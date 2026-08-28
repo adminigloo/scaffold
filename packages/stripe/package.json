@@ -1,0 +1,54 @@
+{
+  "name": "@adminigloo/stripe",
+  "version": "0.1.0",
+  "description": "The Stripe primitive: session creation, signature verification, an event ledger with two-phase idempotency, and a typed handler registry.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adminigloo/scaffold.git",
+    "directory": "packages/stripe"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./schema": {
+      "types": "./dist/schema.d.ts",
+      "import": "./dist/schema.js",
+      "require": "./dist/schema.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "public"
+  },
+  "dependencies": {
+    "@adminigloo/db": "workspace:^",
+    "@adminigloo/env": "workspace:^",
+    "@adminigloo/permissions": "workspace:^"
+  },
+  "peerDependencies": {
+    "drizzle-orm": "^0.45.0",
+    "stripe": "^22.0.0",
+    "zod": "^3.25.0 || ^4.0.0"
+  },
+  "devDependencies": {
+    "drizzle-orm": "^0.45.2",
+    "stripe": "^22.6.0",
+    "zod": "^4.5.1"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts src/schema.ts --format esm,cjs --dts --clean",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  }
+}

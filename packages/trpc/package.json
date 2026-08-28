@@ -1,0 +1,46 @@
+{
+  "name": "@adminigloo/trpc",
+  "version": "0.1.0",
+  "description": "The procedure ladder. Every procedure declares its authorization scope, permission checks are middleware rather than handler code, and a CI audit fails the router that forgets.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adminigloo/scaffold.git",
+    "directory": "packages/trpc"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "public"
+  },
+  "dependencies": {
+    "@adminigloo/auth": "workspace:^",
+    "@adminigloo/permissions": "workspace:^"
+  },
+  "peerDependencies": {
+    "@trpc/server": "^11.0.0",
+    "zod": "^3.25.0 || ^4.0.0"
+  },
+  "devDependencies": {
+    "@trpc/server": "^11.18.0",
+    "zod": "^4.5.1"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  }
+}
