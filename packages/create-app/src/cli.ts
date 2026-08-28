@@ -38,9 +38,12 @@ export function parseArgs(argv: readonly string[]): CliFlags {
 }
 
 export const HELP = `
-create-adminigloo-app — generate a Next.js project with the base already wired.
+@adminigloo/create-app — generate a Next.js project with the base already wired.
 
-  npx create-adminigloo-app <name> [options]
+  pnpm dlx @adminigloo/create-app <name> [options]
+
+  The package is scoped because GitHub Packages rejects unscoped names. The
+  command it installs is still create-adminigloo-app.
 
   --yes, -y     Accept every default. Also implied when stdin is not a TTY,
                 so this never hangs waiting for input inside CI.

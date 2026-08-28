@@ -1,5 +1,5 @@
 {
-  "name": "create-adminigloo-app",
+  "name": "@adminigloo/create-app",
   "version": "0.1.0",
   "description": "Generate a Next.js project with auth, tenancy, permissions, tRPC, Stripe and staging/prod environments already wired.",
   "license": "UNLICENSED",
