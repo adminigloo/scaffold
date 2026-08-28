@@ -58,6 +58,16 @@ importers:
         specifier: ^4.5.1
         version: 4.5.1
 
+  packages/permissions:
+    dependencies:
+      '@adminigloo/db':
+        specifier: workspace:^
+        version: link:../db
+    devDependencies:
+      drizzle-orm:
+        specifier: ^0.45.2
+        version: 0.45.2(@neondatabase/serverless@1.1.0)
+
 packages:
 
   '@changesets/apply-release-plan@8.0.0':
