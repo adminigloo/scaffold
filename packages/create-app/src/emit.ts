@@ -192,6 +192,11 @@ export function renderPackageJson(answers: Answers): string {
     },
     dependencies: Object.fromEntries(Object.entries(deps).sort()),
     devDependencies: Object.fromEntries(Object.entries(devDeps).sort()),
+    // pnpm 10 stopped running dependency install scripts unless they are named
+    // here. Without it Next's image optimiser has no sharp binary and esbuild
+    // has no platform binary, and both fail at the first build rather than at
+    // install — where the warning that explains it has already scrolled past.
+    pnpm: { onlyBuiltDependencies: ["esbuild", "sharp"] },
   };
 
   return `${JSON.stringify(manifest, null, 2)}\n`;
