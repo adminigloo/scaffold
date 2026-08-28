@@ -1,0 +1,48 @@
+{
+  "name": "@adminigloo/db",
+  "version": "0.1.0",
+  "description": "Neon Postgres client, shared column conventions, transaction helpers, and a migration runner that refuses to touch production by accident.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adminigloo/scaffold.git",
+    "directory": "packages/db"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": ["dist"],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "public"
+  },
+  "dependencies": {
+    "@adminigloo/env": "workspace:^",
+    "uuidv7": "^1.2.1",
+    "ws": "^8.21.1"
+  },
+  "peerDependencies": {
+    "@neondatabase/serverless": "^1.0.0",
+    "drizzle-orm": "^0.45.0",
+    "zod": "^3.25.0 || ^4.0.0"
+  },
+  "devDependencies": {
+    "@neondatabase/serverless": "^1.1.0",
+    "@types/ws": "^8.18.1",
+    "drizzle-orm": "^0.45.2",
+    "zod": "^4.5.1"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  }
+}
