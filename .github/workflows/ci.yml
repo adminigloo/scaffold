@@ -16,6 +16,11 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # BUILD FIRST. Packages resolve each other's types from dist/index.d.ts,
+      # which does not exist on a fresh checkout — dist is gitignored. Running
+      # typecheck first passes on a developer machine that happens to have
+      # stale build output and fails in CI, which is the worst ordering of the
+      # two. `pnpm -r build` walks the workspace in dependency order.
+      - run: pnpm build
       - run: pnpm typecheck
       - run: pnpm test
-      - run: pnpm build
