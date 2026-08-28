@@ -26,4 +26,4 @@ export {
 export { coreServer, coreClient } from "./fragments.js";
 
 export { defineEnv } from "./define.js";
-export type { DefineEnvOptions } from "./define.js";
+export type { DefineEnvOptions, InferEnvSchemas } from "./define.js";

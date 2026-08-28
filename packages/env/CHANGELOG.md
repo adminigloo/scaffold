@@ -1,5 +1,18 @@
 # @adminigloo/env
 
+## 0.1.1
+
+### Patch Changes
+
+- `defineEnv` now returns usable value types instead of `unknown`.
+  
+  TypeScript cannot compute `createEnv`'s mapped return type while the schema
+  records are still generic parameters, so every variable arrived as `unknown` and
+  `env.DATABASE_URL` failed to typecheck at the first use. Found by generating a
+  project and running `tsc` on it, not by a unit test — the package's own tests
+  never read a value back out. `InferEnvSchemas` spells the result out, and a
+  compile-time assertion now guards it.
+
 ## 0.1.0
 
 ### Minor Changes

@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, staging]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://npm.pkg.github.com
+          scope: "__SCOPE__"
+      - run: pnpm install --frozen-lockfile
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: pnpm typecheck
+      - run: pnpm test
+      # SKIP_ENV_VALIDATION lets the build run without secrets. It relaxes the
+      # Zod pass ONLY — the key-mode assertion still runs on any key present.
+      - run: pnpm build
+        env:
+          SKIP_ENV_VALIDATION: "1"

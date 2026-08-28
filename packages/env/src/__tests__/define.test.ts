@@ -110,3 +110,26 @@ describe("defineEnv", () => {
     ).toThrow(KeyModeMismatchError);
   });
 });
+
+describe("defineEnv — inferred value types", () => {
+  it("produces usable types, not unknown", () => {
+    const env = build(
+      {},
+      {
+        NODE_ENV: "development",
+        NEXT_PUBLIC_APP_URL: "http://localhost:3000",
+        STRIPE_SECRET_KEY: "sk_test_x",
+      },
+    );
+
+    // Compile-time assertions. Before InferEnvSchemas these were `unknown`,
+    // so every consumer needed a cast and the generated app did not typecheck.
+    const url: string = env.NEXT_PUBLIC_APP_URL;
+    const level: "trace" | "debug" | "info" | "warn" | "error" | "fatal" = env.LOG_LEVEL;
+    const secret: string | undefined = env.STRIPE_SECRET_KEY;
+
+    expect(url).toBe("http://localhost:3000");
+    expect(level).toBe("info");
+    expect(secret).toBe("sk_test_x");
+  });
+});

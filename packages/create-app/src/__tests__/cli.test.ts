@@ -1,0 +1,405 @@
+import { mkdtemp, readFile, readdir, writeFile, mkdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import {
+  DEFAULT_ANSWERS,
+  InvalidProjectNameError,
+  isPersonalWorkspaceOnly,
+  packagesFor,
+  requiredEnvFor,
+  tenantLabel,
+  validateProjectName,
+  type Answers,
+} from "../answers.js";
+import { collectAnswers, nextSteps, parseArgs, targetDirFor } from "../cli.js";
+import { defaultsOnlyPrompter } from "../prompt.js";
+import {
+  assertTargetUsable,
+  planEmit,
+  renderEnvExample,
+  renderPackageJson,
+  renderScaffoldRecord,
+  renderTokens,
+  targetNameFor,
+  TargetNotEmptyError,
+  writePlan,
+} from "../emit.js";
+
+const TEMPLATE_DIR = join(__dirname, "..", "..", "template");
+
+function answers(overrides: Partial<Answers> = {}): Answers {
+  return { ...DEFAULT_ANSWERS, projectName: "acme", ...overrides };
+}
+
+describe("validateProjectName", () => {
+  it.each(["acme", "acme-app", "acme_app", "a", "acme.io", "app2"])(
+    "accepts %s",
+    (name) => {
+      expect(validateProjectName(name)).toBe(name);
+    },
+  );
+
+  it("trims surrounding whitespace rather than rejecting it", () => {
+    expect(validateProjectName("  acme  ")).toBe("acme");
+  });
+
+  it.each([
+    ["", "empty"],
+    ["Acme", "uppercase is legal in a folder and illegal in a package name"],
+    [".acme", "leading dot makes a hidden directory"],
+    ["_acme", "leading underscore"],
+    ["my app", "space"],
+    ["my/app", "slash would nest"],
+    ["a".repeat(215), "npm caps at 214"],
+  ])("rejects %j — %s", (name) => {
+    expect(() => validateProjectName(name)).toThrow(InvalidProjectNameError);
+  });
+
+  it("says what is wrong, not just that something is", () => {
+    expect(() => validateProjectName("Acme")).toThrow(/lowercase/);
+  });
+});
+
+describe("packagesFor — the only structural branch", () => {
+  it("always installs the base", () => {
+    const base = packagesFor(answers());
+    for (const name of ["env", "db", "auth", "tenancy", "permissions", "trpc"]) {
+      expect(base).toContain(`@adminigloo/${name}`);
+    }
+  });
+
+  it("depends only on packages that are actually published", async () => {
+    // A generated project whose very first `pnpm install` 404s is worse than
+    // one missing a feature. Keep this list in step with the registry.
+    const PUBLISHED = new Set([
+      "@adminigloo/env",
+      "@adminigloo/db",
+      "@adminigloo/auth",
+      "@adminigloo/tenancy",
+      "@adminigloo/permissions",
+      "@adminigloo/trpc",
+      "@adminigloo/stripe",
+    ]);
+    for (const model of ["none", "one-time", "subscription", "both"] as const) {
+      for (const pkg of packagesFor(answers({ businessModel: model }))) {
+        expect(PUBLISHED.has(pkg), `${pkg} is not published yet`).toBe(true);
+      }
+    }
+  });
+
+  it("installs no payment package when the project takes no money", () => {
+    const none = packagesFor(answers({ businessModel: "none" }));
+    expect(none).not.toContain("@adminigloo/stripe");
+    expect(none).not.toContain("@adminigloo/commerce");
+    expect(none).not.toContain("@adminigloo/billing");
+  });
+
+  it("adds stripe for every money-taking model", () => {
+    for (const model of ["one-time", "subscription", "both"] as const) {
+      expect(packagesFor(answers({ businessModel: model }))).toContain(
+        "@adminigloo/stripe",
+      );
+    }
+  });
+
+  it("never lists commerce or billing until they are published", () => {
+    // Listing an unpublished package makes the generated project fail its very
+    // first install. The business model still changes the Stripe dependency,
+    // the env vars and the dev script, so the answer is not inert.
+    for (const model of ["one-time", "subscription", "both"] as const) {
+      const p = packagesFor(answers({ businessModel: model }));
+      expect(p).not.toContain("@adminigloo/commerce");
+      expect(p).not.toContain("@adminigloo/billing");
+    }
+  });
+
+  it("never lists a package twice", () => {
+    const p = packagesFor(answers({ businessModel: "both", includeAi: true, includeEmail: true }));
+    expect(new Set(p).size).toBe(p.length);
+  });
+
+  it("adds ai and email only when asked", () => {
+    expect(packagesFor(answers())).not.toContain("@adminigloo/ai");
+    expect(packagesFor(answers({ includeAi: true }))).toContain("@adminigloo/ai");
+    expect(packagesFor(answers({ includeEmail: true }))).toContain(
+      "@adminigloo/email",
+    );
+  });
+});
+
+describe("requiredEnvFor", () => {
+  it("never asks for a key the project has no use for", () => {
+    const vars = requiredEnvFor(answers({ businessModel: "none" }));
+    expect(vars.some((v) => v.includes("STRIPE"))).toBe(false);
+    expect(vars.some((v) => v.includes("RESEND"))).toBe(false);
+  });
+
+  it("asks for Stripe once money is involved", () => {
+    const vars = requiredEnvFor(answers({ businessModel: "subscription" }));
+    expect(vars).toContain("STRIPE_SECRET_KEY");
+    expect(vars).toContain("STRIPE_WEBHOOK_SECRET");
+  });
+
+  it("always needs both database urls — pooled and direct do different jobs", () => {
+    const vars = requiredEnvFor(answers());
+    expect(vars).toContain("DATABASE_URL");
+    expect(vars).toContain("DATABASE_URL_UNPOOLED");
+  });
+});
+
+describe("tenant labelling", () => {
+  it("uses the chosen noun", () => {
+    expect(tenantLabel(answers({ tenantNoun: "Company" }))).toBe("Company");
+  });
+
+  it("still has a label for a consumer project — tenancy is always on", () => {
+    const b2c = answers({ tenantNoun: "none" });
+    expect(tenantLabel(b2c)).toBe("Workspace");
+    expect(isPersonalWorkspaceOnly(b2c)).toBe(true);
+  });
+});
+
+describe("renderTokens", () => {
+  it("substitutes every occurrence, not just the first", () => {
+    expect(renderTokens("__PROJECT_NAME__ and __PROJECT_NAME__", answers())).toBe(
+      "acme and acme",
+    );
+  });
+
+  it("expands the scope in both forms", () => {
+    expect(renderTokens("__SCOPE__/db and __SCOPE_NAME__", answers())).toBe(
+      "@adminigloo/db and adminigloo",
+    );
+  });
+
+  it("pluralises the tenant label for headings", () => {
+    expect(
+      renderTokens("__TENANT_LABEL_PLURAL__", answers({ tenantNoun: "Company" })),
+    ).toBe("Companys");
+  });
+
+  it("leaves unknown tokens alone rather than blanking them", () => {
+    expect(renderTokens("__NOT_A_TOKEN__", answers())).toBe("__NOT_A_TOKEN__");
+  });
+});
+
+describe("targetNameFor", () => {
+  it("renames the underscore-prefixed files npm would have stripped", () => {
+    expect(targetNameFor("_gitignore")).toBe(".gitignore");
+    expect(targetNameFor("_npmrc")).toBe(".npmrc");
+  });
+
+  it("renames a leading underscore at every depth", () => {
+    expect(targetNameFor(join("_github", "workflows", "ci.yml"))).toBe(
+      join(".github", "workflows", "ci.yml"),
+    );
+  });
+
+  it("does NOT hide a source file that legitimately starts with an underscore", () => {
+    // The generator originally renamed every leading underscore, which turned
+    // src/server/routers/_app.ts into .app.ts — a hidden file the app then
+    // could not import. Caught by generating for real, not by a unit test.
+    expect(targetNameFor(join("src", "server", "routers", "_app.ts"))).toBe(
+      join("src", "server", "routers", "_app.ts"),
+    );
+  });
+
+  it("leaves ordinary paths untouched", () => {
+    expect(targetNameFor(join("app", "page.tsx"))).toBe(join("app", "page.tsx"));
+  });
+});
+
+describe("renderPackageJson", () => {
+  it("marks the project private so it cannot be published by accident", () => {
+    expect(JSON.parse(renderPackageJson(answers())).private).toBe(true);
+  });
+
+  it("runs the Stripe listener beside next dev, so webhooks get exercised", () => {
+    const withMoney = JSON.parse(
+      renderPackageJson(answers({ businessModel: "one-time" })),
+    );
+    expect(withMoney.scripts.dev).toContain("stripe listen");
+    expect(withMoney.devDependencies).toHaveProperty("concurrently");
+  });
+
+  it("keeps dev simple when there is no Stripe", () => {
+    const plain = JSON.parse(renderPackageJson(answers()));
+    expect(plain.scripts.dev).toBe("next dev");
+    expect(plain.devDependencies).not.toHaveProperty("concurrently");
+  });
+
+  it("depends on exactly the packages the answers selected", () => {
+    const parsed = JSON.parse(renderPackageJson(answers({ businessModel: "both" })));
+    for (const pkg of packagesFor(answers({ businessModel: "both" }))) {
+      expect(parsed.dependencies).toHaveProperty(pkg);
+    }
+  });
+
+  it("is valid JSON ending in a newline", () => {
+    const out = renderPackageJson(answers());
+    expect(() => JSON.parse(out)).not.toThrow();
+    expect(out.endsWith("\n")).toBe(true);
+  });
+});
+
+describe("renderEnvExample", () => {
+  it("lists every required variable as an empty assignment", () => {
+    const out = renderEnvExample(answers({ businessModel: "subscription" }));
+    for (const name of requiredEnvFor(answers({ businessModel: "subscription" }))) {
+      expect(out).toContain(`${name}=`);
+    }
+  });
+
+  it("says plainly that live keys do not belong here", () => {
+    expect(renderEnvExample(answers())).toMatch(/TEST-MODE KEYS ONLY/);
+  });
+});
+
+describe("renderScaffoldRecord", () => {
+  it("records every answer, so a later diff has something to diff against", () => {
+    const out = renderScaffoldRecord(answers({ businessModel: "both", adminShell: "full" }));
+    expect(out).toContain("both");
+    expect(out).toContain("full");
+    expect(out).toContain("Forked modules");
+  });
+});
+
+describe("parseArgs", () => {
+  it("takes the first bare argument as the name", () => {
+    expect(parseArgs(["acme"]).name).toBe("acme");
+  });
+
+  it("ignores a second bare argument rather than silently using it", () => {
+    expect(parseArgs(["acme", "other"]).name).toBe("acme");
+  });
+
+  it("accepts --dir in both spellings", () => {
+    expect(parseArgs(["--dir", "/tmp/x"]).dir).toBe("/tmp/x");
+    expect(parseArgs(["--dir=/tmp/y"]).dir).toBe("/tmp/y");
+  });
+
+  it("recognises the short flags", () => {
+    expect(parseArgs(["-y"]).yes).toBe(true);
+    expect(parseArgs(["-h"]).help).toBe(true);
+  });
+
+  it("defaults to interactive with no flags", () => {
+    expect(parseArgs([]).yes).toBe(false);
+  });
+});
+
+describe("collectAnswers", () => {
+  it("takes the CLI name over prompting for one", async () => {
+    const result = await collectAnswers(
+      { name: "from-flag", yes: true, help: false },
+      defaultsOnlyPrompter(),
+    );
+    expect(result.projectName).toBe("from-flag");
+  });
+
+  it("validates a name supplied by flag, not only a typed one", async () => {
+    await expect(
+      collectAnswers({ name: "Bad Name", yes: true, help: false }, defaultsOnlyPrompter()),
+    ).rejects.toThrow(InvalidProjectNameError);
+  });
+});
+
+describe("targetDirFor", () => {
+  it("defaults to a directory named after the project", () => {
+    expect(targetDirFor({ yes: true, help: false }, answers(), "/work")).toMatch(
+      /acme$/,
+    );
+  });
+
+  it("honours --dir", () => {
+    expect(
+      targetDirFor({ yes: true, help: false, dir: "elsewhere" }, answers(), "/work"),
+    ).toMatch(/elsewhere$/);
+  });
+});
+
+describe("assertTargetUsable", () => {
+  it("accepts a directory that does not exist yet", async () => {
+    await expect(assertTargetUsable(join(tmpdir(), `nope-${Date.now()}`))).resolves
+      .toBeUndefined();
+  });
+
+  it("accepts a directory holding only a git repo and a README", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "usable-"));
+    await mkdir(join(dir, ".git"), { recursive: true });
+    await writeFile(join(dir, "README.md"), "notes");
+    await expect(assertTargetUsable(dir)).resolves.toBeUndefined();
+  });
+
+  it("refuses a directory with real work in it, and names what it found", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "occupied-"));
+    await writeFile(join(dir, "index.ts"), "export {}");
+    await expect(assertTargetUsable(dir)).rejects.toThrow(TargetNotEmptyError);
+    await expect(assertTargetUsable(dir)).rejects.toThrow(/index\.ts/);
+  });
+});
+
+describe("planEmit — against the real template", () => {
+  it("plans every template file plus the generated ones", async () => {
+    const plan = await planEmit(TEMPLATE_DIR, "/out", answers());
+    expect(plan.files.has("package.json")).toBe(true);
+    expect(plan.files.has(".env.example")).toBe(true);
+    expect(plan.files.has("SCAFFOLD.md")).toBe(true);
+    expect(plan.files.has(".gitignore")).toBe(true);
+    expect(plan.files.has(".npmrc")).toBe(true);
+    expect(plan.files.has(join("src", "env.ts"))).toBe(true);
+    expect(plan.files.has(join("app", "layout.tsx"))).toBe(true);
+  });
+
+  it("leaves no unsubstituted token anywhere in the output", async () => {
+    const plan = await planEmit(TEMPLATE_DIR, "/out", answers({ tenantNoun: "Company" }));
+    for (const [path, contents] of plan.files) {
+      expect(contents, `${path} still has a token`).not.toMatch(/__[A-Z_]+__/);
+    }
+  });
+
+  it("writes the scope into .npmrc so a fresh clone can install", async () => {
+    const plan = await planEmit(TEMPLATE_DIR, "/out", answers());
+    expect(plan.files.get(".npmrc")).toContain("@adminigloo:registry=");
+  });
+
+  it("points drizzle-kit at the UNPOOLED url", async () => {
+    const plan = await planEmit(TEMPLATE_DIR, "/out", answers());
+    expect(plan.files.get("drizzle.config.ts")).toContain("DATABASE_URL_UNPOOLED");
+  });
+});
+
+describe("writePlan — end to end", () => {
+  it("produces a directory that matches the plan exactly", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "generated-"));
+    const target = join(dir, "acme");
+    const plan = await planEmit(TEMPLATE_DIR, target, answers());
+    await writePlan(plan);
+
+    const written = await readdir(target);
+    expect(written).toContain("package.json");
+    expect(written).toContain(".gitignore");
+    expect(written).toContain("src");
+
+    const manifest = JSON.parse(await readFile(join(target, "package.json"), "utf8"));
+    expect(manifest.name).toBe("acme");
+
+    const env = await readFile(join(target, "src", "env.ts"), "utf8");
+    expect(env).toContain('from "@adminigloo/env"');
+    expect(env).not.toMatch(/__[A-Z_]+__/);
+  });
+});
+
+describe("nextSteps", () => {
+  it("lists only the variables this project actually needs", () => {
+    const out = nextSteps(answers({ businessModel: "none" }), "/out/acme");
+    expect(out).toContain("DATABASE_URL");
+    expect(out).not.toContain("STRIPE_SECRET_KEY");
+  });
+
+  it("warns about key mode only when there are keys to get wrong", () => {
+    expect(nextSteps(answers({ businessModel: "none" }), "/o")).not.toMatch(/TEST mode/);
+    expect(nextSteps(answers({ businessModel: "both" }), "/o")).toMatch(/TEST mode/);
+  });
+});

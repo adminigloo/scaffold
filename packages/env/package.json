@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/env",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Boot-time environment validation. Derives APP_ENV from the deployment, binds provider key modes to it, and refuses to build a deployment that points at localhost.",
   "license": "UNLICENSED",
   "type": "module",

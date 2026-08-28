@@ -49,6 +49,8 @@ importers:
         specifier: ^4.5.1
         version: 4.5.1
 
+  packages/create-app: {}
+
   packages/db:
     dependencies:
       '@adminigloo/env':
