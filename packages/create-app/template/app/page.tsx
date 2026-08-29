@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AuthHeader } from "@/components/AuthHeader";
 import { HealthCheck } from "@/components/HealthCheck";
 
 export default function Home() {
@@ -12,6 +13,9 @@ export default function Home() {
       <p style={{ color: "#4b5563" }}>
         <HealthCheck />
       </p>
+      <div style={{ margin: "1.5rem 0" }}>
+        <AuthHeader />
+      </div>
       <p style={{ color: "#4b5563" }}>
         <Link href="/setup">What is configured, and what is not</Link> &mdash; add
         credentials to <code>.env.local</code> whenever you want the feature they

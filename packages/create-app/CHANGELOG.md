@@ -1,5 +1,25 @@
 # create-adminigloo-app
 
+## 0.6.0
+
+### Minor Changes
+
+- Sign-in actually exists now.
+  
+  - Adds `/sign-in` and `/sign-up` as Clerk catch-all routes. The `[[...sign-in]]`
+    segment is required, not decorative: Clerk routes verification, second factor
+    and reset as sub-paths, so a plain `sign-in/page.tsx` renders the first screen
+    and 404s the moment anyone needs a second step. Previously there was no
+    sign-in page at all — `/sign-in` was a 404.
+  - Adds a header with sign-in / user button / admin link, written as a SERVER
+    component reading `auth()`. Clerk Core 3 removed `<SignedIn>` / `<SignedOut>`,
+    and they throw at render rather than at build — the code looks correct until
+    the page 500s.
+  - `drizzle.config.ts` loads `.env.local` itself. drizzle-kit is a standalone
+    binary and does not read it the way Next does, so `pnpm db:migrate` failed
+    with "url: ''" while the app connected fine — which reads as a broken config
+    rather than an unloaded file. `db:seed` gets `--env-file` for the same reason.
+
 ## 0.5.2
 
 ### Patch Changes

@@ -301,7 +301,8 @@ export function renderPackageJson(answers: Answers): string {
       "db:studio": "drizzle-kit studio",
       // Idempotent: re-run it after adding a permission to the catalog. It only
       // touches templates it created, never one you have customised.
-      "db:seed": "tsx scripts/seed-roles.ts",
+      // --env-file because tsx, like drizzle-kit, does not read .env.local.
+      "db:seed": "tsx --env-file=.env.local scripts/seed-roles.ts",
     },
     dependencies: Object.fromEntries(Object.entries(deps).sort()),
     devDependencies: Object.fromEntries(Object.entries(devDeps).sort()),
