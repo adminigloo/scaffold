@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/auth",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Identity mirror. Clerk owns credentials and sessions; this owns the local user row, the Principal every other package consumes, and nothing about roles.",
   "license": "UNLICENSED",
   "type": "module",

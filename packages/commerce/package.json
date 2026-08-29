@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/commerce",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "One-time purchases. Cart maths in integer minor units, orders keyed on the PaymentIntent so creation is idempotent in the database rather than by convention, and discounts as Stripe coupons instead of negative line items.",
   "license": "UNLICENSED",
   "type": "module",

@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/ai",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Conventions for streaming route handlers: authorize before the stream opens, meter it through cancellation, and record what it cost in integer micros.",
   "license": "UNLICENSED",
   "type": "module",

@@ -20,6 +20,7 @@ export {
   renderTokens,
   renderPackageJson,
   renderEnvExample,
+  renderEnvLocal,
   renderScaffoldRecord,
   renderEnvModule,
   renderSchemaModule,

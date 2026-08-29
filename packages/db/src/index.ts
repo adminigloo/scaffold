@@ -11,7 +11,9 @@ export {
 export { createDb } from "./client.js";
 export type { CreateDbOptions, Db } from "./client.js";
 
-export { dbServer } from "./env.js";
+export { DatabaseNotConfiguredError, isDbConfigured } from "./unconfigured.js";
+
+export { dbServer, DB_OPTIONAL_UNTIL_DEPLOYED } from "./env.js";
 
 export { withRollback } from "./tx.js";
 export type { Transactable } from "./tx.js";

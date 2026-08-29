@@ -1,5 +1,17 @@
 # @adminigloo/testing
 
+## 0.1.1
+
+### Patch Changes
+
+- Updated dependencies
+  - @adminigloo/env@0.2.0
+  - @adminigloo/db@0.2.0
+  - @adminigloo/auth@0.1.1
+  - @adminigloo/stripe@0.1.1
+  - @adminigloo/permissions@0.1.1
+  - @adminigloo/tenancy@0.1.1
+
 ## 0.1.0
 
 ### Minor Changes

@@ -10,6 +10,7 @@ export {
   expectedKeyMode,
   assertKeyMode,
   assertModeBoundKeys,
+  isBlank,
   KeyModeMismatchError,
   KeyModeIndeterminateError,
 } from "./validators.js";
@@ -26,4 +27,17 @@ export {
 export { coreServer, coreClient } from "./fragments.js";
 
 export { defineEnv } from "./define.js";
-export type { DefineEnvOptions, InferEnvSchemas } from "./define.js";
+export type {
+  DefineEnvOptions,
+  InferEnvSchemas,
+  OptionalUntilDeployed,
+} from "./define.js";
+
+export { describeEnv, formatEnvReport } from "./report.js";
+export type {
+  DescribeEnvOptions,
+  EnvFeature,
+  EnvGroupReport,
+  EnvReport,
+  EnvVarReport,
+} from "./report.js";

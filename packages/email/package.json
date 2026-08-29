@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/email",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Transactional email with a delivery log. With no API key a send is recorded as skipped instead of throwing, so every feature that sends mail still works before anyone has found a credential.",
   "license": "UNLICENSED",
   "type": "module",

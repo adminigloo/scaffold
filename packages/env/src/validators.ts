@@ -125,3 +125,15 @@ export function assertModeBoundKeys(
     assertKeyMode(key, value, appEnv);
   }
 }
+
+/**
+ * Is this variable effectively unset?
+ *
+ * `""` counts as unset because that is what a Vercel dashboard row saved with
+ * no value produces, and it is what `emptyStringAsUndefined` already collapses
+ * inside `createEnv`. Treating `""` as "present" here would make graduated
+ * strictness disagree with the parser it feeds.
+ */
+export function isBlank(value: string | undefined): boolean {
+  return value === undefined || value === "";
+}

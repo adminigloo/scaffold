@@ -1,5 +1,14 @@
 # @adminigloo/commerce
 
+## 0.1.1
+
+### Patch Changes
+
+- Updated dependencies
+  - @adminigloo/db@0.2.0
+  - @adminigloo/stripe@0.1.1
+  - @adminigloo/permissions@0.1.1
+
 ## 0.1.0
 
 ### Minor Changes

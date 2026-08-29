@@ -180,6 +180,10 @@ export async function planEmit(
   files.set(join("src", "env.ts"), renderEnvModule(answers));
   files.set(join("src", "db", "schema.ts"), renderSchemaModule(answers));
   files.set(".env.example", renderEnvExample(answers));
+  // Written directly, not just as an example. It is gitignored, and it carries
+  // the one value that is not a credential — so `pnpm install && pnpm dev`
+  // works with no setup at all, which is the whole point of deferring the rest.
+  files.set(".env.local", renderEnvLocal(answers));
   files.set("SCAFFOLD.md", renderScaffoldRecord(answers));
 
   return { targetDir, files };
@@ -261,6 +265,75 @@ export function renderPackageJson(answers: Answers): string {
   return `${JSON.stringify(manifest, null, 2)}\n`;
 }
 
+/**
+ * A ready-to-run `.env.local`.
+ *
+ * Every credential is present but commented out, with where to get it. An empty
+ * file would boot equally well and tell you nothing; a file listing what is
+ * missing turns "read the README" into "uncomment the line".
+ */
+export function renderEnvLocal(answers: Answers): string {
+  const port = 3000;
+  const lines = [
+    "# Local development. Gitignored, and already valid — `pnpm dev` runs as is.",
+    "#",
+    "# Everything below is commented out. Uncomment and fill one in whenever you",
+    "# want the feature it unlocks; visit /setup to see what is on and what is off.",
+    "# A malformed value still fails at boot, so a half-pasted key is caught here",
+    "# rather than three screens later.",
+    "",
+    `NEXT_PUBLIC_APP_URL=http://localhost:${port}`,
+    "",
+    "# --- Neon -----------------------------------------------------------------",
+    "# console.neon.tech -> your STAGING project -> Connection Details.",
+    "# Two different strings: the pooled host contains `-pooler`, the direct one",
+    "# does not. They are not interchangeable and boot validation checks which is",
+    "# which, so a swap fails immediately instead of hanging drizzle-kit later.",
+    "# DATABASE_URL=",
+    "# DATABASE_URL_UNPOOLED=",
+    "",
+    "# --- Clerk ----------------------------------------------------------------",
+    "# dashboard.clerk.com -> API keys. Test mode.",
+    "# The webhook secret is only needed once you have a public URL; on localhost",
+    "# the user row is created from the session instead.",
+    "# NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=",
+    "# CLERK_SECRET_KEY=",
+    "# CLERK_WEBHOOK_SIGNING_SECRET=",
+  ];
+
+  if (answers.businessModel !== "none") {
+    lines.push(
+      "",
+      "# --- Stripe ---------------------------------------------------------------",
+      "# dashboard.stripe.com -> Developers -> API keys, with Test mode ON.",
+      "# STRIPE_WEBHOOK_SECRET is printed by `stripe listen`, which `pnpm dev`",
+      "# starts for you — it is NOT the one in the dashboard.",
+      "# NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=",
+      "# STRIPE_SECRET_KEY=",
+      "# STRIPE_WEBHOOK_SECRET=",
+    );
+  }
+  if (answers.includeEmail) {
+    lines.push(
+      "",
+      "# --- Resend ---------------------------------------------------------------",
+      "# Without RESEND_API_KEY, sends are recorded as `skipped` and logged, so you",
+      "# can see exactly what would have gone out.",
+      "# RESEND_API_KEY=",
+      "# EMAIL_FROM=Your Name <hello@yourdomain.com>",
+    );
+  }
+  if (answers.includeAi) {
+    lines.push(
+      "",
+      "# --- AI ---------------------------------------------------------------------",
+      "# ANTHROPIC_API_KEY=",
+    );
+  }
+
+  return `${lines.join("\n")}\n`;
+}
+
 export function renderEnvExample(answers: Answers): string {
   const lines = [
     "# Copy to .env.local and fill in. Every value is validated at boot;",
@@ -326,7 +399,7 @@ export function renderEnvModule(answers: Answers): string {
 
   const imports = [
     `import { authClient, authServer, AUTH_MODE_BOUND_KEYS } from "${scope}/auth";`,
-    `import { dbServer } from "${scope}/db";`,
+    `import { dbServer, DB_OPTIONAL_UNTIL_DEPLOYED } from "${scope}/db";`,
     `import { coreClient, coreServer, defineEnv } from "${scope}/env";`,
   ];
   if (takesMoney) {
@@ -334,12 +407,8 @@ export function renderEnvModule(answers: Answers): string {
       `import { stripeClient, stripeServer, STRIPE_MODE_BOUND_KEYS } from "${scope}/stripe";`,
     );
   }
-  if (answers.includeAi) {
-    imports.push(`import { aiServer } from "${scope}/ai";`);
-  }
-  if (answers.includeEmail) {
-    imports.push(`import { emailServer } from "${scope}/email";`);
-  }
+  if (answers.includeAi) imports.push(`import { aiServer } from "${scope}/ai";`);
+  if (answers.includeEmail) imports.push(`import { emailServer } from "${scope}/email";`);
 
   const serverSpreads = ["...coreServer()", "...dbServer()", "...authServer()"];
   const clientSpreads = ["...coreClient()", "...authClient()"];
@@ -355,6 +424,21 @@ export function renderEnvModule(answers: Answers): string {
     "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
   ];
 
+  // Required on a deployment, deferrable on a laptop. Everything a service
+  // account issues belongs here; NEXT_PUBLIC_APP_URL does not, because you
+  // already know it and nothing has to be signed up for.
+  const deferred = [
+    "...DB_OPTIONAL_UNTIL_DEPLOYED",
+    '"CLERK_SECRET_KEY"',
+    '"CLERK_WEBHOOK_SIGNING_SECRET"',
+    '"NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"',
+  ];
+
+  const features = [
+    `{ name: "Database", vars: [...DB_OPTIONAL_UNTIL_DEPLOYED], disables: "Anything that reads or writes data." }`,
+    `{ name: "Sign-in", vars: ["CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "CLERK_WEBHOOK_SIGNING_SECRET"], disables: "Signing in, and every permission check." }`,
+  ];
+
   if (takesMoney) {
     serverSpreads.push("...stripeServer()");
     clientSpreads.push("...stripeClient()");
@@ -364,6 +448,14 @@ export function renderEnvModule(answers: Answers): string {
       "STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET",
       "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY",
     );
+    deferred.push(
+      '"STRIPE_SECRET_KEY"',
+      '"STRIPE_WEBHOOK_SECRET"',
+      '"NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY"',
+    );
+    features.push(
+      `{ name: "Payments", vars: ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY"], disables: "Checkout, subscriptions and the webhook ledger." }`,
+    );
   }
 
   if (answers.includeAi) {
@@ -372,6 +464,9 @@ export function renderEnvModule(answers: Answers): string {
       "ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY",
       "OPENAI_API_KEY: process.env.OPENAI_API_KEY",
       "GOOGLE_GENERATIVE_AI_API_KEY: process.env.GOOGLE_GENERATIVE_AI_API_KEY",
+    );
+    features.push(
+      `{ name: "AI", vars: ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"], disables: "AI routes." }`,
     );
   }
 
@@ -383,6 +478,10 @@ export function renderEnvModule(answers: Answers): string {
       "EMAIL_REPLY_TO: process.env.EMAIL_REPLY_TO",
       "RESEND_WEBHOOK_SECRET: process.env.RESEND_WEBHOOK_SECRET",
     );
+    deferred.push('"EMAIL_FROM"');
+    features.push(
+      `{ name: "Email", vars: ["RESEND_API_KEY", "EMAIL_FROM"], disables: "Sending mail. Sends are recorded as skipped instead." }`,
+    );
   }
 
   return `${imports.join("\n")}
@@ -393,25 +492,62 @@ export function renderEnvModule(answers: Answers): string {
  * HARD RULE: this is the only module allowed to read \`process.env\`. Everywhere
  * else imports \`env\`. Composed from the fragments of the packages actually
  * installed, so this project is never asked for a credential it has no use for.
- *
- * Validation runs at boot. Missing or malformed stops the server, which catches
- * a forgotten Vercel variable as a build failure rather than as a runtime bug
- * in staging.
  */
+const server = {
+  ${serverSpreads.join(",\n  ")},
+};
+
+const client = {
+  ${clientSpreads.join(",\n  ")},
+};
+
+const runtimeEnv = {
+  ${runtime.join(",\n  ")},
+};
+
+/**
+ * Credentials you can add LATER.
+ *
+ * On a laptop these may be absent: the app boots, /setup lists what is missing,
+ * and the feature each one unlocks stays off until you paste a value in. That
+ * is the difference between a scaffold you can run and one you have to finish
+ * shopping for first.
+ *
+ * On a deployment they are hard-required and the build fails without them,
+ * because a forgotten Vercel variable should stop a release rather than reach a
+ * customer as a broken page. A value that is PRESENT but malformed still fails
+ * everywhere — a mistyped connection string is not a deferred credential.
+ */
+const optionalUntilDeployed = [
+  ${deferred.join(",\n  ")},
+] as const;
+
 export const env = defineEnv({
-  server: {
-    ${serverSpreads.join(",\n    ")},
-  },
-  client: {
-    ${clientSpreads.join(",\n    ")},
-  },
+  server,
+  client,
+  runtimeEnv,
+  optionalUntilDeployed,
   // Their \`_test_\` / \`_live_\` mode must match the deployment. Checked outside
-  // Zod, so SKIP_ENV_VALIDATION cannot switch it off.
+  // Zod on the raw values, so neither SKIP_ENV_VALIDATION nor deferring a key
+  // above can switch it off.
   modeBoundKeys: [${modeBound.join(", ")}],
-  runtimeEnv: {
-    ${runtime.join(",\n    ")},
-  },
 });
+
+/**
+ * Inputs for the /setup page, exported so it reads the SAME schemas boot
+ * validation uses. A setup page with its own copy of the list drifts the first
+ * time a package is added, and then confidently reports that everything is
+ * configured.
+ */
+export const envDescription = {
+  server,
+  client,
+  runtimeEnv,
+  optionalUntilDeployed,
+  features: [
+    ${features.join(",\n    ")},
+  ],
+};
 `;
 }
 

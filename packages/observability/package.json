@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/observability",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Structured logging with this scaffold's real secrets redacted, an audit registry that is the only way to name an action, error fingerprints that survive a redeploy, and a rate limiter with no transport baked in.",
   "license": "UNLICENSED",
   "type": "module",

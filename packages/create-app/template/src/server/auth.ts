@@ -5,6 +5,7 @@ import { users } from "__SCOPE__/auth/schema";
 import { personalWorkspaceId, personalWorkspaceSlug } from "__SCOPE__/tenancy";
 import { tenantMembers, tenants } from "__SCOPE__/tenancy/schema";
 import { db } from "@/db";
+import { env } from "@/env";
 
 /**
  * Who is making this request, as a Principal.
@@ -14,6 +15,12 @@ import { db } from "@/db";
  * stale the moment you revoke, and the session token outlives the revocation.
  */
 export async function currentPrincipal(): Promise<Principal | null> {
+  // No Clerk yet. `auth()` throws rather than returning an empty session when
+  // the keys are absent, so without this guard every page that asks who the
+  // caller is 500s on a laptop that has not signed up for Clerk — including
+  // /setup, which exists to tell you that Clerk is what is missing.
+  if (!env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY || !env.CLERK_SECRET_KEY) return null;
+
   const { userId: externalId } = await auth();
   if (!externalId) return null;
 

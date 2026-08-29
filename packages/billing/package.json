@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/billing",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Subscriptions and entitlements: a local plan catalog, what a purchase grants, and proration.",
   "license": "UNLICENSED",
   "type": "module",
