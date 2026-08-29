@@ -1,10 +1,26 @@
 name: Release
 
+# MANUAL ONLY, deliberately.
+#
+# This used to run on every push to main, alongside CI. Publishing already
+# happens from a workstation via `pnpm release`, so the workflow was doing the
+# same job a second time — and every push carried two independent chances to
+# send a failure email. Two of them fired for a problem that had already been
+# fixed locally, which is noise that teaches you to ignore the alerts that
+# matter.
+#
+# CI still runs on every push. That one is the signal.
+#
+# To publish from here instead of locally: Actions -> Release -> Run workflow.
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build and report what would publish, without publishing"
+        type: boolean
+        default: false
 
-concurrency: ${{ github.workflow }}-${{ github.ref }}
+concurrency: ${{ github.workflow }}
 
 jobs:
   release:
@@ -29,9 +45,17 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # Opens a "Version Packages" PR when changesets are pending.
-      # Publishes to GitHub Packages when that PR is merged.
-      - uses: changesets/action@v1
+      # Same ordering as CI: packages resolve each other's types from dist.
+      - run: pnpm build
+      - run: pnpm typecheck
+      - run: pnpm test
+
+      - name: What would publish
+        run: pnpm changeset status --since=origin/main || true
+
+      - name: Publish
+        if: ${{ !inputs.dry_run }}
+        uses: changesets/action@v1
         with:
           version: pnpm version-packages
           publish: pnpm release

@@ -1,5 +1,24 @@
 # create-adminigloo-app
 
+## 0.3.0
+
+### Minor Changes
+
+- The generated app can now actually call its own API.
+  
+  - Adds `src/trpc/client.tsx` (typed React client + provider, wired into the root
+    layout) and `src/trpc/server.ts` (RSC caller). Without these the server route
+    existed and no component could reach it — `@trpc/react-query` was a dependency
+    with nothing importing it.
+  - Both clients are created inside `useState` initialisers. A module-level
+    QueryClient is shared across every request the server handles, so one user's
+    cached data can render for the next.
+  - Authorization failures are never retried: the answer will not change, and
+    retrying turns one 403 into four in the log.
+  - Adds `tsx` (the seed script is run, not built) and `server-only`, plus a
+    `db:seed` script — `scripts/seed-roles.ts` told you to run `pnpm tsx` with tsx
+    absent from devDependencies.
+
 ## 0.2.0
 
 ### Minor Changes

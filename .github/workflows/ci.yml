@@ -7,6 +7,7 @@ on:
 
 jobs:
   check:
+    name: typecheck, test, build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,12 +16,119 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+
+      # A stale lockfile fails here with a clear message rather than three
+      # steps later as a missing module. It has happened twice.
       - run: pnpm install --frozen-lockfile
+
       # BUILD FIRST. Packages resolve each other's types from dist/index.d.ts,
-      # which does not exist on a fresh checkout — dist is gitignored. Running
-      # typecheck first passes on a developer machine that happens to have
-      # stale build output and fails in CI, which is the worst ordering of the
-      # two. `pnpm -r build` walks the workspace in dependency order.
+      # which is gitignored and absent on a fresh checkout. Typecheck-first
+      # passes on a machine with stale build output and fails only in CI.
       - run: pnpm build
       - run: pnpm typecheck
       - run: pnpm test
+
+  generate:
+    name: generate a project and build it
+    runs-on: ubuntu-latest
+    needs: check
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://npm.pkg.github.com
+          scope: "@adminigloo"
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @adminigloo/create-app build
+
+      # The end-to-end test that unit tests cannot do. It runs the generator for
+      # real, installs the PUBLISHED packages from the registry, and builds the
+      # result — which is exactly what someone starting a project experiences.
+      #
+      # This exists because two defects reached a tagged release that every unit
+      # test passed through: the generated app had no tRPC client provider, so no
+      # component could call the API, and src/db/schema.ts omitted three
+      # packages' tables, so they were missing from every migration. Both were
+      # only visible by generating a project and building it.
+      - name: Generate a full project
+        run: |
+          mkdir -p /tmp/e2e && cd /tmp/e2e
+          node "$GITHUB_WORKSPACE/packages/create-app/dist/index.js" \
+            e2e-app --yes --model both --admin full --ai --email
+
+      - name: Install the generated project
+        working-directory: /tmp/e2e/e2e-app
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Typecheck the generated project
+        working-directory: /tmp/e2e/e2e-app
+        run: pnpm exec tsc --noEmit
+
+      # Placeholder credentials. Every value is shaped correctly so the boot
+      # validation genuinely runs — a build that passes because validation was
+      # skipped proves nothing about the contract this scaffold exists to
+      # enforce. Nothing here reaches a network.
+      - name: Build the generated project
+        working-directory: /tmp/e2e/e2e-app
+        run: |
+          cat > .env.local <<'EOF'
+          NEXT_PUBLIC_APP_URL=http://localhost:3000
+          DATABASE_URL=postgresql://u:p@ep-ci-pooler.us-east-2.aws.neon.tech/db
+          DATABASE_URL_UNPOOLED=postgresql://u:p@ep-ci.us-east-2.aws.neon.tech/db
+          CLERK_SECRET_KEY=sk_test_0000000000000000000000000000
+          CLERK_WEBHOOK_SIGNING_SECRET=whsec_0000000000000000000000000000
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_0000000000000000000000000000
+          STRIPE_SECRET_KEY=sk_test_1111111111111111111111111111
+          STRIPE_WEBHOOK_SECRET=whsec_1111111111111111111111111111
+          NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_1111111111111111111111111111
+          RESEND_API_KEY=re_22222222222222222222222222
+          EMAIL_FROM=CI <ci@example.com>
+          ANTHROPIC_API_KEY=sk-ant-api03-3333333333333333333333333
+          EOF
+          pnpm exec next build
+
+      # The guarantee this whole scaffold exists to provide. If a live key ever
+      # stops failing the build, that is the most important regression here.
+      - name: A live key must refuse to build
+        working-directory: /tmp/e2e/e2e-app
+        run: |
+          # Assembled from parts on purpose. Written as a literal, this trips
+          # GitHub push protection, which cannot tell a deliberately fake live
+          # key from a real one — and it is right not to try.
+          MODE=live
+          sed -i "s/^STRIPE_SECRET_KEY=.*/STRIPE_SECRET_KEY=sk_${MODE}_9999999999999999999999999999/" .env.local
+          if SKIP_ENV_VALIDATION=1 pnpm exec next build > out.log 2>&1; then
+            echo "::error::A live Stripe key built successfully. The mode assertion is broken."
+            exit 1
+          fi
+          grep -q "KeyModeMismatchError" out.log || {
+            echo "::error::Build failed, but not with KeyModeMismatchError:"
+            tail -20 out.log
+            exit 1
+          }
+          echo "Live key correctly refused, even with SKIP_ENV_VALIDATION=1."
+
+      # Proves the composed schema is complete: one migration covering every
+      # table from every installed package.
+      - name: Generate migrations from the composed schema
+        working-directory: /tmp/e2e/e2e-app
+        run: |
+          sed -i 's/^STRIPE_SECRET_KEY=.*/STRIPE_SECRET_KEY=sk_test_1111111111111111111111111111/' .env.local
+          set -a && . ./.env.local && set +a
+          pnpm exec drizzle-kit generate
+          tables=$(grep -c "CREATE TABLE" drizzle/*.sql)
+          echo "migration covers $tables tables"
+          [ "$tables" -ge 14 ] || {
+            echo "::error::Expected at least 14 tables, found $tables — a package's schema is missing from src/db/schema.ts"
+            exit 1
+          }

@@ -210,6 +210,7 @@ export function renderPackageJson(answers: Answers): string {
     next: "16.2.12",
     react: "19.2.4",
     "react-dom": "19.2.4",
+    "server-only": "^0.0.1",
     superjson: "^2.2.1",
     zod: "^4.5.1",
   };
@@ -221,6 +222,8 @@ export function renderPackageJson(answers: Answers): string {
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "drizzle-kit": "^0.31.10",
+    // The seed script is TypeScript and is run directly, not built.
+    tsx: "^4.23.5",
     typescript: "^5.9.3",
     vitest: "^4.1.11",
   };
@@ -242,6 +245,9 @@ export function renderPackageJson(answers: Answers): string {
       "db:generate": "drizzle-kit generate",
       "db:migrate": "drizzle-kit migrate",
       "db:studio": "drizzle-kit studio",
+      // Idempotent: re-run it after adding a permission to the catalog. It only
+      // touches templates it created, never one you have customised.
+      "db:seed": "tsx scripts/seed-roles.ts",
     },
     dependencies: Object.fromEntries(Object.entries(deps).sort()),
     devDependencies: Object.fromEntries(Object.entries(devDeps).sort()),
