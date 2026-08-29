@@ -80,21 +80,29 @@ export function packagesFor(answers: Answers): readonly string[] {
   // Only packages that are actually published. A dependency on something that
   // does not exist yet makes `pnpm install` fail on the first command the
   // person runs, which is the worst possible first impression of a generator.
-  const base = ["env", "db", "auth", "tenancy", "permissions", "trpc"];
+  const base = [
+    "env",
+    "db",
+    "auth",
+    "tenancy",
+    "permissions",
+    "trpc",
+    "observability",
+  ];
   const optional: string[] = [];
 
   // Stripe is the primitive: sessions, signature verification, the event
   // ledger, idempotent dispatch. Every money-taking project needs it.
   if (answers.businessModel !== "none") optional.push("stripe");
 
-  // NOT YET PUBLISHED, deliberately absent rather than listed-and-broken:
-  //   @adminigloo/commerce  cart, shipping, tax, orders   (one-time, both)
-  //   @adminigloo/billing   plans, entitlements, portal   (subscription, both)
-  // Depending on a package that does not exist makes the first `pnpm install`
-  // 404, which is a worse first impression than a feature arriving later. The
-  // business model still decides the Stripe dependency, the env vars asked for,
-  // and whether `stripe listen` runs beside `next dev` — so the answer already
-  // changes the generated project today.
+  // Cart, shipping, tax and orders — one-time purchases.
+  if (answers.businessModel === "one-time" || answers.businessModel === "both") {
+    optional.push("commerce");
+  }
+  // Plans, entitlements, proration and the portal — recurring revenue.
+  if (answers.businessModel === "subscription" || answers.businessModel === "both") {
+    optional.push("billing");
+  }
 
   if (answers.includeAi) optional.push("ai");
   if (answers.includeEmail) optional.push("email");
@@ -125,7 +133,11 @@ export function requiredEnvFor(answers: Answers): readonly string[] {
       "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY",
     );
   }
-  if (answers.includeEmail) vars.push("RESEND_API_KEY", "RESEND_FROM_EMAIL");
+  // Names must match what @adminigloo/email actually declares. This listed
+  // RESEND_FROM_EMAIL, which nothing reads — so .env.example told you to set a
+  // variable that does nothing, while EMAIL_FROM, which the schema REQUIRES,
+  // went unmentioned and the app refused to boot.
+  if (answers.includeEmail) vars.push("RESEND_API_KEY", "EMAIL_FROM");
   if (answers.includeAi) vars.push("ANTHROPIC_API_KEY");
   return vars;
 }

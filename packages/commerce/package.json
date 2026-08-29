@@ -1,0 +1,51 @@
+{
+  "name": "@adminigloo/commerce",
+  "version": "0.1.0",
+  "description": "One-time purchases. Cart maths in integer minor units, orders keyed on the PaymentIntent so creation is idempotent in the database rather than by convention, and discounts as Stripe coupons instead of negative line items.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adminigloo/scaffold.git",
+    "directory": "packages/commerce"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./schema": {
+      "types": "./dist/schema.d.ts",
+      "import": "./dist/schema.js",
+      "require": "./dist/schema.cjs"
+    }
+  },
+  "files": ["dist"],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "public"
+  },
+  "dependencies": {
+    "@adminigloo/db": "workspace:^",
+    "@adminigloo/permissions": "workspace:^",
+    "@adminigloo/stripe": "workspace:^"
+  },
+  "peerDependencies": {
+    "drizzle-orm": "^0.45.0",
+    "stripe": "^22.0.0"
+  },
+  "devDependencies": {
+    "@adminigloo/tenancy": "workspace:^",
+    "drizzle-orm": "^0.45.2",
+    "stripe": "^22.6.0"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts src/schema.ts --format esm,cjs --dts --clean",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  }
+}

@@ -87,7 +87,12 @@ describe("packagesFor — the only structural branch", () => {
       "@adminigloo/tenancy",
       "@adminigloo/permissions",
       "@adminigloo/trpc",
+      "@adminigloo/observability",
       "@adminigloo/stripe",
+      "@adminigloo/commerce",
+      "@adminigloo/billing",
+      "@adminigloo/ai",
+      "@adminigloo/email",
     ]);
     for (const model of ["none", "one-time", "subscription", "both"] as const) {
       for (const pkg of packagesFor(answers({ businessModel: model }))) {
@@ -111,15 +116,22 @@ describe("packagesFor — the only structural branch", () => {
     }
   });
 
-  it("never lists commerce or billing until they are published", () => {
-    // Listing an unpublished package makes the generated project fail its very
-    // first install. The business model still changes the Stripe dependency,
-    // the env vars and the dev script, so the answer is not inert.
-    for (const model of ["one-time", "subscription", "both"] as const) {
-      const p = packagesFor(answers({ businessModel: model }));
-      expect(p).not.toContain("@adminigloo/commerce");
-      expect(p).not.toContain("@adminigloo/billing");
-    }
+  it("adds commerce for one-time purchases and billing for subscriptions", () => {
+    const once = packagesFor(answers({ businessModel: "one-time" }));
+    expect(once).toContain("@adminigloo/commerce");
+    expect(once).not.toContain("@adminigloo/billing");
+
+    const sub = packagesFor(answers({ businessModel: "subscription" }));
+    expect(sub).toContain("@adminigloo/billing");
+    expect(sub).not.toContain("@adminigloo/commerce");
+
+    const both = packagesFor(answers({ businessModel: "both" }));
+    expect(both).toContain("@adminigloo/commerce");
+    expect(both).toContain("@adminigloo/billing");
+  });
+
+  it("always installs observability — logging and audit are not optional", () => {
+    expect(packagesFor(answers())).toContain("@adminigloo/observability");
   });
 
   it("never lists a package twice", () => {
@@ -526,6 +538,39 @@ describe("derived modules", () => {
     // then happily run a live key in staging.
     const paid = renderEnvModule(answers({ businessModel: "both" }));
     expect(paid).toMatch(/modeBoundKeys:.*STRIPE_MODE_BOUND_KEYS/);
+  });
+
+  it("re-exports a schema for EVERY package that owns a table", async () => {
+    // drizzle.config points at this one file, so a package omitted here has its
+    // tables silently excluded from every migration: the app compiles, boots,
+    // and fails on the first insert against a table nobody created.
+    const full = renderSchemaModule(
+      answers({ businessModel: "both", includeAi: true, includeEmail: true }),
+    );
+    for (const pkg of ["auth", "tenancy", "permissions", "observability", "stripe", "ai", "email"]) {
+      expect(full, `missing ${pkg}/schema`).toContain(`@adminigloo/${pkg}/schema"`);
+    }
+  });
+
+  it("composes an env fragment for every package that declares one", () => {
+    const full = renderEnvModule(
+      answers({ businessModel: "both", includeAi: true, includeEmail: true }),
+    );
+    for (const fragment of ["aiServer()", "emailServer()", "stripeServer()"]) {
+      expect(full, `missing ${fragment}`).toContain(fragment);
+    }
+    // .env.example asks for these, so env.ts must actually read them.
+    for (const v of ["ANTHROPIC_API_KEY", "EMAIL_FROM", "RESEND_API_KEY"]) {
+      expect(full).toContain(`${v}: process.env.${v}`);
+    }
+  });
+
+  it("asks only for env vars the installed packages declare", () => {
+    const withEmail = requiredEnvFor(answers({ includeEmail: true }));
+    expect(withEmail).toContain("EMAIL_FROM");
+    // Nothing reads RESEND_FROM_EMAIL; asking for it taught people to ignore
+    // the list, and the variable that IS required went unmentioned.
+    expect(withEmail).not.toContain("RESEND_FROM_EMAIL");
   });
 
   it("re-exports the stripe schema only when stripe is installed", () => {

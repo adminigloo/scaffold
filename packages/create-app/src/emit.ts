@@ -328,6 +328,12 @@ export function renderEnvModule(answers: Answers): string {
       `import { stripeClient, stripeServer, STRIPE_MODE_BOUND_KEYS } from "${scope}/stripe";`,
     );
   }
+  if (answers.includeAi) {
+    imports.push(`import { aiServer } from "${scope}/ai";`);
+  }
+  if (answers.includeEmail) {
+    imports.push(`import { emailServer } from "${scope}/email";`);
+  }
 
   const serverSpreads = ["...coreServer()", "...dbServer()", "...authServer()"];
   const clientSpreads = ["...coreClient()", "...authClient()"];
@@ -351,6 +357,25 @@ export function renderEnvModule(answers: Answers): string {
       "STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY",
       "STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET",
       "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY",
+    );
+  }
+
+  if (answers.includeAi) {
+    serverSpreads.push("...aiServer()");
+    runtime.push(
+      "ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY",
+      "OPENAI_API_KEY: process.env.OPENAI_API_KEY",
+      "GOOGLE_GENERATIVE_AI_API_KEY: process.env.GOOGLE_GENERATIVE_AI_API_KEY",
+    );
+  }
+
+  if (answers.includeEmail) {
+    serverSpreads.push("...emailServer()");
+    runtime.push(
+      "RESEND_API_KEY: process.env.RESEND_API_KEY",
+      "EMAIL_FROM: process.env.EMAIL_FROM",
+      "EMAIL_REPLY_TO: process.env.EMAIL_REPLY_TO",
+      "RESEND_WEBHOOK_SECRET: process.env.RESEND_WEBHOOK_SECRET",
     );
   }
 
@@ -393,13 +418,25 @@ export const env = defineEnv({
  */
 export function renderSchemaModule(answers: Answers): string {
   const scope = answers.scope;
+  // EVERY installed package that owns a table must appear here. drizzle.config
+  // points drizzle-kit at this one file, so a package omitted from this list
+  // has its tables silently excluded from every migration — the code compiles,
+  // the app boots, and the first insert fails against a table that was never
+  // created.
   const exports = [
     `export * from "${scope}/auth/schema";`,
     `export * from "${scope}/tenancy/schema";`,
     `export * from "${scope}/permissions/schema";`,
+    `export * from "${scope}/observability/schema";`,
   ];
   if (answers.businessModel !== "none") {
     exports.push(`export * from "${scope}/stripe/schema";`);
+  }
+  if (answers.includeAi) {
+    exports.push(`export * from "${scope}/ai/schema";`);
+  }
+  if (answers.includeEmail) {
+    exports.push(`export * from "${scope}/email/schema";`);
   }
 
   return `/**

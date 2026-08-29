@@ -5,10 +5,3 @@ dist
 .turbo
 *.tsbuildinfo
 
-# Packages still being generated; re-added once complete and green.
-/packages/observability/
-/packages/testing/
-/packages/email/
-/packages/ai/
-/packages/commerce/
-/packages/billing/
