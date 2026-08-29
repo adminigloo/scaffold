@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/create-app",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Generate a Next.js project with auth, tenancy, permissions, tRPC, Stripe and staging/prod environments already wired.",
   "license": "UNLICENSED",
   "type": "module",

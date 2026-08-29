@@ -1,5 +1,25 @@
 # create-adminigloo-app
 
+## 0.4.0
+
+### Minor Changes
+
+- A signed-in user now always has a local row, so local development works.
+  
+  The `users` row is created by the Clerk webhook, and a webhook needs a public
+  URL — which localhost is not. On a laptop you signed in successfully, no row was
+  ever written, every `currentPrincipal()` returned null, and the app treated you
+  as a stranger while Clerk's UI showed you as signed in. There was no error to
+  search for.
+  
+  `currentPrincipal` now mirrors the user from the session it already holds, and
+  mints their personal workspace. Deliberately NOT gated on NODE_ENV: webhook
+  delivery is best-effort everywhere, and a dropped delivery in production leaves
+  a paying customer permanently locked out of a product they can see. The webhook
+  still keeps the row fresh; this only guarantees it exists. The unique index on
+  (identity_provider, external_id) makes the two safe to race, and a soft-deleted
+  row is never resurrected.
+
 ## 0.3.1
 
 ### Patch Changes
