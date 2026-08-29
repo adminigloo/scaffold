@@ -96,6 +96,43 @@ export function targetNameFor(templateRelativePath: string): string {
     .join(sep);
 }
 
+export class OverlayCollisionError extends Error {
+  readonly name = "OverlayCollisionError";
+  constructor(path: string) {
+    super(
+      `An overlay tried to overwrite ${path}, which the base template owns. ` +
+        `Overlays must be purely additive — silently replacing a base file is ` +
+        `how two templates drift apart without anyone noticing.`,
+    );
+  }
+}
+
+/**
+ * Which overlay directories this project's answers select.
+ *
+ * The admin shell is COPIED SOURCE, because every client restyles it. Copying
+ * it means it stops receiving upstream fixes, which is why only presentation
+ * lives here: its routers, permission checks and audit calls stay in the
+ * runtime packages, so a security fix still reaches everyone without a re-copy.
+ */
+async function overlayDirsFor(
+  templateDir: string,
+  answers: Answers,
+): Promise<string[]> {
+  const overlaysRoot = join(templateDir, "..", "overlays");
+  const names: string[] = [];
+
+  if (answers.adminShell === "minimal") names.push("admin-minimal");
+  if (answers.adminShell === "full") names.push("admin-minimal", "admin-full");
+
+  const present: string[] = [];
+  for (const name of names) {
+    const dir = join(overlaysRoot, name);
+    if (existsSync(dir)) present.push(dir);
+  }
+  return present;
+}
+
 async function walk(dir: string, base = dir): Promise<string[]> {
   const out: string[] = [];
   for (const entry of await readdir(dir, { withFileTypes: true })) {
@@ -120,9 +157,19 @@ export async function planEmit(
 ): Promise<EmitPlan> {
   const files = new Map<string, string>();
 
-  for (const relPath of await walk(templateDir)) {
-    const source = await readFile(join(templateDir, relPath), "utf8");
-    files.set(targetNameFor(relPath), renderTokens(source, answers));
+  // Base first, then overlays. An overlay ADDS files; it never rewrites one the
+  // base owns, and `assertOverlaysAreAdditive` enforces that rather than
+  // trusting it. Selecting the admin shell copies a directory — it does not
+  // switch a flag that some emitted file then branches on.
+  for (const dir of [templateDir, ...(await overlayDirsFor(templateDir, answers))]) {
+    for (const relPath of await walk(dir)) {
+      const target = targetNameFor(relPath);
+      if (dir !== templateDir && files.has(target)) {
+        throw new OverlayCollisionError(target);
+      }
+      const source = await readFile(join(dir, relPath), "utf8");
+      files.set(target, renderTokens(source, answers));
+    }
   }
 
   files.set("package.json", renderPackageJson(answers));

@@ -5,7 +5,15 @@ import { collectAnswers, HELP, nextSteps, parseArgs, targetDirFor } from "./cli.
 import { createPrompter } from "./prompt.js";
 import { assertTargetUsable, planEmit, writePlan } from "./emit.js";
 
-export { parseArgs, collectAnswers, nextSteps, targetDirFor, HELP } from "./cli.js";
+export {
+  parseArgs,
+  collectAnswers,
+  nextSteps,
+  targetDirFor,
+  HELP,
+  UnknownFlagValueError,
+} from "./cli.js";
+export type { CliFlags } from "./cli.js";
 export {
   planEmit,
   writePlan,
@@ -16,6 +24,7 @@ export {
   targetNameFor,
   assertTargetUsable,
   TargetNotEmptyError,
+  OverlayCollisionError,
 } from "./emit.js";
 export type { EmitPlan } from "./emit.js";
 export {

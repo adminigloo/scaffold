@@ -34,6 +34,28 @@ const appStaffPermissions = {
     category: "__TENANT_LABEL_PLURAL__",
     defaultFor: ["admin", "cs_lead", "cs_agent"],
   },
+  "staff.people.view": {
+    label: "View people",
+    category: "People",
+    defaultFor: ["admin", "cs_lead"],
+  },
+  "staff.roles.view": {
+    label: "View roles and permissions",
+    category: "Access",
+    defaultFor: ["admin", "cs_lead"],
+  },
+  "staff.roles.manage": {
+    label: "Assign templates and set per-person overrides",
+    description:
+      "Grants and revokes individual capabilities on top of a role template.",
+    category: "Access",
+    defaultFor: ["admin"],
+  },
+  "staff.audit.view": {
+    label: "View the audit log",
+    category: "Access",
+    defaultFor: ["admin", "cs_lead"],
+  },
   "staff.tenants.impersonate": {
     label: "Open a customer's own screen",
     description: "Every entry is written to the audit log as sensitive access.",

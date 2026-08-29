@@ -16,6 +16,51 @@ export interface CliFlags {
   readonly yes: boolean;
   readonly help: boolean;
   readonly dir?: string;
+  /**
+   * Non-interactive answers. Present so the generator can be scripted — a CLI
+   * whose only non-interactive mode is "all defaults" cannot be used to
+   * reproduce a specific project, which is the first thing you want when a
+   * generated app misbehaves.
+   */
+  readonly tenantNoun?: TenantNoun;
+  readonly businessModel?: BusinessModel;
+  readonly adminShell?: AdminShell;
+  readonly ai?: boolean;
+  readonly email?: boolean;
+}
+
+const TENANT_NOUNS: readonly TenantNoun[] = [
+  "Organization",
+  "Company",
+  "Workspace",
+  "Team",
+  "none",
+];
+const BUSINESS_MODELS: readonly BusinessModel[] = [
+  "none",
+  "one-time",
+  "subscription",
+  "both",
+];
+const ADMIN_SHELLS: readonly AdminShell[] = ["none", "minimal", "full"];
+
+export class UnknownFlagValueError extends Error {
+  readonly name = "UnknownFlagValueError";
+  constructor(flag: string, value: string, allowed: readonly string[]) {
+    super(
+      `--${flag} does not accept "${value}". Use one of: ${allowed.join(", ")}.`,
+    );
+  }
+}
+
+function oneOf<T extends string>(
+  flag: string,
+  value: string,
+  allowed: readonly T[],
+): T {
+  const match = allowed.find((a) => a === value);
+  if (!match) throw new UnknownFlagValueError(flag, value, allowed);
+  return match;
 }
 
 export function parseArgs(argv: readonly string[]): CliFlags {
@@ -24,17 +69,50 @@ export function parseArgs(argv: readonly string[]): CliFlags {
   let yes = false;
   let help = false;
 
+  let tenantNoun: TenantNoun | undefined;
+  let businessModel: BusinessModel | undefined;
+  let adminShell: AdminShell | undefined;
+  let ai: boolean | undefined;
+  let email: boolean | undefined;
+
+  /** Supports both `--flag value` and `--flag=value`. */
+  const readValue = (arg: string, prefix: string, index: number): string | undefined =>
+    arg === prefix ? argv[index + 1] : arg.slice(prefix.length + 1);
+
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === undefined) continue;
+
     if (arg === "--yes" || arg === "-y") yes = true;
     else if (arg === "--help" || arg === "-h") help = true;
-    else if (arg === "--dir") dir = argv[i + 1];
-    else if (arg.startsWith("--dir=")) dir = arg.slice("--dir=".length);
-    else if (!arg.startsWith("-")) name ??= arg;
+    else if (arg === "--ai") ai = true;
+    else if (arg === "--no-ai") ai = false;
+    else if (arg === "--email") email = true;
+    else if (arg === "--no-email") email = false;
+    else if (arg === "--dir" || arg.startsWith("--dir=")) {
+      dir = readValue(arg, "--dir", i);
+    } else if (arg === "--tenant-noun" || arg.startsWith("--tenant-noun=")) {
+      const v = readValue(arg, "--tenant-noun", i);
+      if (v !== undefined) tenantNoun = oneOf("tenant-noun", v, TENANT_NOUNS);
+    } else if (arg === "--model" || arg.startsWith("--model=")) {
+      const v = readValue(arg, "--model", i);
+      if (v !== undefined) businessModel = oneOf("model", v, BUSINESS_MODELS);
+    } else if (arg === "--admin" || arg.startsWith("--admin=")) {
+      const v = readValue(arg, "--admin", i);
+      if (v !== undefined) adminShell = oneOf("admin", v, ADMIN_SHELLS);
+    } else if (!arg.startsWith("-")) {
+      // A bare word that is not the value of the flag before it.
+      const previous = argv[i - 1];
+      const consumed =
+        previous === "--dir" ||
+        previous === "--tenant-noun" ||
+        previous === "--model" ||
+        previous === "--admin";
+      if (!consumed) name ??= arg;
+    }
   }
 
-  return { name, dir, yes, help };
+  return { name, dir, yes, help, tenantNoun, businessModel, adminShell, ai, email };
 }
 
 export const HELP = `
@@ -45,10 +123,17 @@ export const HELP = `
   The package is scoped because GitHub Packages rejects unscoped names. The
   command it installs is still create-adminigloo-app.
 
-  --yes, -y     Accept every default. Also implied when stdin is not a TTY,
-                so this never hangs waiting for input inside CI.
-  --dir <path>  Generate into this directory instead of ./<name>.
-  --help, -h    Show this.
+  --yes, -y            Accept every default. Also implied when stdin is not a
+                       TTY, so this never hangs waiting for input inside CI.
+  --dir <path>         Generate into this directory instead of ./<name>.
+  --tenant-noun <n>    Organization | Company | Workspace | Team | none
+  --model <m>          none | one-time | subscription | both
+  --admin <a>          none | minimal | full
+  --ai / --no-ai       Include streaming route conventions.
+  --email / --no-email Include transactional email.
+  --help, -h           Show this.
+
+  Any flag given is used verbatim; only the rest are prompted for.
 `.trimStart();
 
 /**
@@ -65,7 +150,7 @@ export async function collectAnswers(
     flags.name ?? (await prompter.text("Project name", DEFAULT_ANSWERS.projectName)),
   );
 
-  const tenantNoun = await prompter.select<TenantNoun>(
+  const tenantNoun = flags.tenantNoun ?? (await prompter.select<TenantNoun>(
     "What do you call a customer organisation? This is UI copy, not schema.",
     [
       { value: "Organization", label: "Organization" },
@@ -79,9 +164,9 @@ export async function collectAnswers(
       },
     ],
     DEFAULT_ANSWERS.tenantNoun,
-  );
+  ));
 
-  const businessModel = await prompter.select<BusinessModel>(
+  const businessModel = flags.businessModel ?? (await prompter.select<BusinessModel>(
     "Does it take money?",
     [
       { value: "none", label: "Not yet" },
@@ -90,9 +175,9 @@ export async function collectAnswers(
       { value: "both", label: "Both" },
     ],
     DEFAULT_ANSWERS.businessModel,
-  );
+  ));
 
-  const adminShell = await prompter.select<AdminShell>(
+  const adminShell = flags.adminShell ?? (await prompter.select<AdminShell>(
     "Admin panel? Copied as source, because every client restyles it.",
     [
       { value: "minimal", label: "Minimal", hint: "dashboard, users, tenants, audit" },
@@ -100,16 +185,13 @@ export async function collectAnswers(
       { value: "none", label: "None" },
     ],
     DEFAULT_ANSWERS.adminShell,
-  );
+  ));
 
-  const includeAi = await prompter.confirm(
-    "AI or streaming routes?",
-    DEFAULT_ANSWERS.includeAi,
-  );
-  const includeEmail = await prompter.confirm(
-    "Transactional email?",
-    DEFAULT_ANSWERS.includeEmail,
-  );
+  const includeAi =
+    flags.ai ?? (await prompter.confirm("AI or streaming routes?", DEFAULT_ANSWERS.includeAi));
+  const includeEmail =
+    flags.email ??
+    (await prompter.confirm("Transactional email?", DEFAULT_ANSWERS.includeEmail));
 
   return {
     projectName,

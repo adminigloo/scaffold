@@ -12,7 +12,13 @@ import {
   validateProjectName,
   type Answers,
 } from "../answers.js";
-import { collectAnswers, nextSteps, parseArgs, targetDirFor } from "../cli.js";
+import {
+  collectAnswers,
+  nextSteps,
+  parseArgs,
+  targetDirFor,
+  UnknownFlagValueError,
+} from "../cli.js";
 import { defaultsOnlyPrompter } from "../prompt.js";
 import {
   assertTargetUsable,
@@ -401,5 +407,102 @@ describe("nextSteps", () => {
   it("warns about key mode only when there are keys to get wrong", () => {
     expect(nextSteps(answers({ businessModel: "none" }), "/o")).not.toMatch(/TEST mode/);
     expect(nextSteps(answers({ businessModel: "both" }), "/o")).toMatch(/TEST mode/);
+  });
+});
+
+describe("non-interactive flags", () => {
+  it("parses each answer flag in both spellings", () => {
+    expect(parseArgs(["--model", "both"]).businessModel).toBe("both");
+    expect(parseArgs(["--model=subscription"]).businessModel).toBe("subscription");
+    expect(parseArgs(["--admin", "full"]).adminShell).toBe("full");
+    expect(parseArgs(["--tenant-noun=Company"]).tenantNoun).toBe("Company");
+    expect(parseArgs(["--ai"]).ai).toBe(true);
+    expect(parseArgs(["--no-ai"]).ai).toBe(false);
+    expect(parseArgs(["--email"]).email).toBe(true);
+  });
+
+  it("does not mistake a flag's value for the project name", () => {
+    // `--admin full acme` must yield name=acme, not name=full.
+    expect(parseArgs(["--admin", "full", "acme"]).name).toBe("acme");
+    expect(parseArgs(["--model", "both", "acme"]).name).toBe("acme");
+    expect(parseArgs(["acme", "--admin", "full"]).name).toBe("acme");
+  });
+
+  it("rejects an unknown value instead of silently defaulting", () => {
+    expect(() => parseArgs(["--model", "freemium"])).toThrow(UnknownFlagValueError);
+    expect(() => parseArgs(["--admin", "huge"])).toThrow(/none, minimal, full/);
+  });
+
+  it("uses a flag verbatim and prompts only for the rest", async () => {
+    const result = await collectAnswers(
+      {
+        name: "acme",
+        yes: true,
+        help: false,
+        businessModel: "both",
+        adminShell: "full",
+        ai: true,
+      },
+      defaultsOnlyPrompter(),
+    );
+    expect(result.businessModel).toBe("both");
+    expect(result.adminShell).toBe("full");
+    expect(result.includeAi).toBe(true);
+    // Not supplied, so it fell through to the default.
+    expect(result.tenantNoun).toBe(DEFAULT_ANSWERS.tenantNoun);
+  });
+});
+
+describe("admin shell overlays", () => {
+  it("adds nothing when the shell is declined", async () => {
+    const plan = await planEmit(TEMPLATE_DIR, "/out", answers({ adminShell: "none" }));
+    expect([...plan.files.keys()].some((p) => p.includes("admin"))).toBe(false);
+  });
+
+  it("copies the minimal shell as source", async () => {
+    const plan = await planEmit(TEMPLATE_DIR, "/out", answers({ adminShell: "minimal" }));
+    const paths = [...plan.files.keys()];
+    expect(paths).toContain(join("app", "admin", "layout.tsx"));
+    expect(paths).toContain(join("app", "admin", "page.tsx"));
+    expect(paths).toContain(
+      join("src", "components", "admin", "PermissionChecklist.tsx"),
+    );
+  });
+
+  it("layers full on top of minimal rather than replacing it", async () => {
+    const plan = await planEmit(TEMPLATE_DIR, "/out", answers({ adminShell: "full" }));
+    const paths = [...plan.files.keys()];
+    // From minimal…
+    expect(paths).toContain(join("app", "admin", "layout.tsx"));
+    // …plus full's additions.
+    expect(paths).toContain(join("app", "admin", "roles", "page.tsx"));
+    expect(paths).toContain(join("app", "admin", "people", "page.tsx"));
+  });
+
+  it("leaves no unsubstituted token in the overlay files either", async () => {
+    const plan = await planEmit(TEMPLATE_DIR, "/out", answers({ adminShell: "full" }));
+    for (const [path, contents] of plan.files) {
+      expect(contents, `${path} still has a token`).not.toMatch(/__[A-Z_]+__/);
+    }
+  });
+
+  it("declares every staff permission the admin nav gates on", async () => {
+    // A nav item whose permission is missing from the catalog is invisible to
+    // everyone, forever, with no error anywhere.
+    const plan = await planEmit(TEMPLATE_DIR, "/out", answers({ adminShell: "full" }));
+    const nav = plan.files.get(
+      join("src", "components", "admin", "AdminNav.tsx"),
+    );
+    const catalog = plan.files.get(join("src", "permissions", "catalog.ts"));
+    expect(nav).toBeDefined();
+    expect(catalog).toBeDefined();
+
+    const referenced = [...(nav ?? "").matchAll(/permission: "([^"]+)"/g)].map(
+      (m) => m[1],
+    );
+    expect(referenced.length).toBeGreaterThan(0);
+    for (const key of referenced) {
+      expect(catalog, `catalog is missing ${key}`).toContain(`"${key}"`);
+    }
   });
 });
