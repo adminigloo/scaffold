@@ -1,5 +1,18 @@
 # create-adminigloo-app
 
+## 0.3.1
+
+### Patch Changes
+
+- A clean first build.
+  
+  - `middleware.ts` becomes `proxy.ts`, Next 16's rename. The old name still works
+    and warns on every single build, which is exactly the kind of noise you learn
+    to scroll past — and then miss the warning that matters.
+  - Pins `turbopack.root` to the generated project. Next walks up looking for a
+    lockfile, so a project created below another one infers the wrong workspace
+    root and warns forever.
+
 ## 0.3.0
 
 ### Minor Changes

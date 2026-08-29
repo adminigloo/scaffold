@@ -8,6 +8,13 @@ import "./src/env";
 const config: NextConfig = {
   reactStrictMode: true,
   serverExternalPackages: ["@neondatabase/serverless"],
+  turbopack: {
+    // Pin the workspace root to THIS project. Next walks up looking for a
+    // lockfile, so a project generated anywhere below another one — a scratch
+    // directory, a monorepo you happen to be sitting in — infers the wrong root
+    // and warns on every build.
+    root: import.meta.dirname,
+  },
 };
 
 export default config;
