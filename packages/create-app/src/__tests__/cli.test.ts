@@ -26,6 +26,8 @@ import {
   renderEnvExample,
   renderPackageJson,
   renderScaffoldRecord,
+  renderEnvModule,
+  renderSchemaModule,
   renderTokens,
   targetNameFor,
   TargetNotEmptyError,
@@ -504,5 +506,98 @@ describe("admin shell overlays", () => {
     for (const key of referenced) {
       expect(catalog, `catalog is missing ${key}`).toContain(`"${key}"`);
     }
+  });
+});
+
+describe("derived modules", () => {
+  it("composes only the env fragments the project installed", async () => {
+    const plain = renderEnvModule(answers({ businessModel: "none" }));
+    expect(plain).not.toContain("stripeServer");
+    expect(plain).not.toContain("STRIPE_SECRET_KEY");
+
+    const paid = renderEnvModule(answers({ businessModel: "subscription" }));
+    expect(paid).toContain("stripeServer()");
+    expect(paid).toContain("STRIPE_MODE_BOUND_KEYS");
+    expect(paid).toContain("STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY");
+  });
+
+  it("registers Stripe keys as mode-bound, not merely as variables", () => {
+    // Listing the key without registering it would validate its prefix and
+    // then happily run a live key in staging.
+    const paid = renderEnvModule(answers({ businessModel: "both" }));
+    expect(paid).toMatch(/modeBoundKeys:.*STRIPE_MODE_BOUND_KEYS/);
+  });
+
+  it("re-exports the stripe schema only when stripe is installed", () => {
+    expect(renderSchemaModule(answers({ businessModel: "none" }))).not.toContain(
+      "stripe/schema",
+    );
+    expect(renderSchemaModule(answers({ businessModel: "one-time" }))).toContain(
+      '@adminigloo/stripe/schema"',
+    );
+  });
+
+  it("always re-exports the three base schemas so one migration covers all", () => {
+    const out = renderSchemaModule(answers());
+    for (const pkg of ["auth", "tenancy", "permissions"]) {
+      expect(out).toContain(`@adminigloo/${pkg}/schema"`);
+    }
+  });
+});
+
+describe("stripe overlay", () => {
+  it("is absent from a project that takes no money", async () => {
+    const plan = await planEmit(TEMPLATE_DIR, "/out", answers({ businessModel: "none" }));
+    expect(plan.files.has(join("app", "api", "webhooks", "stripe", "route.ts"))).toBe(
+      false,
+    );
+    expect(plan.files.has(join("src", "server", "stripe.ts"))).toBe(false);
+  });
+
+  it("is present once money is involved", async () => {
+    const plan = await planEmit(TEMPLATE_DIR, "/out", answers({ businessModel: "both" }));
+    expect(plan.files.has(join("app", "api", "webhooks", "stripe", "route.ts"))).toBe(
+      true,
+    );
+  });
+
+  it("implements the release-on-failure step, not just the claim", async () => {
+    // Claiming without releasing is the wedge: every retry then sees an
+    // unfinished row and defers forever.
+    const plan = await planEmit(TEMPLATE_DIR, "/out", answers({ businessModel: "both" }));
+    const route = plan.files.get(
+      join("app", "api", "webhooks", "stripe", "route.ts"),
+    );
+    expect(route).toContain("ON CONFLICT (event_id) DO NOTHING");
+    expect(route).toContain("claimedAt: null");
+    expect(route).toContain("lastError:");
+    expect(route).toMatch(/status: 500/);
+  });
+
+  it("reads the raw body, never req.json()", async () => {
+    const plan = await planEmit(TEMPLATE_DIR, "/out", answers({ businessModel: "both" }));
+    const route =
+      plan.files.get(join("app", "api", "webhooks", "stripe", "route.ts")) ?? "";
+
+    expect(route).toContain("await req.text()");
+
+    // Strip comments before asserting. The doc comment deliberately NAMES
+    // req.json() to explain why it must not be used, and a naive substring
+    // check would fail on the very warning that prevents the bug.
+    const code = route
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    expect(code).not.toContain("req.json()");
+  });
+
+  it("the clerk route reads the raw body too", async () => {
+    const plan = await planEmit(TEMPLATE_DIR, "/out", answers());
+    const route =
+      plan.files.get(join("app", "api", "webhooks", "clerk", "route.ts")) ?? "";
+    const code = route
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    expect(route).toContain("await req.text()");
+    expect(code).not.toContain("req.json()");
   });
 });

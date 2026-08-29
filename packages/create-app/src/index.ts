@@ -21,6 +21,8 @@ export {
   renderPackageJson,
   renderEnvExample,
   renderScaffoldRecord,
+  renderEnvModule,
+  renderSchemaModule,
   targetNameFor,
   assertTargetUsable,
   TargetNotEmptyError,

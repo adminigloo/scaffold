@@ -124,6 +124,10 @@ async function overlayDirsFor(
 
   if (answers.adminShell === "minimal") names.push("admin-minimal");
   if (answers.adminShell === "full") names.push("admin-minimal", "admin-full");
+  // The Stripe webhook route and client only exist for projects that take
+  // money. Copying them into a project without Stripe would leave a route that
+  // imports a package the app never installed.
+  if (answers.businessModel !== "none") names.push("stripe");
 
   const present: string[] = [];
   for (const name of names) {
@@ -173,6 +177,8 @@ export async function planEmit(
   }
 
   files.set("package.json", renderPackageJson(answers));
+  files.set(join("src", "env.ts"), renderEnvModule(answers));
+  files.set(join("src", "db", "schema.ts"), renderSchemaModule(answers));
   files.set(".env.example", renderEnvExample(answers));
   files.set("SCAFFOLD.md", renderScaffoldRecord(answers));
 
@@ -298,4 +304,118 @@ export function renderScaffoldRecord(answers: Answers): string {
     "_none yet_",
     "",
   ].join("\n");
+}
+
+/**
+ * `src/env.ts` for this project.
+ *
+ * Derived rather than templated because the fragments an app composes are
+ * exactly the packages it installed. A static file would either demand a Stripe
+ * key from a project with no Stripe, or omit it from one that needs it — and
+ * the second failure only surfaces at the first payment.
+ */
+export function renderEnvModule(answers: Answers): string {
+  const takesMoney = answers.businessModel !== "none";
+  const scope = answers.scope;
+
+  const imports = [
+    `import { authClient, authServer, AUTH_MODE_BOUND_KEYS } from "${scope}/auth";`,
+    `import { dbServer } from "${scope}/db";`,
+    `import { coreClient, coreServer, defineEnv } from "${scope}/env";`,
+  ];
+  if (takesMoney) {
+    imports.push(
+      `import { stripeClient, stripeServer, STRIPE_MODE_BOUND_KEYS } from "${scope}/stripe";`,
+    );
+  }
+
+  const serverSpreads = ["...coreServer()", "...dbServer()", "...authServer()"];
+  const clientSpreads = ["...coreClient()", "...authClient()"];
+  const modeBound = ["...AUTH_MODE_BOUND_KEYS"];
+  const runtime = [
+    "NODE_ENV: process.env.NODE_ENV",
+    "LOG_LEVEL: process.env.LOG_LEVEL",
+    "DATABASE_URL: process.env.DATABASE_URL",
+    "DATABASE_URL_UNPOOLED: process.env.DATABASE_URL_UNPOOLED",
+    "CLERK_SECRET_KEY: process.env.CLERK_SECRET_KEY",
+    "CLERK_WEBHOOK_SIGNING_SECRET: process.env.CLERK_WEBHOOK_SIGNING_SECRET",
+    "NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL",
+    "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
+  ];
+
+  if (takesMoney) {
+    serverSpreads.push("...stripeServer()");
+    clientSpreads.push("...stripeClient()");
+    modeBound.push("...STRIPE_MODE_BOUND_KEYS");
+    runtime.push(
+      "STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY",
+      "STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET",
+      "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY",
+    );
+  }
+
+  return `${imports.join("\n")}
+
+/**
+ * The environment contract for ${answers.projectName}.
+ *
+ * HARD RULE: this is the only module allowed to read \`process.env\`. Everywhere
+ * else imports \`env\`. Composed from the fragments of the packages actually
+ * installed, so this project is never asked for a credential it has no use for.
+ *
+ * Validation runs at boot. Missing or malformed stops the server, which catches
+ * a forgotten Vercel variable as a build failure rather than as a runtime bug
+ * in staging.
+ */
+export const env = defineEnv({
+  server: {
+    ${serverSpreads.join(",\n    ")},
+  },
+  client: {
+    ${clientSpreads.join(",\n    ")},
+  },
+  // Their \`_test_\` / \`_live_\` mode must match the deployment. Checked outside
+  // Zod, so SKIP_ENV_VALIDATION cannot switch it off.
+  modeBoundKeys: [${modeBound.join(", ")}],
+  runtimeEnv: {
+    ${runtime.join(",\n    ")},
+  },
+});
+`;
+}
+
+/**
+ * `src/db/schema.ts` for this project.
+ *
+ * Re-exports the base tables so drizzle-kit sees ONE schema and a migration
+ * covers base and app tables together. Copying a base table's definition here
+ * instead would fork its migrations silently.
+ */
+export function renderSchemaModule(answers: Answers): string {
+  const scope = answers.scope;
+  const exports = [
+    `export * from "${scope}/auth/schema";`,
+    `export * from "${scope}/tenancy/schema";`,
+    `export * from "${scope}/permissions/schema";`,
+  ];
+  if (answers.businessModel !== "none") {
+    exports.push(`export * from "${scope}/stripe/schema";`);
+  }
+
+  return `/**
+ * ${answers.projectName} schema.
+ *
+ * Base tables come from the packages that own them. Do NOT copy a base table's
+ * definition into this file — the package owns its migrations, and a local copy
+ * forks them without anyone noticing until an upgrade fails.
+ */
+${exports.join("\n")}
+
+// ---------------------------------------------------------------------------
+// ${answers.projectName} tables go below. Use the shared column helpers so ids,
+// timestamps and money follow the same rules everywhere:
+//
+//   import { idColumn, createdAt, updatedAt, amountMinor } from "${scope}/db";
+// ---------------------------------------------------------------------------
+`;
 }

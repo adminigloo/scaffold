@@ -1,0 +1,79 @@
+{
+  "name": "@adminigloo/testing",
+  "version": "0.0.0",
+  "description": "The helpers every generated project needs to test auth, permissions and Stripe without a live service.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adminigloo/scaffold.git",
+    "directory": "packages/testing"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./db": {
+      "types": "./dist/db.d.ts",
+      "import": "./dist/db.js",
+      "require": "./dist/db.cjs"
+    },
+    "./auth": {
+      "types": "./dist/auth.d.ts",
+      "import": "./dist/auth.js",
+      "require": "./dist/auth.cjs"
+    },
+    "./permissions": {
+      "types": "./dist/permissions.d.ts",
+      "import": "./dist/permissions.js",
+      "require": "./dist/permissions.cjs"
+    },
+    "./stripe": {
+      "types": "./dist/stripe.d.ts",
+      "import": "./dist/stripe.js",
+      "require": "./dist/stripe.cjs"
+    },
+    "./factories": {
+      "types": "./dist/factories.d.ts",
+      "import": "./dist/factories.js",
+      "require": "./dist/factories.cjs"
+    },
+    "./playwright": {
+      "types": "./dist/playwright.d.ts",
+      "import": "./dist/playwright.js",
+      "require": "./dist/playwright.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "public"
+  },
+  "dependencies": {
+    "@adminigloo/auth": "workspace:^",
+    "@adminigloo/db": "workspace:^",
+    "@adminigloo/env": "workspace:^",
+    "@adminigloo/permissions": "workspace:^",
+    "@adminigloo/stripe": "workspace:^",
+    "@adminigloo/tenancy": "workspace:^",
+    "svix": "^1.99.1"
+  },
+  "peerDependencies": {
+    "stripe": "^22.0.0"
+  },
+  "devDependencies": {
+    "stripe": "^22.6.0"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts src/db.ts src/auth.ts src/permissions.ts src/stripe.ts src/factories.ts src/playwright.ts --format esm,cjs --dts --clean",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  }
+}
