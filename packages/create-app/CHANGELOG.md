@@ -1,5 +1,27 @@
 # create-adminigloo-app
 
+## 0.5.2
+
+### Patch Changes
+
+- A generated project now boots with no credentials at all.
+  
+  Three separate places threw before anything could render, each of them before
+  the setup page that would explain what was missing:
+  
+  - `proxy.ts` called `clerkMiddleware()` unconditionally. It runs on the EDGE,
+    before layout and before any page, so a project with no Clerk account 500s on
+    every request — the first thing you see after generating is a stack trace.
+  - The Clerk webhook route assumed a signing secret. It now answers 503, not 200:
+    a 200 would make Clerk record the delivery as successful and never retry it
+    once the secret is set.
+  - The setup page reported "Everything is configured" while nothing was, because
+    `report.ok` means "valid for the environment you are in" and locally these are
+    deferred. It now counts what is still outstanding for a deployment.
+  
+  Verified with an empty `.env.local`: home 200, /setup 200, and tRPC returns
+  `{"ok":true}` through the full client-server chain.
+
 ## 0.5.1
 
 ### Patch Changes

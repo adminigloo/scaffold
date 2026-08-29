@@ -16,6 +16,14 @@ export const dynamic = "force-dynamic";
  * read, which is a long afternoon.
  */
 export async function POST(req: Request): Promise<Response> {
+  // No signing secret configured yet. 503, not 500: this is a deployment that
+  // has not finished being set up, not a request that went wrong. Returning 200
+  // would be worse — Clerk would record the delivery as successful and never
+  // retry it once the secret is actually set.
+  if (!env.CLERK_WEBHOOK_SIGNING_SECRET) {
+    return new NextResponse("identity webhook not configured", { status: 503 });
+  }
+
   const body = await req.text();
   const headers = Object.fromEntries(req.headers.entries());
 

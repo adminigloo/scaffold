@@ -49,6 +49,14 @@ const WHERE_TO_GET_IT: Record<string, string> = {
 export default function SetupPage() {
   const report = describeEnv(envDescription);
 
+  // NOT `report.ok`. That means "valid for the environment you are in", and
+  // locally these credentials are deferred — so it is true while nothing is
+  // configured, and the page cheerfully reports success on a project that can
+  // neither sign anyone in nor reach a database. What a reader actually wants
+  // to know is whether anything is still outstanding for a real deployment.
+  const outstanding = report.missingWhenDeployed;
+  const allSet = outstanding.length === 0;
+
   return (
     <main style={{ fontFamily: "system-ui", padding: "3rem 2rem", maxWidth: 860, lineHeight: 1.6 }}>
       <p
@@ -65,13 +73,13 @@ export default function SetupPage() {
       </p>
 
       <h1 style={{ fontSize: "1.75rem", margin: "0 0 8px" }}>
-        {report.ok ? "Everything is configured" : "Add credentials as you need them"}
+        {allSet ? "Everything is configured" : "Add credentials as you need them"}
       </h1>
 
       <p style={{ color: "#4b5563", maxWidth: "62ch" }}>
-        {report.ok
-          ? "Nothing is missing. Delete this page whenever you like — it is copied source."
-          : "Nothing here blocks you from building. Add a value to .env.local and restart when you want the feature it unlocks."}
+        {allSet
+          ? "Nothing is outstanding. Delete this page whenever you like — it is copied source."
+          : `${outstanding.length} credential${outstanding.length === 1 ? "" : "s"} still to add. None of them blocks you from building — paste one into .env.local and restart when you want the feature it unlocks.`}
       </p>
 
       {report.groups.map((group) => (
@@ -141,7 +149,7 @@ export default function SetupPage() {
         </section>
       ))}
 
-      {report.missingWhenDeployed.length > 0 && (
+      {outstanding.length > 0 && (
         <section
           style={{
             marginTop: "2rem",
@@ -163,7 +171,7 @@ export default function SetupPage() {
               color: "#6b7280",
             }}
           >
-            {report.missingWhenDeployed.join("  ")}
+            {outstanding.join("  ")}
           </p>
         </section>
       )}
