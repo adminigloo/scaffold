@@ -1,5 +1,19 @@
 # create-adminigloo-app
 
+## 0.5.1
+
+### Patch Changes
+
+- Generated projects install the CURRENT package versions.
+  
+  Every dependency was pinned at `^0.1.0`. A caret range on a 0.x version means
+  `>=0.1.0 <0.2.0`, so the moment `@adminigloo/env` shipped 0.2.0 a freshly
+  generated project quietly installed the old one — everything resolved,
+  everything built, and the feature the release added simply was not there.
+  
+  Versions are now explicit and a test reads the workspace manifests, so the build
+  fails if the list drifts.
+
 ## 0.5.0
 
 ### Minor Changes

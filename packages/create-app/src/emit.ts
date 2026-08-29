@@ -197,6 +197,56 @@ export async function writePlan(plan: EmitPlan): Promise<void> {
   }
 }
 
+/**
+ * The version of each package a NEW project should install.
+ *
+ * Hardcoded, and guarded by a test that reads the workspace manifests — because
+ * the obvious shortcut is wrong in a way that fails silently. Every package sat
+ * at `^0.1.0`, and a caret range on a 0.x version means `>=0.1.0 <0.2.0`: the
+ * moment @adminigloo/env shipped 0.2.0, a freshly generated project quietly
+ * installed the OLD one. Everything resolved, everything built, and the feature
+ * the release added simply was not there.
+ *
+ * Keep in step with the workspace. `create-app.versions.test.ts` fails the
+ * build if this drifts, which is the only reason a hardcoded list is safe.
+ */
+const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
+  env: "0.2.0",
+  db: "0.2.0",
+  auth: "0.1.1",
+  tenancy: "0.1.1",
+  permissions: "0.1.1",
+  trpc: "0.1.0",
+  observability: "0.1.1",
+  stripe: "0.1.1",
+  commerce: "0.1.1",
+  billing: "0.1.1",
+  ai: "0.1.1",
+  email: "0.1.1",
+};
+
+export class UnknownPackageVersionError extends Error {
+  readonly name = "UnknownPackageVersionError";
+  constructor(pkg: string) {
+    super(
+      `No version recorded for ${pkg}. Add it to PACKAGE_VERSIONS in emit.ts — ` +
+        `guessing a range here is how a project silently installs the wrong one.`,
+    );
+  }
+}
+
+/** `@scope/name` -> the caret range a generated project should depend on. */
+export function versionRangeFor(scopedName: string): string {
+  const bare = scopedName.replace(/^@[^/]+\//, "");
+  const version = PACKAGE_VERSIONS[bare];
+  if (!version) throw new UnknownPackageVersionError(scopedName);
+  return `^${version}`;
+}
+
+export function packageVersions(): Readonly<Record<string, string>> {
+  return PACKAGE_VERSIONS;
+}
+
 const STRIPE_DEV_SCRIPT =
   'concurrently -k -n next,stripe -c blue,magenta "next dev" ' +
   '"stripe listen --forward-to localhost:3000/api/webhooks/stripe"';
@@ -219,7 +269,7 @@ export function renderPackageJson(answers: Answers): string {
     zod: "^4.5.1",
   };
   if (answers.businessModel !== "none") deps["stripe"] = "^22.6.0";
-  for (const pkg of packagesFor(answers)) deps[pkg] = "^0.1.0";
+  for (const pkg of packagesFor(answers)) deps[pkg] = versionRangeFor(pkg);
 
   const devDeps: Record<string, string> = {
     "@types/node": "^26.4.0",
