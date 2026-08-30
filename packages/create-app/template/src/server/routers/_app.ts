@@ -1,3 +1,4 @@
+import { adminRouter } from "./admin";
 import { createTRPCRouter, publicProcedure, requireTenant } from "../trpc";
 
 /**
@@ -17,6 +18,13 @@ export const appRouter = createTRPCRouter({
       .meta({ scope: "tenant" })
       .query(({ ctx }) => ({ tenantId: ctx.tenantId, granted: ctx.can.toArray() })),
   }),
+
+  // The admin panel's pages are copied source that every client restyles; this
+  // router is not, and it is where the staff permission checks and the audit
+  // writes actually live. Mounted unconditionally, even in a project generated
+  // without the admin shell, so the panel can be added later without also
+  // having to re-derive its boundary.
+  admin: adminRouter,
 });
 
 export type AppRouter = typeof appRouter;

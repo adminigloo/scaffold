@@ -219,6 +219,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   trpc: "0.1.0",
   observability: "0.1.1",
   stripe: "0.1.1",
+  catalog: "0.1.0",
   commerce: "0.1.1",
   billing: "0.1.1",
   ai: "0.1.1",
@@ -275,6 +276,7 @@ export function renderPackageJson(answers: Answers): string {
     "@types/node": "^26.4.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@adminigloo/testing": "^0.1.1",
     "drizzle-kit": "^0.31.10",
     // The seed script is TypeScript and is run directly, not built.
     tsx: "^4.23.5",
@@ -303,6 +305,13 @@ export function renderPackageJson(answers: Answers): string {
       // touches templates it created, never one you have customised.
       // --env-file because tsx, like drizzle-kit, does not read .env.local.
       "db:seed": "tsx --env-file=.env.local scripts/seed-roles.ts",
+      // Local-only demo data: a tenant, members on different templates, an
+      // override and a sealed permission, so the checklist shows all three states.
+      "db:seed:demo": "tsx --env-file=.env.local scripts/seed-demo.ts",
+      // No --env-file: this runs in CI where .env.local does not exist, and Node
+      // treats a missing --env-file as fatal. The script loads it in a try/catch.
+      "db:migrate:deploy": "tsx scripts/migrate.ts",
+      "test:integration": "vitest run --project=integration",
     },
     dependencies: Object.fromEntries(Object.entries(deps).sort()),
     devDependencies: Object.fromEntries(Object.entries(devDeps).sort()),
@@ -350,6 +359,11 @@ export function renderEnvLocal(answers: Answers): string {
     "# NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=",
     "# CLERK_SECRET_KEY=",
     "# CLERK_WEBHOOK_SIGNING_SECRET=",
+    "",
+    "# Who becomes the first administrator once DEPLOYED. On localhost the first",
+    "# person to sign in gets it automatically; on a deployment the sign-up page",
+    "# is public, so it grants nobody unless the email matches this.",
+    "# BOOTSTRAP_ADMIN_EMAIL=",
   ];
 
   if (answers.businessModel !== "none") {
@@ -452,6 +466,7 @@ export function renderEnvModule(answers: Answers): string {
     `import { authClient, authServer, AUTH_MODE_BOUND_KEYS } from "${scope}/auth";`,
     `import { dbServer, DB_OPTIONAL_UNTIL_DEPLOYED } from "${scope}/db";`,
     `import { coreClient, coreServer, defineEnv } from "${scope}/env";`,
+    `import { z } from "zod";`,
   ];
   if (takesMoney) {
     imports.push(
@@ -461,7 +476,15 @@ export function renderEnvModule(answers: Answers): string {
   if (answers.includeAi) imports.push(`import { aiServer } from "${scope}/ai";`);
   if (answers.includeEmail) imports.push(`import { emailServer } from "${scope}/email";`);
 
-  const serverSpreads = ["...coreServer()", "...dbServer()", "...authServer()"];
+  const serverSpreads = [
+    "...coreServer()",
+    "...dbServer()",
+    "...authServer()",
+    // Who becomes the first administrator on a DEPLOYED environment. Optional:
+    // unset means a deployment grants nobody automatically, which is the safe
+    // default when the sign-up page is reachable from the public internet.
+    "BOOTSTRAP_ADMIN_EMAIL: z.string().email().optional()",
+  ];
   const clientSpreads = ["...coreClient()", "...authClient()"];
   const modeBound = ["...AUTH_MODE_BOUND_KEYS"];
   const runtime = [
@@ -473,6 +496,7 @@ export function renderEnvModule(answers: Answers): string {
     "CLERK_WEBHOOK_SIGNING_SECRET: process.env.CLERK_WEBHOOK_SIGNING_SECRET",
     "NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL",
     "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
+    "BOOTSTRAP_ADMIN_EMAIL: process.env.BOOTSTRAP_ADMIN_EMAIL",
   ];
 
   // Required on a deployment, deferrable on a laptop. Everything a service
@@ -624,6 +648,7 @@ export function renderSchemaModule(answers: Answers): string {
   ];
   if (answers.businessModel !== "none") {
     exports.push(`export * from "${scope}/stripe/schema";`);
+    exports.push(`export * from "${scope}/catalog/schema";`);
   }
   if (answers.includeAi) {
     exports.push(`export * from "${scope}/ai/schema";`);

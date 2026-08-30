@@ -89,6 +89,7 @@ describe("packagesFor — the only structural branch", () => {
       "@adminigloo/trpc",
       "@adminigloo/observability",
       "@adminigloo/stripe",
+      "@adminigloo/catalog",
       "@adminigloo/commerce",
       "@adminigloo/billing",
       "@adminigloo/ai",
@@ -468,9 +469,15 @@ describe("non-interactive flags", () => {
 });
 
 describe("admin shell overlays", () => {
-  it("adds nothing when the shell is declined", async () => {
+  it("adds no admin SHELL when it is declined", async () => {
+    // Narrowed from "no path contains admin". The admin tRPC router lives in the
+    // BASE template on purpose — routers stay in runtime packages so a security
+    // fix reaches every client without a re-copy. Only the copied-source shell
+    // is optional.
     const plan = await planEmit(TEMPLATE_DIR, "/out", answers({ adminShell: "none" }));
-    expect([...plan.files.keys()].some((p) => p.includes("admin"))).toBe(false);
+    const paths = [...plan.files.keys()];
+    expect(paths.some((p) => p.startsWith(join("app", "admin")))).toBe(false);
+    expect(paths.some((p) => p.includes(join("components", "admin")))).toBe(false);
   });
 
   it("copies the minimal shell as source", async () => {
@@ -547,7 +554,7 @@ describe("derived modules", () => {
     const full = renderSchemaModule(
       answers({ businessModel: "both", includeAi: true, includeEmail: true }),
     );
-    for (const pkg of ["auth", "tenancy", "permissions", "observability", "stripe", "ai", "email"]) {
+    for (const pkg of ["auth", "tenancy", "permissions", "observability", "stripe", "catalog", "ai", "email"]) {
       expect(full, `missing ${pkg}/schema`).toContain(`@adminigloo/${pkg}/schema"`);
     }
   });

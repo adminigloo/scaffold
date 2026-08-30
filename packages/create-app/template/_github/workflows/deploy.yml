@@ -1,0 +1,183 @@
+# The release path. Everything it assumes is written down in DEPLOYMENT.md.
+#
+# Two branches, two surfaces:
+#
+#   push to `staging` -> migrate the staging Neon branch, then deploy a Preview
+#   push to `main`    -> migrate staging, THEN migrate production, then deploy
+#
+# The production migration depends on the staging one. That dependency is the
+# protection: the same SQL has to apply cleanly to a real database that was
+# forked from production before it is allowed near production itself.
+#
+# Vercel's own Git integration is switched off for these two branches in
+# vercel.json, so this workflow is the only thing that can deploy them. Left on,
+# Vercel would build and promote the moment the commit landed — in parallel with
+# the migration, not after it — and the new code would meet the old schema.
+name: Deploy
+
+on:
+  push:
+    branches: [staging, main]
+
+# One release at a time, repo-wide rather than per-branch: both branches migrate
+# the same staging database, and two runs interleaving there would race the
+# drizzle journal. `cancel-in-progress: false` because a half-applied migration
+# is worse than a slow queue.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  # The Vercel CLI reads these from the environment. Passing --token on the
+  # command line would put it in the `ps` output of every step on the runner.
+  VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+  VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+  VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+  # .npmrc interpolates ${GITHUB_TOKEN} for the __SCOPE__ registry. The
+  # automatic secrets.GITHUB_TOKEN is scoped to THIS repository and cannot read
+  # packages published from another one, so this is a PAT with read:packages.
+  GITHUB_TOKEN: ${{ secrets.PACKAGES_READ_TOKEN }}
+  NODE_AUTH_TOKEN: ${{ secrets.PACKAGES_READ_TOKEN }}
+
+jobs:
+  # Deliberately repeats what ci.yml checks on pull requests.
+  #
+  # GitHub gives no ordering between workflows: without this job, ci.yml and
+  # this one start together on the same push, and a red typecheck would not stop
+  # the production migration that is already running beside it.
+  verify:
+    name: Typecheck and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+
+  migrate-staging:
+    name: Migrate staging
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Holds DATABASE_URL_UNPOOLED for the staging Neon branch. No protection
+    # rules — staging exists to be broken.
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:migrate:deploy
+        env:
+          MIGRATION_TARGET: staging
+          DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+
+  deploy-staging:
+    name: Deploy Preview
+    needs: migrate-staging
+    if: github.ref == 'refs/heads/staging'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      # `vercel build` shells out to the package manager the lockfile names, and
+      # ubuntu-latest ships npm and yarn but not pnpm. Without this the build
+      # fails at install with "pnpm: command not found", several minutes in.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      # Pinning the major is worth doing once you know which one you are on. A
+      # CLI major bump that changes a flag's meaning would land in the middle of
+      # a release with no commit in this repo to blame it on.
+      - run: npm install --global vercel@latest
+      # `pull` writes the Preview-scope environment variables into .vercel/, and
+      # `build` uses them. That is why the build runs through the Vercel CLI and
+      # not `pnpm build`: `next build` here would inline NEXT_PUBLIC_* values
+      # from an empty environment and ship a site whose links point nowhere.
+      - run: vercel pull --yes --environment=preview --git-branch=staging
+      - run: vercel build
+      - id: deploy
+        run: |
+          url="$(vercel deploy --prebuilt)"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Preview: $url" >> "$GITHUB_STEP_SUMMARY"
+      # A per-deploy URL is useless to the person you asked to review this. Set
+      # the STAGING_DOMAIN repository variable to a domain attached to the
+      # Vercel project and they get one address that always shows the latest
+      # staging build.
+      - name: Point the staging domain at this deployment
+        if: vars.STAGING_DOMAIN != ''
+        run: vercel alias set "${{ steps.deploy.outputs.url }}" "${{ vars.STAGING_DOMAIN }}"
+
+  migrate-production:
+    name: Migrate production
+    # THE SEQUENCING IS THE PROTECTION. `needs` here means a push to main
+    # migrates staging first and stops the whole release if that fails.
+    needs: migrate-staging
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Holds the production DATABASE_URL_UNPOOLED, which exists nowhere else —
+    # not in .env.local, not in the staging environment. Configure this
+    # environment with a required reviewer and "Deploy branches: main only";
+    # that approval gate is the last thing standing between a merge and the
+    # customer database.
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:migrate:deploy
+        env:
+          MIGRATION_TARGET: production
+          # The explicit opt-in scripts/migrate.ts demands. Set in exactly one
+          # place, this one, so a hand-run migration from a laptop cannot have
+          # it: `pnpm db:migrate:deploy` against production refuses on a machine
+          # that has not typed this out.
+          ALLOW_PRODUCTION_MIGRATION: "true"
+          DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+
+  deploy-production:
+    name: Deploy Production
+    needs: migrate-production
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: npm install --global vercel@latest
+      - run: vercel pull --yes --environment=production
+      # --prod on the build as well as the deploy. The build is where
+      # NEXT_PUBLIC_* values are inlined, so a preview-scope build promoted to
+      # production serves production traffic with the staging app URL baked into
+      # every canonical tag, email link and redirect.
+      - run: vercel build --prod
+      - run: |
+          url="$(vercel deploy --prebuilt --prod)"
+          echo "Production: $url" >> "$GITHUB_STEP_SUMMARY"

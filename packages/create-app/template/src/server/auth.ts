@@ -6,6 +6,7 @@ import { personalWorkspaceId, personalWorkspaceSlug } from "__SCOPE__/tenancy";
 import { tenantMembers, tenants } from "__SCOPE__/tenancy/schema";
 import { db } from "@/db";
 import { env } from "@/env";
+import { grantBootstrapAdminIfFirst } from "./bootstrap";
 
 /**
  * Who is making this request, as a Principal.
@@ -90,7 +91,11 @@ async function mirrorUser(externalId: string) {
     created ??
     (await db.query.users.findFirst({ where: eq(users.externalId, externalId) }));
 
-  if (row) await ensurePersonalWorkspace(row.id);
+  if (row) {
+    await ensurePersonalWorkspace(row.id);
+    // Only ever succeeds for the very first staff user; a no-op forever after.
+    await grantBootstrapAdminIfFirst(row.id, row.email);
+  }
   return row ?? null;
 }
 

@@ -95,6 +95,12 @@ export function packagesFor(answers: Answers): readonly string[] {
   // ledger, idempotent dispatch. Every money-taking project needs it.
   if (answers.businessModel !== "none") optional.push("stripe");
 
+  // The product catalog both sides sell from. commerce turns a variant into an
+  // order line, billing turns a recurring one into a subscription — neither
+  // owns it, and without it `orderItems.productRef` is a bare string pointing
+  // at nothing.
+  if (answers.businessModel !== "none") optional.push("catalog");
+
   // Cart, shipping, tax and orders — one-time purchases.
   if (answers.businessModel === "one-time" || answers.businessModel === "both") {
     optional.push("commerce");

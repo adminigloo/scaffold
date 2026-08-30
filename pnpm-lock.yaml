@@ -84,6 +84,25 @@ importers:
         specifier: ^0.45.2
         version: 0.45.2(@neondatabase/serverless@1.1.0)
 
+  packages/catalog:
+    dependencies:
+      '@adminigloo/db':
+        specifier: workspace:^
+        version: link:../db
+      '@adminigloo/permissions':
+        specifier: workspace:^
+        version: link:../permissions
+    devDependencies:
+      drizzle-orm:
+        specifier: ^0.45.2
+        version: 0.45.2(@neondatabase/serverless@1.1.0)
+      stripe:
+        specifier: ^22.6.0
+        version: 22.6.0(@types/node@26.4.0)
+      zod:
+        specifier: ^4.5.1
+        version: 4.5.1
+
   packages/commerce:
     dependencies:
       '@adminigloo/db':
