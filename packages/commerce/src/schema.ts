@@ -329,7 +329,13 @@ export const discountCodes = pgTable(
      * SQL is NULL rather than false, and the row silently drops out of the
      * eligibility query it was supposed to pass.
      */
-    minSubtotalMinor: amountMinor("min_subtotal_minor").default(0n),
+    // `sql\`0\`` rather than `.default(0n)`. drizzle-kit serialises its snapshot
+    // with JSON.stringify, which throws "Do not know how to serialize a BigInt"
+    // — and it throws during `generate`, printing a stack trace while still
+    // leaving a journal behind, so the next `migrate` reports "applied
+    // successfully" having applied nothing. A project with commerce installed
+    // could never create its tables, and nothing said so.
+    minSubtotalMinor: amountMinor("min_subtotal_minor").default(sql`0`),
     /** NULL means unlimited. */
     maxRedemptions: integer("max_redemptions"),
     /**

@@ -500,6 +500,17 @@ describe("admin shell overlays", () => {
     expect(paths).toContain(join("app", "admin", "people", "page.tsx"));
   });
 
+  it("filters a nav item whose package is absent rather than breaking", async () => {
+    // Without commerce there is no catalog package and no `catalog.*` key. The
+    // nav still lists Products; the permission filter removes it. That is the
+    // designed behaviour, not an oversight — assert it so nobody "fixes" it by
+    // declaring a key for a capability the project does not have.
+    const plan = await planEmit(TEMPLATE_DIR, "/out", answers({ adminShell: "full" }));
+    const catalog = plan.files.get(join("src", "permissions", "catalog.ts")) ?? "";
+    expect(catalog).not.toContain("catalogPermissions");
+    expect(plan.files.has(join("app", "admin", "products", "page.tsx"))).toBe(false);
+  });
+
   it("leaves no unsubstituted token in the overlay files either", async () => {
     const plan = await planEmit(TEMPLATE_DIR, "/out", answers({ adminShell: "full" }));
     for (const [path, contents] of plan.files) {
@@ -510,7 +521,16 @@ describe("admin shell overlays", () => {
   it("declares every staff permission the admin nav gates on", async () => {
     // A nav item whose permission is missing from the catalog is invisible to
     // everyone, forever, with no error anywhere.
-    const plan = await planEmit(TEMPLATE_DIR, "/out", answers({ adminShell: "full" }));
+    //
+    // Checked against a FULLY-featured project on purpose. The nav is a
+    // superset: an item like Products is gated on a key that only exists once
+    // the catalog package is installed, and in a leaner project it is simply
+    // filtered out — harmless, and the assertion below covers that separately.
+    const plan = await planEmit(
+      TEMPLATE_DIR,
+      "/out",
+      answers({ adminShell: "full", businessModel: "both", includeAi: true, includeEmail: true }),
+    );
     const nav = plan.files.get(
       join("src", "components", "admin", "AdminNav.tsx"),
     );
@@ -519,11 +539,34 @@ describe("admin shell overlays", () => {
     expect(catalog).toBeDefined();
 
     const referenced = [...(nav ?? "").matchAll(/permission: "([^"]+)"/g)].map(
-      (m) => m[1],
+      (m) => m[1] ?? "",
     );
     expect(referenced.length).toBeGreaterThan(0);
+
+    // A key reaches the catalog one of two ways: written literally in the app's
+    // own block, or spread in from a package fragment. Grepping only for the
+    // literal would fail every package-contributed key while the app works
+    // perfectly — so map the namespace to the fragment that supplies it.
+    const FRAGMENT_FOR_NAMESPACE: Record<string, string> = {
+      catalog: "catalogPermissions",
+      orders: "commercePermissions",
+      discounts: "commercePermissions",
+      plans: "billingPermissions",
+      subscriptions: "billingPermissions",
+    };
+
     for (const key of referenced) {
-      expect(catalog, `catalog is missing ${key}`).toContain(`"${key}"`);
+      const namespace = key.split(".")[0] ?? "";
+      const fragment = FRAGMENT_FOR_NAMESPACE[namespace];
+      const satisfied = fragment
+        ? (catalog ?? "").includes(fragment)
+        : (catalog ?? "").includes(`"${key}"`);
+      expect(
+        satisfied,
+        fragment
+          ? `nav gates on ${key} but the catalog never spreads ${fragment}`
+          : `nav gates on ${key} and the catalog never declares it`,
+      ).toBe(true);
     }
   });
 });
@@ -554,7 +597,18 @@ describe("derived modules", () => {
     const full = renderSchemaModule(
       answers({ businessModel: "both", includeAi: true, includeEmail: true }),
     );
-    for (const pkg of ["auth", "tenancy", "permissions", "observability", "stripe", "catalog", "ai", "email"]) {
+    for (const pkg of [
+      "auth",
+      "tenancy",
+      "permissions",
+      "observability",
+      "stripe",
+      "catalog",
+      "commerce",
+      "billing",
+      "ai",
+      "email",
+    ]) {
       expect(full, `missing ${pkg}/schema`).toContain(`@adminigloo/${pkg}/schema"`);
     }
   });

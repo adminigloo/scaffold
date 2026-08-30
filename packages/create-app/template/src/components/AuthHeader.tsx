@@ -2,6 +2,7 @@ import { UserButton } from "@clerk/nextjs";
 import { auth } from "@clerk/nextjs/server";
 import Link from "next/link";
 import { env } from "@/env";
+import { buttonClass } from "@/components/ui";
 
 /**
  * Sign in / out, and a way into the admin panel.
@@ -18,8 +19,11 @@ import { env } from "@/env";
 export async function AuthHeader() {
   if (!env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY || !env.CLERK_SECRET_KEY) {
     return (
-      <p style={{ fontSize: "0.875rem", color: "#6b7280", margin: 0 }}>
-        Sign-in is off until Clerk is configured — see <Link href="/setup">/setup</Link>.
+      <p className="text-sm text-ink-muted">
+        Sign-in is off until Clerk is configured &mdash;{" "}
+        <Link href="/setup" className="text-accent underline underline-offset-2">
+          /setup
+        </Link>
       </p>
     );
   }
@@ -28,26 +32,15 @@ export async function AuthHeader() {
 
   if (!userId) {
     return (
-      <Link
-        href="/sign-in"
-        style={{
-          display: "inline-block",
-          padding: "0.4rem 0.9rem",
-          border: "1px solid #d1d5db",
-          borderRadius: 4,
-          textDecoration: "none",
-          fontSize: "0.875rem",
-          color: "#111827",
-        }}
-      >
+      <Link href="/sign-in" className={buttonClass("secondary")}>
         Sign in
       </Link>
     );
   }
 
   return (
-    <div style={{ display: "flex", gap: "1rem", alignItems: "center" }}>
-      <Link href="/admin" style={{ fontSize: "0.875rem" }}>
+    <div className="flex items-center gap-3">
+      <Link href="/admin" className="text-sm text-accent underline underline-offset-2">
         Admin
       </Link>
       <UserButton />

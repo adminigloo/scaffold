@@ -1,5 +1,29 @@
 # @adminigloo/commerce
 
+## 0.1.2
+
+### Patch Changes
+
+- Tailwind, the product builder, in-app checkout — and three bugs that made the
+  whole thing unusable.
+  
+  - **commerce could never create its tables.** `minSubtotalMinor.default(0n)`
+    crashed drizzle-kit with "Do not know how to serialize a BigInt" during
+    `generate` — while still leaving a journal behind, so the next `migrate`
+    reported "applied successfully" having applied nothing. Now `sql\`0\``.
+  - **The generated schema barrel omitted commerce and billing.** Orders, plans,
+    subscriptions and entitlements were absent from every migration.
+  - **catalog's permissions were tenant-scoped but gated with `requireStaff`.**
+    Defining what is for sale is an operator activity; declared under "tenant"
+    those keys could never match, so the whole Products section was invisible with
+    no error anywhere. Now staff-scoped with staff defaults, and a test asserts no
+    key names a non-staff template.
+  
+  Also: Tailwind v4 with a token set both themes share, a real admin shell, the
+  product builder with a Stripe sync plan shown before you publish, embedded
+  Payment Element checkout, and `src/permissions/catalog.ts` is now generated so
+  package fragments land in the scope their callers actually read.
+
 ## 0.1.1
 
 ### Patch Changes

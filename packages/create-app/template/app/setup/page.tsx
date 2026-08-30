@@ -1,5 +1,6 @@
 import { describeEnv } from "__SCOPE__/env";
 import { envDescription } from "@/env";
+import { Card, Notice, PageHeader } from "@/components/ui";
 
 /**
  * What is configured, what is not, and what each missing thing switches off.
@@ -58,123 +59,84 @@ export default function SetupPage() {
   const allSet = outstanding.length === 0;
 
   return (
-    <main style={{ fontFamily: "system-ui", padding: "3rem 2rem", maxWidth: 860, lineHeight: 1.6 }}>
-      <p
-        style={{
-          fontFamily: "ui-monospace, monospace",
-          fontSize: 11,
-          letterSpacing: "0.14em",
-          textTransform: "uppercase",
-          color: "#6b7280",
-          margin: "0 0 12px",
-        }}
-      >
+    <main className="mx-auto max-w-3xl px-6 py-12">
+      <p className="mb-3 font-mono text-[11px] uppercase tracking-[0.14em] text-ink-muted">
         __PROJECT_NAME__ &middot; environment: {report.appEnv}
       </p>
 
-      <h1 style={{ fontSize: "1.75rem", margin: "0 0 8px" }}>
-        {allSet ? "Everything is configured" : "Add credentials as you need them"}
-      </h1>
+      <PageHeader
+        title={allSet ? "Everything is configured" : "Add credentials as you need them"}
+        description={
+          allSet
+            ? "Nothing is outstanding. Delete this page whenever you like — it is copied source."
+            : `${outstanding.length} credential${outstanding.length === 1 ? "" : "s"} still to add. None of them blocks you from building — paste one into .env.local and restart when you want the feature it unlocks.`
+        }
+      />
 
-      <p style={{ color: "#4b5563", maxWidth: "62ch" }}>
-        {allSet
-          ? "Nothing is outstanding. Delete this page whenever you like — it is copied source."
-          : `${outstanding.length} credential${outstanding.length === 1 ? "" : "s"} still to add. None of them blocks you from building — paste one into .env.local and restart when you want the feature it unlocks.`}
-      </p>
+      <div className="flex flex-col gap-6">
+        {report.groups.map((group) => (
+          <section key={group.name}>
+            <h2 className="mb-2 text-[11px] font-medium uppercase tracking-wider text-ink-muted">
+              {group.name}
+            </h2>
 
-      {report.groups.map((group) => (
-        <section key={group.name} style={{ marginTop: "2rem" }}>
-          <h2
-            style={{
-              fontSize: "0.6875rem",
-              letterSpacing: "0.12em",
-              textTransform: "uppercase",
-              color: "#6b7280",
-              margin: "0 0 0.5rem",
-            }}
-          >
-            {group.name}
-          </h2>
-
-          <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
-            {group.vars.map((v) => (
-              <li
-                key={v.name}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "18px 1fr",
-                  gap: "0.75rem",
-                  alignItems: "start",
-                  padding: "0.625rem 0",
-                  borderBottom: "1px solid #f0f1f3",
-                }}
-              >
-                <span
-                  aria-hidden
-                  title={v.present ? "set" : "not set"}
-                  style={{
-                    marginTop: 6,
-                    width: 10,
-                    height: 10,
-                    borderRadius: "50%",
-                    background: v.malformed
-                      ? "#a02e21"
-                      : v.present
-                        ? "#17635a"
-                        : "#d1d5db",
-                  }}
-                />
-                <div style={{ minWidth: 0 }}>
-                  <code style={{ fontSize: "0.8125rem" }}>{v.name}</code>
-                  {v.malformed && (
-                    <span style={{ color: "#a02e21", fontSize: "0.75rem", marginLeft: 8 }}>
-                      set, but not valid
-                    </span>
-                  )}
-                  <div style={{ fontSize: "0.8125rem", color: "#6b7280" }}>
-                    {WHAT_IT_UNLOCKS[v.name] ?? ""}
-                    {!v.present && WHERE_TO_GET_IT[v.name] && (
-                      <>
-                        {" "}
-                        <span style={{ color: "#9ca3af" }}>
-                          &mdash; {WHERE_TO_GET_IT[v.name]}
+            <Card>
+              <ul>
+                {group.vars.map((v) => (
+                  <li
+                    key={v.name}
+                    className="grid grid-cols-[10px_1fr] items-start gap-x-3 border-b border-line px-4 py-2.5 last:border-0"
+                  >
+                    {/* Shape as well as colour. A status conveyed only by hue is
+                        a status a red-green colour-blind reader cannot read,
+                        and this is the page you land on when nothing works. */}
+                    <span
+                      aria-hidden
+                      className={
+                        v.malformed
+                          ? "mt-2 size-2.5 rotate-45 bg-danger"
+                          : v.present
+                            ? "mt-2 size-2.5 rounded-full bg-accent"
+                            : "mt-2 size-2.5 rounded-full border border-line"
+                      }
+                    />
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-baseline gap-x-2">
+                        <code className="font-mono text-[13px] text-ink">{v.name}</code>
+                        <span className="sr-only">
+                          {v.malformed ? "set, but not valid" : v.present ? "set" : "not set"}
                         </span>
-                      </>
-                    )}
-                  </div>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ))}
+                        {v.malformed && (
+                          <span className="text-xs text-danger">set, but not valid</span>
+                        )}
+                      </div>
+                      <p className="text-[13px] text-ink-muted">
+                        {WHAT_IT_UNLOCKS[v.name] ?? ""}
+                        {!v.present && WHERE_TO_GET_IT[v.name] && (
+                          <> &mdash; {WHERE_TO_GET_IT[v.name]}</>
+                        )}
+                      </p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          </section>
+        ))}
 
-      {outstanding.length > 0 && (
-        <section
-          style={{
-            marginTop: "2rem",
-            borderLeft: "3px solid #7d5a0c",
-            padding: "0.25rem 0 0.25rem 1rem",
-          }}
-        >
-          <p style={{ margin: 0, fontSize: "0.875rem", color: "#4b5563", maxWidth: "60ch" }}>
-            <strong>These are optional here and required on a deployment.</strong> A
-            preview or production build refuses to start without them, which is
-            deliberate: a forgotten Vercel variable should fail the build, not
-            surface as a broken page.
-          </p>
-          <p
-            style={{
-              margin: "0.5rem 0 0",
-              fontFamily: "ui-monospace, monospace",
-              fontSize: "0.8125rem",
-              color: "#6b7280",
-            }}
-          >
-            {outstanding.join("  ")}
-          </p>
-        </section>
-      )}
+        {outstanding.length > 0 && (
+          <Notice tone="warn" title="Optional here, required on a deployment">
+            <p>
+              A preview or production build refuses to start without them, which
+              is deliberate: a forgotten Vercel variable should fail the build,
+              not surface as a broken page.
+            </p>
+            <p className="mt-2 font-mono text-[13px] break-words">
+              {outstanding.join("  ")}
+            </p>
+          </Notice>
+        )}
+      </div>
     </main>
   );
 }

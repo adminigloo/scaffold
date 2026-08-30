@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
+import { Badge, Input, cx } from "@/components/ui";
 
 /**
  * The checklist.
@@ -60,6 +61,8 @@ export function reasonFor(row: PermissionRow): string {
   return row.fromTemplate ? "From the role template" : "Not granted";
 }
 
+const STATES = ["inherit", "allow", "deny"] as const;
+
 export function PermissionChecklist({
   rows,
   templateName,
@@ -67,6 +70,7 @@ export function PermissionChecklist({
   onChange,
 }: PermissionChecklistProps) {
   const [filter, setFilter] = useState("");
+  const filterId = useId();
 
   const grouped = useMemo(() => {
     const needle = filter.trim().toLowerCase();
@@ -90,10 +94,10 @@ export function PermissionChecklist({
   const overridden = rows.filter((r) => r.override !== "inherit").length;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
-      <header style={{ display: "flex", gap: "1rem", alignItems: "baseline", flexWrap: "wrap" }}>
-        <p style={{ margin: 0, fontSize: "0.875rem", color: "#4b5563" }}>
-          Template <strong>{templateName}</strong>
+    <div className="flex flex-col gap-5">
+      <header className="flex flex-wrap items-center gap-3">
+        <p className="text-sm text-ink-muted">
+          Template <strong className="font-medium text-ink">{templateName}</strong>
           {overridden > 0 && (
             <>
               {" · "}
@@ -101,92 +105,70 @@ export function PermissionChecklist({
             </>
           )}
         </p>
-        <input
+        <label htmlFor={filterId} className="sr-only">
+          Filter permissions
+        </label>
+        <Input
+          id={filterId}
           type="search"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           placeholder="Filter permissions"
-          aria-label="Filter permissions"
-          style={{
-            marginLeft: "auto",
-            padding: "0.375rem 0.625rem",
-            border: "1px solid #d1d5db",
-            borderRadius: 4,
-            fontSize: "0.875rem",
-          }}
+          className="ml-auto w-56"
         />
       </header>
 
       {grouped.map(([category, items]) => (
         <section key={category}>
-          <h3
-            style={{
-              fontSize: "0.6875rem",
-              letterSpacing: "0.12em",
-              textTransform: "uppercase",
-              color: "#6b7280",
-              margin: "0 0 0.5rem",
-            }}
-          >
+          <h3 className="mb-1 text-[11px] font-medium uppercase tracking-wider text-ink-muted">
             {category}
           </h3>
 
-          <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+          <ul className="rounded-[--radius-card] border border-line bg-surface">
             {items.map((row) => (
               <li
                 key={row.key}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr auto",
-                  gap: "1rem",
-                  alignItems: "center",
-                  padding: "0.625rem 0",
-                  borderBottom: "1px solid #f0f1f3",
-                }}
+                className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-line px-3 py-2.5 last:border-0"
               >
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: "0.875rem", color: "#111827" }}>
-                    {row.label}
-                    {row.sealed && (
-                      <span
-                        style={{
-                          marginLeft: "0.5rem",
-                          fontSize: "0.6875rem",
-                          color: "#a02e21",
-                          border: "1px solid #a02e21",
-                          borderRadius: 3,
-                          padding: "0 4px",
-                        }}
-                      >
-                        SEALED
-                      </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm text-ink">{row.label}</span>
+                    {row.sealed && <Badge tone="danger">Sealed</Badge>}
+                    {/* The resolved answer, not just the inputs. An admin
+                        reading a template plus an override in their head is an
+                        admin who will get it wrong on the row that matters. */}
+                    {!row.sealed && (
+                      <Badge tone={effectiveFor(row) ? "accent" : "neutral"}>
+                        {effectiveFor(row) ? "Can" : "Cannot"}
+                      </Badge>
                     )}
                   </div>
-                  <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>
+                  <p className="mt-0.5 text-xs text-ink-muted">
                     {row.description ?? row.key} · {reasonFor(row)}
-                  </div>
+                  </p>
                 </div>
 
                 <fieldset
                   disabled={disabled || row.sealed}
-                  style={{ border: 0, margin: 0, padding: 0, display: "flex", gap: 4 }}
+                  className="flex shrink-0 gap-px rounded-[--radius-card] border border-line p-px disabled:opacity-50"
                 >
-                  <legend className="sr-only" style={{ position: "absolute", left: -9999 }}>
-                    {row.label}
-                  </legend>
-                  {(["inherit", "allow", "deny"] as const).map((state) => (
+                  <legend className="sr-only">{row.label}</legend>
+                  {STATES.map((state) => (
+                    // A styled radio, not a button: a segmented control built
+                    // from buttons has no group semantics and arrow keys do
+                    // nothing, so a keyboard user cannot move between the three
+                    // choices at all. The input stays in the DOM and focusable;
+                    // `sr-only` hides it visually and nothing else.
                     <label
                       key={state}
-                      style={{
-                        fontSize: "0.75rem",
-                        padding: "0.25rem 0.5rem",
-                        border: "1px solid #d1d5db",
-                        borderRadius: 4,
-                        cursor: row.sealed ? "not-allowed" : "pointer",
-                        background: row.override === state ? "#111827" : "#fff",
-                        color: row.override === state ? "#fff" : "#4b5563",
-                        opacity: row.sealed ? 0.5 : 1,
-                      }}
+                      className={cx(
+                        "cursor-pointer rounded-[3px] px-2 py-0.5 text-xs capitalize",
+                        "has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent",
+                        row.override === state
+                          ? "bg-accent text-surface"
+                          : "text-ink-muted hover:text-ink",
+                        (disabled || row.sealed) && "cursor-not-allowed",
+                      )}
                     >
                       <input
                         type="radio"
@@ -194,7 +176,7 @@ export function PermissionChecklist({
                         value={state}
                         checked={row.override === state}
                         onChange={() => onChange(row.key, state)}
-                        style={{ position: "absolute", opacity: 0, width: 0, height: 0 }}
+                        className="sr-only"
                       />
                       {state}
                     </label>
@@ -207,7 +189,7 @@ export function PermissionChecklist({
       ))}
 
       {grouped.length === 0 && (
-        <p style={{ fontSize: "0.875rem", color: "#6b7280" }}>
+        <p className="text-sm text-ink-muted">
           No permissions match &ldquo;{filter}&rdquo;.
         </p>
       )}

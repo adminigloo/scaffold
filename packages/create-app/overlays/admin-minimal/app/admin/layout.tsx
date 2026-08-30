@@ -1,3 +1,4 @@
+import { UserButton } from "@clerk/nextjs";
 import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 import { AdminNav } from "@/components/admin/AdminNav";
@@ -41,9 +42,32 @@ export default async function AdminLayout({ children }: { children: ReactNode })
   if (!can) return <AdminUnavailable reason="not-staff" />;
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "240px 1fr", minHeight: "100vh" }}>
-      <AdminNav granted={can.toArray()} />
-      <main style={{ padding: "2rem", minWidth: 0 }}>{children}</main>
+    <div className="flex min-h-dvh">
+      {/* `sticky top-0 h-dvh` rather than a scrolling column: an audit page a
+          thousand rows long otherwise scrolls the nav off the top, and the way
+          out of a long table should not be to scroll back up it. */}
+      <aside className="sticky top-0 flex h-dvh w-60 shrink-0 flex-col border-r border-line bg-surface">
+        <div className="border-b border-line px-4 py-4">
+          <p className="truncate font-mono text-[11px] uppercase tracking-[0.14em] text-ink-muted">
+            __PROJECT_NAME__
+          </p>
+          <p className="mt-0.5 text-sm font-semibold tracking-tight">Admin</p>
+        </div>
+
+        <AdminNav granted={can.toArray()} />
+
+        {/* Who am I signed in as, and how do I get out — at the bottom, where
+            every tool people already use puts it. Impersonation makes this more
+            than decoration: the answer is not always the one you expect. */}
+        <div className="mt-auto flex items-center gap-2 border-t border-line px-4 py-3">
+          <UserButton />
+          <span className="min-w-0 flex-1 truncate text-xs text-ink-muted" title={principal.email ?? undefined}>
+            {principal.email ?? "signed in"}
+          </span>
+        </div>
+      </aside>
+
+      <main className="min-w-0 flex-1 px-8 py-8">{children}</main>
     </div>
   );
 }

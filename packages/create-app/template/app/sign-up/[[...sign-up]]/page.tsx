@@ -1,5 +1,7 @@
 import { SignUp } from "@clerk/nextjs";
+import Link from "next/link";
 import { env } from "@/env";
+import { Card, CardBody, PageHeader } from "@/components/ui";
 
 /**
  * Clerk's hosted sign-up, mounted as a catch-all.
@@ -12,20 +14,42 @@ import { env } from "@/env";
 export default function SignUpPage() {
   if (!env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) {
     return (
-      <main style={{ fontFamily: "system-ui", padding: "3rem", lineHeight: 1.6 }}>
-        <h1 style={{ fontSize: "1.25rem" }}>Sign-up is not configured yet</h1>
-        <p style={{ color: "#4b5563", maxWidth: "58ch" }}>
-          Add <code>NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY</code> and{" "}
-          <code>CLERK_SECRET_KEY</code> to <code>.env.local</code>, then restart.
-          See <a href="/setup">/setup</a>.
-        </p>
+      <main className="mx-auto flex min-h-dvh max-w-lg items-center px-6 py-12">
+        <div className="w-full">
+          <PageHeader
+            title="Sign-up is not configured yet"
+            description="Clerk holds the identities; without its keys there is no account to create."
+          />
+          <Card>
+            <CardBody className="text-sm text-ink-muted">
+              Add <Key>NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY</Key> and{" "}
+              <Key>CLERK_SECRET_KEY</Key> to <Key>.env.local</Key>, then restart.{" "}
+              <Link href="/setup" className="text-accent underline underline-offset-2">
+                /setup
+              </Link>{" "}
+              lists what is missing and where to get it.
+            </CardBody>
+          </Card>
+        </div>
       </main>
     );
   }
 
+  // Clerk renders its own card here, styled by Clerk. Deliberately left alone:
+  // matching it to the theme means pinning its internal class names, and those
+  // change between Clerk releases without a major version. The page around it
+  // carries the theme instead.
   return (
-    <main style={{ display: "grid", placeItems: "center", minHeight: "100vh" }}>
+    <main className="grid min-h-dvh place-items-center bg-canvas px-6 py-12">
       <SignUp />
     </main>
+  );
+}
+
+function Key({ children }: { children: string }) {
+  return (
+    <code className="rounded-[3px] bg-accent-soft px-1 py-px font-mono text-xs text-accent">
+      {children}
+    </code>
   );
 }

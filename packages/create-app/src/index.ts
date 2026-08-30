@@ -27,6 +27,7 @@ export {
   renderScaffoldRecord,
   renderEnvModule,
   renderSchemaModule,
+  renderPermissionsCatalog,
   targetNameFor,
   assertTargetUsable,
   TargetNotEmptyError,

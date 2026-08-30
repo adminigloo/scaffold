@@ -1,0 +1,138 @@
+@import "tailwindcss";
+
+/* Explicit, rather than trusting v4's automatic source detection.
+   Auto-detection anchors on the repository root and skips anything .gitignore
+   lists — which is exactly right until a project is generated into a directory
+   that has not been `git init`ed yet, or sits inside a larger repo whose ignore
+   rules were written for something else. Either way the failure is silent:
+   every class defined in src/ simply produces no CSS, and the app renders as
+   unstyled HTML with no error anywhere. Two lines remove the guess. */
+@source "../app";
+@source "../src";
+
+/* ---------------------------------------------------------------------------
+   THE THEME. One place, and the only place, colour is decided.
+
+   Three people build screens in this codebase and they must produce one
+   product. That only holds if every colour resolves through a token declared
+   here — a bare `#6b7280` or a `text-gray-500` looks fine in light mode and is
+   invisible in dark, and nobody finds it until a customer screenshots it.
+
+   `--color-*: initial` deletes Tailwind's stock palette before ours is added,
+   so `text-gray-500` and `bg-red-50` no longer exist as utilities and emit
+   nothing at all. That is deliberate and it is the enforcement mechanism: an
+   off-palette colour fails visibly in review instead of drifting into a theme
+   nobody re-tests.
+   --------------------------------------------------------------------------- */
+@theme {
+  --color-*: initial;
+
+  --color-surface: #ffffff;
+  --color-canvas: #f7f8f9;
+  --color-ink: #12161a;
+  --color-ink-muted: #5f6a76;
+  --color-line: #e3e6ea;
+  --color-accent: #17635a;
+  --color-accent-soft: #e2efec;
+  --color-danger: #a02e21;
+  --color-warn: #7d5a0c;
+
+  /* Kept from the stock palette because they are structural, not decorative:
+     `border-transparent` and `text-current` have no themed equivalent, and
+     `text-white` is the spelling people reach for on a filled button. Prefer
+     `text-surface` there — see the note on the dark accent below. */
+  --color-transparent: transparent;
+  --color-current: currentColor;
+  --color-inherit: inherit;
+  --color-white: #ffffff;
+  --color-black: #000000;
+
+  --radius-card: 6px;
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono",
+    monospace;
+}
+
+/* ---------------------------------------------------------------------------
+   DARK MODE. Only the colour tokens are redefined; every radius, font and
+   spacing value is shared, so the two themes cannot drift structurally.
+
+   Plain `:root` rather than another `@theme` block: `@theme` output lands in
+   the `theme` cascade layer, and an unlayered rule beats a layered one no
+   matter the order, which is exactly the override we want.
+
+   THE ACCENT IS BRIGHTER HERE ON PURPOSE. `--color-accent` does double duty —
+   link text on a dark canvas wants a light teal, a filled button wants enough
+   contrast under its label. The light theme can satisfy both with white text;
+   the dark theme cannot. So filled controls use `text-surface`, not
+   `text-white`: surface is #ffffff in light mode (identical result) and near
+   black in dark mode, where #3aa892 under dark text reads at 6:1. Writing
+   `bg-accent text-white` by hand gives 2.9:1 in dark mode and fails AA —
+   compose <Button> from src/components/ui instead, which gets this right.
+   --------------------------------------------------------------------------- */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-surface: #15191d;
+    --color-canvas: #0d1013;
+    --color-ink: #e7ecef;
+    --color-ink-muted: #96a1ac;
+    --color-line: #262c33;
+    --color-accent: #3aa892;
+    --color-accent-soft: #10302a;
+    --color-danger: #e08272;
+    --color-warn: #cfa14e;
+  }
+}
+
+@layer base {
+  html {
+    /* Tokens are the app's colours; this tells the BROWSER which way round we
+       are, so form controls, scrollbars and the caret stop rendering as light
+       chrome on a dark page. */
+    color-scheme: light dark;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    line-height: 1.55;
+  }
+
+  /* Every interactive element gets a visible focus ring, by default, without
+     three people having to remember the same utility string. Keyboard focus is
+     the accessibility requirement that is always noticed last, because the
+     person building the screen is using a mouse.
+
+     `:where()` keeps specificity at zero, so any component that wants a
+     different ring simply overrides it. */
+  :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  code,
+  kbd,
+  pre,
+  samp {
+    font-family: var(--font-mono);
+  }
+}
+
+@layer utilities {
+  /* The shared card corner has two spellings: `rounded-card` (v4's theme-derived
+     utility) and `rounded-[--radius-card]` (the v3 bracket shorthand, which v4
+     still accepts but has deprecated). Both are in use across the pages three
+     agents wrote. Pinning the bracket form here means a future Tailwind minor
+     that finally drops the old shorthand does not silently square off every
+     card in the product — a regression whose cause nobody would guess. */
+  .rounded-\[--radius-card\] {
+    border-radius: var(--radius-card);
+  }
+}

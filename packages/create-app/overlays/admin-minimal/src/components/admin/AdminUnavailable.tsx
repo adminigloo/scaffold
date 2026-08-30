@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { buttonClass } from "@/components/ui";
 
 export type AdminUnavailableReason = "database" | "not-staff";
 
@@ -29,32 +30,11 @@ export function AdminUnavailable({ reason }: { reason: AdminUnavailableReason })
         };
 
   return (
-    <main
-      style={{
-        fontFamily: "system-ui",
-        display: "grid",
-        placeItems: "center",
-        minHeight: "70vh",
-        padding: "2rem",
-      }}
-    >
-      <div style={{ maxWidth: "44ch", textAlign: "center" }}>
-        <h1 style={{ fontSize: "1.25rem", margin: "0 0 0.5rem" }}>{copy.title}</h1>
-        <p style={{ color: "#4b5563", lineHeight: 1.6, margin: "0 0 1.25rem" }}>
-          {copy.body}
-        </p>
-        <Link
-          href={copy.action.href}
-          style={{
-            display: "inline-block",
-            padding: "0.45rem 0.95rem",
-            border: "1px solid #d1d5db",
-            borderRadius: 4,
-            textDecoration: "none",
-            fontSize: "0.875rem",
-            color: "#111827",
-          }}
-        >
+    <main className="grid min-h-dvh place-items-center px-6 py-12">
+      <div className="max-w-[44ch] text-center">
+        <h1 className="text-xl font-semibold tracking-tight">{copy.title}</h1>
+        <p className="mt-2 text-sm text-ink-muted">{copy.body}</p>
+        <Link href={copy.action.href} className={buttonClass("secondary", "mt-5")}>
           {copy.action.label}
         </Link>
       </div>

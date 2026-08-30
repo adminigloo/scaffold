@@ -4,6 +4,20 @@ import { db } from "@/db";
 import { currentPrincipal } from "@/server/auth";
 import { loadStaffPermissions } from "@/server/permissions";
 import { api } from "@/trpc/server";
+import {
+  Badge,
+  Card,
+  EmptyState,
+  Notice,
+  PageHeader,
+  Table,
+  TBody,
+  TD,
+  TH,
+  THead,
+  TR,
+  cx,
+} from "@/components/ui";
 
 /**
  * Audit trail.
@@ -27,7 +41,12 @@ export default async function AuditPage({
   const principal = await currentPrincipal();
   const can = principal ? await loadStaffPermissions({ principal }) : null;
   if (!can?.can("staff.audit.view")) {
-    return <p>You do not have permission to view the audit log.</p>;
+    return (
+      <>
+        <PageHeader title="Audit log" />
+        <Notice tone="warn">You do not have permission to view the audit log.</Notice>
+      </>
+    );
   }
 
   const sensitiveOnly = (await searchParams).sensitive === "1";
@@ -38,103 +57,111 @@ export default async function AuditPage({
 
   return (
     <>
-      <h1 style={{ fontSize: "1.5rem", margin: "0 0 0.25rem" }}>Audit log</h1>
-      <p style={{ color: "#6b7280", maxWidth: "62ch", marginTop: 0 }}>
-        Append-only. Nothing in the app updates or deletes a row here — a trail
-        that can be edited answers a different question than the one it is kept
-        for.
-      </p>
+      <PageHeader
+        title="Audit log"
+        description="Append-only. Nothing in the app updates or deletes a row here — a trail that can be edited answers a different question than the one it is kept for."
+      />
 
-      <p style={{ fontSize: "0.8125rem", margin: "0 0 1rem" }}>
-        <Link
-          href="/admin/audit"
-          style={{ fontWeight: sensitiveOnly ? 400 : 700 }}
-        >
+      {/* Links, not buttons: the filter is in the URL, so it survives a reload,
+          a bookmark and a paste into a compliance ticket. */}
+      <div role="group" aria-label="Filter" className="mb-4 flex gap-1">
+        <FilterLink href="/admin/audit" active={!sensitiveOnly}>
           Everything
-        </Link>
-        {" · "}
-        <Link
-          href="/admin/audit?sensitive=1"
-          style={{ fontWeight: sensitiveOnly ? 700 : 400 }}
-        >
+        </FilterLink>
+        <FilterLink href="/admin/audit?sensitive=1" active={sensitiveOnly}>
           Sensitive access only
-        </Link>
-      </p>
+        </FilterLink>
+      </div>
 
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.875rem" }}>
-        <thead>
-          <tr style={{ textAlign: "left", borderBottom: "1px solid #d1d5db" }}>
-            <th style={{ padding: "0.5rem 0.75rem" }}>When</th>
-            <th style={{ padding: "0.5rem 0.75rem" }}>Actor</th>
-            <th style={{ padding: "0.5rem 0.75rem" }}>Action</th>
-            <th style={{ padding: "0.5rem 0.75rem" }}>Target</th>
-          </tr>
-        </thead>
-        <tbody>
-          {entries.map((entry) => (
-            <tr key={String(entry.id)} style={{ borderBottom: "1px solid #f0f1f3" }}>
-              <td
-                style={{
-                  padding: "0.5rem 0.75rem",
-                  whiteSpace: "nowrap",
-                  color: "#6b7280",
-                }}
-              >
-                {entry.createdAt.toISOString().replace("T", " ").slice(0, 19)}
-              </td>
-              <td style={{ padding: "0.5rem 0.75rem" }}>
-                {/* The audit tables carry no foreign keys, so the join misses
-                    for a deleted user. Showing the raw id is the honest answer;
-                    showing nothing would make the row look actorless. */}
-                {entry.actorName ?? entry.actorEmail ?? entry.actorUserId ?? "system"}
-                {entry.actorImpersonatedBy && (
-                  <span style={{ display: "block", fontSize: "0.75rem", color: "#a02e21" }}>
-                    impersonated by {entry.actorImpersonatedBy}
-                  </span>
-                )}
-              </td>
-              <td style={{ padding: "0.5rem 0.75rem" }}>
-                {entry.label}
-                {entry.isSensitive && (
-                  <span
-                    title="Recorded as sensitive access"
-                    style={{
-                      marginLeft: "0.5rem",
-                      fontSize: "0.6875rem",
-                      color: "#a02e21",
-                      border: "1px solid #a02e21",
-                      borderRadius: 3,
-                      padding: "0 4px",
-                    }}
-                  >
-                    SENSITIVE
-                  </span>
-                )}
-                <span style={{ display: "block", fontSize: "0.75rem", color: "#6b7280" }}>
-                  {entry.action}
-                </span>
-              </td>
-              <td style={{ padding: "0.5rem 0.75rem", fontFamily: "monospace", fontSize: "0.75rem" }}>
-                {entry.resourceType ? `${entry.resourceType} ${entry.resourceId ?? ""}` : "—"}
-                {entry.metadata !== null && (
-                  <span style={{ display: "block", color: "#6b7280" }}>
-                    {summarise(entry.metadata)}
-                  </span>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-
-      {entries.length === 0 && (
-        <p style={{ color: "#6b7280", maxWidth: "62ch" }}>
+      {entries.length === 0 ? (
+        <EmptyState title={sensitiveOnly ? "No sensitive access recorded" : "Nothing recorded yet"}>
           {sensitiveOnly
-            ? "No sensitive access recorded. Actions land here when their key is declared with `sensitive: true` in a defineAuditedActions registry — impersonation and permission grants, for example."
-            : "Nothing recorded yet. A row is written whenever an audited action runs; changing someone's permissions on the Roles page writes one immediately. Actions must be declared with defineAuditedActions — one named with a bare string literal at the call site is invisible to every query written against this table."}
-        </p>
+            ? "Actions land here when their key is declared with `sensitive: true` in a defineAuditedActions registry — impersonation and permission grants, for example."
+            : "A row is written whenever an audited action runs; changing someone's permissions on the Roles page writes one immediately. Actions must be declared with defineAuditedActions — one named with a bare string literal at the call site is invisible to every query written against this table."}
+        </EmptyState>
+      ) : (
+        <Card>
+          <Table>
+            <THead>
+              <TR>
+                <TH className="w-44">When</TH>
+                <TH>Actor</TH>
+                <TH>Action</TH>
+                <TH>Target</TH>
+              </TR>
+            </THead>
+            <TBody>
+              {entries.map((entry) => (
+                <TR key={String(entry.id)}>
+                  <TD className="whitespace-nowrap font-mono text-xs text-ink-muted">
+                    {entry.createdAt.toISOString().replace("T", " ").slice(0, 19)}
+                  </TD>
+                  <TD>
+                    {/* The audit tables carry no foreign keys, so the join misses
+                        for a deleted user. Showing the raw id is the honest answer;
+                        showing nothing would make the row look actorless. */}
+                    <span className="text-ink">
+                      {entry.actorName ?? entry.actorEmail ?? entry.actorUserId ?? "system"}
+                    </span>
+                    {entry.actorImpersonatedBy && (
+                      <span className="mt-0.5 block text-xs text-danger">
+                        impersonated by {entry.actorImpersonatedBy}
+                      </span>
+                    )}
+                  </TD>
+                  <TD>
+                    <span className="text-ink">{entry.label}</span>
+                    {entry.isSensitive && (
+                      <Badge tone="danger" className="ml-2" title="Recorded as sensitive access">
+                        Sensitive
+                      </Badge>
+                    )}
+                    <span className="mt-0.5 block font-mono text-xs text-ink-muted">
+                      {entry.action}
+                    </span>
+                  </TD>
+                  <TD className="font-mono text-xs text-ink-muted">
+                    {entry.resourceType
+                      ? `${entry.resourceType} ${entry.resourceId ?? ""}`
+                      : "—"}
+                    {entry.metadata !== null && (
+                      <span className="mt-0.5 block break-all">
+                        {summarise(entry.metadata)}
+                      </span>
+                    )}
+                  </TD>
+                </TR>
+              ))}
+            </TBody>
+          </Table>
+        </Card>
       )}
     </>
+  );
+}
+
+function FilterLink({
+  href,
+  active,
+  children,
+}: {
+  readonly href: string;
+  readonly active: boolean;
+  readonly children: string;
+}) {
+  return (
+    <Link
+      href={href}
+      aria-current={active ? "true" : undefined}
+      className={cx(
+        "rounded-[--radius-card] px-2.5 py-1 text-sm no-underline",
+        active
+          ? "bg-accent-soft font-medium text-accent"
+          : "text-ink-muted hover:bg-surface hover:text-ink",
+      )}
+    >
+      {children}
+    </Link>
   );
 }
 
@@ -155,12 +182,14 @@ function summarise(metadata: unknown): string {
 function NotConfigured() {
   return (
     <>
-      <h1 style={{ fontSize: "1.5rem", margin: "0 0 0.25rem" }}>Audit log</h1>
-      <p style={{ color: "#6b7280", maxWidth: "62ch" }}>
-        No database yet, so there is no trail to read.{" "}
-        <Link href="/setup">/setup</Link> lists what is missing; set{" "}
-        <code>DATABASE_URL</code> and run <code>pnpm db:migrate</code>.
-      </p>
+      <PageHeader title="Audit log" />
+      <EmptyState title="No database yet, so there is no trail to read">
+        <Link href="/setup" className="text-accent underline underline-offset-2">
+          /setup
+        </Link>{" "}
+        lists what is missing; set <code className="font-mono">DATABASE_URL</code>{" "}
+        and run <code className="font-mono">pnpm db:migrate</code>.
+      </EmptyState>
     </>
   );
 }

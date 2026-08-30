@@ -68,19 +68,36 @@ describe("publishing is sealed", () => {
 });
 
 describe("defaults", () => {
-  it("gives a viewer read access but nothing else", () => {
+  it("gives a support agent read access but nothing else", () => {
     // A catalog holds no customer data — unlike commerce's `orders.view`, which
-    // carries a postal address and a phone number.
-    const catalog = definePermissions("tenant", catalogPermissions);
-    expect(catalog.defaultsFor("viewer")).toEqual(["catalog.products.view"]);
+    // carries a postal address and a phone number. Looking up what something
+    // costs is not a privileged read.
+    const catalog = definePermissions("staff", catalogPermissions);
+    expect(catalog.defaultsFor("cs_agent")).toEqual(["catalog.products.view"]);
   });
 
-  it("does not hand a plain member the publish or price keys", () => {
-    const catalog = definePermissions("tenant", catalogPermissions);
-    const member = catalog.defaultsFor("member");
-    expect(member).not.toContain("catalog.products.publish");
-    expect(member).not.toContain("catalog.prices.edit");
-    expect(member).not.toContain("catalog.products.archive");
+  it("does not hand a cs_lead the publish or archive keys", () => {
+    // Publishing makes something chargeable and archiving pulls it from sale.
+    // Both are owner decisions, not support-desk ones.
+    const catalog = definePermissions("staff", catalogPermissions);
+    const lead = catalog.defaultsFor("cs_lead");
+    expect(lead).not.toContain("catalog.products.publish");
+    expect(lead).not.toContain("catalog.products.archive");
+  });
+
+  it("names STAFF templates, never tenant roles", () => {
+    // These are operator keys: you author what is for sale, your customers buy
+    // it. Declared against tenant roles they can never match, because the admin
+    // router gates them with requireStaff and the nav filters the staff set —
+    // so the whole Products section is invisible with no error anywhere.
+    const STAFF = new Set(["admin", "cs_lead", "cs_agent"]);
+    for (const [key, def] of Object.entries(catalogPermissions)) {
+      for (const template of def.defaultFor ?? []) {
+        expect(STAFF.has(template), `${key} names non-staff template "${template}"`).toBe(
+          true,
+        );
+      }
+    }
   });
 
   it("composes into a catalog without colliding with itself", () => {

@@ -1,4 +1,6 @@
 import { adminRouter } from "./admin";
+import { catalogRouter } from "./catalog";
+import { checkoutRouter } from "./checkout";
 import { createTRPCRouter, publicProcedure, requireTenant } from "../trpc";
 
 /**
@@ -25,6 +27,20 @@ export const appRouter = createTRPCRouter({
   // without the admin shell, so the panel can be added later without also
   // having to re-derive its boundary.
   admin: adminRouter,
+
+  // The product builder. Staff-scoped like `admin`, and mounted the same way:
+  // unconditionally, so a project generated without the admin shell still has
+  // the boundary — the pages are copied source that a client restyles, this
+  // router is where `requireStaff(...)` and the price audit actually live.
+  catalog: catalogRouter,
+
+  // The public storefront and the in-app Stripe Payment Element. The only
+  // router here with `public` procedures on it, and deliberately so: a shop
+  // nobody can browse without an account is a shop nobody browses. What keeps
+  // it safe is that the amount, the currency and the owning tenant are read
+  // from the catalog row, never from the request — see the note at the top of
+  // ./checkout.ts.
+  checkout: checkoutRouter,
 });
 
 export type AppRouter = typeof appRouter;

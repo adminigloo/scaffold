@@ -129,6 +129,14 @@ async function overlayDirsFor(
   // imports a package the app never installed.
   if (answers.businessModel !== "none") names.push("stripe");
 
+  // The product builder is an ADMIN surface, so it needs both: something to
+  // sell AND an admin shell to put it in. In the base template it emitted even
+  // with `--admin none`, which put admin pages in a project that had
+  // deliberately declined one.
+  if (answers.businessModel !== "none" && answers.adminShell !== "none") {
+    names.push("catalog-admin");
+  }
+
   const present: string[] = [];
   for (const name of names) {
     const dir = join(overlaysRoot, name);
@@ -179,6 +187,10 @@ export async function planEmit(
   files.set("package.json", renderPackageJson(answers));
   files.set(join("src", "env.ts"), renderEnvModule(answers));
   files.set(join("src", "db", "schema.ts"), renderSchemaModule(answers));
+  files.set(
+    join("src", "permissions", "catalog.ts"),
+    renderPermissionsCatalog(answers),
+  );
   files.set(".env.example", renderEnvExample(answers));
   // Written directly, not just as an example. It is gitignored, and it carries
   // the one value that is not a credential — so `pnpm install && pnpm dev`
@@ -269,7 +281,13 @@ export function renderPackageJson(answers: Answers): string {
     superjson: "^2.2.1",
     zod: "^4.5.1",
   };
-  if (answers.businessModel !== "none") deps["stripe"] = "^22.6.0";
+  if (answers.businessModel !== "none") {
+    deps["stripe"] = "^22.6.0";
+    // The Payment Element runs in the browser, so checkout needs the client SDK
+    // as well as the server one.
+    deps["@stripe/stripe-js"] = "^9.13.0";
+    deps["@stripe/react-stripe-js"] = "^6.8.0";
+  }
   for (const pkg of packagesFor(answers)) deps[pkg] = versionRangeFor(pkg);
 
   const devDeps: Record<string, string> = {
@@ -278,6 +296,11 @@ export function renderPackageJson(answers: Answers): string {
     "@types/react-dom": "^19",
     "@adminigloo/testing": "^0.1.1",
     "drizzle-kit": "^0.31.10",
+    // Tailwind v4 folds in postcss and autoprefixer. Adding autoprefixer back
+    // double-prefixes. These two ship in lockstep — a mismatched pair fails at
+    // PostCSS load, before any page renders.
+    tailwindcss: "^4.1.14",
+    "@tailwindcss/postcss": "^4.1.14",
     // The seed script is TypeScript and is run directly, not built.
     tsx: "^4.23.5",
     typescript: "^5.9.3",
@@ -626,6 +649,147 @@ export const envDescription = {
 `;
 }
 
+
+/**
+ * `src/permissions/catalog.ts` for this project.
+ *
+ * Generated, because which packages contribute keys depends on what was
+ * installed — and because SCOPE MATTERS AND IS EASY TO GET WRONG. Every key
+ * here must sit in the scope the code that checks it uses: a key declared under
+ * "tenant" but gated with `requireStaff(...)` can never match, the feature is
+ * invisible to everyone, and nothing errors. That is precisely what happened
+ * with the catalog keys before the conformance test caught it.
+ *
+ * The rule: STAFF is you operating the product — defining what is for sale,
+ * reading the audit log, impersonating a customer. TENANT is your customer
+ * operating their own account.
+ */
+export function renderPermissionsCatalog(answers: Answers): string {
+  const scope = answers.scope;
+  const label = tenantLabel(answers);
+  const plural = `${label}s`;
+
+  const imports = [
+    `import { definePermissions, type PermissionKeyOf } from "${scope}/permissions";`,
+    `import { tenancyPermissions } from "${scope}/tenancy";`,
+  ];
+
+  // Package fragments, each into the scope the checking code actually uses.
+  const staffFragments: string[] = [];
+  const tenantFragments = ["tenancyPermissions"];
+  const staffContrib: string[] = [];
+
+  if (answers.businessModel !== "none") {
+    // Defining what is for sale is an operator activity, so these are STAFF.
+    imports.push(`import { catalogPermissions } from "${scope}/catalog";`);
+    staffFragments.push("catalogPermissions");
+    staffContrib.push("catalogPermissions");
+
+    // Managing a tenant's own billing — portal, invoices — is theirs.
+    imports.push(`import { stripePermissions } from "${scope}/stripe";`);
+    tenantFragments.push("stripePermissions");
+  }
+  if (answers.businessModel === "one-time" || answers.businessModel === "both") {
+    // Order administration: refunds, fulfilment, discount codes. Operator work.
+    imports.push(`import { commercePermissions } from "${scope}/commerce";`);
+    staffFragments.push("commercePermissions");
+    staffContrib.push("commercePermissions");
+  }
+  if (answers.businessModel === "subscription" || answers.businessModel === "both") {
+    imports.push(`import { billingPermissions } from "${scope}/billing";`);
+    staffFragments.push("billingPermissions");
+    staffContrib.push("billingPermissions");
+  }
+  if (answers.includeAi) {
+    imports.push(`import { aiPermissions } from "${scope}/ai";`);
+    tenantFragments.push("aiPermissions");
+  }
+
+  const staffSpread = [...staffFragments, "appStaffPermissions"];
+  const tenantSpread = [...tenantFragments, "appTenantPermissions"];
+
+  return `${imports.join("\n")}
+
+/**
+ * Permission keys for ${answers.projectName}.
+ *
+ * Packages contribute plain records; this file spreads them into one catalog
+ * per scope. \`contributedBy\` is what catches two packages claiming the same
+ * key — a bare spread lets the last one silently win, and which definition
+ * survives is decided by import order.
+ *
+ * Adding a capability is two steps: a key here, and a grant in a role template.
+ * Nothing is implicit — a key in no template is denied for everyone, including
+ * you.
+ *
+ * SCOPE IS LOAD-BEARING. Check where the code that reads a key lives before you
+ * add it: \`requireStaff\` reads the staff catalog, \`requireTenant\` reads the
+ * tenant one, and a key in the wrong scope matches nothing and errors nowhere.
+ */
+
+const appTenantPermissions = {
+  // "reports.export": { label: "Export reports", category: "Reports" },
+} as const;
+
+export const tenantCatalog = definePermissions(
+  "tenant",
+  { ${tenantSpread.map((f) => `...${f}`).join(", ")} },
+  { contributedBy: [${[...tenantFragments, "appTenantPermissions"].join(", ")}] },
+);
+
+const appStaffPermissions = {
+  "staff.dashboard.view": {
+    label: "View the admin dashboard",
+    category: "Dashboard",
+    defaultFor: ["admin", "cs_lead", "cs_agent"],
+  },
+  "staff.tenants.view": {
+    label: "View ${plural}",
+    category: "${plural}",
+    defaultFor: ["admin", "cs_lead", "cs_agent"],
+  },
+  "staff.people.view": {
+    label: "View people",
+    category: "People",
+    defaultFor: ["admin", "cs_lead"],
+  },
+  "staff.roles.view": {
+    label: "View roles and permissions",
+    category: "Access",
+    defaultFor: ["admin", "cs_lead"],
+  },
+  "staff.roles.manage": {
+    label: "Assign templates and set per-person overrides",
+    description:
+      "Grants and revokes individual capabilities on top of a role template.",
+    category: "Access",
+    defaultFor: ["admin"],
+  },
+  "staff.audit.view": {
+    label: "View the audit log",
+    category: "Access",
+    defaultFor: ["admin", "cs_lead"],
+  },
+  "staff.tenants.impersonate": {
+    label: "Open a customer's own screen",
+    description: "Every entry is written to the audit log as sensitive access.",
+    category: "${plural}",
+    // Sealed: an override must not hand this to one person quietly.
+    sealed: true,
+  },
+} as const;
+
+export const staffCatalog = definePermissions(
+  "staff",
+  { ${staffSpread.map((f) => `...${f}`).join(", ")} },
+  { contributedBy: [${[...staffContrib, "appStaffPermissions"].join(", ")}] },
+);
+
+export type TenantPermission = PermissionKeyOf<typeof tenantCatalog>;
+export type StaffPermission = PermissionKeyOf<typeof staffCatalog>;
+`;
+}
+
 /**
  * `src/db/schema.ts` for this project.
  *
@@ -649,6 +813,12 @@ export function renderSchemaModule(answers: Answers): string {
   if (answers.businessModel !== "none") {
     exports.push(`export * from "${scope}/stripe/schema";`);
     exports.push(`export * from "${scope}/catalog/schema";`);
+  }
+  if (answers.businessModel === "one-time" || answers.businessModel === "both") {
+    exports.push(`export * from "${scope}/commerce/schema";`);
+  }
+  if (answers.businessModel === "subscription" || answers.businessModel === "both") {
+    exports.push(`export * from "${scope}/billing/schema";`);
   }
   if (answers.includeAi) {
     exports.push(`export * from "${scope}/ai/schema";`);

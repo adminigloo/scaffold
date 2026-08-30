@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { TRPCProvider } from "@/trpc/client";
 import { env } from "@/env";
+import "./globals.css";
 
 export const metadata: Metadata = {
   title: "__PROJECT_NAME__",
@@ -28,8 +29,16 @@ function AuthProvider({ children }: { children: ReactNode }) {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
-      <body>
+    // `suppressHydrationWarning` on <html> only: the dark theme is pure CSS
+    // (prefers-color-scheme), so nothing here reads the theme at runtime — but
+    // browser extensions routinely stamp attributes on <html> before React
+    // hydrates, and the resulting warning trains people to ignore the console.
+    <html lang="en" suppressHydrationWarning>
+      {/* Explicit background, from a token. A transparent body borrows whatever
+          the browser paints, which in dark mode is white behind a dark page —
+          visible as a flash on navigation and as white gutters on short pages,
+          neither of which points at its own cause. */}
+      <body className="min-h-dvh bg-canvas text-ink antialiased">
         <AuthProvider>
           <TRPCProvider>{children}</TRPCProvider>
         </AuthProvider>

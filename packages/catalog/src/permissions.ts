@@ -1,8 +1,19 @@
 import type { PermissionMap } from "@adminigloo/permissions";
 
 /**
- * This package's contribution to the tenant catalog. The app spreads it into
- * its own `definePermissions("tenant", { ... })` call.
+ * This package's contribution to the STAFF catalog. The app spreads it into its
+ * own `definePermissions("staff", { ... })` call.
+ *
+ * STAFF, NOT TENANT, and the distinction is the whole point. Defining what is
+ * for sale is an operator activity: you author the products, your customers buy
+ * them. The admin router gates every one of these with `requireStaff(...)`, and
+ * `AdminNav` filters against the staff permission set — so declared under
+ * "tenant" these keys can never match anything, and the Products section is
+ * invisible to everybody, forever, with no error to find. They were tenant
+ * keys until the nav was wired and the conformance test caught it.
+ *
+ * A tenant-facing storefront needs no permission at all: an active product is
+ * public, which is what "storefront" means.
  *
  * EVERY KEY IS UNDER `catalog.*`, and none is under `billing.*`.
  * @adminigloo/stripe owns that namespace outright. `definePermissions` only
@@ -21,16 +32,16 @@ export const catalogPermissions = {
     label: "View products",
     description: "See products, their variants, prices and what they grant.",
     category: "Catalog",
-    // Viewers included, unlike commerce's `orders.view`. A catalog holds no
-    // customer data — it is the shop window, and the prices in it are on the
-    // public storefront anyway.
-    defaultFor: ["owner", "admin", "member", "viewer"],
+    // Every staff role, including cs_agent. A catalog holds no customer data —
+    // it is the shop window, and the prices are on the public storefront
+    // anyway, so a support agent looking one up is reading nothing private.
+    defaultFor: ["admin", "cs_lead", "cs_agent"],
   },
   "catalog.products.create": {
     label: "Create products",
     description: "Add a new product. It starts as a draft and sells nothing.",
     category: "Catalog",
-    defaultFor: ["owner", "admin", "member"],
+    defaultFor: ["admin", "cs_lead"],
   },
   "catalog.products.edit": {
     label: "Edit products",
@@ -41,16 +52,19 @@ export const catalogPermissions = {
     // product description and changing what a customer is charged are different
     // acts, and the person who does the copy is usually not the person who
     // signs off on the money.
-    defaultFor: ["owner", "admin", "member"],
+    defaultFor: ["admin", "cs_lead"],
   },
+  // Admin only. Archiving pulls something out of sale; a support lead
+  // reclassifying a product mid-campaign is not a support-desk decision.
   "catalog.products.archive": {
     label: "Archive products",
     description:
       "Retire a product so it can no longer be bought. Orders that already " +
       "reference it keep rendering; nothing is deleted.",
     category: "Catalog",
-    defaultFor: ["owner", "admin"],
+    defaultFor: ["admin"],
   },
+  // Admin only, and sealed. Publishing makes something chargeable.
   "catalog.products.publish": {
     label: "Publish products",
     description:
@@ -70,7 +84,7 @@ export const catalogPermissions = {
      * cheaper to prevent than to refund.
      */
     sealed: true,
-    defaultFor: ["owner", "admin"],
+    defaultFor: ["admin"],
   },
   "catalog.prices.edit": {
     label: "Edit prices",
@@ -85,7 +99,7 @@ export const catalogPermissions = {
      * because a Stripe price is immutable — so this is a narrower grant than
      * `catalog.products.edit` and deliberately not folded into it.
      */
-    defaultFor: ["owner", "admin"],
+    defaultFor: ["admin", "cs_lead"],
   },
 } as const satisfies PermissionMap;
 

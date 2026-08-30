@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import {
   PermissionChecklist,
   type OverrideState,
 } from "@/components/admin/PermissionChecklist";
 import { api } from "@/trpc/client";
+import { Badge, Card, EmptyState, Input, Notice, cx } from "@/components/ui";
 
 /**
  * The roles screen, wired to the database through tRPC.
@@ -41,6 +42,7 @@ export function RoleEditor({ canManage }: RoleEditorProps) {
   const [search, setSearch] = useState("");
   const [picked, setPicked] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  const searchId = useId();
 
   const templates = api.admin.listTemplates.useQuery({ scope: SCOPE });
   const people = api.admin.listPeople.useQuery({
@@ -124,176 +126,132 @@ export function RoleEditor({ canManage }: RoleEditorProps) {
   const stale = permissions.data?.stalePermissions ?? [];
 
   return (
-    <div style={{ display: "grid", gap: "1.5rem" }}>
+    <div className="flex flex-col gap-5">
       {templates.data && templates.data.templates.length > 0 && (
-        <ul
-          style={{
-            listStyle: "none",
-            margin: 0,
-            padding: 0,
-            display: "flex",
-            gap: "0.5rem",
-            flexWrap: "wrap",
-          }}
-        >
+        <ul className="flex flex-wrap gap-2">
           {templates.data.templates.map((item) => (
             <li
               key={item.id}
-              style={{
-                border: "1px solid #e3e6ea",
-                borderRadius: 4,
-                padding: "0.375rem 0.625rem",
-                fontSize: "0.75rem",
-                color: "#4b5563",
-              }}
+              className="rounded-[--radius-card] border border-line bg-surface px-2.5 py-1.5 text-xs text-ink-muted"
             >
-              <strong style={{ color: "#111827" }}>{item.name}</strong> ·{" "}
+              <strong className="font-medium text-ink">{item.name}</strong> ·{" "}
               {item.holders} {item.holders === 1 ? "person" : "people"}
-              {!item.isSystem && " · customised"}
+              {!item.isSystem && (
+                <Badge tone="warn" className="ml-1.5">
+                  Customised
+                </Badge>
+              )}
             </li>
           ))}
         </ul>
       )}
 
       {templates.data?.templates.length === 0 && (
-        <p style={{ fontSize: "0.875rem", color: "#6b7280", margin: 0 }}>
-          No staff role templates exist yet. Run <code>pnpm db:seed</code> — it
-          creates them from <code>src/permissions/catalog.ts</code> and is safe
-          to re-run.
-        </p>
+        <Notice tone="warn" title="No staff role templates exist yet">
+          Run <code className="font-mono">pnpm db:seed</code> — it creates them
+          from <code className="font-mono">src/permissions/catalog.ts</code> and
+          is safe to re-run.
+        </Notice>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", gap: "1.5rem" }}>
-        <section style={{ minWidth: 0 }}>
-          <input
+      <div className="grid gap-5 lg:grid-cols-[16rem_1fr]">
+        <section className="min-w-0">
+          <label htmlFor={searchId} className="sr-only">
+            Find a person
+          </label>
+          <Input
+            id={searchId}
             type="search"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Find a person"
-            aria-label="Find a person"
-            style={{
-              width: "100%",
-              padding: "0.375rem 0.625rem",
-              border: "1px solid #d1d5db",
-              borderRadius: 4,
-              fontSize: "0.875rem",
-              marginBottom: "0.5rem",
-            }}
+            className="mb-2"
           />
 
-          {people.isPending && (
-            <p style={{ fontSize: "0.8125rem", color: "#6b7280" }}>Loading…</p>
-          )}
+          {people.isPending && <p className="text-[13px] text-ink-muted">Loading…</p>}
 
           {people.isError && (
-            <p style={{ fontSize: "0.8125rem", color: "#a02e21" }}>
+            <p role="alert" className="text-[13px] text-danger">
               {people.error.message}
             </p>
           )}
 
-          <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
-            {rows.map((person) => {
-              const active = person.id === selected;
-              return (
-                <li key={person.id}>
-                  <button
-                    type="button"
-                    onClick={() => setPicked(person.id)}
-                    aria-current={active ? "true" : undefined}
-                    style={{
-                      display: "block",
-                      width: "100%",
-                      textAlign: "left",
-                      border: 0,
-                      borderRadius: 4,
-                      padding: "0.5rem",
-                      cursor: "pointer",
-                      background: active ? "#f3f4f6" : "transparent",
-                      fontWeight: active ? 600 : 400,
-                      fontSize: "0.875rem",
-                      color: "#111827",
-                    }}
-                  >
-                    {person.displayName ?? person.email ?? person.id}
-                    <span
-                      style={{
-                        display: "block",
-                        fontSize: "0.75rem",
-                        color: "#6b7280",
-                        fontWeight: 400,
-                      }}
-                    >
-                      {person.templateName ?? "No staff template"}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
+          {rows.length > 0 && (
+            <Card>
+              <ul>
+                {rows.map((person) => {
+                  const active = person.id === selected;
+                  return (
+                    <li key={person.id} className="border-b border-line last:border-0">
+                      <button
+                        type="button"
+                        onClick={() => setPicked(person.id)}
+                        aria-current={active ? "true" : undefined}
+                        className={cx(
+                          "block w-full cursor-pointer px-3 py-2 text-left text-sm",
+                          active ? "bg-accent-soft" : "hover:bg-canvas",
+                        )}
+                      >
+                        <span
+                          className={cx(
+                            "block truncate",
+                            active ? "font-medium text-accent" : "text-ink",
+                          )}
+                        >
+                          {person.displayName ?? person.email ?? person.id}
+                        </span>
+                        <span className="block truncate text-xs text-ink-muted">
+                          {person.templateName ?? "No staff template"}
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </Card>
+          )}
 
           {people.isSuccess && rows.length === 0 && (
-            <p style={{ fontSize: "0.8125rem", color: "#6b7280" }}>
+            <EmptyState title={search.trim() === "" ? "Nobody has signed in yet" : "No match"}>
               {search.trim() === ""
-                ? "Nobody has signed in yet. A row appears here the first time someone signs in through Clerk — the app mirrors the Clerk user into the local users table on that first request."
+                ? "A row appears here the first time someone signs in through Clerk — the app mirrors the Clerk user into the local users table on that first request."
                 : `Nobody matches "${search.trim()}".`}
-            </p>
+            </EmptyState>
           )}
 
           {people.data?.hasMore && (
-            <p style={{ fontSize: "0.75rem", color: "#6b7280" }}>
+            <p className="mt-2 text-xs text-ink-muted">
               Showing the 25 most recent. Narrow it with the search box.
             </p>
           )}
         </section>
 
-        <section style={{ minWidth: 0 }}>
+        <section className="flex min-w-0 flex-col gap-4">
           {failure && (
-            <p
-              role="alert"
-              style={{
-                margin: "0 0 1rem",
-                padding: "0.625rem 0.75rem",
-                border: "1px solid #a02e21",
-                borderRadius: 4,
-                fontSize: "0.8125rem",
-                color: "#a02e21",
-              }}
-            >
+            <Notice tone="danger" role="alert" title="That change was refused">
               {failure}
-            </p>
+            </Notice>
           )}
 
           {stale.length > 0 && (
-            <p
-              role="alert"
-              style={{
-                margin: "0 0 1rem",
-                padding: "0.625rem 0.75rem",
-                border: "1px solid #b45309",
-                borderRadius: 4,
-                fontSize: "0.8125rem",
-                color: "#b45309",
-              }}
-            >
-              Stored rows reference permissions the catalog no longer declares:{" "}
-              <code>{stale.join(", ")}</code>. The resolver refuses these, so
+            <Notice tone="warn" role="alert" title="Stored rows reference unknown permissions">
+              <code className="font-mono break-all">{stale.join(", ")}</code> are
+              no longer declared by the catalog. The resolver refuses these, so
               this person may be denied everything until a migration rewrites or
               removes the rows.
-            </p>
+            </Notice>
           )}
 
           {selected === null && (
-            <p style={{ fontSize: "0.875rem", color: "#6b7280" }}>
-              Pick a person to see what they can do.
-            </p>
+            <p className="text-sm text-ink-muted">Pick a person to see what they can do.</p>
           )}
 
           {permissions.isPending && selected !== null && (
-            <p style={{ fontSize: "0.875rem", color: "#6b7280" }}>Loading…</p>
+            <p className="text-sm text-ink-muted">Loading…</p>
           )}
 
           {permissions.isError && (
-            <p style={{ fontSize: "0.875rem", color: "#a02e21" }}>
+            <p role="alert" className="text-sm text-danger">
               {permissions.error.message}
             </p>
           )}
@@ -301,10 +259,10 @@ export function RoleEditor({ canManage }: RoleEditorProps) {
           {permissions.data && (
             <>
               {!canManage && (
-                <p style={{ fontSize: "0.8125rem", color: "#6b7280", marginTop: 0 }}>
-                  Read-only. Changing an override needs{" "}
-                  <code>staff.roles.manage</code>.
-                </p>
+                <Notice tone="info" title="Read-only">
+                  Changing an override needs{" "}
+                  <code className="font-mono">staff.roles.manage</code>.
+                </Notice>
               )}
               <PermissionChecklist
                 rows={permissions.data.rows}

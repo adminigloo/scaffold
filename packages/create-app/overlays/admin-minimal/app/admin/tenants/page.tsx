@@ -3,6 +3,19 @@ import { tenants } from "__SCOPE__/tenancy/schema";
 import { db } from "@/db";
 import { currentPrincipal } from "@/server/auth";
 import { loadStaffPermissions } from "@/server/permissions";
+import {
+  Badge,
+  Card,
+  EmptyState,
+  Notice,
+  PageHeader,
+  Table,
+  TBody,
+  TD,
+  TH,
+  THead,
+  TR,
+} from "@/components/ui";
 
 /**
  * Read-only list of customer organisations.
@@ -15,7 +28,14 @@ export default async function TenantsPage() {
   const principal = await currentPrincipal();
   const can = principal ? await loadStaffPermissions({ principal }) : null;
   if (!can?.can("staff.tenants.view")) {
-    return <p>You do not have permission to view __TENANT_LABEL_PLURAL__.</p>;
+    return (
+      <>
+        <PageHeader title="__TENANT_LABEL_PLURAL__" />
+        <Notice tone="warn">
+          You do not have permission to view __TENANT_LABEL_PLURAL__.
+        </Notice>
+      </>
+    );
   }
 
   const rows = await db
@@ -26,33 +46,51 @@ export default async function TenantsPage() {
 
   return (
     <>
-      <h1 style={{ fontSize: "1.5rem", margin: "0 0 1rem" }}>__TENANT_LABEL_PLURAL__</h1>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.875rem" }}>
-        <thead>
-          <tr style={{ textAlign: "left", borderBottom: "1px solid #d1d5db" }}>
-            <th style={{ padding: "0.5rem 0.75rem" }}>Name</th>
-            <th style={{ padding: "0.5rem 0.75rem" }}>Slug</th>
-            <th style={{ padding: "0.5rem 0.75rem" }}>Kind</th>
-            <th style={{ padding: "0.5rem 0.75rem" }}>Created</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.id} style={{ borderBottom: "1px solid #f0f1f3" }}>
-              <td style={{ padding: "0.5rem 0.75rem" }}>{row.name}</td>
-              <td style={{ padding: "0.5rem 0.75rem", fontFamily: "monospace" }}>
-                {row.slug}
-              </td>
-              <td style={{ padding: "0.5rem 0.75rem" }}>{row.kind}</td>
-              <td style={{ padding: "0.5rem 0.75rem" }}>
-                {row.createdAt?.toISOString().slice(0, 10)}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {rows.length === 0 && (
-        <p style={{ color: "#6b7280" }}>No __TENANT_LABEL_LOWER__s yet.</p>
+      <PageHeader
+        title="__TENANT_LABEL_PLURAL__"
+        description="The 50 most recently created. Every tenant-scoped query in the app is filtered by one of these ids."
+      />
+
+      {rows.length === 0 ? (
+        <EmptyState title="No __TENANT_LABEL_LOWER__s yet">
+          One is created the first time somebody signs in — every new user gets a
+          personal workspace — and named ones are created by whatever onboarding
+          you build. Run <code className="font-mono">pnpm db:seed:demo</code> to
+          put sample rows here.
+        </EmptyState>
+      ) : (
+        <Card>
+          <Table>
+            <THead>
+              <TR>
+                <TH>Name</TH>
+                <TH>Slug</TH>
+                <TH>Kind</TH>
+                <TH>Created</TH>
+              </TR>
+            </THead>
+            <TBody>
+              {rows.map((row) => (
+                <TR key={row.id}>
+                  <TD className="font-medium text-ink">{row.name}</TD>
+                  <TD className="font-mono text-xs text-ink-muted">{row.slug}</TD>
+                  <TD>
+                    {/* Personal workspaces are auto-created for every signed-in
+                        user and will outnumber real customers by an order of
+                        magnitude. Marking the kind is what stops someone
+                        reading this list as a customer count. */}
+                    <Badge tone={row.kind === "personal" ? "neutral" : "accent"}>
+                      {row.kind}
+                    </Badge>
+                  </TD>
+                  <TD className="whitespace-nowrap text-ink-muted">
+                    {row.createdAt?.toISOString().slice(0, 10)}
+                  </TD>
+                </TR>
+              ))}
+            </TBody>
+          </Table>
+        </Card>
       )}
     </>
   );

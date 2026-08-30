@@ -4,6 +4,20 @@ import { db } from "@/db";
 import { currentPrincipal } from "@/server/auth";
 import { loadStaffPermissions } from "@/server/permissions";
 import { api } from "@/trpc/server";
+import {
+  Badge,
+  Card,
+  EmptyState,
+  Notice,
+  PageHeader,
+  Table,
+  TBody,
+  TD,
+  TH,
+  THead,
+  TR,
+  cx,
+} from "@/components/ui";
 
 /**
  * One row per distinct bug, not one per occurrence.
@@ -24,100 +38,80 @@ export default async function ErrorsPage() {
   const principal = await currentPrincipal();
   const can = principal ? await loadStaffPermissions({ principal }) : null;
   if (!can?.can("staff.audit.view")) {
-    return <p>You do not have permission to view errors.</p>;
+    return (
+      <>
+        <PageHeader title="Errors" />
+        <Notice tone="warn">You do not have permission to view errors.</Notice>
+      </>
+    );
   }
 
   const { errors } = await (await api()).admin.recentErrors({ limit: 100 });
 
   return (
     <>
-      <h1 style={{ fontSize: "1.5rem", margin: "0 0 0.25rem" }}>Errors</h1>
-      <p style={{ color: "#6b7280", maxWidth: "62ch", marginTop: 0 }}>
-        Unresolved first. The occurrence count is the triage signal — it is what
-        separates a bug that fired once from one firing every second, and it
-        exists only because repeated errors increment a row instead of inserting
-        a new one.
-      </p>
+      <PageHeader
+        title="Errors"
+        description="Unresolved first. The occurrence count is the triage signal — it is what separates a bug that fired once from one firing every second, and it exists only because repeated errors increment a row instead of inserting a new one."
+      />
 
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.875rem" }}>
-        <thead>
-          <tr style={{ textAlign: "left", borderBottom: "1px solid #d1d5db" }}>
-            <th style={{ padding: "0.5rem 0.75rem", width: "5rem" }}>Count</th>
-            <th style={{ padding: "0.5rem 0.75rem" }}>Error</th>
-            <th style={{ padding: "0.5rem 0.75rem" }}>Source</th>
-            <th style={{ padding: "0.5rem 0.75rem" }}>Last seen</th>
-          </tr>
-        </thead>
-        <tbody>
-          {errors.map((row) => (
-            <tr key={String(row.id)} style={{ borderBottom: "1px solid #f0f1f3" }}>
-              <td
-                style={{
-                  padding: "0.5rem 0.75rem",
-                  fontVariantNumeric: "tabular-nums",
-                  fontWeight: row.occurrences > 1 ? 700 : 400,
-                  color: row.resolvedAt ? "#6b7280" : "#111827",
-                }}
-              >
-                {row.occurrences.toLocaleString()}
-              </td>
-              <td style={{ padding: "0.5rem 0.75rem", minWidth: 0 }}>
-                <span style={{ color: row.resolvedAt ? "#6b7280" : "#111827" }}>
-                  {row.message}
-                </span>
-                {row.resolvedAt && (
-                  <span
-                    style={{
-                      marginLeft: "0.5rem",
-                      fontSize: "0.6875rem",
-                      color: "#15803d",
-                      border: "1px solid #15803d",
-                      borderRadius: 3,
-                      padding: "0 4px",
-                    }}
+      {errors.length === 0 ? (
+        <EmptyState title="Nothing recorded">
+          Rows appear when something catches an error, computes a stable key with{" "}
+          <code className="font-mono">errorFingerprint</code>, and upserts into{" "}
+          <code className="font-mono">error_log</code> on that key. Nothing in the
+          scaffold does that for you yet: an empty table here means either a
+          healthy app or an unwired reporter, and the place to wire it is the{" "}
+          <code className="font-mono">errorFormatter</code> in{" "}
+          <code className="font-mono">src/server/trpc.ts</code> plus each webhook
+          route.
+        </EmptyState>
+      ) : (
+        <Card>
+          <Table>
+            <THead>
+              <TR>
+                <TH className="w-20">Count</TH>
+                <TH>Error</TH>
+                <TH className="w-40">Source</TH>
+                <TH className="w-44">Last seen</TH>
+              </TR>
+            </THead>
+            <TBody>
+              {errors.map((row) => (
+                <TR key={String(row.id)}>
+                  <TD
+                    className={cx(
+                      "tabular-nums",
+                      row.resolvedAt ? "text-ink-muted" : "text-ink",
+                      row.occurrences > 1 && !row.resolvedAt && "font-semibold",
+                    )}
                   >
-                    RESOLVED
-                  </span>
-                )}
-                <span
-                  style={{
-                    display: "block",
-                    fontFamily: "monospace",
-                    fontSize: "0.75rem",
-                    color: "#6b7280",
-                  }}
-                >
-                  {row.fingerprint} · first seen{" "}
-                  {row.firstSeenAt.toISOString().slice(0, 10)}
-                </span>
-              </td>
-              <td style={{ padding: "0.5rem 0.75rem", color: "#6b7280" }}>
-                {row.source ?? "—"}
-              </td>
-              <td
-                style={{
-                  padding: "0.5rem 0.75rem",
-                  whiteSpace: "nowrap",
-                  color: "#6b7280",
-                }}
-              >
-                {row.lastSeenAt.toISOString().replace("T", " ").slice(0, 19)}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-
-      {errors.length === 0 && (
-        <p style={{ color: "#6b7280", maxWidth: "62ch" }}>
-          Nothing recorded. Rows appear when something catches an error, computes
-          a stable key with <code>errorFingerprint</code>, and upserts into{" "}
-          <code>error_log</code> on that key. Nothing in the scaffold does that
-          for you yet: an empty table here means either a healthy app or an
-          unwired reporter, and the place to wire it is the{" "}
-          <code>errorFormatter</code> in <code>src/server/trpc.ts</code> plus
-          each webhook route.
-        </p>
+                    {row.occurrences.toLocaleString()}
+                  </TD>
+                  <TD className="min-w-0">
+                    <span className={row.resolvedAt ? "text-ink-muted" : "text-ink"}>
+                      {row.message}
+                    </span>
+                    {row.resolvedAt && (
+                      <Badge tone="accent" className="ml-2">
+                        Resolved
+                      </Badge>
+                    )}
+                    <span className="mt-0.5 block break-all font-mono text-xs text-ink-muted">
+                      {row.fingerprint} · first seen{" "}
+                      {row.firstSeenAt.toISOString().slice(0, 10)}
+                    </span>
+                  </TD>
+                  <TD className="text-ink-muted">{row.source ?? "—"}</TD>
+                  <TD className="whitespace-nowrap font-mono text-xs text-ink-muted">
+                    {row.lastSeenAt.toISOString().replace("T", " ").slice(0, 19)}
+                  </TD>
+                </TR>
+              ))}
+            </TBody>
+          </Table>
+        </Card>
       )}
     </>
   );
@@ -126,12 +120,14 @@ export default async function ErrorsPage() {
 function NotConfigured() {
   return (
     <>
-      <h1 style={{ fontSize: "1.5rem", margin: "0 0 0.25rem" }}>Errors</h1>
-      <p style={{ color: "#6b7280", maxWidth: "62ch" }}>
-        No database yet, so nothing has been recorded.{" "}
-        <Link href="/setup">/setup</Link> lists what is missing; set{" "}
-        <code>DATABASE_URL</code> and run <code>pnpm db:migrate</code>.
-      </p>
+      <PageHeader title="Errors" />
+      <EmptyState title="No database yet, so nothing has been recorded">
+        <Link href="/setup" className="text-accent underline underline-offset-2">
+          /setup
+        </Link>{" "}
+        lists what is missing; set <code className="font-mono">DATABASE_URL</code>{" "}
+        and run <code className="font-mono">pnpm db:migrate</code>.
+      </EmptyState>
     </>
   );
 }

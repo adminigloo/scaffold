@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/catalog",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "The product catalog commerce and billing both sell from: products, variants, and what buying a variant grants. Pure pricing and validation, plus a Stripe sync planner that knows prices are immutable.",
   "license": "UNLICENSED",
   "type": "module",
