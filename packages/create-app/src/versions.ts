@@ -45,10 +45,18 @@
  * the corrected pin cannot be left sitting unpublished behind one that is.
  */
 const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
-  env: "0.2.1",
-  db: "0.2.1",
-  auth: "0.1.2",
-  tenancy: "0.2.0",
+  // 0.3.0 for the host-agnostic `resolveAppEnv()`. A project resolving 0.2.x
+  // gets the four-line body that failed open — an unlabelled deployment read as
+  // somebody's laptop — and `checkout.simulate` refuses to give the shop away
+  // on precisely that answer.
+  env: "0.3.0",
+  db: "0.2.2",
+  auth: "0.1.3",
+  // 0.3.0: creating a tenant now writes its owner the owner role as a row, and
+  // the emitted code calls the export that does it. Owning a tenant conferred
+  // nothing before that, so a project on 0.2.x compiles and grants nobody
+  // anything.
+  tenancy: "0.3.0",
   permissions: "0.1.2",
   // 0.2.0 rather than 0.1.x because `requireTenant(...).input(...)` did not
   // compile before it. `^0.1.0` would resolve to a build a generated project
@@ -57,18 +65,23 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // The same, and the one that was actually broken: `createErrorReporter` ships
   // in 0.2.0 and `src/server/error-reporter.ts` imports it unconditionally, so
   // a project resolving 0.1.x fails to compile on a file every project gets.
-  observability: "0.2.0",
-  stripe: "0.1.2",
-  catalog: "0.1.2",
+  observability: "0.2.1",
+  stripe: "0.1.3",
+  // 0.2.0 for the variant- and product-name rules. The product builder refuses
+  // to start a save that `validateProduct` cannot clear, so a project resolving
+  // 0.1.x gets a validator with no opinion about a blank variant name — which
+  // is the hole the form used to fall through: it created the product, had
+  // `upsertVariant` refuse it, and left a draft with nothing under it.
+  catalog: "0.2.0",
   commerce: "0.1.3",
   billing: "0.1.2",
-  ai: "0.1.2",
-  email: "0.2.0",
+  ai: "0.1.3",
+  email: "0.2.1",
   // A devDependency of every generated project rather than a dependency, and
   // it belongs here all the same. `renderPackageJson` spelled `^0.1.1` out
   // inline, which put a fourteenth version in a place no drift test looked at —
   // the exact arrangement the rest of this table exists to replace.
-  testing: "0.1.2",
+  testing: "0.1.3",
 };
 
 export class UnknownPackageVersionError extends Error {

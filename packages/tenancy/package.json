@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/tenancy",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Tenants, members and invitations. Owns the organisation model; personal workspaces make tenancy universal so B2C and B2B share one query path.",
   "license": "UNLICENSED",
   "type": "module",

@@ -52,7 +52,7 @@ export default async function TenantsPage() {
       />
 
       {rows.length === 0 ? (
-        <EmptyState title="No __TENANT_LABEL_LOWER__s yet">
+        <EmptyState title="No __TENANT_LABEL_PLURAL_LOWER__ yet">
           One is created the first time somebody signs in — every new user gets a
           personal workspace — and named ones are created by whatever onboarding
           you build. Run <code className="font-mono">pnpm db:seed:demo</code> to

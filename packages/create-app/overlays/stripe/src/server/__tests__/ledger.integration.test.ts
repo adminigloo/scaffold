@@ -327,33 +327,33 @@ describeIntegration("two concurrent deliveries of the same event", () => {
 });
 
 /**
- * *** FINDING — `claimStatements.readExisting` cannot be fed to `decideClaim`. ***
+ * WHAT `claimStatements.readExisting` HANDS BACK, AND THAT THE DECIDER SURVIVES IT.
  *
  * The exported statements are documented as "the four statements the protocol
- * needs", and `decideClaim`'s own doc comment describes reading `processed_at`
- * and `claimed_at` straight after the insert. Do that literally and it throws.
+ * needs", and `decideClaim`'s own comment describes reading `processed_at` and
+ * `claimed_at` straight after the insert. Do that literally and the values are
+ * not Dates: Drizzle installs an identity type parser for timestamptz on the
+ * connection so that its own column mapper can do the conversion, so a raw
+ * `db.execute` gets `"2026-08-30 19:28:07.563276+00"` — a string, while the
+ * typed `select()` path on the same row in the same transaction gets a Date.
  *
- * Drizzle installs an identity type parser for timestamptz on the connection so
- * that its own column mapper can do the conversion, so a raw `db.execute` gets
- * `"2026-08-30 19:28:07.563276+00"` — a string. `ClaimInput` declares
- * `Date | null`, and the lease branch calls `claimedAt.getTime()`, so the very
- * first delivery that lands on an in-flight row dies with
- * `TypeError: claimedAt.getTime is not a function` — inside a webhook, on the
- * retry path, which is the least observed code in the system.
+ * That divergence used to be a crash. `ClaimInput` declared `Date | null`, the
+ * lease branch called `claimedAt.getTime()`, and the first delivery to land on
+ * an in-flight row died with `TypeError: claimedAt.getTime is not a function` —
+ * inside a webhook, on the retry path, which is the least observed code in the
+ * system. TypeScript could not catch it, because `execute()` hands back untyped
+ * rows and the cast at the call site is unchecked; the unit suite could not
+ * catch it, because it constructs its own Dates.
  *
- * TypeScript does not catch it: `execute()` hands back untyped rows, so the
- * cast at the call site is unchecked. The unit suite does not catch it either,
- * because it constructs `Date` objects itself.
- *
- * The generated webhook route is NOT affected — it reads through Drizzle's
- * `select()`, which maps the column to a `Date`. Anyone following the exported
- * statements instead is.
- *
- * The fix belongs in @__SCOPE_NAME__/stripe: have `readExisting` cast
- * (`processed_at AT TIME ZONE 'UTC'` is not enough — the caller needs a Date),
- * or accept `Date | string | null` in `ClaimInput` and normalise inside
- * `decideClaim`. Until then these two tests pin the current behaviour so the
- * change is visible when it lands.
+ * `ClaimInput` now accepts `Date | string | null` and normalises through
+ * `asDate` (@__SCOPE_NAME__/stripe 0.1.2). These tests are what keeps that fix
+ * honest FROM THE DRIVER'S SIDE. @__SCOPE_NAME__/stripe's own unit suite feeds
+ * `decideClaim` a string literal somebody typed, which proves the branch and
+ * assumes the format; only here does the string come from Postgres, so a
+ * normalisation that mis-parsed the real `+00` offset — the failure that turns
+ * a five-minute lease into a five-hour one, silently — fails here and nowhere
+ * else. The two paths are therefore asserted to AGREE rather than merely to not
+ * throw.
  */
 describeIntegration("what the exported SQL actually returns", () => {
   it("returns timestamps as STRINGS, not Dates", async () => {
@@ -374,27 +374,87 @@ describeIntegration("what the exported SQL actually returns", () => {
     });
   });
 
-  it("makes decideClaim throw when driven with them", async () => {
+  it("decides the same way whether it is fed the strings or the Dates", async () => {
     await withRollback(db, async (tx: AppTransaction) => {
       await deliver(tx);
 
       const [raw] = (
         await tx.execute(bindPositional(claimStatements.readExisting, [EVENT_ID]))
       ).rows;
+      const typed = await readExistingViaOrm(tx);
 
-      // `unknown as Date | null` is what the compiler has to be told at any
-      // real call site, because `execute()` returns untyped rows and
-      // `ClaimInput` wants Dates. TypeScript accepts it without complaint. It
-      // is a lie, and the next two lines are the proof.
-      const drive = (): ClaimOutcome =>
+      // `unknown as Date | null` is what the compiler has to be told at any real
+      // call site, because `execute()` returns untyped rows and the declared
+      // input is wider than the annotation. It used to be a lie; the assertions
+      // below are what makes it true.
+      const fromStrings = decideClaim({
+        insertedRow: false,
+        existingProcessedAt: raw?.processed_at as Date | null,
+        existingClaimedAt: raw?.claimed_at as Date | null,
+      });
+      const fromDates = decideClaim({
+        insertedRow: false,
+        existingProcessedAt: typed.processedAt,
+        existingClaimedAt: typed.claimedAt,
+      });
+
+      // Freshly claimed by the insert above, so both must defer.
+      expect(fromStrings).toEqual({ action: "retry-later" });
+      expect(fromStrings).toEqual(fromDates);
+    });
+  });
+
+  it("puts the string claim at the same instant on the lease as the Date one", async () => {
+    // THE ASSERTION THAT A "does not throw" TEST WOULD MISS. A parse that read
+    // the `+00` offset as local time still returns a Date, still has
+    // `getTime`, and still decides — wrongly, by however many hours this
+    // machine is from UTC. The lease boundary is where that shows up: one
+    // millisecond either side of it must flip the answer, measured from the
+    // Date the ORM produced for the same column.
+    await withRollback(db, async (tx: AppTransaction) => {
+      await deliver(tx);
+
+      const [raw] = (
+        await tx.execute(bindPositional(claimStatements.readExisting, [EVENT_ID]))
+      ).rows;
+      const claimedAt = (await readExistingViaOrm(tx)).claimedAt;
+      if (claimedAt === null) throw new Error("the claiming insert left claimed_at null");
+
+      const at = (offsetMs: number): ClaimOutcome =>
+        decideClaim({
+          insertedRow: false,
+          existingProcessedAt: null,
+          existingClaimedAt: raw?.claimed_at as Date | null,
+          now: new Date(claimedAt.getTime() + offsetMs),
+          leaseMs: DEFAULT_CLAIM_LEASE_MS,
+        });
+
+      expect(at(DEFAULT_CLAIM_LEASE_MS - 1)).toEqual({ action: "retry-later" });
+      expect(at(DEFAULT_CLAIM_LEASE_MS)).toEqual({ action: "process", reclaimed: true });
+    });
+  });
+
+  it("reads a processed_at string as processed rather than as unfinished", async () => {
+    // The other column, and the more expensive direction to get wrong: a
+    // `processed_at` that failed to normalise reads as null, the row looks
+    // unfinished, and a completed handler runs a second time against a paid
+    // event.
+    await withRollback(db, async (tx: AppTransaction) => {
+      await deliver(tx);
+      await tx.execute(bindPositional(claimStatements.markProcessed, [EVENT_ID]));
+
+      const [raw] = (
+        await tx.execute(bindPositional(claimStatements.readExisting, [EVENT_ID]))
+      ).rows;
+      expect(typeof raw?.processed_at).toBe("string");
+
+      expect(
         decideClaim({
           insertedRow: false,
           existingProcessedAt: raw?.processed_at as Date | null,
           existingClaimedAt: raw?.claimed_at as Date | null,
-        });
-
-      expect(drive).toThrowError(TypeError);
-      expect(drive).toThrowError(/getTime is not a function/);
+        }),
+      ).toEqual({ action: "skip-duplicate" });
     });
   });
 });

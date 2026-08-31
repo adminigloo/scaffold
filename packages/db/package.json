@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/db",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Neon Postgres client, shared column conventions, transaction helpers, and a migration runner that refuses to touch production by accident.",
   "license": "UNLICENSED",
   "type": "module",

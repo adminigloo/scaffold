@@ -422,7 +422,14 @@ describe("accept", () => {
     // database would match a truncated hash against whatever it decoded to.
     const { pg, service, token } = harness();
     const row = pg.tables.invitations[0];
-    if (row) row.token_hash = `${row.token_hash.slice(0, 63)}0`;
+    // Flip the last character to something it is NOT. Overwriting it with a
+    // fixed "0" corrupted nothing on the one hash in sixteen already ending in
+    // "0" — the token then verified, `accept` succeeded, and the suite failed
+    // roughly every third run for reasons that looked like infrastructure.
+    if (row) {
+      const last = row.token_hash.slice(-1);
+      row.token_hash = `${row.token_hash.slice(0, -1)}${last === "0" ? "1" : "0"}`;
+    }
 
     await expect(service.accept(token, INVITEE)).resolves.toEqual({
       status: "unknown-token",

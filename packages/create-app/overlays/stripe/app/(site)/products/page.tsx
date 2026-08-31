@@ -4,6 +4,12 @@ import { formatMinor, priceRange } from "__SCOPE__/catalog";
 import { Badge, Card, CardBody, EmptyState, Notice, PageHeader } from "@/components/ui";
 import { db } from "@/db";
 import { type StorefrontProduct } from "@/server/routers/checkout";
+// WHICH CHECKOUT IS LIVE. The same predicate `/checkout` branches on and the
+// same one `checkout.simulate` enforces, so the storefront cannot promise a
+// customer a checkout the next page refuses to give them. This notice used to
+// read `stripe === null` on its own, which is why a production deployment with
+// no Stripe key told every visitor that buying was simulated.
+import { checkoutMode } from "@/server/checkout-mode";
 import { productHref } from "@/storefront";
 import { api } from "@/trpc/server";
 
@@ -40,6 +46,32 @@ export default async function ProductsPage() {
         description="Everything currently for sale. Prices are shown in the currency each product is sold in."
       />
 
+      {/*
+        The one sentence that makes the simulated checkout discoverable.
+
+        It used to be discoverable by accident or not at all: the button lives
+        two pages further in, behind a product and a variant, and nothing on the
+        way there said it existed. Somebody evaluating this scaffold would reach
+        a shop, assume payments were required to see anything work, and stop.
+
+        Not a debug banner. It renders on exactly the condition the checkout
+        renders the simulated form on — the same function call, not a second
+        rule that happens to agree — so it describes what will actually happen
+        to the next person who clicks Buy. It disappears the moment
+        STRIPE_SECRET_KEY is set, and it never appears on a deployment that is
+        not permitted to simulate, with nothing to remember and nothing to
+        remove at launch.
+      */}
+      {checkoutMode().kind === "simulated" && products !== null && products.length > 0 && (
+        <Notice tone="info" title="Payments are not configured, so buying is simulated">
+          There is no Stripe key on this deployment, so the checkout records the
+          order and applies everything the product grants — an entitlement, a
+          licence key, a shipment — without taking a payment. It is the same
+          function a real payment runs, and it is refused as soon as Stripe is
+          configured.
+        </Notice>
+      )}
+
       {products === null ? (
         <Notice tone="warn" title="The catalog cannot be read yet">
           This page lists rows from Postgres and <code>DATABASE_URL</code> is not
@@ -52,10 +84,12 @@ export default async function ProductsPage() {
         </Notice>
       ) : products.length === 0 ? (
         <EmptyState title="Nothing is published yet">
-          Published products appear here. Create one in the catalog admin, give
-          it at least one variant with a price, then set its status to{" "}
-          <strong>Active</strong> — drafts and archived products are deliberately
-          never shown to customers.
+          Run <code className="font-mono">pnpm db:seed:demo</code> to put a
+          catalogue here — one product per grant kind, plus the draft and the
+          sold-out option that make the refusals visible. Or create one in the
+          catalog admin, give it at least one variant with a price, then set its
+          status to <strong>Active</strong> — drafts and archived products are
+          deliberately never shown to customers.
         </EmptyState>
       ) : (
         <ul className="grid list-none grid-cols-1 gap-4 p-0 sm:grid-cols-2 lg:grid-cols-3">

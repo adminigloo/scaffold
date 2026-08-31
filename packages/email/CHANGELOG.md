@@ -1,5 +1,13 @@
 # @adminigloo/email
 
+## 0.2.1
+
+### Patch Changes
+
+- Updated dependencies
+  - @adminigloo/env@0.3.0
+  - @adminigloo/db@0.2.2
+
 ## 0.2.0
 
 ### Minor Changes

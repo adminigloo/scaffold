@@ -24,6 +24,16 @@ name: Generator matrix
 # `next build` against the private registry, and six of those cost more than
 # every other job in this repository put together. A regression here is a
 # regression in a combination nobody is generating this afternoon.
+#
+# WHAT IS NOT DEFERRED TO THE NIGHT is whether the generator can EMIT every
+# configuration. That question needs no install, no registry and no network —
+# only a plan in memory — so `every-configuration.test.ts` asks it of all two
+# hundred and forty of them on every commit, in about fourteen seconds. This
+# matrix is for the questions that genuinely need a package manager: does the
+# combination resolve, typecheck, build and serve. A verifier once found a
+# window in which no project with an admin panel could be generated at all, and
+# a nightly job is the wrong instrument for a fault with a twenty-five minute
+# lifetime.
 
 on:
   schedule:
@@ -187,6 +197,27 @@ jobs:
           fi
           bash "$GITHUB_WORKSPACE/.github/scripts/report-matrix-failure.sh" \
             "${{ matrix.id }}" "${{ matrix.flags }}" "typecheck" tsc.log
+          exit 1
+
+      # Each combination ships a DIFFERENT set of test files, because each ships
+      # a different set of overlays, and a suite is only as good as the
+      # configurations it has been run in. `--admin none --model both` copies in
+      # the stripe overlay's tests with no admin surface underneath them; the
+      # per-PR job in ci.yml only ever runs the maximal set.
+      #
+      # Unit only. The integration suites need a database and this job has none;
+      # REQUIRE_DATABASE is deliberately NOT set here, so they skip — and say so
+      # in the log, one line per suite.
+      - name: Test
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          if pnpm exec vitest run --project=unit > test.log 2>&1; then
+            cat test.log
+            exit 0
+          fi
+          cat test.log
+          bash "$GITHUB_WORKSPACE/.github/scripts/report-matrix-failure.sh" \
+            "${{ matrix.id }}" "${{ matrix.flags }}" "test" test.log
           exit 1
 
       - name: Build

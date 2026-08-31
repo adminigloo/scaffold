@@ -1,26 +1,30 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  canPublish as catalogCanPublish,
-  validateProduct,
-  type GrantDraft,
   type GrantKind,
   type Problem,
   type ProductKind,
   type ProductStatus,
   type SyncPlan,
-  type VariantDraft,
   type VariantInterval,
 } from "__SCOPE__/catalog";
-import { parseInventoryInput, parseMoneyInput } from "@/components/admin/money";
+import { parseMoneyInput } from "@/components/admin/money";
+import { reviewProductDraft } from "@/components/admin/productDraft";
 import {
-  emptyVariantRow,
-  grantConfigFor,
-  VariantEditor,
-  type VariantRow,
-} from "@/components/admin/VariantEditor";
+  describeSaveFailure,
+  formFieldId,
+  type FieldFault,
+} from "@/components/admin/saveErrors";
+import {
+  saveProduct,
+  type ProductWriteGateway,
+  type SaveJournal,
+} from "@/components/admin/saveProduct";
+import { emptyVariantRow, type VariantRow } from "@/components/admin/variantRow";
+import { VariantEditor } from "@/components/admin/VariantEditor";
 import { api } from "@/trpc/client";
 
 /**
@@ -28,14 +32,22 @@ import { api } from "@/trpc/client";
  *
  * One component for both, because a create form and an edit form that diverge
  * end up with different validation, and the one that gets less use is the one
- * that ships a broken product. The only difference is that `create` has no id
- * yet, so it cannot publish, archive, or plan a Stripe sync until it is saved.
+ * that ships a broken product. The only difference is that a product with no id
+ * yet cannot publish, archive, or plan a Stripe sync.
  *
  * COPIED SOURCE. Restyle it freely. What must NOT move in here is the
  * decision-making: `validateProduct` is the package's, run again on the server
  * in `catalog.publish`, and the sync plan comes back from `catalog.syncPlan`
  * already worked out. A browser holding its own copy of the rules is how a UI
  * ends up offering a button the API then refuses.
+ *
+ * NEITHER DOES THE SAVE CHAIN LIVE HERE. It is `saveProduct` in
+ * ./saveProduct.ts, driven through an interface, because the defect that made
+ * this form unusable — a variant that was written to the database while the
+ * form went on insisting it was unsaved, with Publish disabled forever — was
+ * invisible in isolation and obvious the moment the sequence could be run by a
+ * test. `jsx: "preserve"` means a `.tsx` cannot be imported by vitest at all,
+ * so a rule that lives in a component file is a rule nothing checks.
  */
 
 export interface ProductFormInitialVariant {
@@ -101,6 +113,9 @@ const SECONDARY =
   `rounded-[--radius-card] border border-line bg-surface px-3.5 py-2 text-sm text-ink ${FOCUS} ` +
   "disabled:cursor-not-allowed disabled:opacity-50";
 
+/** How much text the write procedures accept. Matched on the inputs below. */
+const DESCRIPTION_MAX_LENGTH = 5_000;
+
 /** Plain English for each planner action, beside the planner's own reason. */
 const STEP_LABEL: Record<string, string> = {
   "create-product": "Creates a Stripe product",
@@ -146,10 +161,27 @@ export function ProductForm({
   const [rows, setRows] = useState<readonly VariantRow[]>(() =>
     (initial?.variants ?? []).map(rowFromInitial),
   );
+  /**
+   * The product's id, held in state rather than read off `initial`.
+   *
+   * On the edit page it never changes. On the CREATE page it is null until
+   * `catalog.create` returns, and then it is not null any more — which is the
+   * difference between "press Save again" and "you now have two products, and
+   * the second save is refused for a duplicate slug". A create that fails after
+   * the product row lands is an ordinary outcome of a dropped connection, and
+   * the form has to be able to carry on from it.
+   */
+  const [productId, setProductId] = useState<string | null>(initial?.id ?? null);
   const [removedIds, setRemovedIds] = useState<readonly string[]>([]);
   const [busy, setBusy] = useState<null | "save" | "publish" | "archive">(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  /**
+   * Fields the SERVER refused, rendered through the same component as the
+   * validator's own problems so a refusal from either source appears under the
+   * input it is about rather than as a paragraph at the top of the page.
+   */
+  const [serverFaults, setServerFaults] = useState<readonly FieldFault[]>([]);
   const [planSnapshot, setPlanSnapshot] = useState<PlanSnapshot | null>(
     initial ? { id: initial.id } : null,
   );
@@ -182,18 +214,28 @@ export function ProductForm({
   });
 
   // ---- validation, all of it, all the time --------------------------------
-  const { problems, problemsByPath, moneyProblems, publishable } = useMemo(
-    () => validateEverything({ slug, name, kind, rows }),
+  const review = useMemo(
+    () => reviewProductDraft({ slug, name, kind, rows }),
     [slug, name, kind, rows],
   );
 
-  // `publishable` is the PACKAGE's rule, not `problems.length === 0` written
-  // out again here. Two copies of it drift the moment someone decides one
-  // problem is "only a warning", and the first warning anybody adds is always
-  // the one that ships a broken price. The money failures sit alongside it
-  // because `validateProduct` cannot see them — by the time it runs, the value
-  // is already a bigint.
-  const blocked = !publishable || moneyProblems.length > 0;
+  /**
+   * The validator's problems and the server's refusals, in one map.
+   *
+   * Both are keyed the same way — `product.name`, `variants[1].name`,
+   * `grants[0].config.feature` — precisely so the field components below need
+   * to know nothing about where a message came from.
+   */
+  const problemsByPath = useMemo(
+    () => withServerFaults(review.problemsByPath, serverFaults),
+    [review.problemsByPath, serverFaults],
+  );
+
+  // `review.writable` is the PACKAGE's rule, not `problems.length === 0`
+  // written out again here. Two copies of it drift the moment someone decides
+  // one problem is "only a warning", and the first warning anybody adds is
+  // always the one that ships a broken price.
+  const blocked = !review.writable;
   const status = initial?.status ?? "draft";
 
   function patchRow(key: string, patch: Partial<VariantRow>) {
@@ -220,89 +262,113 @@ export function ProductForm({
     setRows((current) => current.filter((candidate) => candidate.key !== key));
   }
 
+  /**
+   * Put the cursor on the field a message names.
+   *
+   * A sentence naming a field on a form with eight variant rows still leaves
+   * the reader scrolling. The ids come from `formFieldId`, which is the one
+   * place that knows a variant's inputs are keyed on the row's `key`.
+   */
+  function revealField(path: string | null) {
+    if (path === null) return;
+    const elementId = formFieldId(path, rows.map((row) => row.key));
+    if (elementId === null) return;
+    const element = document.getElementById(elementId);
+    if (element === null) return;
+    element.focus({ preventScroll: true });
+    element.scrollIntoView({ block: "center" });
+  }
+
+  /**
+   * The four procedures, behind the interface `saveProduct` writes through.
+   *
+   * Wrapped rather than passed directly so the chain depends on a shape it
+   * declares, and a test can supply four functions instead of a tRPC client.
+   */
+  const gateway: ProductWriteGateway = {
+    createProduct: (input) => create.mutateAsync(input),
+    updateProduct: (input) => update.mutateAsync(input),
+    upsertVariant: (input) => upsertVariant.mutateAsync(input),
+    setGrant: (input) => setGrant.mutateAsync(input),
+    removeVariant: (input) => removeVariant.mutateAsync(input),
+  };
+
+  /**
+   * Every id the server hands back, adopted the instant it arrives.
+   *
+   * THE FIX FOR THE BLOCKER, and the reason it is a callback rather than a
+   * return value: a chain that fails at step five must leave the form knowing
+   * about steps one to four. A save that recorded nothing until it finished
+   * would be a save that recorded nothing at all on the one occasion it
+   * mattered.
+   */
+  const journal: SaveJournal = {
+    productWritten: (id) => setProductId(id),
+    variantWritten: (rowKey, variantId) =>
+      setRows((current) =>
+        current.map((row) => (row.key === rowKey ? { ...row, id: variantId } : row)),
+      ),
+    variantRemoved: (variantId) =>
+      setRemovedIds((current) => current.filter((candidate) => candidate !== variantId)),
+  };
+
   async function handleSave() {
     setFailure(null);
     setNotice(null);
+    setServerFaults([]);
     setBusy("save");
 
-    // What has been written so far, so a failure halfway can say so. These
-    // calls are sequential and not one transaction: `create` and
-    // `upsertVariant` are separately permissioned on purpose, and wrapping them
-    // in one procedure would let `catalog.products.create` alone set a price.
-    let done = 0;
-
     try {
-      const productFields = {
-        slug: slug.trim(),
-        name: name.trim(),
-        description: description.trim() === "" ? null : description.trim(),
-        kind,
-      };
+      const outcome = await saveProduct(
+        { productId, slug, name, description, kind, rows, removedIds },
+        gateway,
+        journal,
+      );
 
-      const productId = initial
-        ? (await update.mutateAsync({ id: initial.id, ...productFields })).id
-        : (await create.mutateAsync(productFields)).id;
-      done += 1;
-
-      // Variants BEFORE removals, so replacing the only variant on an active
-      // product works: `removeVariant` refuses to take the last one, and by
-      // then the replacement exists.
-      for (const [index, row] of rows.entries()) {
-        const money = parseMoneyInput(row.priceInput, row.currency);
-        const stock = parseInventoryInput(row.inventoryInput);
-        if (!money.ok || !stock.ok) continue;
-
-        const saved = await upsertVariant.mutateAsync({
-          id: row.id ?? undefined,
-          productId,
-          name: row.name.trim(),
-          sku: row.sku.trim() === "" ? null : row.sku.trim(),
-          priceMinor: money.minor,
-          currency: row.currency,
-          interval: row.interval === "" ? null : row.interval,
-          isDefault: row.isDefault,
-          inventory: stock.value,
-          sortOrder: index,
-        });
-        done += 1;
-
-        await setGrant.mutateAsync({
-          variantId: saved.id,
-          kind: row.grantKind,
-          config: grantConfigFor(row),
-        });
-        done += 1;
+      if (outcome.status === "refused") {
+        // Nothing was sent. The list is already on screen under the fields; the
+        // line here says why the button did nothing, and the cursor moves to
+        // the first thing to fix.
+        setFailure(
+          `Nothing was saved. ${outcome.reasons.length} thing` +
+            `${outcome.reasons.length === 1 ? "" : "s"} on this form cannot be ` +
+            `written as ${outcome.reasons.length === 1 ? "it stands" : "they stand"}:` +
+            `\n\n${outcome.reasons.map((reason) => `• ${reason}`).join("\n")}`,
+        );
+        revealField(outcome.faultPath);
+        return;
       }
 
-      for (const id of removedIds) {
-        await removeVariant.mutateAsync({ id });
-        done += 1;
+      if (outcome.status === "failed") {
+        const report = describeSaveFailure(outcome.error, outcome.step);
+        setServerFaults(report.faults);
+        setFailure(`${report.message}${landedNote(outcome.written, initial !== undefined)}`);
+        revealField(report.faults[0]?.path ?? null);
+        return;
       }
-
-      setRemovedIds([]);
 
       if (initial) {
-        await utils.catalog.get.invalidate({ id: productId });
+        await utils.catalog.get.invalidate({ id: outcome.productId });
         await utils.catalog.syncPlan.invalidate();
         // Re-snapshot against the saved state; the overrides just became the
         // stored values, so keeping the old snapshot would show a plan for a
         // change that has already happened.
-        setPlanSnapshot({ id: productId });
-        setNotice("Saved.");
+        setPlanSnapshot({ id: outcome.productId });
+        setNotice("Saved. Every variant on this form is now a row in the database.");
         router.refresh();
       } else {
         // Straight to the edit page: publishing, archiving and the Stripe plan
         // all need an id, and a create form that stays put after saving leaves
         // the admin with no way to reach them.
-        router.push(`/admin/products/${productId}`);
+        router.push(`/admin/products/${outcome.productId}`);
       }
     } catch (error) {
+      // `saveProduct` returns its failures rather than throwing, so anything
+      // arriving here came from the refetch or the navigation AFTER the writes
+      // succeeded. Say so, rather than implying the save did not happen.
       setFailure(
-        `${messageOf(error)}${
-          done > 0
-            ? `\n\n${done} change${done === 1 ? "" : "s"} were already saved before this failed. Reload the page to see what landed.`
-            : ""
-        }`,
+        `The product was saved. Refreshing the page afterwards failed: ` +
+          `${describeSaveFailure(error, { kind: "product" }).message}`,
       );
     } finally {
       setBusy(null);
@@ -310,46 +376,48 @@ export function ProductForm({
   }
 
   async function handlePublish() {
-    if (!initial) return;
+    if (productId === null) return;
     setFailure(null);
     setNotice(null);
+    setServerFaults([]);
     setBusy("publish");
     try {
-      await publish.mutateAsync({ id: initial.id });
-      await utils.catalog.get.invalidate({ id: initial.id });
+      await publish.mutateAsync({ id: productId });
+      await utils.catalog.get.invalidate({ id: productId });
       setNotice("Published. The product is now purchasable.");
       router.refresh();
     } catch (error) {
       // The server's message carries EVERY validation problem, one per line —
       // it re-ran `validateProduct` rather than trusting this form. Rendered
       // with `whitespace-pre-line` so the list stays a list.
-      setFailure(messageOf(error));
+      setFailure(describeSaveFailure(error, { kind: "product" }).message);
     } finally {
       setBusy(null);
     }
   }
 
   async function handleArchive() {
-    if (!initial) return;
+    if (productId === null) return;
     setFailure(null);
     setNotice(null);
+    setServerFaults([]);
     setBusy("archive");
     try {
-      await archive.mutateAsync({ id: initial.id });
-      await utils.catalog.get.invalidate({ id: initial.id });
+      await archive.mutateAsync({ id: productId });
+      await utils.catalog.get.invalidate({ id: productId });
       setNotice("Archived. Nothing was deleted — existing orders still render it.");
       router.refresh();
     } catch (error) {
-      setFailure(messageOf(error));
+      setFailure(describeSaveFailure(error, { kind: "product" }).message);
     } finally {
       setBusy(null);
     }
   }
 
   function previewStripe() {
-    if (!initial) return;
+    if (productId === null) return;
     setPlanSnapshot({
-      id: initial.id,
+      id: productId,
       product: {
         name: name.trim() === "" ? undefined : name.trim(),
         description: description.trim() === "" ? null : description.trim(),
@@ -377,9 +445,28 @@ export function ProductForm({
   return (
     <div className="space-y-6">
       {failure ? (
-        <p className="whitespace-pre-line rounded-[--radius-card] border border-danger bg-surface p-3 text-sm text-danger">
-          {failure}
-        </p>
+        <div className="rounded-[--radius-card] border border-danger bg-surface p-3">
+          <p className="whitespace-pre-line text-sm text-danger">{failure}</p>
+          {/* A product created by a chain that then failed. On the EDIT page
+              reloading is at least possible; on the create page there was
+              nothing to reload, which is why "reload the page" was never a
+              recovery story here. It exists now, and so does the product. */}
+          {initial === undefined && productId !== null ? (
+            <p className="mt-2 text-sm text-ink-muted">
+              The product exists as a draft. Fix the above and press{" "}
+              <span className="text-ink">Create product</span> again — this form
+              holds its id, so it updates that product rather than creating a
+              second one — or{" "}
+              <Link
+                href={`/admin/products/${productId}`}
+                className={`text-accent underline underline-offset-2 ${FOCUS} rounded-[--radius-card]`}
+              >
+                open it on its own page
+              </Link>
+              .
+            </p>
+          ) : null}
+        </div>
       ) : null}
       {notice ? (
         <p className="rounded-[--radius-card] border border-line bg-accent-soft p-3 text-sm text-accent">
@@ -399,11 +486,13 @@ export function ProductForm({
               className={FIELD}
               value={name}
               placeholder="Standard deck of cards"
+              aria-invalid={problemsByPath.has("product.name")}
               onChange={(event) => {
                 setName(event.target.value);
                 if (!slugTouched.current) setSlug(slugify(event.target.value));
               }}
             />
+            <Problems messages={problemsByPath.get("product.name")} />
           </div>
 
           <div>
@@ -415,6 +504,7 @@ export function ProductForm({
               className={FIELD}
               value={slug}
               placeholder="standard-deck"
+              aria-invalid={problemsByPath.has("product.slug")}
               onChange={(event) => {
                 slugTouched.current = true;
                 setSlug(event.target.value);
@@ -431,12 +521,14 @@ export function ProductForm({
               id="product-description"
               className={`${FIELD} min-h-20`}
               value={description}
+              maxLength={DESCRIPTION_MAX_LENGTH}
               placeholder="What the customer is actually buying."
               onChange={(event) => setDescription(event.target.value)}
             />
             <p className="mt-1 text-xs text-ink-muted">
               Copied to the Stripe product, so it shows on the receipt.
             </p>
+            <Problems messages={problemsByPath.get("product.description")} />
           </div>
 
           <div>
@@ -491,7 +583,7 @@ export function ProductForm({
       ) : null}
 
       {/* ---- everything that is wrong, at once ------------------------- */}
-      <ProblemSummary problems={problems} moneyProblems={moneyProblems} />
+      <ProblemSummary problems={review.problems} moneyProblems={review.moneyProblems} />
 
       {/* ---- what Stripe will do --------------------------------------- */}
       {initial ? (
@@ -731,88 +823,36 @@ function Problems({ messages }: { readonly messages?: readonly string[] }) {
 // Pure helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Run the package's validator over the form as it stands.
- *
- * `status: "active"` rather than the product's real status, because the
- * question the builder is answering is "what stops this from going live". With
- * the stored `'draft'` the rule that matters most — an active product needs a
- * variant — never fires, and the admin finds out at the publish button.
- *
- * Money problems are kept separate: an unparseable price is not something
- * `validateProduct` can see, because by the time it runs the value is already a
- * bigint. Reported together, so the summary really is everything at once.
- */
-function validateEverything(input: {
-  readonly slug: string;
-  readonly name: string;
-  readonly kind: ProductKind;
-  readonly rows: readonly VariantRow[];
-}): {
-  problems: readonly Problem[];
-  problemsByPath: ReadonlyMap<string, readonly string[]>;
-  moneyProblems: readonly string[];
-  publishable: boolean;
-} {
-  const moneyProblems: string[] = [];
-
-  const variants: VariantDraft[] = input.rows.map((row, index) => {
-    const label = row.name.trim() === "" ? `variant ${index + 1}` : row.name.trim();
-    const money = parseMoneyInput(row.priceInput, row.currency);
-    if (!money.ok) moneyProblems.push(`"${label}": ${money.message}`);
-
-    const stock = parseInventoryInput(row.inventoryInput);
-    if (!stock.ok) moneyProblems.push(`"${label}": ${stock.message}`);
-
-    return {
-      id: row.id ?? undefined,
-      sku: row.sku.trim() === "" ? null : row.sku.trim(),
-      name: row.name.trim(),
-      // 0 is a stand-in for an amount that could not be parsed; the failure is
-      // already reported above, and substituting it keeps every OTHER rule
-      // running instead of hiding them behind one bad field.
-      priceMinor: money.ok ? money.minor : 0n,
-      currency: row.currency,
-      interval: row.interval === "" ? null : row.interval,
-      isDefault: row.isDefault,
-      inventory: stock.ok ? stock.value : null,
-    };
-  });
-
-  // One grant per row, in row order, so `grants[i]` in a problem path is the
-  // same i the variant editor renders.
-  const grants: GrantDraft[] = input.rows.map((row) => ({
-    variantId: row.id ?? undefined,
-    kind: row.grantKind,
-    config: grantConfigFor(row),
-  }));
-
-  const problems = validateProduct({
-    product: {
-      slug: input.slug.trim(),
-      kind: input.kind,
-      status: "active",
-      name: input.name.trim(),
-    },
-    variants,
-    grants,
-  });
-
-  const problemsByPath = new Map<string, string[]>();
-  for (const problem of problems) {
-    const bucket = problemsByPath.get(problem.path);
-    if (bucket) bucket.push(problem.message);
-    else problemsByPath.set(problem.path, [problem.message]);
+/** The validator's problems plus whatever the server refused, one map. */
+function withServerFaults(
+  problemsByPath: ReadonlyMap<string, readonly string[]>,
+  faults: readonly FieldFault[],
+): ReadonlyMap<string, readonly string[]> {
+  if (faults.length === 0) return problemsByPath;
+  const merged = new Map<string, readonly string[]>(problemsByPath);
+  for (const fault of faults) {
+    merged.set(fault.path, [...(merged.get(fault.path) ?? []), fault.message]);
   }
+  return merged;
+}
 
-  return {
-    problems,
-    problemsByPath,
-    moneyProblems,
-    // The package's own rule, aliased on import only so it does not read like
-    // the `canPublishProducts` permission prop.
-    publishable: catalogCanPublish(problems),
-  };
+/**
+ * What had already landed when a chain broke, and what to do about it.
+ *
+ * The count is the honest one — every confirmed write, not every attempt — and
+ * the advice is to press the button again rather than to reload, because every
+ * row that landed now carries its id and will be updated rather than
+ * duplicated. "1 change were already saved" was the previous wording, from a
+ * ternary that pluralised the noun and left the verb alone.
+ */
+function landedNote(written: number, isEdit: boolean): string {
+  if (written === 0) return "\n\nNothing was written: this failed on the first call.";
+  const changes = `${written} change${written === 1 ? " was" : "s were"}`;
+  return (
+    `\n\n${changes} already written before this failed. Press ` +
+    `${isEdit ? "Save changes" : "Create product"} again once it is fixed — every ` +
+    `row that landed is now held by its id, so it is updated rather than written twice.`
+  );
 }
 
 function rowFromInitial(variant: ProductFormInitialVariant): VariantRow {
@@ -860,8 +900,4 @@ function slugify(value: string): string {
     .replace(/^-+|-+$/g, "")
     .slice(0, 96)
     .replace(/-+$/g, "");
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

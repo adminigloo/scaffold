@@ -1,100 +1,32 @@
 import type { ReactNode } from "react";
-import { formatMinor, type GrantKind, type ProductKind, type VariantInterval } from "__SCOPE__/catalog";
+import { formatMinor, type GrantKind, type ProductKind } from "__SCOPE__/catalog";
 import { parseInventoryInput, parseMoneyInput } from "@/components/admin/money";
+import type { VariantRow } from "@/components/admin/variantRow";
 
 /**
  * The variant rows of the product builder.
  *
  * No `"use client"` directive: `ProductForm` carries it, and everything
  * imported by a client module is compiled into the client graph anyway. The
- * money conversion these fields depend on lives in ./money.ts — see the note at
- * the top of that file for why it is not in here.
- */
-
-// ---------------------------------------------------------------------------
-// Row model
-// ---------------------------------------------------------------------------
-
-/**
- * One editable variant, held entirely as strings.
+ * money conversion these fields depend on lives in ./money.ts and the row model
+ * in ./variantRow.ts — see the note at the top of either for why neither is in
+ * here: esbuild will not transform a `.tsx` under `jsx: "preserve"`, so nothing
+ * a unit test needs may live in a component file.
  *
- * The number fields are strings because a half-typed "12." is a legitimate
- * intermediate state and coercing on every keystroke deletes the dot out from
- * under the cursor. The conversion happens once, on submit and for validation,
- * through `parseMoneyInput`.
+ * The row model is re-exported so `@/components/admin/VariantEditor` remains
+ * the one import a page needs, and so a project that had already written
+ * against it does not break on the move.
  */
-export interface VariantRow {
-  /** Stable React key. The row id once saved, a local token before that. */
-  readonly key: string;
-  /** NULL until this row has been written, which is why nothing keys on it. */
-  readonly id: string | null;
-  readonly name: string;
-  readonly sku: string;
-  readonly priceInput: string;
-  readonly currency: string;
-  /** "" is one-time; the column stores NULL for it. */
-  readonly interval: "" | VariantInterval;
-  readonly isDefault: boolean;
-  readonly inventoryInput: string;
-  readonly grantKind: GrantKind;
-  readonly grantFeature: string;
-  readonly grantLimit: string;
-  readonly grantSeats: string;
-  readonly grantKeyFormat: string;
-  readonly grantWeightGrams: string;
-  readonly grantRequiresAddress: boolean;
-}
 
-export function emptyVariantRow(key: string, currency: string, kind: ProductKind): VariantRow {
-  return {
-    key,
-    id: null,
-    name: "",
-    sku: "",
-    priceInput: "",
-    currency,
-    // Pre-filled to match the product's kind, because the alternative is a
-    // form that is born invalid: a subscription variant with no interval is
-    // `subscription-variant-missing-interval` before anyone has typed.
-    interval: kind === "subscription" ? "month" : "",
-    isDefault: false,
-    inventoryInput: "",
-    grantKind: "none",
-    grantFeature: "",
-    grantLimit: "",
-    grantSeats: "",
-    grantKeyFormat: "",
-    grantWeightGrams: "",
-    grantRequiresAddress: false,
-  };
-}
+export {
+  emptyVariantRow,
+  grantConfigFor,
+  variantLabel,
+  type VariantRow,
+} from "@/components/admin/variantRow";
 
-/** The `product_grants.config` payload for a row, shaped by its kind. */
-export function grantConfigFor(row: VariantRow): Record<string, unknown> {
-  switch (row.grantKind) {
-    case "entitlement":
-      return {
-        feature: row.grantFeature.trim(),
-        // NULL is unlimited, matching `entitlements.limit_value`. Not zero —
-        // zero is a real limit meaning "none of this feature".
-        limit: row.grantLimit.trim() === "" ? null : Number(row.grantLimit),
-      };
-    case "license_key":
-      return {
-        ...(row.grantSeats.trim() === "" ? {} : { seats: Number(row.grantSeats) }),
-        ...(row.grantKeyFormat.trim() === "" ? {} : { keyFormat: row.grantKeyFormat.trim() }),
-      };
-    case "ship":
-      return {
-        ...(row.grantWeightGrams.trim() === ""
-          ? {}
-          : { weightGrams: Number(row.grantWeightGrams) }),
-        requiresAddress: row.grantRequiresAddress,
-      };
-    case "none":
-      return {};
-  }
-}
+/** How much text the write procedures accept. Matched on the inputs below. */
+const SKU_MAX_LENGTH = 120;
 
 // ---------------------------------------------------------------------------
 // Component
@@ -212,6 +144,7 @@ function VariantRowFields({
   const at = `variants[${index}]`;
   const money = parseMoneyInput(row.priceInput, row.currency);
   const stock = parseInventoryInput(row.inventoryInput);
+  const nameProblems = problemsByPath.get(`${at}.name`);
   const id = (field: string) => `${row.key}-${field}`;
 
   return (
@@ -242,8 +175,14 @@ function VariantRowFields({
             value={row.name}
             disabled={disabled}
             placeholder="Standard edition"
+            aria-invalid={nameProblems !== undefined}
             onChange={(event) => onChange(row.key, { name: event.target.value })}
           />
+          {/* The field the whole builder used to fall over on. A blank name was
+              accepted here, refused by `upsertVariant`, and reported as a
+              stringified zod issue with a path of ["name"] — which named
+              neither the row nor the product. */}
+          <Problems messages={nameProblems} />
         </div>
 
         <div>
@@ -255,6 +194,7 @@ function VariantRowFields({
             className={FIELD}
             value={row.sku}
             disabled={disabled}
+            maxLength={SKU_MAX_LENGTH}
             placeholder="DECK-STD-01"
             onChange={(event) => onChange(row.key, { sku: event.target.value })}
           />
@@ -262,6 +202,7 @@ function VariantRowFields({
             Blank for anything with no stock keeping unit. Inventing one puts a
             fake value into the warehouse export.
           </FieldNote>
+          <Problems messages={problemsByPath.get(`${at}.sku`)} />
         </div>
 
         <div>

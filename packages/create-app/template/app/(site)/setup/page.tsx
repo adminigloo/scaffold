@@ -79,6 +79,31 @@ export default function SetupPage() {
         environment: {report.appEnv}
       </p>
 
+      {/* WHEN NOTHING NAMED THE ENVIRONMENT. `report.appEnv` alone cannot say
+          this: "staging" reads as a fact, and on a host that is not Vercel it
+          may be a guess — the one made when there is no VERCEL_ENV and no
+          APP_ENV. The guess is deliberately the cautious one, and every
+          consequence of it is a thing somebody will otherwise report as a bug:
+          the simulated checkout is off, the automatic first-admin grant is off,
+          and the credentials below stay optional rather than being enforced.
+          One variable turns all of that into a decision instead of a default. */}
+      {report.origin === "unidentified" && (
+        <Notice tone="info" title="Nothing on this host says which environment it is">
+          There is no <code className="font-mono">VERCEL_ENV</code> and no{" "}
+          <code className="font-mono">APP_ENV</code>, so this is being treated as
+          an unnamed deployment: cautious about anything dangerous, and lenient
+          about anything missing. Set{" "}
+          <code className="font-mono">APP_ENV</code> to{" "}
+          <code className="font-mono">local</code>,{" "}
+          <code className="font-mono">staging</code> or{" "}
+          <code className="font-mono">production</code> in this deployment&rsquo;s
+          own configuration. Until you do, the credentials below stay optional
+          rather than being required, the first person to sign in is not made an
+          administrator, live Stripe and Clerk keys are refused, and the
+          simulated checkout is unavailable.
+        </Notice>
+      )}
+
       <PageHeader
         title={allSet ? "Everything is configured" : "Add credentials as you need them"}
         description={

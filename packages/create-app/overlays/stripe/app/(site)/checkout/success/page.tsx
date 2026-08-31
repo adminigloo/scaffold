@@ -4,9 +4,10 @@ import type { ReactNode } from "react";
 import type Stripe from "stripe";
 import { isDbConfigured } from "__SCOPE__/db";
 import { formatMinor } from "__SCOPE__/catalog";
+import { accountOrderHref } from "@/account";
 import { Card, CardBody, Notice, PageHeader, buttonClass } from "@/components/ui";
 import { db } from "@/db";
-import { currentPrincipal } from "@/server/auth";
+import { currentPrincipal, isSignInConfigured } from "@/server/auth";
 import {
   readOrderByReference,
   type FulfilledOrderView,
@@ -78,8 +79,17 @@ export default async function CheckoutSuccessPage({
  * that path works signed out. A `sim_` reference has no such property: it is
  * just an id, and an id in a URL gets pasted into chat logs and bug reports. So
  * this path checks the thing it actually can, which is stronger anyway: the
- * order must belong to the person asking. A simulated purchase always has a
- * signed-in buyer, because `checkout.simulate` is a `protectedProcedure`.
+ * order must belong to the person asking.
+ *
+ * THE ONE EXCEPTION IS A DEPLOYMENT WHERE NOBODY CAN SIGN IN. With no Clerk
+ * keys `checkout.simulate` books a guest order — `orders.user_id` is nullable
+ * exactly so it can — and there is then no account boundary for this check to
+ * enforce: every visitor is the same anonymous person, and refusing to show a
+ * guest order to the browser that just created it would be theatre that hides
+ * the receipt from its only reader. The condition is `isSignInConfigured()`,
+ * the same predicate the procedure used to decide whether to demand a buyer, so
+ * the two cannot disagree — and it closes by itself the moment Clerk is
+ * configured, after which a guest order stops being readable this way at all.
  */
 async function SimulatedReturn({ reference }: { readonly reference: string }) {
   // The same guard the storefront and the checkout use, asked before the read
@@ -105,7 +115,18 @@ async function SimulatedReturn({ reference }: { readonly reference: string }) {
 
   // One answer for "no such order" and "not yours". Distinguishing them turns
   // this page into an oracle for whether a given reference exists.
-  if (!order || order.userId === null || order.userId !== principalId) {
+  //
+  // `order.userId === null` is a guest purchase, readable only while this
+  // deployment has no accounts at all. Note the ordering: with Clerk configured
+  // the second clause is false, and a guest order left over from before the
+  // keys were added is refused like anybody else's.
+  const isOwnOrder =
+    order !== null &&
+    (order.userId === null
+      ? !isSignInConfigured()
+      : order.userId === principalId);
+
+  if (!order || !isOwnOrder) {
     return (
       <Shell>
         <Notice tone="danger" title="That order could not be found">
@@ -125,7 +146,7 @@ async function SimulatedReturn({ reference }: { readonly reference: string }) {
         downstream of it behaves exactly as it will once payments are live.
       </Notice>
       <OrderCard order={order} />
-      <BackToProducts />
+      <WhereToFindThis orderNumber={order.orderNumber} />
     </Shell>
   );
 }
@@ -248,8 +269,88 @@ async function StripeReturn({ params }: { readonly params: SuccessParams }) {
 
       {order && <OrderCard order={order} />}
 
-      {copy.retry ? <BackToProducts label="Try again" /> : <BackToProducts />}
+      {copy.retry ? (
+        <BackToProducts label="Try again" />
+      ) : (
+        // No order number when the webhook has not landed yet, which is the
+        // common case here and not an error. The block falls back to the order
+        // list, which will contain it a second from now.
+        <WhereToFindThis {...(order ? { orderNumber: order.orderNumber } : {})} />
+      )}
     </Shell>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Where the buyer goes next
+// ---------------------------------------------------------------------------
+
+/**
+ * THE ONE SCREEN A BUYER IS CERTAINLY LOOKING AT, pointed at the one place
+ * their purchase can be found again.
+ *
+ * This page is a RETURN URL. Nothing in the application links to it, its
+ * address carries a client secret or a fulfilment reference that stops
+ * resolving, and the customer closes the tab a minute after arriving. Until
+ * this block the only way out of it was "Browse products", and the account
+ * area — which exists precisely because a buyer had nowhere to see what they
+ * had bought — was advertised nowhere but the site header, on the one screen
+ * where nobody reads the header. A licence key rendered here and named nowhere
+ * else is a key the customer loses by closing a tab.
+ *
+ * `orderNumber` is optional deliberately. On the Stripe path the order is
+ * written by the webhook, asynchronously, so it is usually still absent when
+ * this page renders; the order LIST is the honest destination in that case and
+ * costs the buyer one further click. Never a link to
+ * `/account/orders/undefined`.
+ *
+ * SILENT WHERE NOBODY CAN SIGN IN. With no Clerk keys `checkout.simulate` books
+ * a guest order and `/account` can only answer "sign in to see what you have",
+ * so sending anybody there would be advice they cannot take. The predicate is
+ * `isSignInConfigured`, the same one `SimulatedReturn` uses to decide whether a
+ * guest order is readable at all, so the two cannot drift apart.
+ *
+ * `accountOrderHref` is IMPORTED rather than spelled out. The order number goes
+ * into a path segment and the account overlay owns the rule for doing that
+ * safely; a second copy here is the one that forgets to encode it the day the
+ * order-number prefix grows a slash. That the import resolves is not luck —
+ * `overlayNamesFor` selects the account overlay on exactly the condition it
+ * selects this one, and neither can be installed without the other.
+ */
+function WhereToFindThis({ orderNumber }: { readonly orderNumber?: string }) {
+  if (!isSignInConfigured()) return <BackToProducts />;
+
+  return (
+    <Card>
+      <CardBody className="flex flex-col gap-3">
+        <p className="text-sm font-medium">Where to find this again</p>
+        <p className="text-sm text-ink-muted">
+          Every order you place, the licence keys it issued, what it entitles you
+          to and where any parcel has got to are all in your account. You do not
+          need to keep this page.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {orderNumber ? (
+            <Link
+              href={accountOrderHref(orderNumber)}
+              className={buttonClass("primary")}
+            >
+              View this order
+            </Link>
+          ) : (
+            <Link href="/account/orders" className={buttonClass("primary")}>
+              Your orders
+            </Link>
+          )}
+          <Link href="/account" className={buttonClass("secondary")}>
+            Your account
+          </Link>
+          <Link href="/products" className={buttonClass("secondary")}>
+            Browse products
+          </Link>
+        </div>
+      </CardBody>
+    </Card>
   );
 }
 

@@ -1,5 +1,13 @@
 # @adminigloo/auth
 
+## 0.1.3
+
+### Patch Changes
+
+- Updated dependencies
+  - @adminigloo/env@0.3.0
+  - @adminigloo/db@0.2.2
+
 ## 0.1.2
 
 ### Patch Changes

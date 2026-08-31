@@ -264,6 +264,98 @@ describe("inventory", () => {
   });
 });
 
+/**
+ * The rules that exist because the write procedures already had them.
+ *
+ * Every one of these was previously enforced ONLY by the tRPC input schema, so
+ * a form running this validator saw a clean product, offered Save, and got back
+ * a stringified list of zod issues with a path of `["name"]` — which does not
+ * say whether it means the product or one of six variants. A rule the API holds
+ * and the validator does not is a button the UI offers and the API refuses.
+ */
+describe("names", () => {
+  it("flags a product with no name", () => {
+    const problems = validateProduct({
+      product: product({ name: "" }),
+      variants: [variant()],
+    });
+    expect(codes(problems)).toEqual(["product-name-missing"]);
+    expect(problems[0]?.path).toBe("product.name");
+  });
+
+  it("flags a product name that is only whitespace", () => {
+    // The write procedure trims before it measures, so "   " is empty there.
+    // Accepting it here would let the form save something the API refuses.
+    expect(
+      codes(validateProduct({ product: product({ name: "   " }), variants: [variant()] })),
+    ).toEqual(["product-name-missing"]);
+  });
+
+  it("flags a product name nobody passed at all", () => {
+    const { name: _omitted, ...withoutName } = product();
+    expect(
+      codes(validateProduct({ product: withoutName, variants: [variant()] })),
+    ).toEqual(["product-name-missing"]);
+  });
+
+  it("flags a product name past the stored maximum", () => {
+    const problems = validateProduct({
+      product: product({ name: "a".repeat(201) }),
+      variants: [variant()],
+    });
+    expect(codes(problems)).toEqual(["product-name-too-long"]);
+    expect(problems[0]?.message).toContain("201 characters");
+  });
+
+  it("flags a variant with no name, and says which row", () => {
+    // THE BLOCKER'S SECOND HALF. A blank variant name used to validate clean,
+    // so the form created the product and only then had `upsertVariant` refuse
+    // it — leaving a draft product with no variants and a raw zod dump on
+    // screen.
+    const problems = validateProduct({
+      product: product(),
+      variants: [variant(), variant({ name: "" })],
+    });
+    expect(codes(problems)).toEqual(["variant-name-missing"]);
+    expect(problems[0]?.path).toBe("variants[1].name");
+    expect(problems[0]?.message).toContain("Variant 2");
+  });
+
+  it("flags a variant name past the stored maximum", () => {
+    expect(
+      codes(
+        validateProduct({
+          product: product(),
+          variants: [variant({ name: "a".repeat(201) })],
+        }),
+      ),
+    ).toEqual(["variant-name-too-long"]);
+  });
+
+  it("names a blank-named variant by its sku in every OTHER message", () => {
+    // Not cosmetic. `variant.name ?? …` treated "" as a name, so a row with no
+    // name reported `"" has no billing interval` — a message that identifies
+    // nothing on a form holding six rows.
+    const problems = validateProduct({
+      product: product({ kind: "subscription" }),
+      variants: [variant({ name: "", sku: "DECK-STD-01" })],
+    });
+    expect(codes(problems)).toEqual([
+      "variant-name-missing",
+      "subscription-variant-missing-interval",
+    ]);
+    expect(problems[1]?.message).toContain("DECK-STD-01");
+  });
+
+  it("falls back to the row's position when there is no name and no sku", () => {
+    const problems = validateProduct({
+      product: product({ kind: "subscription" }),
+      variants: [variant({ name: "" })],
+    });
+    expect(problems[1]?.message).toContain("variant 1");
+  });
+});
+
 describe("slug", () => {
   it("accepts a plain hyphenated slug", () => {
     expect(

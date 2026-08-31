@@ -1,6 +1,9 @@
 import { resolve } from "node:path";
 import {
+  ADMIN_SHELLS,
+  BUSINESS_MODELS,
   DEFAULT_ANSWERS,
+  TENANT_NOUNS,
   packagesFor,
   requiredEnvFor,
   validateProjectName,
@@ -28,21 +31,6 @@ export interface CliFlags {
   readonly ai?: boolean;
   readonly email?: boolean;
 }
-
-const TENANT_NOUNS: readonly TenantNoun[] = [
-  "Organization",
-  "Company",
-  "Workspace",
-  "Team",
-  "none",
-];
-const BUSINESS_MODELS: readonly BusinessModel[] = [
-  "none",
-  "one-time",
-  "subscription",
-  "both",
-];
-const ADMIN_SHELLS: readonly AdminShell[] = ["none", "minimal", "full"];
 
 export class UnknownFlagValueError extends Error {
   readonly name = "UnknownFlagValueError";
@@ -240,6 +228,22 @@ export function nextSteps(answers: Answers, targetDir: string): string {
     lines.push(
       "Stripe keys must be TEST mode outside production. A live key throws at",
       "boot, and no environment variable turns that check off.",
+      "",
+      // THE ONE PARAGRAPH THAT MAKES THE SHOP FINDABLE. Everything after "Buy"
+      // works with no Stripe account at all — the order, the entitlement, the
+      // licence key — and none of it was reachable, because the catalogue was
+      // empty and nothing anywhere said which command fills it. A capability
+      // nobody can find is a capability nobody has, and the terminal directly
+      // after generation is the only documentation that gets read.
+      "You can walk the whole purchase path before any Stripe account exists.",
+      "With DATABASE_URL set:",
+      "",
+      "  pnpm db:seed && pnpm db:seed:demo",
+      "  pnpm dev, then open /products and buy something",
+      "",
+      "With no STRIPE_SECRET_KEY the checkout records the order and applies",
+      "every grant through the same function a real payment runs. It refuses",
+      "as soon as Stripe is configured, and on production either way.",
       "",
     );
   }

@@ -4,11 +4,19 @@ import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
 import type Stripe from "stripe";
 import { products, productVariants } from "__SCOPE__/catalog/schema";
+// For the audit line on a simulated order, and for nothing that decides
+// anything — the decision is `checkoutMode()` below.
+import { describeAppEnv } from "__SCOPE__/env";
 import { createLogger } from "__SCOPE__/observability";
 import { FIRM_WIDE } from "__SCOPE__/permissions";
-import { isStripeConfigured } from "__SCOPE__/stripe";
 import { db } from "@/db";
 import { env } from "@/env";
+import { isSignInConfigured } from "@/server/auth";
+// Which checkout is live on this deployment. THE one predicate — the same call
+// `/checkout`, the storefront notice and the Simulate button are drawn from, so
+// the page and the procedure cannot disagree about it. Read by `simulate` and
+// by nothing else here; see property 1 on that procedure.
+import { checkoutMode } from "@/server/checkout-mode";
 import {
   assertPurchasable,
   fulfilPurchase,
@@ -20,10 +28,11 @@ import {
   type PurchasableVariant,
 } from "@/server/fulfilment";
 // Imported for its SIDE EFFECT as much as its value. `createStripeClient`
-// caches on globalThis and `isStripeConfigured()` / `getStripeOrThrow()` read
-// that cache — so in a process that has never imported this module they both
-// report "not configured" on a deployment that is. Importing the handle
-// directly is what makes that impossible to get wrong here.
+// caches on globalThis and `getStripeOrThrow()` reads that cache — so in a
+// process that has never imported this module it reports "not configured" on a
+// deployment that is. Importing the handle directly is what makes that
+// impossible to get wrong here; `checkout-mode.ts` imports it for the same
+// reason.
 import { stripe } from "@/server/stripe";
 import { createTRPCRouter, protectedProcedure, publicProcedure } from "../trpc";
 
@@ -38,14 +47,17 @@ const logger = createLogger({ level: env.LOG_LEVEL });
  * The in-app checkout: a Stripe Payment Element embedded in our own pages, not
  * a redirect to Stripe's hosted Checkout.
  *
- * WHY THESE THREE PROCEDURES ARE NOT BEHIND requireTenant/requireStaff, when
+ * WHY NONE OF THESE PROCEDURES IS BEHIND requireTenant/requireStaff, when
  * every other procedure in this app is.
  *
  * A storefront that requires a permission to read is not a storefront. The two
  * reads below are `publicProcedure` because the data they return is by
  * definition published — an `active` product is the shop window. `createIntent`
  * is `protectedProcedure` because a payment must be attributable to a person,
- * but there is no capability to check: any signed-in user may buy.
+ * but there is no capability to check: any signed-in user may buy. `simulate`
+ * is `publicProcedure` with the attribution requirement written out in its own
+ * handler, because the deployment it exists for is one where nobody can sign in
+ * at all — see the five properties documented on it.
  *
  * What replaces the permission check is that NOTHING AUTHORIZATION-BEARING
  * COMES FROM THE CLIENT. The amount, the currency, the Stripe price and the
@@ -341,6 +353,47 @@ function isSpentIntent(intent: Stripe.PaymentIntent): boolean {
 }
 
 /**
+ * The Stripe Customer this user already has, or NULL.
+ *
+ * SPLIT OUT OF `ensureCustomer` AND EXPORTED because the billing portal needs
+ * the opposite behaviour to a checkout. Checkout may create a Customer, because
+ * a Subscription requires one and the customer is about to pay. The portal must
+ * not: a portal session opened against a Customer created seconds earlier shows
+ * no payment methods, no invoices and no subscription, which reads to the
+ * person looking at it as though their billing history has been lost. "There is
+ * nothing to manage yet" is the honest answer, and a NULL is what lets the
+ * caller say it.
+ *
+ * `metadata['appUserId']` is the join, and this is the only place that spelling
+ * lives. `/account/billing` finding the customer by a query written a second
+ * time is how the two come to disagree about which Stripe object belongs to a
+ * person — and the disagreement would surface as a customer being handed a
+ * stranger's billing portal.
+ */
+export async function findStripeCustomerId(
+  client: NonNullable<typeof stripe>,
+  userId: string,
+): Promise<string | null> {
+  // The id goes into a Stripe search QUERY, which is a string language with
+  // quoting. Our ids are generated (see `idColumn`), so this can only trip if
+  // something upstream starts minting them differently — and the moment it
+  // does, an unescaped quote turns this into query injection against our own
+  // Stripe account.
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(userId)) {
+    throw new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message: "Refusing to build a Stripe search query from an unexpected user id.",
+    });
+  }
+
+  const found = await client.stripe.customers.search({
+    query: `metadata['${APP_USER_METADATA_KEY}']:'${userId}'`,
+    limit: 1,
+  });
+  return found.data[0]?.id ?? null;
+}
+
+/**
  * The Stripe Customer for this user, created if we have never seen them.
  *
  * A Subscription requires one; a PaymentIntent does not, which is why the
@@ -363,24 +416,8 @@ async function ensureCustomer(
   client: NonNullable<typeof stripe>,
   principal: { readonly userId: string; readonly email: string | null },
 ): Promise<string> {
-  // The id goes into a Stripe search QUERY, which is a string language with
-  // quoting. Our ids are generated (see `idColumn`), so this can only trip if
-  // something upstream starts minting them differently — and the moment it
-  // does, an unescaped quote turns this into query injection against our own
-  // Stripe account.
-  if (!/^[A-Za-z0-9_-]{1,128}$/.test(principal.userId)) {
-    throw new TRPCError({
-      code: "INTERNAL_SERVER_ERROR",
-      message: "Refusing to build a Stripe search query from an unexpected user id.",
-    });
-  }
-
-  const found = await client.stripe.customers.search({
-    query: `metadata['${APP_USER_METADATA_KEY}']:'${principal.userId}'`,
-    limit: 1,
-  });
-  const existing = found.data[0];
-  if (existing) return existing.id;
+  const existing = await findStripeCustomerId(client, principal.userId);
+  if (existing !== null) return existing;
 
   const created = await client.stripe.customers.create(
     {
@@ -694,16 +731,23 @@ export const checkoutRouter = createTRPCRouter({
    *
    * FOUR PROPERTIES MAKE IT SAFE, and it is not safe without all four.
    *
-   *  1. IT REFUSES TO RUN ONCE STRIPE IS CONFIGURED. The moment
-   *     STRIPE_SECRET_KEY is set this procedure is dead code and unreachable.
-   *     That is what stops it being a way to take products without paying, and
-   *     it is gated on the honest condition — whether this deployment can take
-   *     money — rather than on NODE_ENV or a feature flag. A NODE_ENV gate is
-   *     the wrong test twice over: it would keep this path alive on a
-   *     production deployment that has Stripe configured (a free-products
-   *     endpoint on a live shop), and kill it on the local machine where it is
-   *     the entire point. The condition here flips by itself, correctly, in
-   *     both directions.
+   *  1. IT RUNS ONLY WHERE IT CAN PROVE IT IS MEANT TO. One call, to the one
+   *     predicate: `checkoutMode()`. Not "is Stripe missing", not "is this not
+   *     production" — those are NEGATIVE gates, and this procedure is the
+   *     standing proof of what a negative gate costs. It used to read
+   *     `!stripe && resolveAppEnv() !== "production"`, which grants the
+   *     capability unless it can name a reason not to; `resolveAppEnv()` read
+   *     `VERCEL_ENV` and nothing else, a self-hosted production shop was
+   *     therefore not "production" by that reading, no exclusion fired, and a
+   *     verifier minted a licence key against a £29 product for free on a real
+   *     host. `checkoutMode()` inverts it: `simulated` is granted by two named
+   *     cases — a positively identified local environment, or a staging
+   *     deployment carrying `ALLOW_SIMULATED_CHECKOUT=true` — and everything
+   *     else, including an environment nobody labelled and any value added to
+   *     `AppEnv` in future, falls through to a refusal without anyone having
+   *     had to think of it. It still flips by itself the moment the Stripe keys
+   *     are pasted in, because "is Stripe configured" is the first thing that
+   *     predicate asks.
    *  2. IT NEVER TOUCHES STRIPE. No customer, no PaymentIntent, no
    *     subscription. `fulfilPurchase` does not import Stripe at all.
    *  3. IT GOES THROUGH THE SAME ELIGIBILITY GATE AS `createIntent` — the same
@@ -712,11 +756,38 @@ export const checkoutRouter = createTRPCRouter({
    *     function.
    *  4. IT IS IDEMPOTENT AND LOUD. Fulfilment is keyed on the reference by a
    *     unique index, and every call writes a `commerce.order.simulated` audit
-   *     row (flagged sensitive) plus a `logger.warn` naming who bought what. An
-   *     order granted without payment must be identifiable forever after.
+   *     row — flagged sensitive, so it lands in the compliance slice rather
+   *     than the firehose — plus a `logger.warn` naming who bought what and
+   *     which environment allowed it. An order granted without payment must be
+   *     identifiable forever after.
+   *
+   * WHY IT IS `publicProcedure` WHEN `createIntent` IS NOT. The one decision
+   * here that looks like a weakening, and is not.
+   *
+   * A real payment is always attributable, because Stripe will not take money
+   * without a customer and this project will not make one without a session. A
+   * deployment with no Clerk keys has no sessions at all: nobody can sign in,
+   * `currentPrincipal()` returns null for every request by construction, and a
+   * `protectedProcedure` therefore refuses everybody. That is what made the
+   * simulated path unreachable on the exact configuration it exists for — a
+   * fresh project with a database and nothing else — and "sign in first" is not
+   * advice anybody can act on when there is nowhere to sign in.
+   *
+   * So attribution is required WHEREVER IT IS POSSIBLE, and only there. With
+   * Clerk configured this still refuses an anonymous caller, exactly as before.
+   * Without it the order is booked with `user_id = NULL`, which is not a
+   * degraded state invented here: `orders.user_id` is nullable by design so
+   * that a guest purchase is a first-class record, and every reader of that
+   * table already handles one. The moment the Clerk keys are pasted in the
+   * requirement comes back by itself, with nothing to remember and nothing to
+   * remove.
+   *
+   * The rung change also moves this onto the anonymous, IP-keyed rate-limit
+   * budget instead of the per-user one, which is the right budget for a
+   * mutation an unauthenticated caller can reach.
    */
-  simulate: protectedProcedure
-    .meta({ scope: "authenticated" })
+  simulate: publicProcedure
+    .meta({ scope: "public" })
     .input(
       z.object({
         variantId: z.string().min(1),
@@ -724,32 +795,57 @@ export const checkoutRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      if (isStripeConfigured()) {
-        // Property 1. `@/server/stripe` is imported at the top of this module,
-        // so the globalThis cache `isStripeConfigured` reads is warm by the
-        // time this line runs — see the note on that import.
+      // Property 1, and it is the FIRST statement in the procedure. Before the
+      // eligibility read, because a deployment with no database would otherwise
+      // answer "cannot connect" here — which reads as an outage and sends
+      // somebody looking for the wrong fault entirely.
+      //
+      // The refusal carries the predicate's own `reason`, so the sentence the
+      // API returns is the same sentence the checkout page and the storefront
+      // notice are rendering from. There is no second copy to keep in step.
+      const mode = checkoutMode();
+      if (mode.kind !== "simulated") {
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
-          message:
-            "Simulated purchases are only available while Stripe is not " +
-            "configured. This deployment has STRIPE_SECRET_KEY set, so use " +
-            "the real checkout.",
+          message: `Simulated purchases are not available here. ${mode.reason}`,
         });
       }
 
-      // Property 3. The same call `createIntent` makes, three procedures up.
+      // For the log line and the audit row only — never for the decision, which
+      // was made above. Both are recorded because "which environment allowed
+      // this" is the first question asked of a free grant after the fact, and
+      // `origin` is the half that says whether anybody had declared it.
+      const { appEnv, origin } = describeAppEnv();
+
+      // Attribution wherever it is possible, and nowhere it is not. With Clerk
+      // configured this is the same refusal `protectedProcedure` used to make;
+      // without it there is no account for an order to belong to.
+      const buyerId = ctx.principal?.userId ?? null;
+      if (buyerId === null && isSignInConfigured()) {
+        throw new TRPCError({
+          code: "UNAUTHORIZED",
+          message:
+            "Sign in first. This deployment can identify people, so an order " +
+            "recorded on it has to belong to somebody.",
+        });
+      }
+
+      // Property 4. The same call `createIntent` makes, three procedures up.
       const variant = await purchasableOrThrow(input.variantId, input.quantity);
 
       const reference = simulatedReference();
 
-      // Property 4, first half. Logged BEFORE the write as well as after, so a
+      // Property 5, first half. Logged BEFORE the write as well as after, so a
       // fulfilment that throws halfway still leaves a record that somebody
       // tried — the pre-write line is the only evidence a crashed grant ever
-      // happened.
+      // happened. A guest purchase logs `userId: null` rather than omitting the
+      // field, so the line still reads as an answer instead of a gap.
       logger.warn(
         {
           reference,
-          userId: ctx.principal.userId,
+          appEnv,
+          appEnvOrigin: origin,
+          userId: buyerId,
           tenantId: variant.tenantId,
           variantId: variant.variantId,
           productSlug: variant.productSlug,
@@ -763,7 +859,7 @@ export const checkoutRouter = createTRPCRouter({
       const result = await fulfilPurchase({
         variantId: variant.variantId,
         quantity: input.quantity,
-        userId: ctx.principal.userId,
+        userId: buyerId,
         // From the product row, never from the request. The storefront's tenant
         // is whose catalog this is, and letting a client name it would let one
         // customer book an order into another's ledger.

@@ -221,12 +221,15 @@ function fail(message: string): never {
 /**
  * Two gates, because one of them is nearly always satisfied.
  *
- * `resolveAppEnv()` reads `VERCEL_ENV`, which nothing outside Vercel sets — so
- * it says "local" on a laptop AND in any CI runner, and on its own it would
- * only stop someone running this from a Vercel build. The dangerous case it
- * misses is the ordinary one: a developer whose `.env.local` was filled in from
- * `vercel env pull --environment=production`. The app URL is the tell, because
- * it comes from the same pull.
+ * `resolveAppEnv()` now recognises every host — a platform variable, an
+ * explicit `APP_ENV`, or `NODE_ENV` as the fallback discriminator — so it does
+ * stop a run from inside a deployment, wherever that deployment lives. What it
+ * still cannot see is the dangerous case, and that one is the ordinary one: a
+ * developer running this under `tsx` on their own laptop, where the answer is
+ * honestly "local", with a `.env.local` filled in from
+ * `vercel env pull --environment=production`. Nothing about the process says
+ * anything is wrong; the connection string does. The app URL is the tell,
+ * because it came from the same pull.
  */
 function assertLocal(): void {
   const appEnv = resolveAppEnv();

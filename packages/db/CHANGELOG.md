@@ -1,5 +1,12 @@
 # @adminigloo/db
 
+## 0.2.2
+
+### Patch Changes
+
+- Updated dependencies
+  - @adminigloo/env@0.3.0
+
 ## 0.2.1
 
 ### Patch Changes

@@ -2,11 +2,36 @@ import { auth, currentUser } from "@clerk/nextjs/server";
 import { eq } from "drizzle-orm";
 import type { Principal } from "__SCOPE__/auth";
 import { users } from "__SCOPE__/auth/schema";
-import { personalWorkspaceId, personalWorkspaceSlug } from "__SCOPE__/tenancy";
+import {
+  grantTenantOwnerRole,
+  personalWorkspaceId,
+  personalWorkspaceSlug,
+} from "__SCOPE__/tenancy";
 import { tenantMembers, tenants } from "__SCOPE__/tenancy/schema";
 import { db } from "@/db";
 import { env } from "@/env";
 import { grantBootstrapAdminIfFirst } from "./bootstrap";
+
+/**
+ * Can anybody sign in to this deployment at all?
+ *
+ * BOTH KEYS, because either alone is a deployment that cannot authenticate:
+ * the publishable key draws the sign-in card and the secret key is what
+ * verifies the session behind it. The condition was written inline in
+ * `currentPrincipal` and nowhere else, so every other caller that needed to
+ * know re-derived it — and the two that got it wrong tested only the
+ * publishable half, which is the one a browser can see.
+ *
+ * IT IS A REAL PRODUCT STATE, not a diagnostic. A project generated an hour ago
+ * has no Clerk keys, and the honest thing for a page to do about that is not
+ * always "redirect to /sign-in": the simulated checkout books a GUEST order on
+ * such a deployment, because `orders.user_id` is nullable precisely so that a
+ * purchase nobody can be attributed to is still a purchase. Every page that
+ * behaves differently when nobody can sign in asks this one function.
+ */
+export function isSignInConfigured(): boolean {
+  return Boolean(env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && env.CLERK_SECRET_KEY);
+}
 
 /**
  * Who is making this request, as a Principal.
@@ -20,7 +45,7 @@ export async function currentPrincipal(): Promise<Principal | null> {
   // the keys are absent, so without this guard every page that asks who the
   // caller is 500s on a laptop that has not signed up for Clerk — including
   // /setup, which exists to tell you that Clerk is what is missing.
-  if (!env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY || !env.CLERK_SECRET_KEY) return null;
+  if (!isSignInConfigured()) return null;
 
   const { userId: externalId } = await auth();
   if (!externalId) return null;
@@ -100,14 +125,33 @@ async function mirrorUser(externalId: string) {
 }
 
 /**
- * Give a brand-new user somewhere to be.
+ * Give a brand-new user somewhere to be, and something to be there.
  *
  * Tenancy is always on, so a user with no membership can reach no tenant-scoped
  * route at all — `tenantProcedure` denies non-members by design. A consumer-shaped
  * project would otherwise sign someone up into a dead end.
  *
- * Idempotent: both writes conflict-do-nothing, so a concurrent request or a
- * later re-run changes nothing.
+ * THREE WRITES, AND THE THIRD IS NOT OPTIONAL. This used to write the tenant
+ * and the membership and stop, which put the customer inside a workspace they
+ * owned and could do nothing in: permissions are deny-by-default and neither
+ * @__SCOPE_NAME__/permissions nor @__SCOPE_NAME__/tenancy grants an owner
+ * anything implicitly, so `owner_user_id` pointing at you conferred exactly
+ * zero. The visible symptoms were `/account/billing` explaining that the
+ * renewal amount is shown to whoever holds `subscriptions.view` — "normally its
+ * owner" — to the owner, `account.billingPortal` answering FORBIDDEN, and
+ * inviting anybody refused for want of a rank to compare the invitation
+ * against. None of it raised an error; the product behaved as though the
+ * customer were a stranger in their own account.
+ *
+ * `grantTenantOwnerRole` writes a real `principal_role` row rather than
+ * teaching the resolver to imply one, so what the owner can do stays a thing
+ * you can read out of a table — see the block comment on that function for why
+ * that trade is worth a backfill script.
+ *
+ * Idempotent: all three writes conflict-do-nothing, so a concurrent request or
+ * a later re-run changes nothing. The role grant also inserts nothing when the
+ * templates have not been seeded yet, rather than throwing — a fresh database
+ * with no `pnpm db:seed` behind it must not turn a first sign-in into a 500.
  */
 async function ensurePersonalWorkspace(userId: string): Promise<void> {
   const tenantId = personalWorkspaceId(userId);
@@ -127,4 +171,10 @@ async function ensurePersonalWorkspace(userId: string): Promise<void> {
     .insert(tenantMembers)
     .values({ tenantId, userId, status: "active" })
     .onConflictDoNothing();
+
+  // AFTER the membership, deliberately. A role row for somebody who is not a
+  // member resolves to nothing — `loadTenantPermissions` checks membership
+  // first and returns null — so writing it earlier would be a row that means
+  // nothing until the next statement succeeds.
+  await grantTenantOwnerRole(db, { tenantId, userId });
 }

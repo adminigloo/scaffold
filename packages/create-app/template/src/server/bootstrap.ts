@@ -29,6 +29,18 @@ import { env } from "@/env";
  *               With no `BOOTSTRAP_ADMIN_EMAIL` set, a deployment grants
  *               nothing automatically and you assign the first role by hand.
  *
+ * AND UNTIL RECENTLY THE "DEPLOYED" BRANCH ONLY EVER RAN ON VERCEL. This is one
+ * line of `if`, and it was correct the whole time — but `resolveAppEnv()` read
+ * `VERCEL_ENV` and nothing else, so a self-hosted deployment on Docker, Fly,
+ * Railway, Render, ECS or a VPS answered "local" and took the branch above it.
+ * Every such deployment handed staff:admin to whoever signed up first, which is
+ * precisely the race this comment describes. The environment now recognises
+ * every host and an unlabelled one is not "local", so the branch fires where it
+ * always should have. The cost of that fix is worth stating plainly: a
+ * self-hosted deployment with no `BOOTSTRAP_ADMIN_EMAIL` set now grants nobody,
+ * and the first staff role is assigned by hand — which is the same deal Vercel
+ * deployments have always had.
+ *
  * SERIALISED BY AN ADVISORY LOCK, and the reason is worth reading before anyone
  * "simplifies" it away.
  *

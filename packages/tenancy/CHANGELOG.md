@@ -1,5 +1,71 @@
 # @adminigloo/tenancy
 
+## 0.3.0
+
+### Minor Changes
+
+- A tenant's owner holds the owner role in it, as a row.
+  
+  **Owning a tenant conferred nothing.** `tenants.owner_user_id` says who a tenant
+  belongs to and `tenant_members` says they are in it; neither is a permission.
+  `@adminigloo/permissions` is deny-by-default all the way down and grants nothing
+  implicitly, so a customer who signed up, was given a personal workspace and
+  bought something held zero permissions in the only tenant they belonged to.
+  `/account/billing` told them the renewal amount is shown to whoever holds
+  `subscriptions.view` — "normally its owner" — while they were the owner,
+  `account.billingPortal` answered FORBIDDEN, and inviting anybody was refused
+  because they had no rank to compare an invitation against. Nothing errored; the
+  product simply behaved as though the customer were a stranger in their own
+  account.
+  
+  **A row, not a rule in the resolver.** Teaching `resolvePermissionSet` that an
+  owner implicitly holds the owner template is fewer lines and needs no backfill,
+  and it costs the property the permission model is built on: everything a
+  principal can do is a row you can read, join, diff and audit. An implicit grant
+  appears in no table — the admin checklist could not render it,
+  `explainPermission` could not attribute it, revoking it would mean special-casing
+  the ownership pointer, and "why can this person refund" would be answered by a
+  resolver's source rather than by the database. This package already refuses that
+  trade once, by giving `tenant_members` no role column so that a role is written
+  in exactly one place.
+  
+  **Two new exports.**
+  
+  - `grantTenantOwnerRole(db, { tenantId, userId })` — one owner, at workspace
+    creation. Returns whether a row was written.
+  - `backfillTenantOwnerRoles(db)` — every tenant whose owner is an active member
+    and holds no role. Returns how many rows were written. This is the repair for
+    workspaces that already exist, and it is not optional: the creation path runs
+    on a user's *first* sign-in only, so fixing creation fixes nobody who has
+    already signed up.
+  
+  Both are a single `insert … select` against `role_template`, so an unseeded
+  database inserts zero rows and reports zero rather than throwing — a first
+  sign-in must not become a 500 because `pnpm db:seed` has not been run yet. Both
+  carry `on conflict do nothing` against `principal_role`'s primary key, so an
+  owner who has deliberately been assigned a *lower* template is never silently
+  promoted back. The backfill skips soft-deleted tenants and suspended owners,
+  because reinstating authority somebody removed on purpose is not a repair.
+  
+  `TENANT_OWNER_TEMPLATE_KEY` is exported alongside them so the one word that has
+  to agree with `TENANT_ROLE_TEMPLATES`, with every `defaultFor: ["owner"]` in
+  every catalog fragment and with the seeded row has a single spelling.
+  
+  **What this does to `assertMayGrant`.** Its rank comparison is
+  `canManageTemplateKey`, which is strictly greater, so an owner still cannot
+  invite another owner — deliberately, and unchanged. What changes is everything
+  below that: an owner previously matched the "you hold no role in this
+  organisation" branch and was refused *every* role, including viewer. They can
+  now invite admin, member and viewer, which is the behaviour that branch was
+  written to allow.
+  
+  No table objects and no `drizzle-orm/pg-core`, so the package root stays safe
+  for client components.
+
+### Patch Changes
+
+- @adminigloo/db@0.2.2
+
 ## 0.2.0
 
 ### Minor Changes

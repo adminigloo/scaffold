@@ -1,5 +1,11 @@
 import type { z } from "zod";
-import { resolveAppEnv, type AppEnv, type EnvSource } from "./app-env.js";
+import {
+  describeAppEnv,
+  isDeployed,
+  type AppEnv,
+  type AppEnvOrigin,
+  type EnvSource,
+} from "./app-env.js";
 import { isBlank } from "./validators.js";
 
 /**
@@ -36,6 +42,25 @@ export interface EnvGroupReport {
 
 export interface EnvReport {
   readonly appEnv: AppEnv;
+  /**
+   * Which variable decided `appEnv`, or `unidentified` if none did.
+   *
+   * On the page this is the difference between "this is staging" and "nothing
+   * on this box says where it is, so it is being treated as staging". The
+   * second sentence has an action attached to it and the first does not, and
+   * without this field the page cannot tell them apart.
+   */
+  readonly origin: AppEnvOrigin;
+  /**
+   * Was this IDENTIFIED as a deployment, by the platform or by `APP_ENV`?
+   *
+   * This — not `appEnv !== "local"` — is what decides whether a deferred
+   * credential counts as required, because it is the same predicate `defineEnv`
+   * uses to decide whether the app will actually refuse to boot without it. A
+   * report that answered that question differently from the validator would
+   * tell somebody their deployment is fine and then fail to start.
+   */
+  readonly deployed: boolean;
   readonly groups: readonly EnvGroupReport[];
   /**
    * Absent variables that block boot under LOCAL strictness — that is, with
@@ -89,7 +114,9 @@ export interface DescribeEnvOptions {
  * about the key's value.
  */
 export function describeEnv(opts: DescribeEnvOptions): EnvReport {
-  const appEnv = resolveAppEnv(opts.source ?? process.env);
+  const source = opts.source ?? process.env;
+  const { appEnv, origin } = describeAppEnv(source);
+  const deployed = isDeployed(source);
   const relaxable = new Set(opts.optionalUntilDeployed ?? []);
 
   const scoped: { scope: "server" | "client"; report: EnvVarReport }[] = [];
@@ -116,7 +143,11 @@ export function describeEnv(opts: DescribeEnvOptions): EnvReport {
       const requiredWhenDeployed = !whenAbsent.success;
       const defaulted = whenAbsent.success && whenAbsent.data !== undefined;
       const requiredLocally = requiredWhenDeployed && !relaxable.has(name);
-      const required = appEnv === "local" ? requiredLocally : requiredWhenDeployed;
+      // `deployed`, not `appEnv`. An unidentified host resolves to "staging" so
+      // that the danger gates close, but `defineEnv` still defers its
+      // credentials there — and a report that called them required would list
+      // blockers for a boot that is going to succeed.
+      const required = deployed ? requiredWhenDeployed : requiredLocally;
 
       const malformed = present && !schema.safeParse(raw).success;
       if (malformed) anyMalformed = true;
@@ -168,11 +199,17 @@ export function describeEnv(opts: DescribeEnvOptions): EnvReport {
 
   const ok =
     !anyMalformed &&
-    (appEnv === "local"
-      ? missingLocally.length === 0
-      : missingWhenDeployed.length === 0);
+    (deployed ? missingWhenDeployed.length === 0 : missingLocally.length === 0);
 
-  return { appEnv, groups, missingLocally, missingWhenDeployed, ok };
+  return {
+    appEnv,
+    origin,
+    deployed,
+    groups,
+    missingLocally,
+    missingWhenDeployed,
+    ok,
+  };
 }
 
 /**
@@ -232,7 +269,7 @@ export function formatEnvReport(report: EnvReport): string {
   const beforeDeploying = report.missingWhenDeployed.filter(
     (name) => !blockingNames.has(name),
   );
-  if (report.appEnv === "local" && beforeDeploying.length > 0) {
+  if (!report.deployed && beforeDeploying.length > 0) {
     section(
       "Required before this deploys to preview or production:",
       beforeDeploying.map((name) => `  - ${name}`),
@@ -243,8 +280,20 @@ export function formatEnvReport(report: EnvReport): string {
     sections.push("Everything this environment requires is set.");
   }
 
+  // The origin is printed only when nothing named the environment, because
+  // that is the only case with an action attached: everywhere else the reader
+  // already knows which variable they set. Left off, an operator reading
+  // "Environment: staging" on their production box has no way to learn that
+  // the word was a guess rather than a reading.
+  const where =
+    report.origin === "unidentified"
+      ? `${report.appEnv} (nothing on this host names the environment - set ` +
+        `APP_ENV to local, staging or production; being unnamed is why the ` +
+        `simulated checkout and the automatic first-admin grant are off)`
+      : report.appEnv;
+
   return [
-    `Environment: ${report.appEnv} - ${healthy} of ${entries.length} variables set.`,
+    `Environment: ${where} - ${healthy} of ${entries.length} variables set.`,
     "",
     sections.join("\n\n"),
   ].join("\n");

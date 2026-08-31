@@ -1,5 +1,415 @@
 # create-adminigloo-app
 
+## 0.10.0
+
+### Minor Changes
+
+- A customer could buy something and had nowhere to see it. New `account` overlay.
+  
+  **Every surface in the scaffold was an operator surface.** `fulfilPurchase`
+  writes `orders`, `order_items`, `order_shipments` and `entitlements`, and mints
+  a Crockford-base32 licence key inside the transaction that books the order — and
+  the only reader in the entire project was `readOrderByReference`, called by one
+  page, keyed on a reference in a URL the buyer is about to navigate away from. A
+  customer who closed the tab after `/checkout/success` had permanently lost a key
+  no page, no admin screen and no support tool could retrieve. `checkEntitlement`,
+  `resolveEntitlements` and `createBillingPortalSession` had zero callers between
+  them. The machine was built; there was no dial.
+  
+  **Four routes, in a new strictly-additive overlay selected on exactly the
+  condition the stripe overlay is.** `/account` is what you hold — licence keys
+  first, then allowances, then deliveries, then recent orders, because somebody
+  arriving here wants the key rather than the receipt. `/account/orders` is the
+  full history, with a refunded total struck through. `/account/orders/
+  [orderNumber]` is one order with the money ladder the `orders` table has always
+  stored as five separate columns and never rendered — subtotal, discount,
+  shipping, tax, total — plus its licence keys, what it granted, and where the
+  parcel is. `/account/billing` is the subscription state and one button into
+  Stripe's hosted portal. `app/(site)/account/**` is a path the base template owns
+  nothing under, so `assertOverlaysAreAdditive` passes by construction.
+  
+  **The scoping decision, which had to be settled before any of it could be
+  written.** A storefront order is booked with `orders.tenant_id =
+  STOREFRONT_TENANT_ID`, which is `FIRM_WIDE`, and `orders.user_id` = the buyer.
+  Every customer of the shop therefore shares one tenant id. Reading an order list
+  by tenant hands each buyer the whole shop's history; reading it by the buyer's
+  own organisation returns nothing, because their order was never booked there.
+  So `listOrdersForUser` and `readOrderForUser` filter on `user_id`, with the
+  tenant as a narrowing second predicate, and the ownership predicate is in the
+  WHERE clause rather than in an `if` after the read — the early return that
+  compares `order.userId` is exactly the line a later refactor deletes as
+  redundant.
+  
+  The same argument applies harder to entitlements, which `applyGrant` also writes
+  at `FIRM_WIDE`: that table is not a per-customer bucket and must never be read
+  as one. The account area reaches a grant only THROUGH the order that paid for
+  it, joining on the `source_ref` provenance column that already existed —
+  `split_part(source_ref, ':', 1)`, never a LIKE pattern, because `_` is a
+  single-character wildcard and a Stripe reference is `pi_3ABC…`, so the pattern
+  form would silently match other customers' grants. Subscriptions are the one
+  thing that genuinely is per tenant, so `/account/billing` resolves the viewer's
+  own organisation and checks the tenant permission ladder against it.
+  
+  **Permissions: two existing TENANT keys, and no new ones.** `subscriptions.view`
+  from `@adminigloo/billing` gates the billing state and `billing.portal.open`
+  from `@adminigloo/stripe` gates the portal — both already spread into the tenant
+  catalog, both checked with `requireTenant`. `/account` and `/account/orders`
+  check no key at all, deliberately: the buyer is not a member of the tenant their
+  own order lives in, so `requireTenant("orders.view")` there would deny every
+  customer their own receipt and error nowhere, which is the exact failure the
+  scope rules exist to prevent. Ownership is the authorisation on those pages, and
+  a permission on them would be theatre. Where a key IS missing the control is
+  rendered disabled with the reason beside it rather than hidden; a pure
+  disclosure with nothing to act on is hidden instead.
+  
+  **The billing portal degrades honestly rather than throwing.** The button
+  renders only when `STRIPE_SECRET_KEY` is present — the same condition
+  `SimulatePurchase` keys off, which flips by itself the moment the keys are
+  pasted in — and `account.billingPortal` enforces the same condition server-side,
+  returning a three-way discriminated union so "this deployment cannot reach
+  Stripe" and "you have never been charged" get different sentences and neither
+  gets an error boundary. `ensureCustomer` in the checkout router is split so the
+  portal can look a Stripe customer up without creating one: a session opened
+  against a Customer created seconds earlier shows no invoices and no cards, which
+  reads as lost billing history. Opening the portal writes one audit row, marked
+  sensitive, because the act itself then happens at Stripe where this application
+  sees nothing — so without it "who cancelled our subscription" has no answer.
+  
+  **Three new readers beside `readOrderByReference`**, in `fulfilment.ts` so one
+  module still knows how an order is read: `listOrdersForUser`,
+  `readOrderForUser` and `referenceOfKey`, sharing one column list and one
+  line-loading query. `FulfilledOrderView` gains the four money columns and the
+  fulfilment reference. `/account` appears in `APP_LINKS` for any project that
+  sells something, and the account tab strip is now read by the reachability
+  guard, so `/account/orders` and `/account/billing` are proved linked rather than
+  excused.
+  
+  The overlay's decisions — what a subscription's five nullable columns mean, how
+  an unlimited allowance reads, when a shipment row is a parcel — live in
+  `src/account.ts` with no `@/db` import, and run as a third vitest project
+  against workspace source. The queries live in `src/server/account.ts` and are
+  deliberately not unit-tested: a mocked database would assert the mock's opinion
+  of a WHERE clause, which is the one thing about them that matters and the one
+  thing a mock cannot check.
+- One predicate decides which checkout is live, it is stated positively, and a
+  tenant owner is given their role at creation.
+  
+  **The page and the procedure disagreed, in the dangerous direction.**
+  `app/(site)/checkout/page.tsx` carried a comment promising that "the page and
+  the procedure cannot disagree about which checkout is live". They did. The page
+  branched on `!stripe`, the storefront notice on `stripe === null`, the Simulate
+  button on nothing at all, and only `checkout.simulate` also asked what
+  environment it was on. Grepping `resolveAppEnv` across `checkout/page.tsx`,
+  `products/page.tsx` and `SimulatePurchase.tsx` returned nothing: none of the
+  three customer-facing surfaces knew where it was running, so a production
+  deployment with no Stripe key rendered "payments are not configured, so buying
+  is simulated" to every visitor and drew a button the server then refused.
+  
+  **`src/server/checkout-mode.ts` is now the one predicate.** `checkoutMode()`
+  returns `{ kind: "stripe" | "simulated" | "unavailable", reason }`. The checkout
+  page calls it, the storefront notice calls it, `checkout.simulate` calls it, and
+  `SimulatePurchase` is handed its result as a prop with a type-only import — so
+  the browser renders the server's decision instead of forming a fourth opinion.
+  `reason` is written once and is what the page prints, what the notice prints and
+  what the mutation refuses with, so the customer-facing sentence and the API
+  error cannot drift apart either.
+  
+  **The gate is positive now.** It used to be
+  `!stripe && resolveAppEnv() !== "production"` — a negative gate, which grants a
+  dangerous capability unless it can name a reason not to. Every negative gate
+  fails the same way: something the author did not enumerate arrives, matches no
+  exclusion, and is allowed. That is exactly what happened. `resolveAppEnv()` read
+  `VERCEL_ENV` and nothing else, a self-hosted production shop was therefore not
+  `"production"` by that reading, and a verifier minted licence key
+  `SSHFF-281V7-CJQMQ-1A4KJ` against a £29 product for free on a real host.
+  
+  `simulated` is now granted by two named cases and nothing else:
+  
+  - a **positively identified local environment** — a dev server, a test run, or
+    `APP_ENV=local`. No opt-in, because that is the whole promise: a shop you can
+    buy from twenty minutes after generating it, with no Stripe account. Note that
+    `local` is now an affirmative identification rather than the fall-through
+    default it used to be, which is what makes it usable as proof at all.
+  - **staging with `ALLOW_SIMULATED_CHECKOUT=true`.** A preview deployment is
+    where this gets demoed, and "somebody is going to demo this" is a fact only a
+    person knows — so a person says it, once, in the deployment's own
+    configuration. New variable, declared in the generated `src/env.ts` as
+    `z.enum(["true", "false"]).default("false")`: unset means off, and a value
+    that is neither fails at boot rather than being read as one of them.
+  
+  Everything else — production, and any environment nobody labelled, and any
+  `AppEnv` value added in future — falls through to `unavailable` without anyone
+  having had to think of it. `/checkout` renders that state explicitly instead of
+  falling through to a card form with no publishable key behind it.
+  
+  **A tenant owner is given a role row when the workspace is created.**
+  `ensurePersonalWorkspace` wrote the `tenants` row and the `tenant_members` row
+  and stopped, which left every customer holding zero permissions in the only
+  tenant they belonged to — see `@adminigloo/tenancy` for the whole story. It now
+  calls `grantTenantOwnerRole` after the membership, and `scripts/seed-roles.ts`
+  calls `backfillTenantOwnerRoles` after seeding the templates, which is what
+  repairs the accounts that already exist: the creation path only ever runs on a
+  user's first sign-in.
+  
+  **`scripts/migrate.ts` reads `VERCEL_ENV` directly** where it used to call
+  `isDeployed()`. The two used to be the same thing; `isDeployed()` is now also
+  true when `APP_ENV` names a deployment, which is exactly what a self-hosted
+  release pipeline sets — so the guard would have refused to run the migration it
+  exists to run, and blamed Vercel while doing it.
+  
+  `.env.local` and `.env.example` now document `APP_ENV` and
+  `ALLOW_SIMULATED_CHECKOUT`. `APP_ENV` is deliberately *not* written into
+  `.env.local`: a value there would follow a `next start` run to check the
+  production build, and the security property worth keeping is that nothing on
+  disk can make a server look like a laptop.
+- The product builder could never publish anything. Fixed, with the rules that
+  made it reachable moved into the validator.
+  
+  **No product could be published, so the storefront could never have anything on
+  it, so checkout could never be exercised.** `handleSave` awaited
+  `catalog.upsertVariant`, used the returned id for the `setGrant` call on the
+  very next line, and then dropped it. `setRows` was never called after a save, so
+  `row.id` stayed `null` for the lifetime of the component — and `row.id` is what
+  the Publish button, the "has not been written yet" line under it, the
+  `· unsaved` marker on the row header and the Stripe plan's "not in this plan"
+  note all read. The variant WAS in `product_variants`. Nothing threw. The form
+  simply went on insisting the row did not exist, and saving again re-upserted and
+  changed nothing, so the only way out was a page reload that nothing on screen
+  suggested.
+  
+  The save chain now adopts every id the server hands back, on the row that
+  produced the write, before the next call. That is a stronger fix than re-seeding
+  the form from a refetch: `rows` is `useState` seeded from props, and an effect
+  syncing it from props would overwrite whatever the admin was typing on any
+  `router.refresh()`. Adopting ids as they arrive is also what makes a
+  half-finished save recoverable — on the next press the product has an id so it
+  is updated rather than created a second time, and each written row has an id so
+  it is updated rather than duplicated.
+  
+  **`validateProduct` gains the rules the write procedures already enforced.** A
+  blank variant name validated clean, so the form offered Save, created the
+  product, and only then had `upsertVariant` refuse it — leaving a draft product
+  with no variants and a stringified list of zod issues on the page. `path:
+  ["name"]` does not say whether it means the product or one of six variant rows.
+  Four new problem codes close it: `product-name-missing`,
+  `product-name-too-long`, `variant-name-missing` and `variant-name-too-long`,
+  capped at the 200 characters the columns and the procedures already used. A
+  blank variant name is now `variants[0].name` before anything is written, and the
+  form refuses to start the chain rather than half-writing the product.
+  
+  `validateProduct` also stops treating a blank name as a name. `variant.name ??
+  variant.sku` reported every OTHER problem on a nameless row as
+  `"" has no billing interval` — a message identifying nothing on a form holding
+  six of them. It falls through to the SKU and then to the row's position, as it
+  always meant to.
+  
+  **A refusal that does get through is now a sentence.** Anything a zod schema
+  rejects is mapped back to the field label printed above the input — "“Name” on
+  variant 2 (“Deluxe”) cannot be empty." — rendered under that input, with the
+  cursor moved to it. Messages the server wrote for a human, such as a taken slug
+  or the publish validator's list, pass through untouched. A dropped connection
+  says so instead of "Failed to fetch". And "1 change were already saved" is now
+  "1 change was already written before this failed", with advice to press the
+  button again rather than to reload a create page that has nothing to reload.
+  
+  The chain, the draft review and the error mapping moved out of `ProductForm.tsx`
+  into plain `.ts` modules, because `jsx: "preserve"` keeps vitest out of a `.tsx`
+  entirely — every one of these defects was invisible reading the code and obvious
+  the first time the sequence could be run by a test. Those tests now execute:
+  `packages/create-app` gained a second vitest project that runs the
+  `catalog-admin` overlay's suite against workspace source, with `__SCOPE__` and
+  `@/` aliased the way the generator renders them. They previously ran nowhere at
+  all, which is why the whole monorepo suite was green while this shipped.
+  
+  `PACKAGE_VERSIONS.catalog` moves to `0.2.0` with it. A generated project
+  resolving `^0.1.x` would get a validator with no opinion about a blank variant
+  name, which is precisely the hole the form used to fall through.
+- The simulated purchase is reachable, the admin dashboard counts something, and
+  `Company` pluralises.
+  
+  **The simulated checkout was not missing, the road to it was.** `fulfilPurchase`
+  books an order, applies every grant and mints a licence key with no Stripe
+  account, `checkout.simulate` calls it, and both are tested — but
+  `scripts/seed-demo.ts` seeded people, a tenant, roles, an audit trail and an
+  error queue, and no catalogue. With an empty `products` table `/products` is an
+  empty page, `/products/[slug]` has no slug to resolve, `/checkout` has nothing
+  to price, and the button therefore could not be clicked by anybody. A new
+  `scripts/seed-shop.ts` in the stripe overlay seeds one active product per grant
+  kind — `entitlement`, `license_key`, `ship`, `none` — plus a draft, an archived
+  product, a zero-inventory variant and a null-inventory one, so
+  `assertPurchasable`'s `not_for_sale` and `sold_out` refusals have something to
+  refuse. Every seeded order goes through `fulfilPurchase({ source: "simulated" })`
+  under a fixed `sim_` reference; there is no second writer, and re-running
+  restores the fixture instead of multiplying it. `pnpm db:seed:demo` chains it,
+  `pnpm db:seed:shop` re-runs it alone, and the seed prints the storefront URL of
+  each product, the two refusal URLs, and the audit filter that lists the lot.
+  
+  **A second gate on the simulated path, and one fewer excuse for not reaching
+  it.** `checkout.simulate` still refuses the moment `STRIPE_SECRET_KEY` is set,
+  and now also refuses outright when `resolveAppEnv()` is `production` — the hole
+  the Stripe check alone leaves is a production deployment whose keys have not
+  been pasted in yet, which is a real shop with a real catalogue giving everything
+  away. `VERCEL_ENV` is set by the platform and cannot be forged from a dashboard,
+  so there is no variable that turns this back on. Against that, the procedure
+  moved from `protectedProcedure` to `publicProcedure` with the attribution rule
+  written out in its handler: a deployment with no Clerk keys has no sessions at
+  all, so the old rung refused everybody on exactly the configuration the feature
+  exists for. Sign-in is now required wherever anybody CAN sign in, and the order
+  is booked as a guest purchase — `orders.user_id` is nullable by design — where
+  nobody can. `/checkout/success` reads a guest order back on the same condition
+  and stops the day Clerk is configured. The audit row is unchanged:
+  `commerce.order.simulated`, still flagged sensitive.
+  
+  **The admin dashboard was a debug view.** "Signed in as", and eighteen
+  permission chips, as the first screen every client sees. `app/admin/page.tsx` is
+  now generated — like `AdminNav.tsx`, because a panel that counts orders cannot
+  exist in a project with no orders table — and carries counts of rows this
+  scaffold actually writes: unresolved `error_log` rows, `order_shipments` with a
+  null `shipped_at`, open invitations, orders paid in the last 30 days with
+  simulated ones excluded, simulated orders all-time as a number that should go to
+  zero at launch, takings summed per currency (never across them), customer
+  tenants, people, and active products. Numbers with somewhere to go are links.
+  Zero everywhere says so in words and names the command that fixes it. A viewer
+  missing a key sees the key printed where the number would be, and the query does
+  not run. No MRR, no churn, no invented trend percentages. The permission chips
+  moved to `/admin/access` with a sidebar entry, because they answer a real
+  support question and a page nothing links to is a page nobody finds.
+  
+  **`Companys`.** The plural was `${tenantLabel(answers)}s`, which was on screen in
+  the admin sidebar, the `/admin/tenants` heading, its empty state and two
+  permission categories. It is a `Record<TenantNoun, string>` lookup now, so a
+  sixth noun is a type error rather than a guess, with a
+  `__TENANT_LABEL_PLURAL_LOWER__` token so no template file has to spell one
+  itself, and a test over all five nouns.
+  
+  **`pnpm dev` no longer forwards Stripe events into the void.** The old script
+  wrote the port down twice — `next dev` with no `--port` moves to 3001 when 3000
+  is taken while the listener keeps forwarding to 3000, so Stripe reports every
+  delivery as delivered and no order is ever written — and `concurrently -k` took
+  the dev server down with it on any machine without the Stripe CLI installed.
+  `scripts/dev.ts` resolves the port once from `NEXT_PUBLIC_APP_URL`, passes it to
+  both halves, and treats the listener as the optional half it is. `concurrently`
+  is no longer a dependency.
+- Two integration tests that contradicted the shipped code, the pipeline that let
+  them, and a receipt that now names the account area.
+  
+  **Both tests were wrong, and both had been since the commit that introduced
+  them.** They lived in `template/` and `overlays/`, which `pnpm -r test` skips as
+  data, and they needed a `DATABASE_URL` that no pipeline set — so they had never
+  executed anywhere, in any run, ever.
+  
+  `ledger.integration.test.ts` asserted that `decideClaim`, handed the strings a
+  raw `db.execute` returns for a timestamptz, throws `TypeError: getTime is not a
+  function`. It used to. `@adminigloo/stripe` 0.1.2 widened `ClaimInput` to
+  `Date | string | null` and normalises through `asDate`, and the throw it pinned
+  was the bug — inside a webhook, on the retry path, which is the least observed
+  code in the system. Nothing depended on it: the generated webhook route reads
+  through Drizzle's `select()` and never saw a string, and the only other mention
+  of `decideClaim` outside the package is a comment in `@adminigloo/commerce`. The
+  test is now the half the package's own unit suite cannot do — the string comes
+  from Postgres rather than from a literal somebody typed, and the two paths are
+  asserted to AGREE rather than merely not to throw. A lease boundary measured
+  against the Date the ORM produced for the same column is what would catch a
+  normalisation that mis-parsed the real `+00` offset, which turns a five-minute
+  lease into a five-hour one and says nothing.
+  
+  `permissions.integration.test.ts` asserted that a staff row filed under a real
+  tenant id instead of the `'*'` sentinel resolves to an EMPTY SET rather than
+  NULL. NULL is right. Every caller reads a non-null return as ADMISSION —
+  `staffProcedure` throws `notStaff()` on null and otherwise runs the handler,
+  `app/admin/layout.tsx` renders the shell on anything else — so the old behaviour
+  bought entry to the staff surface on the strength of a row from which
+  `resolveFor`, pinned to `FIRM_WIDE`, can never resolve a single permission. It
+  also disagreed with the rest of the app: `admin.people` joins
+  `principal_role` on `scope = 'staff' AND tenant_id = FIRM_WIDE`, so the same
+  principal was listed as holding no staff role on the very page an operator would
+  open to find out why their panel was empty. Pinning the gate makes both queries
+  ask one question and gives the empty set back its meaning — a firm-wide role
+  that grants nothing yet, which is what every newly created role looks like, and
+  which the misfiled row was previously indistinguishable from. Both states now
+  have a test.
+  
+  **Every test file this package ships now runs somewhere, and a new one that
+  would not is a failing test.** `emitted-tests.test.ts` reads the include globs
+  out of `vitest.config.ts` and `template/vitest.config.ts` — never a copy of them
+  — and insists each of the seventeen `.test.ts` files under `template/` and
+  `overlays/` is both emitted into a generated project and matched by a glob that
+  collects it. It fails in the other direction too, on a vitest project whose
+  include matches nothing. The stripe overlay's `storefront.ts` gets a workspace
+  project of its own beside `catalog-admin` and `account`; its server suites
+  cannot run there, because they import a `_app.ts` the generator renders and no
+  alias can invent, and they run in a generated project instead.
+  
+  **CI runs that project's suite.** The `generate` job typechecked and built and
+  never tested; it now runs the unit project before the build and the integration
+  project after it, against a `postgres:17` service container. `REQUIRE_DATABASE=1`
+  is what makes that real: `describeIntegration` refuses to skip under it and each
+  suite becomes one failing test naming itself, so a run whose database failed to
+  appear cannot report success. Without the variable — on a laptop — the skip
+  prints a line per suite saying what did not run, because "12 skipped" beside a
+  green tick is how this survived.
+  
+  `DATABASE_WS_PROXY` is what lets any of that reach a database that is not Neon.
+  The driver carries the wire protocol over a WebSocket, which is the only
+  transport on which a serverless function can hold an interactive transaction,
+  and it therefore cannot dial a plain listener at all. Set the variable and
+  `src/db/index.ts` points the driver at a bridge; `.github/scripts/ws-proxy.mjs`
+  is thirty lines of one, and DEPLOYMENT.md has the two commands. Unset — every
+  deployment, and every laptop pointed at Neon — it does nothing.
+  
+  `bootstrap.integration.test.ts` stopped depending on rows it did not write. One
+  test read whatever staff assignments the shared staging branch happened to be
+  seeded with and asserted there was at least one, which passes on a developer's
+  database and fails on a fresh one. It seeds its own incumbent now, deliberately
+  on a non-admin template, since the guard is `WHERE NOT EXISTS (… scope =
+  'staff')` and a fixture built on `staff:admin` could not tell that from a guard
+  that only looks for admins.
+  
+  **`/checkout/success` points at the account area.** Its only way out was "Browse
+  products". It is a return URL: nothing links to it, its address carries a client
+  secret or a fulfilment reference that stops resolving, and the customer closes
+  the tab a minute after arriving — so a licence key rendered there and named
+  nowhere else is a key lost by closing a tab. Both paths now end in a block
+  linking the order in the buyer's account, their order history and their account
+  overview, with `accountOrderHref` imported from the overlay that owns the rule
+  rather than rebuilt. The Stripe path has no order number yet when the webhook
+  has not landed, which is the common case and not an error, so it links the list.
+  Where nobody can sign in the block does not render at all, because `/account`
+  could only answer "sign in to see what you have".
+  
+  **The generator can produce every configuration, and CI asserts it on every
+  commit.** A verifier found a twenty-five minute window in which no project with
+  an admin panel could be generated at all — `CAPABILITY_EVIDENCE` named a file
+  that was mid-move — and although `capabilities.test.ts` would have been red
+  throughout, its sweep is a hand-written array that fixes `tenantNoun` at two of
+  its five values. The option sets moved into `answers.ts` as tuples the types are
+  derived from, `cli.ts` validates against those same tuples, and
+  `every-configuration.test.ts` takes the cartesian product: all 240 are planned,
+  all 240 are checked to be reachable through the flags with nothing left to a
+  prompt, and the two corners are written to disk. A new option value is swept the
+  day it exists rather than the day somebody remembers. The nightly matrix keeps
+  the questions that genuinely need a package manager, and now runs each
+  combination's unit suite as well.
+  
+  **A generated project with a real DATABASE_URL could not build at all, and
+  that is what pointing one at a database found.** `src/db/index.ts` handed
+  `createDb` the `src/db/schema.ts` module namespace. Under Turbopack a module
+  whose exports are all re-exports compiles to a namespace backed by a Proxy over
+  a non-extensible target, and `Object.keys` on one of those throws — which is
+  precisely what drizzle does, in `extractTablesRelationalConfig`, the moment a
+  connection string means it builds the relational query API instead of the
+  unconfigured stand-in. So the failure was invisible without a database and total
+  with one: `next build` exits on page-data collection with `TypeError: 'ownKeys'
+  on proxy: trap returned extra keys but proxy target is non-extensible`, thrown
+  from inside a driver and naming nothing. `src/db/schema.ts` now also exports the
+  tables as one plain object, spread from each package's own namespace, and the
+  handle is built from that. The `export *` lines stay exactly as they were, since
+  they are what drizzle-kit reads. Every configuration in the sweep asserts both
+  halves.
+  
+  `PACKAGE_VERSIONS` moves `env` and `tenancy` to `0.3.0` for the pending minors,
+  under the existing effective-version rule.
+
 ## 0.9.0
 
 ### Minor Changes

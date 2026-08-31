@@ -28,6 +28,10 @@ export type ProblemCode =
   | "negative-price"
   | "negative-inventory"
   | "inventory-not-integer"
+  | "product-name-missing"
+  | "product-name-too-long"
+  | "variant-name-missing"
+  | "variant-name-too-long"
   | "slug-invalid"
   | "slug-reserved"
   | "grant-config-invalid"
@@ -125,6 +129,20 @@ const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const SLUG_MAX_LENGTH = 96;
 
 /**
+ * The cap every name in this catalog is written under.
+ *
+ * It is not a taste judgement about long titles. It is the number the write
+ * procedures enforce, and the reason it is repeated here is that a rule the API
+ * applies and the validator does not is precisely a button the UI offers and
+ * the API then refuses — the admin gets a parser's output instead of a
+ * sentence, because nothing upstream ever looked at the field.
+ *
+ * Stripe truncates a product name at 250 characters on its side, so a shorter
+ * cap also keeps the name on the receipt identical to the name in the builder.
+ */
+const NAME_MAX_LENGTH = 200;
+
+/**
  * Slugs that would collide with a route rather than resolve to a product.
  *
  * A storefront routes `/products/[slug]`, and Next resolves the literal segment
@@ -173,6 +191,32 @@ export function validateProduct(input: ValidateProductInput): readonly Problem[]
   const { product, variants } = input;
   const grants = input.grants ?? [];
 
+  // ---- the product's own name ---------------------------------------------
+  // `undefined` is treated as missing rather than as "not supplied, not
+  // checked". A caller that forgets to pass the name is the same caller whose
+  // insert is about to be refused by the write procedure, and skipping the rule
+  // for them buys nothing but a later, worse error message.
+  const productName = (product.name ?? "").trim();
+  if (productName === "") {
+    problems.push({
+      code: "product-name-missing",
+      message:
+        "This product has no name. The storefront card, the Stripe product " +
+        "and the receipt all print it, so an unnamed product is a blank line " +
+        "in three places — including the one the customer keeps.",
+      path: "product.name",
+    });
+  } else if (productName.length > NAME_MAX_LENGTH) {
+    problems.push({
+      code: "product-name-too-long",
+      message:
+        `This product's name is ${productName.length} characters. The most ` +
+        `that can be stored is ${NAME_MAX_LENGTH}, so the write would be ` +
+        `refused rather than quietly shortened.`,
+      path: "product.name",
+    });
+  }
+
   // ---- slug -------------------------------------------------------------
   const slug = product.slug;
   if (!SLUG_PATTERN.test(slug) || slug.length > SLUG_MAX_LENGTH) {
@@ -215,7 +259,39 @@ export function validateProduct(input: ValidateProductInput): readonly Problem[]
 
   for (const [index, variant] of variants.entries()) {
     const at = `variants[${index}]`;
-    const label = variant.name ?? variant.sku ?? `variant ${index + 1}`;
+    // A BLANK name falls through to the sku and then to the position, the same
+    // as an absent one. Reading `variant.name ?? …` alone is how every other
+    // message on a nameless row came out as `"" has no billing interval`, which
+    // names nothing and is the row hardest to find on a form with six of them.
+    const name = (variant.name ?? "").trim();
+    const sku = (variant.sku ?? "").trim();
+    const label = name !== "" ? name : sku !== "" ? sku : `variant ${index + 1}`;
+
+    // ---- the variant's own name -------------------------------------------
+    // The name is not decoration: it is the option the customer picks between
+    // on the product page and the line the receipt prints. A blank one is an
+    // empty row in the picker, and the write procedure refuses it anyway — so
+    // without this rule the form offers Save and the API answers with a parser
+    // dump naming a field called "name" on a page that has several.
+    if (name === "") {
+      problems.push({
+        code: "variant-name-missing",
+        message:
+          `Variant ${index + 1} has no name. It is what the customer chooses ` +
+          `between on the product page and what the receipt calls the line, ` +
+          `so a blank one is an empty option nobody can identify.`,
+        path: `${at}.name`,
+      });
+    } else if (name.length > NAME_MAX_LENGTH) {
+      problems.push({
+        code: "variant-name-too-long",
+        message:
+          `"${label.slice(0, 40)}…" is ${name.length} characters. The most ` +
+          `that can be stored is ${NAME_MAX_LENGTH}, so the write would be ` +
+          `refused rather than quietly shortened.`,
+        path: `${at}.name`,
+      });
+    }
 
     if (variant.isDefault === true) {
       defaultsSeen += 1;

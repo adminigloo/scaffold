@@ -91,6 +91,34 @@ The production database URL exists in exactly one place: the `production`
 GitHub Environment. It is not in anyone's `.env.local`, which is what makes
 "nobody hand-runs a production migration" true rather than agreed.
 
+### Off Vercel, one variable names the environment: `APP_ENV`
+
+**Set it. Nothing else can answer the question.** On Vercel the platform injects
+`VERCEL_ENV` and the app reads it; nobody has to do anything. On Docker, Fly,
+Railway, Render, ECS or a plain VPS there is no such variable, so the app falls
+back to `NODE_ENV` — which every production server sets, and which therefore
+tells it "this is a production artefact" and nothing more. A deployment that
+says no more than that is treated as an **unnamed deployment**: cautious about
+anything dangerous, lenient about anything missing.
+
+| | named (`APP_ENV=staging` or `production`) | unnamed |
+| --- | --- | --- |
+| deferred credentials (`DATABASE_URL`, Clerk) | required, boot fails without them | still optional |
+| `NEXT_PUBLIC_APP_URL` pointing at localhost | refused at boot | allowed |
+| first user to sign in | administrator only if their email matches `BOOTSTRAP_ADMIN_EMAIL` | same |
+| live Stripe / Clerk keys | accepted on `production` only | refused |
+| simulated checkout | `staging` + `ALLOW_SIMULATED_CHECKOUT=true`, never on `production` | unavailable |
+
+So an unnamed deployment is safe but half-configured: it will boot with a
+missing credential rather than telling you about it, and it cannot hold a live
+key. `/setup` says so on the page when this is the situation you are in.
+
+`APP_ENV` never overrides `VERCEL_ENV`. On a Vercel preview, `APP_ENV=production`
+does nothing at all — the platform's answer wins, which is what keeps the
+live-key binding non-negotiable there. Do NOT put `APP_ENV` in `.env.local`
+either: that file is for your machine, and a value in it would follow a
+`pnpm start` you ran to check the production build.
+
 ### The rate limiter needs Upstash once there is more than one instance
 
 `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` are optional and the app
@@ -159,6 +187,38 @@ feature branch ──PR──▶ staging ──▶ Preview deploy   (test-mode, 
 `pnpm db:push` is not in this project's scripts on purpose. It syncs a schema
 without producing a migration file, and the file is the only record that ever
 reaches production.
+
+### Running the integration suites
+
+`pnpm test` runs two projects. `unit` needs nothing. `integration` needs a
+database, and without one each of its suites prints a line saying it has been
+skipped and why — a skip you can read is the point, because the alternative is a
+green tick over tests that never ran, and this project has been bitten by
+exactly that.
+
+Any Postgres will do; it does not have to be Neon, and it should not be your
+staging branch. Every test rolls its transaction back, but the schema still has
+to be there.
+
+```
+docker run -d --name pg -e POSTGRES_PASSWORD=app -e POSTGRES_USER=app \
+  -e POSTGRES_DB=app -p 5432:5432 postgres:17
+DATABASE_URL_UNPOOLED=postgres://app:app@localhost:5432/app pnpm db:migrate
+```
+
+The app's driver carries the wire protocol over a WebSocket — that is what lets
+a serverless function hold an interactive transaction — so it cannot dial a
+plain Postgres listener. `DATABASE_WS_PROXY` points it at a bridge; see
+`src/db/index.ts`. With `ghcr.io/neondatabase/wsproxy` on port 5433:
+
+```
+DATABASE_URL=postgres://app:app@localhost:5432/app \
+DATABASE_WS_PROXY=127.0.0.1:5433/v1 \
+REQUIRE_DATABASE=1 pnpm test:integration
+```
+
+`REQUIRE_DATABASE=1` turns "no database" from a skip into a failure. Set it in
+any pipeline whose job is to run these; leave it unset on a laptop.
 
 ## 4. What a release does
 

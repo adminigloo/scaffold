@@ -8,17 +8,19 @@ import { SimulatePurchase } from "@/components/checkout/SimulatePurchase";
 import { Notice, PageHeader, buttonClass } from "@/components/ui";
 import { db } from "@/db";
 import { env } from "@/env";
-import { currentPrincipal } from "@/server/auth";
+import { currentPrincipal, isSignInConfigured } from "@/server/auth";
 import {
   MAX_QUANTITY,
   type StorefrontProduct,
   type StorefrontVariant,
 } from "@/server/routers/checkout";
-// Whether this deployment can take money. `stripe` is null exactly when
-// STRIPE_SECRET_KEY is absent, and that null is what `checkout.simulate`
-// enforces on the server — so the page and the procedure cannot disagree about
-// which checkout is live.
-import { stripe } from "@/server/stripe";
+// WHICH CHECKOUT IS LIVE. One predicate, and `checkout.simulate` calls the
+// same one on the same request — so the page and the procedure cannot disagree
+// about it, which is what the comment that used to sit here CLAIMED while the
+// page branched on `!stripe` alone and the procedure also checked the
+// environment. The button below is handed this result rather than deriving a
+// third opinion in the browser.
+import { checkoutMode } from "@/server/checkout-mode";
 import { api } from "@/trpc/server";
 
 /** Reads searchParams and a live price. Nothing here is cacheable. */
@@ -89,6 +91,11 @@ export default async function CheckoutPage({
   ).checkout.getProduct({ slug });
   const principalId: string | null = (await currentPrincipal())?.userId ?? null;
 
+  // Carried on both sign-in redirects below, so the customer lands back on THIS
+  // checkout with the same item rather than on the storefront having to find it
+  // again — which is where a checkout loses people.
+  const returnTo = `/checkout?product=${encodeURIComponent(slug)}&variant=${encodeURIComponent(variantId)}&qty=${quantity}`;
+
   const variant: StorefrontVariant | undefined = product?.variants.find(
     (candidate) => candidate.id === variantId,
   );
@@ -105,6 +112,89 @@ export default async function CheckoutPage({
     );
   }
 
+  // WHICH CHECKOUT THIS DEPLOYMENT IS RUNNING. Asked once, here, and the same
+  // answer is passed to the button and re-derived by nothing.
+  const mode = checkoutMode();
+
+  // NO STRIPE, AND NOT PERMITTED TO PRETEND. The state that used to fall
+  // through to the branches below and render a card form with no publishable
+  // key behind it, or — worse, before the environment fix — a Simulate button
+  // on a production shop. Said plainly instead, in the predicate's own words,
+  // which are the same words the server refuses the mutation with.
+  if (mode.kind === "unavailable") {
+    return (
+      <Shell
+        title="This deployment cannot take payments"
+        description="Nothing has been charged, and nothing can be until payments are configured."
+      >
+        <LineItem product={product} variant={variant} quantity={quantity} />
+        <Notice tone="warn" title="There is no checkout to show you">
+          {mode.reason}
+        </Notice>
+        <BackToProducts />
+      </Shell>
+    );
+  }
+
+  // NO STRIPE SECRET KEY — the simulated checkout.
+  //
+  // This is the branch that makes the shop complete before any Stripe account
+  // exists. It is gated on the one predicate, NOT on NODE_ENV and not on a
+  // hand-rolled copy of the rule: the server enforces the identical call in
+  // `checkout.simulate`, and the Stripe half of it flips by itself the moment
+  // the keys are pasted into .env.local. Nothing here has to be remembered or
+  // removed at launch.
+  //
+  // FIRST, AHEAD OF EVERY SIGN-IN CHECK BELOW, and that ordering is the whole
+  // reason anybody can reach this page on a fresh project. A deployment with no
+  // Stripe usually has no Clerk either — it was generated twenty minutes ago —
+  // and the two gates underneath used to fire first: one to say sign-in is not
+  // configured, the other to bounce to a /sign-in that cannot sign anybody in.
+  // Between them they made the simulated checkout unreachable on precisely the
+  // configuration it exists to serve.
+  if (mode.kind === "simulated") {
+    // Attribution wherever it is possible, which is the same rule
+    // `checkout.simulate` enforces on the server. With Clerk configured the
+    // buyer is sent to sign in and comes back to this exact item; without it
+    // there is no account for the order to belong to and it is booked as a
+    // guest purchase, which `orders.user_id` is nullable to allow.
+    if (isSignInConfigured() && principalId === null) {
+      redirect(`/sign-in?redirect_url=${encodeURIComponent(returnTo)}`);
+    }
+
+    return (
+      <Shell
+        title="Checkout"
+        description="Payments are not configured on this deployment, so this order is recorded without one."
+      >
+        <SimulatePurchase
+          mode={mode}
+          variantId={variant.id}
+          quantity={quantity}
+          productName={product.name}
+          variantName={variant.name}
+          unitPriceMinor={variant.priceMinor}
+          currency={variant.currency}
+          interval={variant.interval}
+          buyer={principalId === null ? "guest" : "account"}
+        />
+        <p className="text-xs text-ink-muted">
+          To take real payments, add <code>STRIPE_SECRET_KEY</code>,{" "}
+          <code>NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY</code> and{" "}
+          <code>STRIPE_WEBHOOK_SECRET</code> to <code>.env.local</code> and
+          restart. Nothing else changes — this page becomes the card form and the
+          order is written by the same function it is written by now.
+        </p>
+      </Shell>
+    );
+  }
+
+  // Everything below is `mode.kind === "stripe"` — the real, money-taking
+  // checkout, and the only kind left once the two branches above have returned.
+  // It requires an account without exception: Stripe will not take a payment that is not
+  // attributable, so a guest order here would be a row with nobody to send a
+  // receipt to and nobody to refund.
+  //
   // Clerk absent is a DIFFERENT problem from not being signed in, and bouncing
   // to /sign-in would hide it behind a page that cannot sign anybody in either.
   if (!env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) {
@@ -124,51 +214,7 @@ export default async function CheckoutPage({
     // Outside the try/catch above on purpose: `redirect` works by throwing, and
     // a catch-all around it would swallow the redirect and render the page as
     // though the customer were signed in.
-    //
-    // The return path is carried so the customer lands back on THIS checkout
-    // with the same item, rather than on the storefront having to find it
-    // again — which is where a checkout loses people.
-    const returnTo = `/checkout?product=${encodeURIComponent(slug)}&variant=${encodeURIComponent(variantId)}&qty=${quantity}`;
     redirect(`/sign-in?redirect_url=${encodeURIComponent(returnTo)}`);
-  }
-
-  // NO STRIPE SECRET KEY — the simulated checkout.
-  //
-  // This is the branch that makes the shop complete before any Stripe account
-  // exists. It is gated on whether the deployment can take money, NOT on
-  // NODE_ENV and not on a flag: that condition is the honest one, the server
-  // enforces the identical one in `checkout.simulate`, and it flips by itself
-  // the moment the keys are pasted into .env.local. Nothing here has to be
-  // remembered or removed at launch.
-  //
-  // Checked before the publishable key on purpose. The secret key is what
-  // decides whether a payment can be taken at all; a deployment missing both is
-  // an unfinished one, and the useful thing to show it is a working checkout,
-  // not a lecture about a variable.
-  if (!stripe) {
-    return (
-      <Shell
-        title="Checkout"
-        description="Payments are not configured on this deployment, so this order is recorded without one."
-      >
-        <SimulatePurchase
-          variantId={variant.id}
-          quantity={quantity}
-          productName={product.name}
-          variantName={variant.name}
-          unitPriceMinor={variant.priceMinor}
-          currency={variant.currency}
-          interval={variant.interval}
-        />
-        <p className="text-xs text-ink-muted">
-          To take real payments, add <code>STRIPE_SECRET_KEY</code>,{" "}
-          <code>NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY</code> and{" "}
-          <code>STRIPE_WEBHOOK_SECRET</code> to <code>.env.local</code> and
-          restart. Nothing else changes — this page becomes the card form and the
-          order is written by the same function it is written by now.
-        </p>
-      </Shell>
-    );
   }
 
   // A SECRET KEY BUT NO PUBLISHABLE KEY. Half-configured, and the one state

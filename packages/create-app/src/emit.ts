@@ -8,6 +8,7 @@ import {
   packagesFor,
   requiredEnvFor,
   tenantLabel,
+  tenantLabelPlural,
   type Answers,
 } from "./answers.js";
 import {
@@ -65,7 +66,15 @@ export function renderTokens(source: string, answers: Answers): string {
     __SCOPE_NAME__: answers.scope.replace(/^@/, ""),
     __TENANT_LABEL__: tenantLabel(answers),
     __TENANT_LABEL_LOWER__: tenantLabel(answers).toLowerCase(),
-    __TENANT_LABEL_PLURAL__: `${tenantLabel(answers)}s`,
+    // From the lookup in answers.ts, never `${label}s`. "Companys" was on
+    // screen in the admin sidebar, in the /admin/tenants heading and in its
+    // empty state, because a suffix is not a pluralisation rule.
+    __TENANT_LABEL_PLURAL__: tenantLabelPlural(answers),
+    // The lowercase form exists because template copy needs it mid-sentence
+    // and the only way to write it before was `__TENANT_LABEL_LOWER__s`, which
+    // is the same broken suffix spelled in a template file where no test could
+    // see it. It produced "No companys yet".
+    __TENANT_LABEL_PLURAL_LOWER__: tenantLabelPlural(answers).toLowerCase(),
   };
   let out = source;
   for (const [token, value] of Object.entries(tokens)) {
@@ -232,6 +241,13 @@ export async function planEmit(
       join("src", "components", "admin", "AdminNav.tsx"),
       renderAdminNav(answers),
     );
+    // The panel's index, on the same footing as the sidebar beside it and for
+    // the same reason. It counts orders, shipments and products in a project
+    // that sells, and cannot so much as import those tables in one that does
+    // not — so no single file in `admin-minimal` could have been right for
+    // both, and the version that shipped there dodged the problem by counting
+    // nothing at all and listing the viewer's permission keys instead.
+    files.set(join("app", "admin", "page.tsx"), renderAdminDashboard(answers));
   }
   // Under `(site)`, so the landing page gets the same header and footer as every
   // other public page. The group is a routing no-op — this is still `/` — and it
@@ -321,11 +337,31 @@ export {
   versionRangeFor,
 } from "./versions.js";
 
-const STRIPE_DEV_SCRIPT =
-  'concurrently -k -n next,stripe -c blue,magenta "next dev" ' +
-  '"stripe listen --forward-to localhost:3000/api/webhooks/stripe"';
+/**
+ * `pnpm dev` for a project that takes money.
+ *
+ * A SCRIPT RATHER THAN A COMMAND LINE, and the reason is a port. The line this
+ * replaced was
+ *
+ *   concurrently -k "next dev" "stripe listen --forward-to localhost:3000/…"
+ *
+ * which writes the port down twice and lets one of them move. `next dev` with
+ * no `--port` takes the next free port when 3000 is busy, so a second project
+ * already running quietly relocates the app to 3001 while the listener keeps
+ * forwarding to 3000: Stripe reports every delivery as delivered, nothing
+ * arrives, and no order is ever written. `-k` compounded it — a machine with no
+ * Stripe CLI exited that half instantly and took `next dev` down with it, so
+ * `pnpm dev` did not start the app at all on a freshly generated project.
+ *
+ * `scripts/dev.ts` ships in the stripe overlay, resolves the port ONCE from
+ * NEXT_PUBLIC_APP_URL and passes it to both halves, and treats the listener as
+ * the optional half it is. It replaces `concurrently`, which is why that
+ * dependency is gone.
+ */
+const STRIPE_DEV_SCRIPT = "tsx scripts/dev.ts";
 
 export function renderPackageJson(answers: Answers): string {
+  const sells = answers.businessModel !== "none";
   const deps: Record<string, string> = {
     "@clerk/nextjs": "^7.6.4",
     "@neondatabase/serverless": "^1.1.0",
@@ -395,7 +431,6 @@ export function renderPackageJson(answers: Answers): string {
     typescript: "^5.9.3",
     vitest: "^4.1.11",
   };
-  if (answers.businessModel !== "none") devDeps["concurrently"] = "^9.1.0";
 
   const manifest = {
     name: answers.projectName,
@@ -404,7 +439,9 @@ export function renderPackageJson(answers: Answers): string {
     type: "module",
     scripts: {
       // The Stripe listener runs alongside `next dev` by default. Webhooks that
-      // are only exercised in production are webhooks nobody has tested.
+      // are only exercised in production are webhooks nobody has tested — and
+      // it degrades to just the app on a machine with no Stripe CLI, rather
+      // than refusing to start. See STRIPE_DEV_SCRIPT.
       dev: answers.businessModel === "none" ? "next dev" : STRIPE_DEV_SCRIPT,
       build: "next build",
       start: "next start",
@@ -419,7 +456,24 @@ export function renderPackageJson(answers: Answers): string {
       "db:seed": "tsx --env-file=.env.local scripts/seed-roles.ts",
       // Local-only demo data: a tenant, members on different templates, an
       // override and a sealed permission, so the checklist shows all three states.
-      "db:seed:demo": "tsx --env-file=.env.local scripts/seed-demo.ts",
+      //
+      // CHAINED WITH THE SHOP SEED in a project that sells something, rather
+      // than left as a second command somebody has to know about. A generated
+      // project had no products at all, which made /products an empty page,
+      // /checkout unreachable and the simulated purchase button unclickable —
+      // a whole capability behind a command nobody had been told to run. Two
+      // scripts because `scripts/seed-shop.ts` imports the catalog and commerce
+      // packages, which a `--model none` project never installs; one entry
+      // point because the person seeding wants the demo, not a list of parts.
+      "db:seed:demo": sells
+        ? "tsx --env-file=.env.local scripts/seed-demo.ts && tsx --env-file=.env.local scripts/seed-shop.ts"
+        : "tsx --env-file=.env.local scripts/seed-demo.ts",
+      // Separately runnable, because the catalogue is the half you re-seed
+      // after buying everything in it, and re-running the people fixture to get
+      // it back is a bigger hammer than the job needs.
+      ...(sells
+        ? { "db:seed:shop": "tsx --env-file=.env.local scripts/seed-shop.ts" }
+        : {}),
       // No --env-file: this runs in CI where .env.local does not exist, and Node
       // treats a missing --env-file as fatal. The script loads it in a try/catch.
       "db:migrate:deploy": "tsx scripts/migrate.ts",
@@ -543,6 +597,16 @@ export function renderEnvLocal(answers: Answers): string {
     "",
     `NEXT_PUBLIC_APP_URL=http://localhost:${port}`,
     "",
+    "# APP_ENV names the environment on any host that is not Vercel. Deliberately",
+    "# NOT set here: `pnpm dev` is already recognised as local from NODE_ENV, and",
+    "# a value in this file would follow a `next start` you ran to check the",
+    "# production build. Set it in the DEPLOYMENT's own configuration —",
+    "# APP_ENV=production or APP_ENV=staging on Docker, Fly, Railway, Render, ECS",
+    "# or a VPS. A deployment that names itself gets deferred credentials",
+    "# enforced, the localhost-URL guard, live-key acceptance on production, and",
+    "# the first-admin grant bound to BOOTSTRAP_ADMIN_EMAIL. One that does not is",
+    "# treated as an unlabelled deployment: safe, but with all of that off.",
+    "",
     "# --- Neon -----------------------------------------------------------------",
     "# console.neon.tech -> your STAGING project -> Connection Details.",
     "# Two different strings: the pooled host contains `-pooler`, the direct one",
@@ -586,6 +650,12 @@ export function renderEnvLocal(answers: Answers): string {
       "# NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=",
       "# STRIPE_SECRET_KEY=",
       "# STRIPE_WEBHOOK_SECRET=",
+      "",
+      "# Books orders with no payment, so the whole funnel works before Stripe",
+      "# exists. Needed NOWHERE locally — `pnpm dev` already qualifies — and it",
+      "# is never available on production. Set it to true only on a staging",
+      "# deployment you are about to demo.",
+      "# ALLOW_SIMULATED_CHECKOUT=true",
     );
   }
   if (answers.includeEmail) {
@@ -799,13 +869,28 @@ export function renderEnvModule(answers: Answers): string {
     serverSpreads.push("...stripeServer()");
     clientSpreads.push("...stripeClient()");
     modeBound.push("...STRIPE_MODE_BOUND_KEYS");
+    // The one variable that authorises handing out paid goods without taking a
+    // payment. Declared here rather than in @__SCOPE_NAME__/stripe's fragment
+    // because it is not a Stripe credential — it is a statement about THIS
+    // deployment, and `src/server/checkout-mode.ts` is the only reader.
+    //
+    // An enum with a default rather than `.optional()`. Unset means off, which
+    // is what a deployment nobody configured must mean; and a value that is
+    // neither "true" nor "false" fails at boot instead of being read as one of
+    // them, because `ALLOW_SIMULATED_CHECKOUT=1` silently meaning "off" is how
+    // somebody demos a shop that refuses every click.
+    serverSpreads.push(
+      'ALLOW_SIMULATED_CHECKOUT: z.enum(["true", "false"]).default("false")',
+    );
     runtime.push(
       "STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY",
       "STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET",
       "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY",
+      "ALLOW_SIMULATED_CHECKOUT: process.env.ALLOW_SIMULATED_CHECKOUT",
     );
     features.push(
       `{ name: "Payments", vars: ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY"], disables: "Checkout, subscriptions and the webhook ledger." }`,
+      `{ name: "Simulated checkout", vars: ["ALLOW_SIMULATED_CHECKOUT"], disables: "Nothing. Set it to true on a staging deployment that has no Stripe key, to record orders without taking a payment. Locally it is not needed, and on production the simulated checkout is never available." }`,
     );
   }
 
@@ -1080,7 +1165,7 @@ export function assertPermissionScopes(
 export function renderPermissionsCatalog(answers: Answers): string {
   const scope = answers.scope;
   const label = tenantLabel(answers);
-  const plural = `${label}s`;
+  const plural = tenantLabelPlural(answers);
 
   // Grouped BY THE TABLE'S OWN `scope` column rather than by a second list per
   // catalog. There is nowhere here to put a fragment in the wrong one.
@@ -1383,7 +1468,7 @@ export async function sendInvitationEmail(
 export function renderAuditRegistry(answers: Answers): string {
   const scope = answers.scope;
   const label = tenantLabel(answers).toLowerCase();
-  const plural = `${label}s`;
+  const plural = tenantLabelPlural(answers).toLowerCase();
 
   const imports = [
     `import { defineAuditedActions } from "${scope}/observability";`,
@@ -1397,6 +1482,13 @@ export function renderAuditRegistry(answers: Answers): string {
     // modules forming a cycle that would leave one of them half-initialised.
     imports.push('import { catalogAuditedActions } from "./routers/catalog";');
     fragments.push("catalogAuditedActions");
+    // The customer side, on the same one-way terms and for the same reason.
+    // Only one thing a customer does is worth a row — opening the billing
+    // portal, which hands them the ability to cancel the subscription and read
+    // every invoice, and which then happens at Stripe where this application
+    // sees nothing further.
+    imports.push('import { accountAuditedActions } from "./routers/account";');
+    fragments.push("accountAuditedActions");
   }
 
   return `${imports.join("\n")}
@@ -1516,8 +1608,9 @@ export function renderAppRouter(answers: Answers): string {
   ];
   if (answers.includeAi) imports.splice(1, 0, 'import { aiRouter } from "./ai";');
   if (takesMoney) {
-    imports.splice(1, 0, 'import { catalogRouter } from "./catalog";');
-    imports.splice(2, 0, 'import { checkoutRouter } from "./checkout";');
+    imports.splice(1, 0, 'import { accountRouter } from "./account";');
+    imports.splice(2, 0, 'import { catalogRouter } from "./catalog";');
+    imports.splice(3, 0, 'import { checkoutRouter } from "./checkout";');
   }
 
   // What the AI route cost, read back. The route itself is a plain handler —
@@ -1548,6 +1641,13 @@ export function renderAppRouter(answers: Answers): string {
   // and the owning tenant are read from the catalog row, never from the
   // request.
   checkout: checkoutRouter,
+
+  // The customer's own account. ONE PROCEDURE, because everything else the
+  // account area does is a server-component read — pages read, routers mutate.
+  // That one is opening the Stripe billing portal, and it is here rather than
+  // in a page so the tenant rung and the audit write are somewhere the scope
+  // audit can see them.
+  account: accountRouter,
 `
     : "";
 
@@ -1604,26 +1704,21 @@ export function renderSchemaModule(answers: Answers): string {
   // has its tables silently excluded from every migration — the code compiles,
   // the app boots, and the first insert fails against a table that was never
   // created.
-  const exports = [
-    `export * from "${scope}/auth/schema";`,
-    `export * from "${scope}/tenancy/schema";`,
-    `export * from "${scope}/permissions/schema";`,
-    `export * from "${scope}/observability/schema";`,
-  ];
+  const owners = ["auth", "tenancy", "permissions", "observability"];
   if (answers.businessModel !== "none") {
-    exports.push(`export * from "${scope}/stripe/schema";`);
-    exports.push(`export * from "${scope}/catalog/schema";`);
+    owners.push("stripe", "catalog", "commerce", "billing");
   }
-  if (answers.businessModel !== "none") {
-    exports.push(`export * from "${scope}/commerce/schema";`);
-    exports.push(`export * from "${scope}/billing/schema";`);
-  }
-  if (answers.includeAi) {
-    exports.push(`export * from "${scope}/ai/schema";`);
-  }
-  if (answers.includeEmail) {
-    exports.push(`export * from "${scope}/email/schema";`);
-  }
+  if (answers.includeAi) owners.push("ai");
+  if (answers.includeEmail) owners.push("email");
+
+  /** `@scope/auth/schema` -> `authSchema`. */
+  const binding = (owner: string): string => `${owner}Schema`;
+
+  const imports = owners.map(
+    (owner) => `import * as ${binding(owner)} from "${scope}/${owner}/schema";`,
+  );
+  const reExports = owners.map((owner) => `export * from "${scope}/${owner}/schema";`);
+  const spread = owners.map((owner) => `  ...${binding(owner)},`);
 
   return `/**
  * ${answers.projectName} schema.
@@ -1631,14 +1726,46 @@ export function renderSchemaModule(answers: Answers): string {
  * Base tables come from the packages that own them. Do NOT copy a base table's
  * definition into this file — the package owns its migrations, and a local copy
  * forks them without anyone noticing until an upgrade fails.
+ *
+ * TWO SHAPES OF THE SAME THING, and both are load-bearing.
+ *
+ * The \`export *\` lines are what drizzle-kit reads. \`drizzle.config.ts\` points
+ * it at this file and it takes every table it finds exported from it, so a
+ * package missing from that list is a package missing from every migration.
+ *
+ * \`schema\` below is the same tables as ONE OBJECT, and it exists because
+ * \`src/db/index.ts\` cannot hand drizzle this module's namespace. A module whose
+ * exports are all re-exports compiles, under Turbopack, to a namespace backed
+ * by a Proxy over a non-extensible target — and \`Object.keys\` on one of those
+ * throws. Drizzle calls exactly that, in \`extractTablesRelationalConfig\`, the
+ * moment a real DATABASE_URL means it builds the relational query API instead
+ * of the unconfigured stand-in. The result was a generated project that built
+ * and served perfectly with no database and failed \`next build\` outright with
+ * one: \`TypeError: 'ownKeys' on proxy: trap returned extra keys but proxy
+ * target is non-extensible\`, thrown from a driver, naming nothing. Spreading
+ * each package's own namespace sidesteps it, because those modules export their
+ * tables directly rather than passing them on.
+ *
+ * ADD YOUR OWN TABLES TO BOTH. The type of \`db\` is derived from this object, so
+ * a table defined below and left out of it is a compile error the first time
+ * you write \`db.query.yourTable\` — not a silent absence.
  */
-${exports.join("\n")}
+${imports.join("\n")}
+
+${reExports.join("\n")}
+
+/** Every table above, as the one object \`createDb\` needs. */
+export const schema = {
+${spread.join("\n")}
+};
 
 // ---------------------------------------------------------------------------
 // ${answers.projectName} tables go below. Use the shared column helpers so ids,
 // timestamps and money follow the same rules everywhere:
 //
 //   import { idColumn, createdAt, updatedAt, amountMinor } from "${scope}/db";
+//
+// Then add each one to the \`schema\` object above.
 // ---------------------------------------------------------------------------
 `;
 }
@@ -1770,6 +1897,31 @@ export function renderSiteNav(answers: Answers): string {
         "delete. Signed-in only, because a member list is not public.",
     },
   ];
+
+  // The customer's own side of the line, from the account overlay. Present on
+  // exactly the condition the shop is: something that can be bought needs
+  // somewhere the buyer can look at it afterwards, and a project that sells
+  // nothing contributes no entry — which is the generated-array pattern doing
+  // the job a flag would otherwise do badly.
+  //
+  // IN `APP_LINKS` RATHER THAN `SITE_LINKS`, and that is not a style choice.
+  // `/account` is meaningless signed out: every page under it opens by asking
+  // who is calling and shows a sign-in prompt when nobody is. Advertising it to
+  // a signed-out visitor from the public nav would put a link in the header
+  // whose only content is "you are not signed in", next to a Sign in button
+  // that says the same thing better.
+  if (answers.businessModel !== "none") {
+    app.push({
+      href: "/account",
+      label: "Your account",
+      why:
+        "Orders, licence keys, allowances and billing — the read half of " +
+        "everything `fulfilPurchase` writes. It was the gap: a person could " +
+        "buy something and had nowhere at all to see it afterwards, because " +
+        "the only reader in the project was keyed on a reference in the URL " +
+        "Stripe returned them to.",
+    });
+  }
 
   // `app/admin` ships in the admin-minimal overlay and admin-full layers on top
   // of it, so anything other than "none" means the route exists. With "none"
@@ -1976,7 +2128,7 @@ ${items}    ],
  * below. Neither substitutes for the other.
  */
 export function renderAdminNav(answers: Answers): string {
-  const plural = `${tenantLabel(answers)}s`;
+  const plural = tenantLabelPlural(answers);
   const sells = answers.businessModel !== "none";
   const full = answers.adminShell === "full";
 
@@ -1989,9 +2141,21 @@ export function renderAdminNav(answers: Answers): string {
           label: "Dashboard",
           permission: "staff.dashboard.view",
           why:
-            "The shell's own index, from the admin-minimal overlay. Present " +
+            "The shell's own index, generated beside this file. Present " +
             "wherever an admin panel is, which is the only circumstance in " +
-            "which this file is written at all.",
+            "which either of them is written at all.",
+        },
+        {
+          href: "/admin/access",
+          label: "Your access",
+          permission: "staff.dashboard.view",
+          why:
+            "The resolved staff permission set for whoever is signed in, from " +
+            "admin-minimal. It used to BE the dashboard, which is why it needs " +
+            "an entry now: a page nothing links to is a page nobody finds, and " +
+            "this is the one that settles \"why can they do that\" during a " +
+            "support call. On the shell's own key rather than a key of its own, " +
+            "because it shows the viewer nothing they are not already holding.",
         },
       ],
     },
@@ -2248,6 +2412,649 @@ export function AdminNav({ granted }: AdminNavProps) {
       </div>
     </nav>
   );
+}
+`;
+}
+
+/**
+ * `app/admin/page.tsx` for this project.
+ *
+ * GENERATED, for the reason `src/components/admin/AdminNav.tsx` is: which
+ * panels can exist is a fact about how the project was generated, and no single
+ * hand-written file is right for all of them. A dashboard shipped inside
+ * `admin-minimal` cannot import the commerce schema — a project generated with
+ * `--model none` never installs that package, so the file would not compile —
+ * and a dashboard that asked at runtime whether commerce was installed would be
+ * exactly the conditional the artifact is forbidden to carry. Absence here is a
+ * query that was never written.
+ *
+ * WHAT IT REPLACED: "Signed in as", and eighteen permission chips. That is a
+ * debug view, and it was the first thing every client saw. It answers a real
+ * support question and it answers nothing an operator opens a panel to find
+ * out, so it has moved to /admin/access intact and this page now carries the
+ * queues.
+ *
+ * EVERY NUMBER IS A COUNT OF ROWS THIS PROJECT ACTUALLY WRITES. No MRR, no
+ * churn, no ARPU, no invented trend percentage beside a figure. The firm ships
+ * to clients in different businesses and not one of those means the same thing
+ * twice; a generated dashboard full of them is a screenshot in somebody's board
+ * deck within the week. That refusal is the one the old page made and it
+ * survives — what changes is that the alternative is no longer a list of
+ * permission keys.
+ *
+ * IT READS `db` DIRECTLY, unlike /admin/audit which goes through the tRPC
+ * caller. Deliberate and narrow: the counts span four packages, routing them
+ * would mean generating a router as well, every one of them is gated
+ * immediately above the query by the same key a rung would have checked, and
+ * nothing here writes. Anything that writes still goes through a procedure.
+ */
+export function renderAdminDashboard(answers: Answers): string {
+  const scope = answers.scope;
+  const sells = answers.businessModel !== "none";
+  const full = answers.adminShell === "full";
+  const plural = tenantLabelPlural(answers);
+  const lower = tenantLabel(answers).toLowerCase();
+  const lowerPlural = tenantLabelPlural(answers).toLowerCase();
+
+  // Every import the panels below need, and none that a panel which was not
+  // written would need. A missing import fails the build; an unused one fails
+  // lint in any project that turns the rule on — so the list is assembled from
+  // the same conditions the panels are.
+  const drizzle = sells
+    ? "and, count, eq, gte, inArray, isNull, like, ne, not, sum"
+    : "and, count, isNull, ne";
+
+  const imports = [
+    `import Link from "next/link";`,
+    `import { ${drizzle} } from "drizzle-orm";`,
+    `import { users } from "${scope}/auth/schema";`,
+    `import { isDbConfigured } from "${scope}/db";`,
+    `import { errorLog } from "${scope}/observability/schema";`,
+    `import { tenantInvitations, tenants } from "${scope}/tenancy/schema";`,
+  ];
+  if (sells) {
+    imports.push(
+      `import { formatMinor } from "${scope}/catalog";`,
+      `import { products } from "${scope}/catalog/schema";`,
+      `import { orders, orderShipments } from "${scope}/commerce/schema";`,
+    );
+  }
+  imports.push(
+    `import {`,
+    `  Card,`,
+    `  CardBody,`,
+    `  EmptyState,`,
+    `  Notice,`,
+    `  PageHeader,`,
+    `} from "@/components/ui";`,
+    `import { db } from "@/db";`,
+    `import { currentPrincipal } from "@/server/auth";`,
+  );
+  if (sells) {
+    // The prefix every fulfilment idempotency key starts with. Imported rather
+    // than retyped: "was this actually paid for" is a string match, and a copy
+    // of that string here would be a second place the answer lives.
+    imports.push(`import { FULFILMENT_KEY_PREFIX } from "@/server/fulfilment";`);
+  }
+  imports.push(`import { loadStaffPermissions } from "@/server/permissions";`);
+
+  const queries: string[] = [
+    `    // Unresolved errors. The partial index \`error_log_unresolved_idx\` exists
+    // for exactly this count, and it is the one number here that means
+    // "somebody has to do something today".
+    counted(can.can("staff.audit.view"), async () =>
+      rows(
+        await db
+          .select({ n: count() })
+          .from(errorLog)
+          .where(isNull(errorLog.resolvedAt)),
+      ),
+    ),`,
+    `    // Invitations nobody has accepted or withdrawn. Expired ones are counted
+    // too, on purpose: an invitation that quietly timed out is still a person
+    // waiting to be let in, and it is the case nobody notices.
+    counted(can.can("staff.tenants.view"), async () =>
+      rows(
+        await db
+          .select({ n: count() })
+          .from(tenantInvitations)
+          .where(
+            and(
+              isNull(tenantInvitations.acceptedAt),
+              isNull(tenantInvitations.revokedAt),
+            ),
+          ),
+      ),
+    ),`,
+    `    // Customer ${lowerPlural} only. A personal workspace is minted for every
+    // signed-in user and they outnumber real customers by an order of
+    // magnitude, so counting them would make this a sign-up counter wearing the
+    // wrong label.
+    counted(can.can("staff.tenants.view"), async () =>
+      rows(
+        await db
+          .select({ n: count() })
+          .from(tenants)
+          .where(ne(tenants.kind, "personal")),
+      ),
+    ),`,
+    `    // People, excluding soft-deleted rows. A deleted user keeps their row
+    // because their audit history references it; counting them would make this
+    // number one that only ever goes up.
+    counted(can.can("staff.people.view"), async () =>
+      rows(
+        await db
+          .select({ n: count() })
+          .from(users)
+          .where(isNull(users.deletedAt)),
+      ),
+    ),`,
+  ];
+
+  if (sells) {
+    queries.push(
+      `    // Shipments booked and not despatched. A NULL \`shipped_at\` means the row
+    // exists so the warehouse has something to pick up, not that anything has
+    // moved — which is precisely the queue.
+    counted(can.can("catalog.products.view"), async () =>
+      rows(
+        await db
+          .select({ n: count() })
+          .from(orderShipments)
+          .where(isNull(orderShipments.shippedAt)),
+      ),
+    ),`,
+      `    // Orders paid for in the window, simulated ones excluded.
+    counted(can.can("catalog.products.view"), async () =>
+      rows(
+        await db
+          .select({ n: count() })
+          .from(orders)
+          .where(and(paidInWindow(since), not(wasSimulated()))),
+      ),
+    ),`,
+      `    // Orders recorded with no payment behind them — all time, not the
+    // window. This should be zero on the day payments go live, and only an
+    // all-time count can still say so a month later.
+    counted(can.can("catalog.products.view"), async () =>
+      rows(
+        await db
+          .select({ n: count() })
+          .from(orders)
+          .where(wasSimulated()),
+      ),
+    ),`,
+      `    // Products a customer can buy right now. Drafts and archived rows are
+    // deliberately not folded in — "12 products" over a storefront showing
+    // three is the kind of number that gets believed.
+    counted(can.can("catalog.products.view"), async () =>
+      rows(
+        await db
+          .select({ n: count() })
+          .from(products)
+          .where(and(eq(products.status, "active"), isNull(products.deletedAt))),
+      ),
+    ),`,
+    );
+  }
+
+  const destructure = sells
+    ? `  const [
+    unresolvedErrors,
+    openInvitations,
+    customerTenants,
+    peopleCount,
+    awaitingDespatch,
+    paidOrders,
+    simulatedOrders,
+    activeProducts,
+  ] = await Promise.all([`
+    : `  const [unresolvedErrors, openInvitations, customerTenants, peopleCount] =
+    await Promise.all([`;
+
+  const windowConstant = sells
+    ? `
+/** The window every "recently" on this page means. */
+const WINDOW_DAYS = 30;
+`
+    : "";
+
+  const sinceLine = sells
+    ? `  const since = new Date(Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000);
+
+`
+    : "";
+
+  const revenueRead = sells
+    ? `
+  /**
+   * Takings in the window, one row per currency.
+   *
+   * NOT a single total. Summing 1000 JPY and 1000 GBP produces 2000 of nothing,
+   * and it would look entirely plausible on the way to a board meeting.
+   * Simulated orders are excluded here as well as counted separately: money
+   * that never moved must not appear in a revenue figure at all.
+   */
+  const takings = can.can("catalog.products.view")
+    ? await db
+        .select({
+          currency: orders.currency,
+          // A \`sum\` over a bigint column comes back as a numeric string, or
+          // NULL for an empty group. Parsed back to bigint rather than to a
+          // number, because minor units are exact and a float is not.
+          totalMinor: sum(orders.totalMinor),
+        })
+        .from(orders)
+        .where(and(paidInWindow(since), not(wasSimulated())))
+        .groupBy(orders.currency)
+    : [];
+`
+    : "";
+
+  const attentionTiles: string[] = [
+    `    tile({
+      label: "Errors to triage",
+      value: unresolvedErrors,
+      permission: "staff.audit.view",
+      hint: "Unresolved rows in error_log, deduplicated by fingerprint.",${
+        full ? '\n      href: "/admin/errors",' : ""
+      }
+    }),`,
+  ];
+  if (sells) {
+    attentionTiles.push(`    tile({
+      label: "Awaiting despatch",
+      value: awaitingDespatch,
+      permission: "catalog.products.view",
+      hint: "Shipments a purchase booked and nobody has handed to a carrier.",
+    }),`);
+  }
+  attentionTiles.push(`    tile({
+      label: "Open invitations",
+      value: openInvitations,
+      permission: "staff.tenants.view",
+      hint: "Sent, not accepted, not withdrawn. Expired ones are included.",
+    }),`);
+
+  const activityTiles: string[] = sells
+    ? [
+        `    tile({
+      label: "Orders",
+      value: paidOrders,
+      permission: "catalog.products.view",
+      hint: "Paid or fulfilled in the window. Refunds and cancellations are not counted.",
+    }),`,
+        `    tile({
+      label: "Simulated orders",
+      value: simulatedOrders,
+      permission: "catalog.products.view",
+      hint: "All time. Booked with no payment while Stripe is unconfigured.",
+      href: "/admin/audit?sensitive=1",
+    }),`,
+      ]
+    : [];
+
+  const shapeTiles: string[] = [
+    `    tile({
+      label: "${plural}",
+      value: customerTenants,
+      permission: "staff.tenants.view",
+      hint: "Customer ${lowerPlural}. Personal workspaces are not counted.",
+      href: "/admin/tenants",
+    }),`,
+    `    tile({
+      label: "People",
+      value: peopleCount,
+      permission: "staff.people.view",
+      hint: "Signed-in users, excluding soft-deleted rows.",${
+        full ? '\n      href: "/admin/people",' : ""
+      }
+    }),`,
+  ];
+  if (sells) {
+    shapeTiles.push(`    tile({
+      label: "Products for sale",
+      value: activeProducts,
+      permission: "catalog.products.view",
+      hint: "Active and not deleted — exactly what the storefront lists.",
+      href: "/admin/products",
+    }),`);
+  }
+
+  const activitySection = sells
+    ? `
+      <section className="mt-6">
+        <h2 className="mb-2 text-[11px] font-medium uppercase tracking-wider text-ink-muted">
+          Last {WINDOW_DAYS} days
+        </h2>
+        <TileGrid tiles={activity} />
+      </section>
+`
+    : "";
+
+  const takingsPanel = sells
+    ? `
+      {takings.length > 0 && (
+        <section className="mt-6">
+          <h2 className="mb-2 text-[11px] font-medium uppercase tracking-wider text-ink-muted">
+            Taken in the last {WINDOW_DAYS} days
+          </h2>
+          <Card>
+            <CardBody className="flex flex-wrap gap-6">
+              {takings.map((row) => (
+                <p
+                  key={row.currency}
+                  className="text-2xl font-semibold tabular-nums text-ink"
+                >
+                  {/* formatMinor, never a division by 100. JPY has no minor
+                      unit, so dividing renders 1,000 yen as 10 — a hundredfold
+                      error that still looks like a plausible amount. */}
+                  {formatMinor(BigInt(row.totalMinor ?? "0"), row.currency)}
+                </p>
+              ))}
+            </CardBody>
+          </Card>
+        </section>
+      )}
+`
+    : "";
+
+  const simulatedBanner = sells
+    ? `simulatedOrders !== null && simulatedOrders > 0 ? (
+        <Notice
+          tone="warn"
+          title={
+            simulatedOrders +
+            (simulatedOrders === 1 ? " order was" : " orders were") +
+            " recorded without a payment"
+          }
+        >
+          The simulated checkout books a real order and applies every grant with
+          no money moving. It exists only while{" "}
+          <code className="font-mono">STRIPE_SECRET_KEY</code> is unset, and is
+          refused outright on a production deployment — so this number should
+          reach zero and stay there once payments are live.{" "}
+          <Link
+            href="/admin/audit?sensitive=1"
+            className="text-accent underline underline-offset-2"
+          >
+            Every one of them is in the audit log
+          </Link>
+          .
+        </Notice>
+      ) : null`
+    : "null";
+
+  const seedHint = sells
+    ? `a ${lower}, five people, an audit trail, an error queue and a small shop`
+    : `a ${lower}, five people, an audit trail and an error queue`;
+
+  const helpers = sells
+    ? `
+/**
+ * Money that actually arrived, in the window.
+ *
+ * \`fulfilled\` is the same money one step later, so it counts. \`refunded\` and
+ * \`cancelled\` do not, and \`pending\` least of all — a bank debit that has not
+ * cleared is not takings.
+ */
+function paidInWindow(since: Date) {
+  return and(
+    inArray(orders.status, ["paid", "fulfilled"]),
+    gte(orders.placedAt, since),
+  );
+}
+
+/**
+ * Was this order booked without a payment?
+ *
+ * Read off \`idempotency_key\`, which is \`fulfilment:\` followed by the
+ * reference, and a simulated reference always begins \`sim_\`. NOT off a NULL
+ * \`stripe_payment_intent_id\`: that is also NULL for a real Checkout order
+ * whose PaymentIntent has not been attached yet, so it would report genuine
+ * takings as simulated for as long as a webhook is in flight.
+ *
+ * The pattern stops at \`sim\` rather than \`sim_\` because \`_\` is a
+ * single-character wildcard in LIKE and would need escaping to mean itself. A
+ * Stripe reference begins \`pi_\`, so there is nothing here to collide with.
+ */
+function wasSimulated() {
+  return like(orders.idempotencyKey, FULFILMENT_KEY_PREFIX + "sim%");
+}
+`
+    : "";
+
+  return `${imports.join("\n")}
+
+/**
+ * The first screen somebody opens in the morning.
+ *
+ * GENERATED FROM THE ANSWERS THIS PROJECT WAS CREATED WITH, exactly like
+ * \`src/nav.ts\` and \`src/components/admin/AdminNav.tsx\`, and for the same
+ * reason: a panel that counts orders cannot exist in a project with no orders
+ * table, and asking at runtime whether one was installed is the conditional
+ * this scaffold refuses to emit. What is absent here is a query that was never
+ * written, not a feature switched off.
+ *
+ * WHAT IT IS NOT. No MRR tile, no churn, no ARPU, no trend percentage. This
+ * shell ships to businesses that do not resemble each other, and a number whose
+ * definition was guessed is worse than no number, because it gets screenshotted
+ * into a board deck. Every figure below is a count of rows this application
+ * writes and each one names the table it came from.
+ *
+ * WHAT IT IS. Three questions in the order an operator asks them — what needs
+ * doing, what happened, how big is this thing — with every number that has
+ * somewhere to go rendered as a link to the page that manages the thing it
+ * counts. A tile you cannot click is a fact; a tile you can click is a task.
+ *
+ * ZERO IS A REAL ANSWER AND READS AS ONE. On a project generated this morning
+ * every number here is 0, which is correct and looks exactly like a page that
+ * failed to load — so when nothing has happened at all, this says so in words
+ * and names the command that changes it.
+ *
+ * PERMISSIONS ARE VISIBLE RATHER THAN INVISIBLE. A viewer who does not hold a
+ * key sees the tile with the key printed where the number would be, and the
+ * query behind it never runs. Hiding the tile would be tidier and would also
+ * mean nobody ever discovers that a permission is the reason — which is the
+ * support question this panel should be answering rather than generating.
+ *
+ * THIS FILE IS YOURS NOW. It was written once, at generation, and nothing
+ * rewrites it.
+ */
+export const dynamic = "force-dynamic";
+${windowConstant}
+interface TileProps {
+  readonly label: string;
+  /** NULL means "you may not see this". It never means zero. */
+  readonly value: number | null;
+  readonly hint: string;
+  readonly permission: string;
+  readonly href?: string;
+}
+
+export default async function AdminDashboard() {
+  const principal = await currentPrincipal();
+  const can = principal ? await loadStaffPermissions({ principal }) : null;
+
+  // Gated again here rather than relying on the layout: a page can be rendered
+  // by a route that does not sit under this layout, and "the parent checked" is
+  // not a property the type system enforces.
+  if (!can) {
+    return (
+      <>
+        <PageHeader title="Dashboard" />
+        <Notice tone="warn">
+          You are signed in but hold no staff role, so there is nothing here to
+          count.
+        </Notice>
+      </>
+    );
+  }
+
+  // Asked before anything queries, exactly as every other admin page asks it.
+  // Catching the throw instead cannot work — a caller wraps it and the name
+  // does not survive — and this page would 500 on a project with no
+  // credentials at all.
+  if (!isDbConfigured(db)) {
+    return (
+      <>
+        <PageHeader title="Dashboard" />
+        <Notice tone="warn" title="DATABASE_URL is not set">
+          Every number on this page is a count of rows in Postgres, and this
+          deployment has no connection to one. Add the variable to{" "}
+          <code className="font-mono">.env.local</code> and restart —{" "}
+          <Link href="/setup" className="text-accent underline underline-offset-2">
+            /setup
+          </Link>{" "}
+          lists what else is outstanding.
+        </Notice>
+      </>
+    );
+  }
+
+${sinceLine}  // ONE ROUND OF QUERIES for the whole screen. Each is a count over an indexed
+  // predicate, none depends on another, and issuing them in sequence would make
+  // the panel's first page its slowest.
+${destructure}
+${queries.join("\n")}
+  ]);
+${revenueRead}
+  const attention: readonly TileProps[] = [
+${attentionTiles.join("\n")}
+  ];
+
+  const activity: readonly TileProps[] = [
+${activityTiles.join("\n")}
+  ];
+
+  const shape: readonly TileProps[] = [
+${shapeTiles.join("\n")}
+  ];
+
+  // Every number THIS viewer is allowed to see. Withheld ones are excluded
+  // rather than counted as zero: telling somebody that nothing has happened
+  // when they simply cannot see what happened is a lie with a friendly tone.
+  const visible = [...attention, ...activity, ...shape]
+    .map((entry) => entry.value)
+    .filter((value): value is number => value !== null);
+  const nothingHasHappened =
+    visible.length > 0 && visible.every((value) => value === 0);
+
+  return (
+    <>
+      <PageHeader
+        title="Dashboard"
+        description="Counts of rows this application writes. Copied source — replace it with whatever this business opens first in the morning."
+      />
+
+      {/*
+        ONE BANNER, CHOSEN BY STATE, never two stacked. Two banners is how a
+        page teaches people to scroll past the one that mattered.
+      */}
+      {nothingHasHappened ? (
+        <EmptyState title="Nothing has happened here yet">
+          Every number below is real and every one of them is zero, which on a
+          project this new is the correct answer rather than a broken page. Run{" "}
+          <code className="font-mono">pnpm db:seed:demo</code> to put ${seedHint}{" "}
+          behind them.
+        </EmptyState>
+      ) : (
+        ${simulatedBanner}
+      )}
+
+      <section className="mt-6">
+        <h2 className="mb-2 text-[11px] font-medium uppercase tracking-wider text-ink-muted">
+          Needs attention
+        </h2>
+        <TileGrid tiles={attention} />
+      </section>
+${activitySection}${takingsPanel}
+      <section className="mt-6">
+        <h2 className="mb-2 text-[11px] font-medium uppercase tracking-wider text-ink-muted">
+          What is here
+        </h2>
+        <TileGrid tiles={shape} />
+      </section>
+    </>
+  );
+}
+
+/**
+ * Run a count, or decline to.
+ *
+ * The query does NOT run when the viewer may not see the answer. That is the
+ * difference between a permission and a display rule: a permission that only
+ * hides the rendering still reads the rows, and the first person to open a
+ * network trace finds the number anyway.
+ */
+async function counted(
+  allowed: boolean,
+  run: () => Promise<number>,
+): Promise<number | null> {
+  return allowed ? await run() : null;
+}
+
+/** \`select count(*)\` returns one row, and \`noUncheckedIndexedAccess\` is on. */
+function rows(result: readonly { readonly n: number }[]): number {
+  return result[0]?.n ?? 0;
+}
+${helpers}
+function TileGrid({ tiles }: { readonly tiles: readonly TileProps[] }) {
+  return (
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      {tiles.map((entry) => (
+        <Tile key={entry.label} {...entry} />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * One number, or the reason it is not there.
+ *
+ * A withheld tile keeps its position and names the key it needs. Dropping it
+ * from the grid would look cleaner and would leave the viewer no way to
+ * discover that a permission is why — which is exactly the ticket this panel
+ * should be answering rather than generating.
+ */
+function Tile({ label, value, hint, permission, href }: TileProps) {
+  const figure = (
+    <p className="text-2xl font-semibold tabular-nums text-ink">
+      {value === null ? "\\u2014" : value.toLocaleString()}
+    </p>
+  );
+
+  return (
+    <Card>
+      <CardBody>
+        <p className="text-[11px] font-medium uppercase tracking-wider text-ink-muted">
+          {label}
+        </p>
+        {href && value !== null ? (
+          <Link href={href} className="block no-underline hover:text-accent">
+            {figure}
+          </Link>
+        ) : (
+          figure
+        )}
+        <p className="mt-1 text-xs text-ink-muted">
+          {value === null ? (
+            <>
+              Hidden — you do not hold{" "}
+              <code className="font-mono">{permission}</code>
+            </>
+          ) : (
+            hint
+          )}
+        </p>
+      </CardBody>
+    </Card>
+  );
+}
+
+/** Named so the arrays above read as a list of tiles rather than of objects. */
+function tile(props: TileProps): TileProps {
+  return props;
 }
 `;
 }

@@ -68,7 +68,16 @@ export class KeyModeMismatchError extends Error {
         (expected === "live"
           ? "Production must use live credentials."
           : "Only production may carry live credentials — a live key here moves real money.") +
-        ` Fix the value in the Vercel ${appEnv === "production" ? "Production" : "Preview"} scope and redeploy.`,
+        // Host-agnostic, because the environment is no longer read from Vercel
+        // alone. Naming the Vercel dashboard to somebody deploying to Fly sent
+        // them looking for a scope that does not exist, and the likelier fault
+        // off Vercel is not the key at all — it is that nothing declared the
+        // environment, so a production box was read as "staging" and refused
+        // the live key it correctly holds.
+        ` Fix the value where this environment's variables are set, and redeploy. ` +
+        `If this IS production, say so: ${appEnv} was derived from ` +
+        `${appEnv === "production" ? "VERCEL_ENV" : "VERCEL_ENV, APP_ENV or NODE_ENV"}, ` +
+        `and off Vercel it is APP_ENV that names the environment.`,
     );
   }
 }

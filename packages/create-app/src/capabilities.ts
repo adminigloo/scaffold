@@ -206,6 +206,17 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
       mentions(plan, ["src", "server", "fulfilment.ts"], "orders"),
   },
   {
+    capability: "commerce.customer-account",
+    why:
+      "The signed-in overview a buyer lands on, from the account overlay. THE " +
+      "READ HALF OF `commerce.orders`, which claimed only the write: every " +
+      "order, licence key and entitlement `fulfilPurchase` produced was " +
+      "reachable from one page keyed on a reference in a URL the buyer was " +
+      "about to navigate away from, and the manifest said the project had " +
+      "orders.",
+    provenBy: (plan) => exists(plan, "app", "(site)", "account", "page.tsx"),
+  },
+  {
     capability: "billing.entitlements",
     why: "The same function grants the entitlement that the order paid for.",
     provenBy: (plan) =>

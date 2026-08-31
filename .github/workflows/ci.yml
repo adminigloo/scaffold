@@ -10,7 +10,13 @@ jobs:
     name: typecheck, test, build
     runs-on: ubuntu-latest
     steps:
+      # FULL HISTORY, for the changeset-coverage step at the end. `changeset
+      # status --since` needs the base ref present, and a shallow clone has
+      # none — it would report "no packages changed" and pass, which is the
+      # worst possible answer from a check like that.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -27,6 +33,22 @@ jobs:
       - run: pnpm build
       - run: pnpm typecheck
       - run: pnpm test
+
+      # EVERY CHANGED PACKAGE CARRIES A CHANGESET, checked rather than
+      # remembered. "Changeset per package touched" is a house rule with
+      # fourteen published packages behind it, and the failure mode of forgetting
+      # one is not a missing changelog entry: the package is not versioned, not
+      # published, and `PACKAGE_VERSIONS` in the generator then pins a range the
+      # registry cannot satisfy. That is how a generator comes to emit projects
+      # that will not install.
+      #
+      # Pull requests only. On a push to main there is no base to compare
+      # against, and `--since` needs one.
+      - name: Every changed package carries a changeset
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+          pnpm changeset status --since="origin/${{ github.base_ref }}" --verbose
 
   api-surface:
     name: what the published API gained and lost
@@ -85,12 +107,42 @@ jobs:
           comment: true
 
   generate:
-    name: generate a project and build it
+    name: generate a project, build it, and run its suite
     runs-on: ubuntu-latest
     needs: check
     permissions:
       contents: read
       packages: read
+
+    # A REAL POSTGRES, because the generated project's integration suites assert
+    # things only Postgres can enforce — a primary key that arbitrates a claim
+    # between two connections, a NOT NULL that rejects a row, `NULL = '*'`
+    # evaluating to UNKNOWN. Mocking any of that would be asserting the mock.
+    #
+    # Those suites shipped for a release with nothing running them: they need
+    # DATABASE_URL, nothing set it, `describeIntegration` reported a neat green
+    # "skipped", and two of them contradicted the code they were testing from
+    # the day they were committed. A service container is the cheapest way to
+    # make that impossible, and it needs no account and no secret — which
+    # matters, because the reason the alternative was never done is that a Neon
+    # branch per run costs a credential somebody has to own.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: app
+        ports:
+          - 5432:5432
+        # Without the health check the first step to connect races the
+        # container's own start-up, and the failure looks like a broken test.
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -129,6 +181,22 @@ jobs:
       - name: Typecheck the generated project
         working-directory: /tmp/e2e/e2e-app
         run: pnpm exec tsc --noEmit
+
+      # THE ONLY PLACE MOST OF THESE TESTS RUN. `pnpm -r test` at the root
+      # excludes `template/` and `overlays/` because to the generator they are
+      # data — text it renders — so the stripe overlay's suite, the AI route's
+      # suite and every test the base template ships execute here and nowhere
+      # else. Before this step they executed nowhere at all, and the monorepo
+      # was fully green through a product builder on which no product could be
+      # published.
+      #
+      # Unit only, and before the build: it needs no database and no artifact,
+      # and a failing assertion should be reported as a failing assertion rather
+      # than as whatever the bundler makes of it. The integration half runs at
+      # the end, once there is a schema to run it against.
+      - name: Test the generated project — unit
+        working-directory: /tmp/e2e/e2e-app
+        run: pnpm exec vitest run --project=unit
 
       # Placeholder credentials. Every value is shaped correctly so the boot
       # validation genuinely runs — a build that passes because validation was
@@ -209,3 +277,93 @@ jobs:
             echo "::error::Expected at least 14 tables, found $tables — a package's schema is missing from src/db/schema.ts"
             exit 1
           }
+
+      # AND THEN APPLY IT, which is a different claim. A migration that
+      # `drizzle-kit generate` is willing to write is not necessarily one
+      # Postgres is willing to run — a bigint default broke every migration in
+      # this scaffold once, and the generate step was green throughout.
+      #
+      # `psql` rather than `pnpm db:migrate`. drizzle-kit picks its driver from
+      # what is installed, finds `@neondatabase/serverless`, and then cannot
+      # reach a plain listener for the same reason the app cannot — it hangs
+      # rather than failing, which is worse. The file is the artifact under
+      # test and this executes it verbatim; the migration journal it skips is
+      # bookkeeping for a deploy, and nothing below reads it.
+      - name: Apply the migration to a real Postgres
+        working-directory: /tmp/e2e/e2e-app
+        env:
+          PGPASSWORD: app
+        run: |
+          for sql in drizzle/*.sql; do
+            echo "applying $sql"
+            psql -v ON_ERROR_STOP=1 -h localhost -U app -d app -f "$sql"
+          done
+          tables=$(psql -tAq -h localhost -U app -d app -c \
+            "select count(*) from information_schema.tables where table_schema='public'")
+          echo "$tables tables now exist"
+          [ "$tables" -ge 14 ] || {
+            echo "::error::the migration ran and left $tables tables behind"
+            exit 1
+          }
+
+      # The bridge the APP needs, which drizzle-kit did not. Every generated
+      # project reaches its database through @neondatabase/serverless, which
+      # carries the wire protocol over a WebSocket and therefore cannot dial a
+      # plain listener at all. See .github/scripts/ws-proxy.mjs, including why
+      # it is told its target rather than reading it out of the address.
+      - name: Bridge the Neon driver to it
+        env:
+          WS_PROXY_TARGET: 127.0.0.1:5432
+        run: |
+          mkdir -p /tmp/wsproxy
+          npm install ws --prefix /tmp/wsproxy --no-audit --no-fund
+          cd /tmp/wsproxy
+          node "$GITHUB_WORKSPACE/.github/scripts/ws-proxy.mjs" 5433 &
+          for _ in $(seq 1 20); do
+            if curl -sf http://127.0.0.1:5433/ > /dev/null; then exit 0; fi
+            sleep 0.5
+          done
+          echo "::error::the WebSocket bridge never came up"
+          exit 1
+
+      # THE ROLE TEMPLATES, because `grantBootstrapAdminIfFirst` grants a
+      # template and there is nothing to grant without them. The bootstrap suite
+      # says so itself rather than failing an assertion, which is the right
+      # behaviour and still a red run — so seed first.
+      #
+      # DATABASE_URL names a pooled endpoint THAT DOES NOT RESOLVE, on purpose.
+      # Boot validation refuses a DATABASE_URL without `-pooler` in the host,
+      # and it should: migrating through a pooler misreports what has been
+      # applied. Nothing resolves this name — the bridge above already knows
+      # where the database is.
+      - name: Seed the role catalog
+        working-directory: /tmp/e2e/e2e-app
+        env:
+          DATABASE_URL: postgres://app:app@ci-pooler.invalid:5432/app
+          DATABASE_URL_UNPOOLED: postgres://app:app@localhost:5432/app
+          DATABASE_WS_PROXY: 127.0.0.1:5433/v1
+        run: pnpm db:seed
+
+      # THE STEP THESE SUITES WERE WRITTEN FOR AND NEVER GOT.
+      #
+      # REQUIRE_DATABASE=1 is the important half. Without it, a run whose
+      # database failed to appear skips every integration suite and reports
+      # success — which is exactly how this hole stayed open for a release. With
+      # it, `describeIntegration` refuses to skip: each suite becomes a single
+      # failing test that names itself. A pipeline that meant to run these
+      # cannot pass by not running them.
+      #
+      # The variables are set on the step rather than written into .env.local
+      # because `src/test/setup.ts` loads that file with `process.loadEnvFile`,
+      # which leaves an already-set variable alone. So these win, and the
+      # placeholder Neon URLs the build steps above rely on stay where they are.
+      - name: Test the generated project — integration, against that Postgres
+        working-directory: /tmp/e2e/e2e-app
+        env:
+          # Repeated rather than anchored: GitHub Actions does not resolve YAML
+          # anchors, and a `<<:` merge key reaches the runner as a literal.
+          DATABASE_URL: postgres://app:app@ci-pooler.invalid:5432/app
+          DATABASE_URL_UNPOOLED: postgres://app:app@localhost:5432/app
+          DATABASE_WS_PROXY: 127.0.0.1:5433/v1
+          REQUIRE_DATABASE: "1"
+        run: pnpm exec vitest run --project=integration

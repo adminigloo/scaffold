@@ -7,9 +7,34 @@
  * extra steps, and the branches rot the moment one client edits them.
  */
 
-export type BusinessModel = "none" | "one-time" | "subscription" | "both";
-export type AdminShell = "none" | "minimal" | "full";
-export type TenantNoun = "Organization" | "Company" | "Workspace" | "Team" | "none";
+/**
+ * EVERY VALUE EACH ANSWER CAN TAKE, as data rather than as a union spelled out
+ * in three places.
+ *
+ * The types below are derived from these tuples, so a sixth tenant noun is one
+ * edit here and not four — and, more to the point, anything that iterates the
+ * answer space picks it up automatically. That is load-bearing: the guarantee
+ * "the generator can produce every configuration" is only worth having if
+ * "every" is computed from the option sets rather than restated by hand beside
+ * them, where the restatement is one value short the day after somebody adds
+ * one and nothing says so.
+ *
+ * `cli.ts` validates flags against exactly these arrays, so a value the CLI
+ * accepts is a value the sweep generates, and there is no third list.
+ */
+export const TENANT_NOUNS = [
+  "Organization",
+  "Company",
+  "Workspace",
+  "Team",
+  "none",
+] as const;
+export const BUSINESS_MODELS = ["none", "one-time", "subscription", "both"] as const;
+export const ADMIN_SHELLS = ["none", "minimal", "full"] as const;
+
+export type BusinessModel = (typeof BUSINESS_MODELS)[number];
+export type AdminShell = (typeof ADMIN_SHELLS)[number];
+export type TenantNoun = (typeof TENANT_NOUNS)[number];
 
 export interface Answers {
   /** Directory and package name. Lowercase, url-safe. */
@@ -165,6 +190,18 @@ export function requiredEnvFor(answers: Answers): readonly string[] {
  */
 export function optionalEnvFor(answers: Answers): readonly string[] {
   const vars = [
+    // Which environment this is, on a host that is not Vercel.
+    //
+    // Optional because a laptop needs no answer — the toolchain's own NODE_ENV
+    // already says "development" there — and because on Vercel the platform
+    // answers first and this is ignored. It is listed because on Docker, Fly,
+    // Railway, Render, ECS or a VPS it is the ONLY thing that names the
+    // environment, and a deployment nobody named is treated as an unlabelled
+    // one: deferred credentials stay deferred, the automatic first-admin grant
+    // stays off, and live Stripe keys are refused. It is also not read through
+    // `src/env.ts`, so /setup cannot list it from the schema — which makes this
+    // file the only place a reader would ever meet it.
+    "APP_ENV",
     // Who becomes the first administrator on a DEPLOYED environment. Optional,
     // and unset means a deployment grants nobody automatically.
     "BOOTSTRAP_ADMIN_EMAIL",
@@ -173,6 +210,11 @@ export function optionalEnvFor(answers: Answers): readonly string[] {
     "UPSTASH_REDIS_REST_URL",
     "UPSTASH_REDIS_REST_TOKEN",
   ];
+  if (answers.businessModel !== "none") {
+    // Authorises booking paid orders with no payment. Off unless it is exactly
+    // "true", never available on production, and needed nowhere locally.
+    vars.push("ALLOW_SIMULATED_CHECKOUT");
+  }
   if (answers.includeAi) {
     vars.push("OPENAI_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY");
   }
@@ -185,6 +227,37 @@ export function optionalEnvFor(answers: Answers): readonly string[] {
 /** Singular noun used in generated UI copy. `none` means a B2C project. */
 export function tenantLabel(answers: Answers): string {
   return answers.tenantNoun === "none" ? "Workspace" : answers.tenantNoun;
+}
+
+/**
+ * The plural of each noun the CLI offers, written down rather than derived.
+ *
+ * `${tenantLabel(answers)}s` produced "Companys" — in the admin sidebar, in the
+ * heading of /admin/tenants, in its empty state and in two permission
+ * categories, which is to say on the first screen a client is shown. English
+ * pluralisation is not a suffix, and the alternative to this table is an
+ * inflection engine that would be wrong in a different, less predictable place.
+ *
+ * A LOOKUP OVER A CLOSED SET IS THE WHOLE POINT. `TenantNoun` is a union of
+ * five values the CLI validates against, so `Record<TenantNoun, string>` makes
+ * a sixth noun a type error at the moment it is added — which is the only
+ * moment anybody is thinking about its plural. A general pluraliser would
+ * silently guess instead.
+ *
+ * `none` is a B2C project, whose singular is already "Workspace"; both forms
+ * have to agree or the same screen says Workspace and Workspacs.
+ */
+const TENANT_PLURALS: Record<TenantNoun, string> = {
+  Organization: "Organizations",
+  Company: "Companies",
+  Workspace: "Workspaces",
+  Team: "Teams",
+  none: "Workspaces",
+};
+
+/** Plural noun used in generated UI copy — headings, nav entries, categories. */
+export function tenantLabelPlural(answers: Answers): string {
+  return TENANT_PLURALS[answers.tenantNoun];
 }
 
 /** A B2C project mints a personal workspace and never renders a switcher. */
@@ -224,6 +297,23 @@ export function overlayNamesFor(answers: Answers): readonly string[] {
   if (answers.businessModel !== "none" && answers.adminShell !== "none") {
     names.push("catalog-admin");
   }
+
+  // The customer's own side of the line: `/account`, their orders, one order
+  // in full, and their billing. Selected on the SAME condition as the stripe
+  // overlay — anything that can be bought needs somewhere the buyer can see it
+  // afterwards — and never without it, because these pages read
+  // `@/server/fulfilment`, `@/server/routers/checkout` and `@/server/stripe`,
+  // all of which the stripe overlay owns.
+  //
+  // Its own directory rather than more files inside `stripe` because the two
+  // have different subjects. The stripe overlay is the sale: the shop window,
+  // the card form, the webhook, the one function that books an order. This is
+  // everything after it, and it is the half that did not exist — every order
+  // `fulfilPurchase` wrote, every licence key it minted and every entitlement
+  // it granted was readable by exactly one page, keyed on a reference in a URL
+  // the buyer was about to leave. Splitting them means a project can restyle
+  // the account area without touching the checkout.
+  if (answers.businessModel !== "none") names.push("account");
 
   // The mail templates and the preview that renders them. They import
   // @__SCOPE_NAME__/email, which a project generated without `--email` never
@@ -304,6 +394,12 @@ export function capabilitiesFor(answers: Answers): readonly string[] {
       // paths, which is why they are not conditioned on the business model.
       "commerce.orders",
       "billing.entitlements",
+      // The buyer's own side. Distinct from `commerce.orders`, which is the
+      // WRITE — `fulfilPurchase` booking a row — and was true for a year while
+      // no customer-facing screen could read one back. A consumer asking "can
+      // a person see what they bought here" was getting the answer to a
+      // different question.
+      "commerce.customer-account",
     );
   }
   if (answers.businessModel === "one-time" || answers.businessModel === "both") {

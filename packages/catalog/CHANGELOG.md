@@ -1,5 +1,76 @@
 # @adminigloo/catalog
 
+## 0.2.0
+
+### Minor Changes
+
+- The product builder could never publish anything. Fixed, with the rules that
+  made it reachable moved into the validator.
+  
+  **No product could be published, so the storefront could never have anything on
+  it, so checkout could never be exercised.** `handleSave` awaited
+  `catalog.upsertVariant`, used the returned id for the `setGrant` call on the
+  very next line, and then dropped it. `setRows` was never called after a save, so
+  `row.id` stayed `null` for the lifetime of the component — and `row.id` is what
+  the Publish button, the "has not been written yet" line under it, the
+  `· unsaved` marker on the row header and the Stripe plan's "not in this plan"
+  note all read. The variant WAS in `product_variants`. Nothing threw. The form
+  simply went on insisting the row did not exist, and saving again re-upserted and
+  changed nothing, so the only way out was a page reload that nothing on screen
+  suggested.
+  
+  The save chain now adopts every id the server hands back, on the row that
+  produced the write, before the next call. That is a stronger fix than re-seeding
+  the form from a refetch: `rows` is `useState` seeded from props, and an effect
+  syncing it from props would overwrite whatever the admin was typing on any
+  `router.refresh()`. Adopting ids as they arrive is also what makes a
+  half-finished save recoverable — on the next press the product has an id so it
+  is updated rather than created a second time, and each written row has an id so
+  it is updated rather than duplicated.
+  
+  **`validateProduct` gains the rules the write procedures already enforced.** A
+  blank variant name validated clean, so the form offered Save, created the
+  product, and only then had `upsertVariant` refuse it — leaving a draft product
+  with no variants and a stringified list of zod issues on the page. `path:
+  ["name"]` does not say whether it means the product or one of six variant rows.
+  Four new problem codes close it: `product-name-missing`,
+  `product-name-too-long`, `variant-name-missing` and `variant-name-too-long`,
+  capped at the 200 characters the columns and the procedures already used. A
+  blank variant name is now `variants[0].name` before anything is written, and the
+  form refuses to start the chain rather than half-writing the product.
+  
+  `validateProduct` also stops treating a blank name as a name. `variant.name ??
+  variant.sku` reported every OTHER problem on a nameless row as
+  `"" has no billing interval` — a message identifying nothing on a form holding
+  six of them. It falls through to the SKU and then to the row's position, as it
+  always meant to.
+  
+  **A refusal that does get through is now a sentence.** Anything a zod schema
+  rejects is mapped back to the field label printed above the input — "“Name” on
+  variant 2 (“Deluxe”) cannot be empty." — rendered under that input, with the
+  cursor moved to it. Messages the server wrote for a human, such as a taken slug
+  or the publish validator's list, pass through untouched. A dropped connection
+  says so instead of "Failed to fetch". And "1 change were already saved" is now
+  "1 change was already written before this failed", with advice to press the
+  button again rather than to reload a create page that has nothing to reload.
+  
+  The chain, the draft review and the error mapping moved out of `ProductForm.tsx`
+  into plain `.ts` modules, because `jsx: "preserve"` keeps vitest out of a `.tsx`
+  entirely — every one of these defects was invisible reading the code and obvious
+  the first time the sequence could be run by a test. Those tests now execute:
+  `packages/create-app` gained a second vitest project that runs the
+  `catalog-admin` overlay's suite against workspace source, with `__SCOPE__` and
+  `@/` aliased the way the generator renders them. They previously ran nowhere at
+  all, which is why the whole monorepo suite was green while this shipped.
+  
+  `PACKAGE_VERSIONS.catalog` moves to `0.2.0` with it. A generated project
+  resolving `^0.1.x` would get a validator with no opinion about a blank variant
+  name, which is precisely the hole the form used to fall through.
+
+### Patch Changes
+
+- @adminigloo/db@0.2.2
+
 ## 0.1.2
 
 ### Patch Changes

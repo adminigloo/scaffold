@@ -1,4 +1,4 @@
-import { describe } from "vitest";
+import { describe, it } from "vitest";
 import { withRollback as rollback } from "__SCOPE__/db";
 import { db, type Db } from "@/db";
 
@@ -61,19 +61,93 @@ export { db } from "@/db";
 export const hasDatabase = Boolean(process.env.DATABASE_URL);
 
 /**
- * `describe` when a database is configured, `describe.skip` when it is not.
+ * Whether this run is one that is REQUIRED to have a database.
+ *
+ * Set `REQUIRE_DATABASE=1` in any pipeline whose job it is to exercise these
+ * suites. It converts "no DATABASE_URL" from a silent skip into a failure, and
+ * that conversion is the entire point of the variable: a pipeline that meant to
+ * run the integration tests and did not must not be able to report success.
+ */
+const requireDatabase = process.env.REQUIRE_DATABASE === "1";
+
+/** Thrown as a test failure when a run that demanded a database has none. */
+export class IntegrationDatabaseMissingError extends Error {
+  readonly name = "IntegrationDatabaseMissingError";
+  constructor(suite: string) {
+    super(
+      `REQUIRE_DATABASE=1 is set and DATABASE_URL is not, so "${suite}" could ` +
+        `not run. This run asked for the integration suites; skipping them ` +
+        `quietly would report a pass for tests that never executed. Either ` +
+        `give the run a database — DATABASE_URL, or DATABASE_WS_PROXY in front ` +
+        `of a local Postgres, see src/db/index.ts — or stop setting ` +
+        `REQUIRE_DATABASE.`,
+    );
+  }
+}
+
+type IntegrationDescribe = (name: string, suite: () => void) => void;
+
+/**
+ * `describe` when a database is configured, and something LOUD when it is not.
  *
  * WRAP EVERY DATABASE TEST IN THIS. vitest.config.ts separates the integration
  * project from the unit one, but it does not decide whether the tests run —
- * this does, per file, so a file still typechecks, still shows up in the
- * output, and reports as SKIPPED instead of failing on a connection nobody
+ * this does, per suite, so a file still typechecks, still appears in the
+ * output, and reports as SKIPPED rather than erroring on a connection nobody
  * asked it to make.
  *
  * A red suite that a developer cannot turn green without credentials is one
- * they stop reading, and then the unit failure hiding two lines below it goes
- * unread as well.
+ * they stop reading, and then the unit failure two lines below it goes unread
+ * as well. That reasoning is still right and it is also how two tests in this
+ * project contradicted the code they tested from the day they were committed:
+ * nothing set DATABASE_URL, every run printed a tidy green "skipped", and a
+ * skip that costs nothing to ignore is ignored.
+ *
+ * So the skip is no longer free. It names itself on the way past, and under
+ * `REQUIRE_DATABASE=1` it is not a skip at all — the suite is replaced by a
+ * single failing test that says which suite did not run and why. A pipeline
+ * that intends to cover these can no longer pass by not covering them.
  */
-export const describeIntegration = hasDatabase ? describe : describe.skip;
+export const describeIntegration: IntegrationDescribe = hasDatabase
+  ? describe
+  : requireDatabase
+    ? (name) => {
+        describe(name, () => {
+          it("has the database this suite exists to talk to", () => {
+            throw new IntegrationDatabaseMissingError(name);
+          });
+        });
+      }
+    : (name, suite) => {
+        // THE REASON GOES IN THE TITLE, not into a console line beside it.
+        // Vitest buffers console output written during collection and its
+        // default reporter never prints it, so a warning here would be as
+        // silent as the skip it was warning about. A title is carried by every
+        // reporter, every editor gutter and every CI annotation — and
+        // "54 skipped" with no explanation anywhere is exactly how two of
+        // these tests contradicted the shipped code for a release.
+        describe.skip(`${name} — SKIPPED, no DATABASE_URL`, suite);
+        announceOnce();
+      };
+
+/**
+ * One line for the whole run, written straight to stderr.
+ *
+ * `console.warn` does not survive collection — Vitest captures it per task and
+ * there is no task yet — so this goes to the descriptor the runner inherits.
+ * Belt and braces beside the titles above: whichever of the two a given
+ * reporter shows, the run says out loud that the database suites did not run.
+ */
+let announced = false;
+function announceOnce(): void {
+  if (announced) return;
+  announced = true;
+  process.stderr.write(
+    "[integration] DATABASE_URL is not set — every suite in this project is " +
+      "SKIPPED, not passing. src/db/index.ts says how to point it at a local " +
+      "Postgres; REQUIRE_DATABASE=1 turns this into a failure.\n",
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Running the APP's code inside the sandbox

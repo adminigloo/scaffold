@@ -1,11 +1,13 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { asTenantUser } from "__SCOPE__/testing/auth";
 import { createScaffoldContext } from "__SCOPE__/trpc";
 import {
   assertPurchasable,
   fulfilPurchase,
+  referenceOfKey,
   simulatedReference,
   sourceOfReference,
+  FULFILMENT_KEY_PREFIX,
   MAX_QUANTITY,
   PurchaseRefusedError,
   STRIPE_MAX_AMOUNT_MINOR,
@@ -13,6 +15,52 @@ import {
 } from "@/server/fulfilment";
 import { appRouter } from "@/server/routers/_app";
 import { createCallerFactory } from "@/server/trpc";
+
+/**
+ * Whether this deployment can sign anybody in, as a stub.
+ *
+ * The real function reads `env`, which t3-env validates and freezes at import
+ * time, so there is nothing left to stub by the time a test runs. Replacing the
+ * export is therefore the only seam — and it is the honest one: `simulate`
+ * reads exactly this function, so a rewrite of the guard that stopped calling
+ * it would fail these tests rather than pass them.
+ *
+ * `importOriginal` keeps `currentPrincipal` and the rest of the module real, so
+ * adding an export to it later does not silently blank it out here.
+ */
+const auth = vi.hoisted(() => ({
+  isSignInConfigured: vi.fn<() => boolean>(),
+}));
+
+/**
+ * `checkoutMode` reads the `stripe` const from this module, bound at import
+ * time. The stub used to write `globalThis.__adminiglooStripe`, which nothing
+ * has read since the four scattered checks were replaced by one predicate — so
+ * "refuses once Stripe IS configured" was asserting against a client that was
+ * still null, and it shipped RED in every generated project that sells
+ * anything.
+ *
+ * Spying on the module the predicate imports keeps the test honest in the way
+ * the original comment wanted: `checkoutMode` itself still runs, so rewriting
+ * it to consult some other flag makes this fail rather than pass.
+ */
+const stripeState = vi.hoisted(() => ({ client: null as unknown }));
+
+vi.mock("@/server/stripe", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/server/stripe")>()),
+  // A GETTER, because a module export is read-only: assigning to it passes
+  // under vitest and fails `tsc --noEmit`, which would ship a red typecheck in
+  // every generated project — the same class of defect this test exists to
+  // stop.
+  get stripe() {
+    return stripeState.client;
+  },
+}));
+
+vi.mock("@/server/auth", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/server/auth")>()),
+  ...auth,
+}));
 
 /**
  * The parts of fulfilment that need no database.
@@ -177,14 +225,27 @@ describe("fulfilment references", () => {
  * that would reopen this path on a live shop.
  */
 function pretendStripeIsConfigured(): void {
-  (globalThis as { __adminiglooStripe?: unknown }).__adminiglooStripe = {
-    client: {},
-    fingerprint: "test",
-  };
+  stripeState.client = {};
 }
 
+function pretendStripeIsNotConfigured(): void {
+  stripeState.client = null;
+}
+
+beforeEach(() => {
+  // The configuration the simulated checkout exists for: a project generated
+  // this morning, with a database and nothing else. Every test that needs the
+  // other answer says so.
+  auth.isSignInConfigured.mockReturnValue(false);
+});
+
 afterEach(() => {
+  pretendStripeIsNotConfigured();
   delete (globalThis as { __adminiglooStripe?: unknown }).__adminiglooStripe;
+  // `resolveAppEnv()` reads VERCEL_ENV out of `process.env` on every call, so a
+  // stub left behind would make every later test in this file believe it is
+  // running on a production deployment.
+  vi.unstubAllEnvs();
 });
 
 const createCaller = createCallerFactory(appRouter);
@@ -210,15 +271,63 @@ describe("checkout.simulate", () => {
     ).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
   });
 
-  it("still requires a signed-in caller when Stripe is not configured", async () => {
-    // No `pretendStripeIsConfigured` — this is the state the simulated checkout
-    // is meant for, and it is still a protectedProcedure. A purchase has to be
-    // attributable to somebody even when nobody is paying for it.
+  it("refuses on a production deployment, keys or no keys", async () => {
+    // THE HOLE THE STRIPE CHECK ALONE LEAVES, and the expensive one: a
+    // production deployment whose keys have not been pasted in yet. That is not
+    // a demo, it is a shop minutes before launch with a real catalogue on it,
+    // and without this gate every visitor could take all of it for free.
+    //
+    // VERCEL_ENV is what `resolveAppEnv()` derives from, and the platform sets
+    // it — there is no variable a person can put in a dashboard to turn this
+    // off, which is the same property `assertKeyMode` relies on.
+    vi.stubEnv("VERCEL_ENV", "production");
+
+    const caller = createCaller(
+      createScaffoldContext({ principal: asTenantUser() }),
+    );
+
+    await expect(
+      caller.checkout.simulate({ variantId: "var_1", quantity: 1 }),
+    ).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
+  });
+
+  it("still refuses an anonymous caller wherever anybody CAN sign in", async () => {
+    // The rung changed from `protectedProcedure` to `publicProcedure`, and this
+    // is the property that must survive the change: on a deployment with an
+    // identity provider, an order still has to belong to somebody. The refusal
+    // moved from the middleware into the handler; it did not go away.
+    auth.isSignInConfigured.mockReturnValue(true);
+
     const caller = createCaller(createScaffoldContext({ principal: null }));
 
     await expect(
       caller.checkout.simulate({ variantId: "var_1", quantity: 1 }),
     ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  });
+
+  it("lets an anonymous caller through when nobody can sign in at all", async () => {
+    // WHY THE GUEST PATH EXISTS. With no Clerk keys `currentPrincipal()` returns
+    // null for every request by construction, so a `protectedProcedure` refused
+    // everybody — which made the simulated checkout unreachable on exactly the
+    // configuration it was built for, and "sign in first" is not advice anybody
+    // can act on when there is nowhere to sign in.
+    //
+    // The assertion is negative on purpose. Past the gate the procedure reads
+    // the variant, and a unit test has no database — so getting a DIFFERENT
+    // failure is the proof that the sign-in gate let this call through, and it
+    // stays true without inventing a fake catalog for the gate to be tested
+    // against. The order that gets written on the other side is covered by
+    // ./fulfilment.integration.test.ts, against a real Postgres.
+    const caller = createCaller(createScaffoldContext({ principal: null }));
+
+    const failure: unknown = await caller.checkout
+      .simulate({ variantId: "var_1", quantity: 1 })
+      .then(() => null)
+      .catch((error: unknown) => error);
+
+    expect(failure).not.toBeNull();
+    expect((failure as { code?: string }).code).not.toBe("UNAUTHORIZED");
+    expect((failure as { code?: string }).code).not.toBe("PRECONDITION_FAILED");
   });
 
   it("rejects a quantity above the cap in its input schema", async () => {
@@ -235,5 +344,37 @@ describe("checkout.simulate", () => {
         quantity: MAX_QUANTITY + 1,
       }),
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The key an order is booked under, read back
+// ---------------------------------------------------------------------------
+
+describe("referenceOfKey", () => {
+  it("is the exact inverse of the key bookOrder writes", () => {
+    // THE HINGE THE WHOLE ACCOUNT AREA HANGS ON. `orders.idempotency_key` is
+    // `fulfilment:<reference>` and `entitlements.source_ref` is
+    // `<reference>:<grantId>`, so this function is the only thing connecting an
+    // order a customer owns to the grants it produced. A change to the prefix
+    // that broke it would not fail to compile and would not fail a build — the
+    // account area would simply stop showing anybody the access they paid for.
+    const reference = simulatedReference();
+    expect(referenceOfKey(`${FULFILMENT_KEY_PREFIX}${reference}`)).toBe(reference);
+    expect(referenceOfKey(`${FULFILMENT_KEY_PREFIX}pi_3ABCdef`)).toBe("pi_3ABCdef");
+  });
+
+  it("returns null for a key written under another namespace", () => {
+    // @__SCOPE_NAME__/commerce defines its own `checkout_session:` prefix over
+    // the same column. A row keyed that way is still somebody's order and must
+    // still appear in their history; it simply names no grants.
+    expect(referenceOfKey("checkout_session:cs_test_123")).toBeNull();
+    expect(referenceOfKey("")).toBeNull();
+  });
+
+  it("does not mistake a reference that merely starts with the prefix letters", () => {
+    // The prefix includes its colon, so a hypothetical `fulfilmentX:` namespace
+    // is a different namespace rather than a reference beginning with "X".
+    expect(referenceOfKey("fulfilmentX:abc")).toBeNull();
   });
 });

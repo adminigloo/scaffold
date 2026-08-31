@@ -12,6 +12,7 @@ import {
   packagesFor,
   requiredEnvFor,
   tenantLabel,
+  tenantLabelPlural,
   validateProjectName,
   type Answers,
 } from "../answers.js";
@@ -32,6 +33,7 @@ import {
   assertTargetUsable,
   type EmitPlan,
   planEmit,
+  renderAdminDashboard,
   renderEnvExample,
   renderPackageJson,
   renderScaffoldRecord,
@@ -197,6 +199,42 @@ describe("tenant labelling", () => {
     expect(tenantLabel(b2c)).toBe("Workspace");
     expect(isPersonalWorkspaceOnly(b2c)).toBe(true);
   });
+
+  /**
+   * "Companys" was on screen in the admin sidebar, in the /admin/tenants
+   * heading, in its empty state and in two permission categories, because the
+   * plural was `${label}s`. Every noun the CLI offers is checked here, not just
+   * the one that broke: the table is a `Record<TenantNoun, string>`, so this
+   * suite and the type checker together are what make a sixth noun impossible
+   * to add without deciding its plural.
+   */
+  it.each([
+    ["Organization", "Organizations", "organizations"],
+    ["Company", "Companies", "companies"],
+    ["Workspace", "Workspaces", "workspaces"],
+    ["Team", "Teams", "teams"],
+    // A consumer project has no customer-facing noun, and its singular is
+    // already "Workspace". Both forms have to agree, or one screen says
+    // Workspace and the next says Nones.
+    ["none", "Workspaces", "workspaces"],
+  ] as const)("pluralises %s as %s", (noun, expected, lowered) => {
+    const chosen = answers({ tenantNoun: noun });
+    expect(tenantLabelPlural(chosen)).toBe(expected);
+    expect(tenantLabelPlural(chosen).toLowerCase()).toBe(lowered);
+  });
+
+  it("never produces a plural by adding s to a word ending in y", () => {
+    // The specific defect, stated as a rule rather than as one string. A future
+    // noun ending in "y" — "Agency", "Charity" — would otherwise reintroduce it
+    // in a project nobody has generated yet.
+    for (const noun of ["Organization", "Company", "Workspace", "Team", "none"] as const) {
+      const chosen = answers({ tenantNoun: noun });
+      const naive = `${tenantLabel(chosen)}s`;
+      if (tenantLabel(chosen).endsWith("y")) {
+        expect(tenantLabelPlural(chosen)).not.toBe(naive);
+      }
+    }
+  });
 });
 
 describe("renderTokens", () => {
@@ -215,7 +253,20 @@ describe("renderTokens", () => {
   it("pluralises the tenant label for headings", () => {
     expect(
       renderTokens("__TENANT_LABEL_PLURAL__", answers({ tenantNoun: "Company" })),
-    ).toBe("Companys");
+    ).toBe("Companies");
+  });
+
+  it("has a lowercase plural, so template copy never spells one itself", () => {
+    // The token exists because the only way to write this before was
+    // `__TENANT_LABEL_LOWER__s`, which is the same broken suffix rule hidden in
+    // a template file where no test could see it. It produced "No companys yet"
+    // on the /admin/tenants empty state.
+    expect(
+      renderTokens(
+        "__TENANT_LABEL_PLURAL_LOWER__",
+        answers({ tenantNoun: "Company" }),
+      ),
+    ).toBe("companies");
   });
 
   it("leaves unknown tokens alone rather than blanking them", () => {
@@ -254,12 +305,44 @@ describe("renderPackageJson", () => {
     expect(JSON.parse(renderPackageJson(answers())).private).toBe(true);
   });
 
-  it("runs the Stripe listener beside next dev, so webhooks get exercised", () => {
+  it("runs the Stripe listener beside next dev through one supervisor", () => {
     const withMoney = JSON.parse(
       renderPackageJson(answers({ businessModel: "one-time" })),
     );
-    expect(withMoney.scripts.dev).toContain("stripe listen");
-    expect(withMoney.devDependencies).toHaveProperty("concurrently");
+
+    // NOT a command line with the port written into it twice. `next dev` with
+    // no --port silently moves to 3001 when 3000 is taken, while the listener
+    // keeps forwarding to 3000 — Stripe reports every delivery as delivered,
+    // nothing arrives, and no order is ever written. `scripts/dev.ts` resolves
+    // the port once from NEXT_PUBLIC_APP_URL and tells both halves.
+    expect(withMoney.scripts.dev).toBe("tsx scripts/dev.ts");
+    expect(withMoney.scripts.dev).not.toContain("3000");
+
+    // `concurrently -k` stopped every process when one exited, so a machine
+    // with no Stripe CLI could not start the dev server at all. The supervisor
+    // replaces it, and the dependency goes with it.
+    expect(withMoney.devDependencies).not.toHaveProperty("concurrently");
+  });
+
+  it("gives a money-taking project a separate shop seed it can re-run", () => {
+    const withMoney = JSON.parse(
+      renderPackageJson(answers({ businessModel: "both" })),
+    );
+    // THE THING THAT WAS MISSING. With no catalogue, /products is empty,
+    // /checkout is unreachable and the simulated purchase cannot be clicked by
+    // anybody — so the demo seed has to produce one, and it must be re-runnable
+    // on its own once you have bought everything in it.
+    expect(withMoney.scripts["db:seed:demo"]).toContain("scripts/seed-shop.ts");
+    expect(withMoney.scripts["db:seed:shop"]).toBe(
+      "tsx --env-file=.env.local scripts/seed-shop.ts",
+    );
+  });
+
+  it("has no shop seed in a project that sells nothing", () => {
+    const plain = JSON.parse(renderPackageJson(answers()));
+    // The script would name a file the stripe overlay never copied in.
+    expect(plain.scripts).not.toHaveProperty("db:seed:shop");
+    expect(plain.scripts["db:seed:demo"]).not.toContain("seed-shop");
   });
 
   it("keeps dev simple when there is no Stripe", () => {
@@ -435,6 +518,7 @@ describe("adminigloo.json — the project manifest", () => {
       "admin-full",
       "stripe",
       "catalog-admin",
+      "account",
       "email",
     ]);
   });
@@ -1567,6 +1651,151 @@ describe("every generated link points at a route in the same plan", () => {
   });
 });
 
+
+/**
+ * The admin dashboard, which is generated for the same reason the sidebar is.
+ *
+ * THE FAILURE THESE GUARD AGAINST is not a broken build. It is a first screen
+ * that shows a client either eighteen of their own permission keys or a wall of
+ * numbers nobody can defend — and both of those compile perfectly. So the
+ * assertions here are about what the emitted page COUNTS and what it refuses to
+ * invent, rather than about whether it renders.
+ */
+describe("renderAdminDashboard", () => {
+  /**
+   * The same grid the link audit walks, built again here because that one is a
+   * local inside its own describe. Every model against every shell: the page is
+   * absent for four of them and has to be right for the rest.
+   */
+  const SHAPES = [...SELLING_MODELS, "none"].flatMap((businessModel) =>
+    [...ADMIN_SHELLS, "none"].map(
+      (adminShell) =>
+        [
+          `--model ${businessModel} --admin ${adminShell}`,
+          { businessModel, adminShell },
+        ] as const,
+    ),
+  ) as readonly (readonly [string, Partial<Answers>])[];
+
+  it("is written wherever there is a shell, and nowhere else", async () => {
+    for (const adminShell of ["minimal", "full"] as const) {
+      const plan = await planEmit(TEMPLATE_DIR, "/out", answers({ adminShell }));
+      expect(plan.files.has(join("app", "admin", "page.tsx"))).toBe(true);
+    }
+
+    const none = await planEmit(
+      TEMPLATE_DIR,
+      "/out",
+      answers({ adminShell: "none" }),
+    );
+    expect(none.files.has(join("app", "admin", "page.tsx"))).toBe(false);
+  });
+
+  it("counts orders only where there is an orders table to count", () => {
+    const sells = renderAdminDashboard(
+      answers({ businessModel: "both", adminShell: "full" }),
+    );
+    expect(sells).toContain("@adminigloo/commerce/schema");
+    expect(sells).toContain("from(orderShipments)");
+
+    // THE REASON THIS FILE IS GENERATED AT ALL. A `--model none` project never
+    // installs @adminigloo/commerce, so a dashboard carrying that import would
+    // not compile — and one that asked at runtime whether commerce was present
+    // would be the conditional the artifact is forbidden to hold.
+    const plain = renderAdminDashboard(
+      answers({ businessModel: "none", adminShell: "full" }),
+    );
+    expect(plain).not.toContain("@adminigloo/commerce/schema");
+    expect(plain).not.toContain("from(orders)");
+    expect(plain).not.toContain("FULFILMENT_KEY_PREFIX");
+  });
+
+  it("invents no number the schema cannot answer", () => {
+    // Against the CODE, not the prose: the doc comment on the emitted page
+    // names MRR and churn in order to refuse them, and a check over raw source
+    // would pass on the strength of that refusal alone.
+    const code = withoutComments(
+      renderAdminDashboard(answers({ businessModel: "both", adminShell: "full" })),
+    );
+    for (const invented of ["Math.random", "MRR", "churn", "ARPU", "trend"]) {
+      expect(code, `the dashboard renders ${invented}`).not.toContain(invented);
+    }
+  });
+
+  it("keeps the permission chips, and keeps them off the dashboard", async () => {
+    const plan = await planEmit(
+      TEMPLATE_DIR,
+      "/out",
+      answers({ adminShell: "minimal" }),
+    );
+    const dashboard = plan.files.get(join("app", "admin", "page.tsx")) ?? "";
+
+    // `toArray()` is how the old page listed every key the viewer holds. It is
+    // a genuinely useful debug view and a terrible first screen, so it moved
+    // rather than being deleted — and a page nothing links to is a page nobody
+    // finds, so the sidebar has to name it.
+    expect(dashboard).not.toContain("toArray()");
+    expect(plan.files.has(join("app", "admin", "access", "page.tsx"))).toBe(true);
+    expect(
+      plan.files.get(join("src", "components", "admin", "AdminNav.tsx")) ?? "",
+    ).toContain('href: "/admin/access"');
+  });
+
+  it("gates every query on the key its tile names", () => {
+    const code = withoutComments(
+      renderAdminDashboard(answers({ businessModel: "both", adminShell: "full" })),
+    );
+
+    const queried = [...code.matchAll(/counted\(can\.can\("([^"]+)"\)/g)].flatMap(
+      (m) => m[1] ?? [],
+    );
+    const shown = [...code.matchAll(/permission: "([^"]+)"/g)].flatMap(
+      (m) => m[1] ?? [],
+    );
+
+    // One query per tile, and the same keys on both sides. A tile whose key
+    // guards nothing is a number a viewer sees without holding the permission;
+    // a query whose key guards no tile is a read nobody asked for.
+    expect(queried).toHaveLength(shown.length);
+    expect(new Set(shown)).toEqual(new Set(queried));
+    expect(shown.length).toBeGreaterThan(0);
+  });
+
+  it.each(SHAPES)(
+    "names no permission key the project has not installed, for %s",
+    async (_label, overrides) => {
+      const plan = await planEmit(TEMPLATE_DIR, "/out", answers(overrides));
+      const dashboard = plan.files.get(join("app", "admin", "page.tsx"));
+      if (dashboard === undefined) return;
+
+      const catalog = plan.files.get(join("src", "permissions", "catalog.ts")) ?? "";
+      const declared = [...catalog.matchAll(/"(staff\.[a-z.]+)":/g)].flatMap(
+        (m) => m[1] ?? [],
+      );
+      const used = [
+        ...withoutComments(dashboard).matchAll(/can\.can\("([^"]+)"\)/g),
+      ].flatMap((m) => m[1] ?? []);
+
+      expect(used.length).toBeGreaterThan(0);
+      for (const key of used) {
+        if (key.startsWith("staff.")) {
+          // A key the app declares itself. In the wrong scope it would match
+          // nothing, deny everybody and error nowhere.
+          expect(declared, `${key} is not in the generated staff catalog`).toContain(
+            key,
+          );
+        } else {
+          // Everything else comes from a package fragment, and the only one
+          // this page uses is @adminigloo/catalog's — which a project selling
+          // nothing does not install.
+          expect(key.startsWith("catalog.")).toBe(true);
+          expect(answers(overrides).businessModel).not.toBe("none");
+        }
+      }
+    },
+  );
+});
+
 /**
  * Invitations: the one feature that spans tenancy, permissions, mail and audit.
  *
@@ -1997,6 +2226,10 @@ const UNLINKED_BY_DESIGN: Readonly<Record<string, string>> = {
   "/checkout/success": "reached by redirect after a payment.",
   "/admin/products/new": "reached from the button on the product list.",
   "/admin/products/[id]": "reached by clicking a row in the product list.",
+  "/account/orders/[orderNumber]":
+    "reached by clicking a row in the customer's own order list, through " +
+    "accountOrderHref. A nav entry would need an order number, and which " +
+    "order would it be.",
   // /admin/errors and /admin/support USED TO BE HERE, excused on the grounds
   // that neither has a permission key the sidebar could gate a link on, so an
   // entry would 404 in every admin-minimal project. That was a correct
@@ -2011,11 +2244,27 @@ function routeKeysIn(plan: EmitPlan): string[] {
   return routePatternsIn(plan).map((pattern) => `/${pattern.join("/")}`);
 }
 
-/** Every href a generated nav array or the admin sidebar renders. */
+/**
+ * Every href a generated nav array or a nav COMPONENT renders.
+ *
+ * THREE FILES, and the third was added for the reason the second was: a nav
+ * that lives inside a feature is a nav this scan cannot see, and a route
+ * reachable only from it looks stranded. `AdminNav.tsx` was that file once —
+ * it linked to two pages no overlay shipped while both link tests stayed green.
+ * `AccountTabs.tsx` is the same shape pointing the other way: it is the only
+ * thing linking `/account/orders` and `/account/billing`, and without it here
+ * two real, linked, working pages would have to be excused in
+ * `UNLINKED_BY_DESIGN` — which would be a lie written down, and would then
+ * excuse them for ever if the strip were later deleted.
+ *
+ * The account tabs are absent from every project that sells nothing, and
+ * `?? ""` is what makes that a non-event rather than a special case.
+ */
 function navHrefsIn(plan: EmitPlan): string[] {
   return [
     plan.files.get(join("src", "nav.ts")) ?? "",
     plan.files.get(join("src", "components", "admin", "AdminNav.tsx")) ?? "",
+    plan.files.get(join("src", "components", "account", "AccountTabs.tsx")) ?? "",
   ].flatMap((source) => hrefsIn(withoutComments(source)));
 }
 

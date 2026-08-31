@@ -11,7 +11,7 @@
 import { and, eq } from "drizzle-orm";
 import { FIRM_WIDE } from "__SCOPE__/permissions";
 import { roleTemplate, roleTemplateGrant } from "__SCOPE__/permissions/schema";
-import { TENANT_ROLE_TEMPLATES } from "__SCOPE__/tenancy";
+import { backfillTenantOwnerRoles, TENANT_ROLE_TEMPLATES } from "__SCOPE__/tenancy";
 import { db } from "../src/db";
 import { staffCatalog, tenantCatalog } from "../src/permissions/catalog";
 
@@ -95,6 +95,25 @@ async function main() {
     await applyDefaults(id, staffCatalog.defaultsFor(template.key), sealed);
     console.log(`  ${template.key}: ${staffCatalog.defaultsFor(template.key).length} granted`);
   }
+
+  // AFTER the templates exist, because the backfill resolves the owner template
+  // by key and writes nothing when it is absent.
+  //
+  // WHY A BACKFILL BELONGS IN THE SEED SCRIPT. Owners are given their role at
+  // workspace creation, and that repairs nobody who has already signed up:
+  // `ensurePersonalWorkspace` runs on a user's FIRST sign-in only, so every
+  // account that existed before the fix keeps holding nothing in its own
+  // workspace forever. This is the one script that is already documented as
+  // safe to re-run after a permission change, already idempotent, and already
+  // in the deploy path — which makes it the place the repair actually happens
+  // rather than the place it is written down.
+  console.log("Backfilling owner roles…");
+  const granted = await backfillTenantOwnerRoles(db);
+  console.log(
+    granted === 0
+      ? "  every tenant owner already holds a role"
+      : `  ${granted} owner${granted === 1 ? "" : "s"} granted the owner role`,
+  );
 
   console.log("Done.");
 }

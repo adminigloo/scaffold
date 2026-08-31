@@ -28,7 +28,7 @@ import { migrate } from "drizzle-orm/neon-serverless/migrator";
 // side effect. `ws` is a dependency of __SCOPE__/db and not of this app, so a
 // deep import of just the guard would resolve and then fail to open a socket.
 import { assertMigrationAllowed } from "__SCOPE__/db";
-import { isDeployed, resolveAppEnv, type AppEnv } from "__SCOPE__/env";
+import { resolveAppEnv, type AppEnv } from "__SCOPE__/env";
 
 /**
  * The one file besides `src/env.ts` that reads `process.env` directly.
@@ -71,11 +71,13 @@ function fail(message: string): never {
 /**
  * Which database this run is for.
  *
- * Stated rather than derived, because the derived answer is wrong here.
- * `resolveAppEnv()` reads `VERCEL_ENV`, which GitHub Actions does not set — so
- * every CI run would resolve to "local" and the production guard would never
- * fire once. The deploy workflow states the target; a laptop states nothing and
- * gets "local".
+ * Stated rather than derived, because the derived answer cannot be trusted to
+ * be the one you meant. `resolveAppEnv()` falls back to reading `NODE_ENV`, and
+ * a runner that happens to export `NODE_ENV=production` would silently make
+ * every CI run target "staging" — while one that does not would target "local",
+ * and the production guard would never fire once. The deploy workflow states
+ * the target; a laptop states nothing and gets whatever the environment
+ * honestly is, which under `tsx` with no NODE_ENV is "local".
  */
 function readTarget(): AppEnv {
   const raw = readEnv("MIGRATION_TARGET");
@@ -155,7 +157,14 @@ async function main(): Promise<void> {
    * someone is rolling the code back — the one moment the two are already
    * disagreeing. Migrations belong to the release, not to the build.
    */
-  if (isDeployed()) {
+  //
+  // `VERCEL_ENV` directly, NOT `isDeployed()`. The two used to be the same
+  // thing and are not any more: `isDeployed()` is now also true when
+  // `APP_ENV` names a deployment, which is exactly what a self-hosted release
+  // pipeline sets — so asking it here would refuse to run the migration that
+  // pipeline exists to run, and would blame Vercel while doing it. This guard
+  // has one subject and should name it.
+  if (readEnv("VERCEL_ENV") !== undefined) {
     fail(
       `VERCEL_ENV is set, so this is running inside a Vercel build. Migrations ` +
         `run from .github/workflows/deploy.yml, before the deploy is created.`,

@@ -104,7 +104,11 @@ describe("assertKeyMode", () => {
       expect(message).toContain("LIVE");
       expect(message).toContain("TEST");
       expect(message).toContain("staging");
-      expect(message).toContain("Preview");
+      // Names every signal that could have produced the environment, not just
+      // Vercel's. Off Vercel it is APP_ENV that decides, and a message that
+      // only mentions Preview sends a self-hoster looking at a dashboard they
+      // do not have.
+      expect(message).toContain("APP_ENV");
     }
   });
 

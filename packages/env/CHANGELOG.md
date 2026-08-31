@@ -1,5 +1,86 @@
 # @adminigloo/env
 
+## 0.3.0
+
+### Minor Changes
+
+- `resolveAppEnv()` works on any host, and an unlabelled deployment no longer
+  reads as somebody's laptop.
+  
+  **The old body was four lines and it failed open.** It switched on `VERCEL_ENV`
+  — `production` → production, `preview` → staging, DEFAULT → `local` — and
+  consulted nothing else. On any host that is not Vercel there is no `VERCEL_ENV`,
+  so a real production server resolved to "a developer's machine" and every gate
+  built on "are we deployed?" opened at once. That was demonstrated, not argued:
+  a shop served with `next start` and `NODE_ENV=production` minted a licence key
+  against a £29 product for free, because the gate meant to close on production
+  asked this function and was told it was a laptop. The bootstrap admin grant had
+  the identical hole from the identical line — on a self-hosted deployment it
+  handed `staff:admin` to whichever stranger signed up first, which is precisely
+  what the deployed branch of that grant exists to prevent.
+  
+  **Precedence, highest first.**
+  
+  1. `VERCEL_ENV`, unchanged and still first. It is injected by the platform and
+     no dashboard row can override it, which is what makes the key-mode binding
+     non-negotiable there. Behaviour on Vercel is unchanged to the byte: a preview
+     deployment still cannot declare itself production. `development` — what
+     `vercel dev` sets — is recognised as a laptop. An unrecognised value now
+     falls through instead of mapping to `local`; a typo must not be the
+     permissive answer.
+  2. `APP_ENV`, exactly `local`, `staging` or `production`, trimmed and
+     lowercased. The host-agnostic source, because every host has environment
+     variables and none of them has Vercel's.
+  3. `NODE_ENV`, as the discriminator that needs no configuration.
+  
+  **The discriminator.** A laptop must be `local` with nothing configured and a
+  server must not be, and neither can be asked to set a variable for that to work.
+  `NODE_ENV` is the signal the framework sets in both directions and a person
+  never does: `next dev` sets `development`, the test runner sets `test`, and
+  `next build` and `next start` set `production` on every host. Anything other
+  than `production` — including unset, which is what a `tsx` script has — is the
+  toolchain saying "not a production artefact", and means `local`.
+  
+  **The default is now `staging`, not `local`.** An unlabelled production artefact
+  is treated as a deployment. `staging` rather than `production` because it is
+  conservative in both directions at once: it closes everything that keys on "is
+  this a deployment", and it still refuses live credentials, so an environment we
+  could not identify is never allowed to move real money. Defaulting to
+  `production` would have closed the same gates while starting to *require* live
+  keys on a box we cannot identify, which is worse than the bug.
+  
+  **`assertKeyMode` is not weakened anywhere.** `expectedKeyMode` is `test` for
+  both `local` and `staging`, so an unidentified host demanded a test key before
+  this change and demands one after it — identical behaviour, not merely
+  comparable. `APP_ENV` cannot smuggle a live key anywhere: there is no value of
+  it that lets a live key run somewhere the app then treats as non-production.
+  `production` demands live keys and closes the dangerous paths; `staging` and
+  `local` refuse live keys outright. Off Vercel the previous answer to "deploy to
+  Fly with live keys" was "the boot refuses", so `APP_ENV` does not weaken a
+  guarantee, it creates the only honest way to hold one.
+  
+  **`isDeployed()` now answers a deliberately different question, and that is what
+  keeps the zero-credential promise.** It is true only where the platform or the
+  operator *said* this is a deployment. `resolveAppEnv()` answers "how dangerous
+  may this process be" and fails closed; `isDeployed()` answers "is a missing
+  credential a mistake or merely something not done yet" and fails to the tolerant
+  side. `defineEnv` and `describeEnv` now key credential strictness off
+  `isDeployed()` rather than `appEnv === "local"`, which on Vercel is the same
+  predicate it always was — so nothing there changes — and off Vercel means
+  `pnpm build` and `pnpm start` on a laptop with no credentials still boot, even
+  though both set `NODE_ENV=production`. Setting `APP_ENV=staging` or
+  `APP_ENV=production` is what turns deferred credentials into required ones.
+  
+  **New exports.** `describeAppEnv()` returns `{ appEnv, origin }`;
+  `appEnvOrigin()` returns just the origin — `vercel`, `app-env`, `node-env` or
+  `unidentified`. `EnvReport` gains `origin` and `deployed`, and
+  `formatEnvReport` prints, on an unlabelled host only, that nothing named the
+  environment and which variable would.
+  
+  `KeyModeMismatchError`'s message no longer tells somebody deploying to Fly to
+  go and fix a Vercel scope, and now names the likelier off-Vercel fault: not the
+  key, but that nothing declared the environment.
+
 ## 0.2.1
 
 ### Patch Changes

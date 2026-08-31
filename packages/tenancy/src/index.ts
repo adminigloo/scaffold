@@ -30,6 +30,13 @@ export type {
   SentInvitation,
 } from "./service.js";
 
+export {
+  grantTenantOwnerRole,
+  backfillTenantOwnerRoles,
+  TENANT_OWNER_TEMPLATE_KEY,
+} from "./ownership.js";
+export type { OwnerRoleDb } from "./ownership.js";
+
 export { tenancyPermissions } from "./permissions.js";
 export type { TenancyPermission } from "./permissions.js";
 

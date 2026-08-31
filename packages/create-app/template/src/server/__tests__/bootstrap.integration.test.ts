@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import { FIRM_WIDE } from "__SCOPE__/permissions";
 import { principalRole, roleTemplate, roleTemplateGrant } from "__SCOPE__/permissions/schema";
 import { users } from "__SCOPE__/auth/schema";
@@ -95,6 +95,7 @@ const ids = {
   deleted: deterministicId(NS, 3),
   raceA: deterministicId(NS, 4),
   raceB: deterministicId(NS, 5),
+  incumbent: deterministicId(NS, 6),
 } as const;
 
 const FIRST_EMAIL = "first@example.com";
@@ -153,6 +154,36 @@ async function staffAdminTemplateId(tx: AppTransaction): Promise<string> {
   return row.id;
 }
 
+/**
+ * A seeded staff template that is NOT staff:admin.
+ *
+ * Whichever one the catalog ships is fine; what matters is that it is not the
+ * one the bootstrap grants, so a fixture built on it tells "somebody is
+ * already staff" apart from "somebody is already an admin". Chosen by
+ * asking the database rather than by naming a key, because the non-admin staff
+ * templates belong to the catalog and this test has no opinion about them.
+ */
+async function staffSupportTemplateId(tx: AppTransaction): Promise<string> {
+  const [row] = await tx
+    .select({ id: roleTemplate.id })
+    .from(roleTemplate)
+    .where(
+      and(
+        eq(roleTemplate.scope, "staff"),
+        eq(roleTemplate.tenantId, FIRM_WIDE),
+        ne(roleTemplate.key, "admin"),
+      ),
+    )
+    .orderBy(roleTemplate.key)
+    .limit(1);
+  if (!row) {
+    throw new Error(
+      "no non-admin staff role_template exists — run `pnpm db:seed`",
+    );
+  }
+  return row.id;
+}
+
 describeIntegration("grantBootstrapAdminIfFirst, on an empty staff rung", () => {
   it("grants staff:admin to the first user", async () => {
     await withAppDb(async (tx) => {
@@ -170,8 +201,25 @@ describeIntegration("grantBootstrapAdminIfFirst, on an empty staff rung", () => 
 
   it("no-ops once ANY staff role exists, even a non-admin one", async () => {
     await withAppDb(async (tx) => {
-      // Not cleared. The staging branch's seeded staff rows are exactly the
-      // "somebody is already inside" state this branch exists for.
+      // WRITTEN HERE, not inherited. This used to read whatever staff rows the
+      // staging branch happened to have been seeded with and assert there was
+      // at least one — which is a test that passes on a developer's database
+      // and fails on a fresh one, for a reason that has nothing to do with the
+      // code. It failed the first time CI gave this suite a database of its
+      // own, which is the whole argument for giving it one.
+      //
+      // A NON-ADMIN template on purpose: the guard is `WHERE NOT EXISTS
+      // (… scope = 'staff')` with no mention of which role, and a fixture
+      // pointing at staff:admin could not tell that from a guard that only
+      // looks for admins.
+      await clearStaffRoles(tx);
+      await tx.insert(principalRole).values({
+        principalId: ids.incumbent,
+        scope: "staff",
+        tenantId: FIRM_WIDE,
+        templateId: await staffSupportTemplateId(tx),
+      });
+
       const before = await staffRows(tx);
       expect(before.length).toBeGreaterThan(0);
 

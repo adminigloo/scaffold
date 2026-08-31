@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { users } from "__SCOPE__/auth/schema";
 import { grantConfigSchemas } from "__SCOPE__/catalog";
 import type { GrantKind } from "__SCOPE__/catalog";
@@ -758,7 +758,7 @@ function generateLicenseKey(): string {
 }
 
 // ---------------------------------------------------------------------------
-// Reading an order back — the one function both success paths use
+// Reading an order back
 // ---------------------------------------------------------------------------
 
 export interface FulfilledOrderLine {
@@ -773,13 +773,163 @@ export interface FulfilledOrderView {
   readonly id: string;
   readonly orderNumber: string;
   readonly status: string;
+  /**
+   * THE FOUR COLUMNS EVERY ORDER WRITES AND NOTHING USED TO READ.
+   *
+   * `bookOrder` writes subtotal, discount, tax and shipping on every single
+   * order, and `/checkout/success` prints only the total — so a customer
+   * querying a charge was shown one number with no way to see what it was made
+   * of. They are carried on the view rather than recomputed at render time for
+   * the reason __SCOPE__/commerce gives on the column itself: the stored
+   * figures are what the customer was charged, and re-deriving them would let a
+   * later change to the rounding rule silently restate a completed order.
+   */
+  readonly subtotalMinor: bigint;
+  readonly discountMinor: bigint;
+  readonly taxMinor: bigint;
+  readonly shippingMinor: bigint;
   readonly totalMinor: bigint;
   readonly currency: string;
   readonly placedAt: Date | null;
   readonly userId: string | null;
-  /** Derived from the stored reference, not from a column of its own. */
+  /**
+   * The fulfilment reference this order was booked under, recovered from
+   * `orders.idempotency_key` rather than stored a second time.
+   *
+   * NULL when the key carries another writer's namespace — __SCOPE__/commerce
+   * defines `CHECKOUT_SESSION_KEY_PREFIX` for exactly that reason — which is
+   * why it is nullable rather than an assertion. A row this module did not
+   * write is still an order, and a reader that threw on one would take a whole
+   * order history down for a single foreign row.
+   *
+   * The account area joins entitlements on it: `applyGrant` writes
+   * `entitlements.source_ref` as `<reference>:<grantId>`, so this is the only
+   * handle connecting a grant back to the purchase that paid for it.
+   */
+  readonly reference: string | null;
+  /** Derived from the reference, not from a column of its own. */
   readonly source: FulfilmentSource | null;
   readonly lines: readonly FulfilledOrderLine[];
+}
+
+/**
+ * The columns every order view is built from, written once.
+ *
+ * Three readers select exactly this list, and a hand-copied select in each of
+ * them is three chances for one screen to be missing a column the others show.
+ * That is not hypothetical: the money breakdown was already in the row
+ * `/checkout/success` had fetched, and was not in the shape it read it through.
+ */
+const ORDER_VIEW_COLUMNS = {
+  id: orders.id,
+  orderNumber: orders.orderNumber,
+  status: orders.status,
+  idempotencyKey: orders.idempotencyKey,
+  subtotalMinor: orders.subtotalMinor,
+  discountMinor: orders.discountMinor,
+  taxMinor: orders.taxMinor,
+  shippingMinor: orders.shippingMinor,
+  totalMinor: orders.totalMinor,
+  currency: orders.currency,
+  placedAt: orders.placedAt,
+  userId: orders.userId,
+} as const;
+
+/** One row of `ORDER_VIEW_COLUMNS`, before its lines are attached. */
+interface OrderRow {
+  readonly id: string;
+  readonly orderNumber: string;
+  readonly status: string;
+  readonly idempotencyKey: string;
+  readonly subtotalMinor: bigint;
+  readonly discountMinor: bigint;
+  readonly taxMinor: bigint;
+  readonly shippingMinor: bigint;
+  readonly totalMinor: bigint;
+  readonly currency: string;
+  readonly placedAt: Date | null;
+  readonly userId: string | null;
+}
+
+/**
+ * The inverse of the key `bookOrder` writes. NULL when the prefix is not ours.
+ *
+ * Exported because the account area needs a reference to reach an order's
+ * entitlements, and spelling `slice(FULFILMENT_KEY_PREFIX.length)` at the call
+ * site is a second copy of a rule that lives here — one that would keep
+ * compiling and start returning nonsense the day the prefix changes.
+ */
+export function referenceOfKey(idempotencyKey: string): string | null {
+  return idempotencyKey.startsWith(FULFILMENT_KEY_PREFIX)
+    ? idempotencyKey.slice(FULFILMENT_KEY_PREFIX.length)
+    : null;
+}
+
+function viewFrom(
+  row: OrderRow,
+  lines: readonly FulfilledOrderLine[],
+): FulfilledOrderView {
+  const reference = referenceOfKey(row.idempotencyKey);
+  return {
+    id: row.id,
+    orderNumber: row.orderNumber,
+    status: row.status,
+    subtotalMinor: row.subtotalMinor,
+    discountMinor: row.discountMinor,
+    taxMinor: row.taxMinor,
+    shippingMinor: row.shippingMinor,
+    totalMinor: row.totalMinor,
+    currency: row.currency,
+    placedAt: row.placedAt,
+    userId: row.userId,
+    reference,
+    source: reference === null ? null : sourceOfReference(reference),
+    lines,
+  };
+}
+
+/**
+ * Every line of several orders, in one round trip.
+ *
+ * A second query rather than a join, matching `loadStorefrontProducts`: a join
+ * multiplies the order row by its line count and every caller then has to
+ * regroup it, which with `noUncheckedIndexedAccess` on is where the undefined
+ * checks pile up. A query PER ORDER would be the other failure — an order
+ * history of forty rows issuing forty-one statements.
+ */
+async function linesByOrder(
+  orderIds: readonly string[],
+): Promise<Map<string, FulfilledOrderLine[]>> {
+  const byOrder = new Map<string, FulfilledOrderLine[]>();
+  // An empty `inArray` is a syntax error in some drivers and an always-false
+  // predicate in others. Neither is worth discovering from the account page of
+  // somebody who has bought nothing, which is the most common page there is.
+  if (orderIds.length === 0) return byOrder;
+
+  const rows = await db
+    .select({
+      orderId: orderItems.orderId,
+      name: orderItems.name,
+      quantity: orderItems.quantity,
+      unitPriceMinor: orderItems.unitPriceMinor,
+      totalMinor: orderItems.totalMinor,
+      metadata: orderItems.metadata,
+    })
+    .from(orderItems)
+    .where(inArray(orderItems.orderId, [...orderIds]));
+
+  for (const row of rows) {
+    const list = byOrder.get(row.orderId) ?? [];
+    list.push({
+      name: row.name,
+      quantity: row.quantity,
+      unitPriceMinor: row.unitPriceMinor,
+      totalMinor: row.totalMinor,
+      licenseKey: row.metadata?.["licenseKey"] ?? null,
+    });
+    byOrder.set(row.orderId, list);
+  }
+  return byOrder;
 }
 
 /**
@@ -790,6 +940,13 @@ export interface FulfilledOrderView {
  * the observable proof that the two paths converged — had they not, this
  * function would need a branch, and the branch is where the divergence would
  * live.
+ *
+ * KEYED ON A REFERENCE AND NOT ON A PERSON, which is why the account area does
+ * not use it. The Stripe path has to work for a buyer with no session, so
+ * ownership there is proved by the client secret in the return URL. The
+ * user-scoped readers below are the same read with the opposite proof, and they
+ * are separate functions because collapsing them would put that difference
+ * inside an `if` on a value the caller supplies.
  */
 export async function readOrderByReference(input: {
   readonly tenantId: string;
@@ -798,15 +955,7 @@ export async function readOrderByReference(input: {
   const idempotencyKey = `${FULFILMENT_KEY_PREFIX}${input.reference}`;
 
   const [order] = await db
-    .select({
-      id: orders.id,
-      orderNumber: orders.orderNumber,
-      status: orders.status,
-      totalMinor: orders.totalMinor,
-      currency: orders.currency,
-      placedAt: orders.placedAt,
-      userId: orders.userId,
-    })
+    .select(ORDER_VIEW_COLUMNS)
     .from(orders)
     .where(
       and(
@@ -817,29 +966,99 @@ export async function readOrderByReference(input: {
     .limit(1);
 
   if (!order) return null;
+  const lines = await linesByOrder([order.id]);
+  return viewFrom(order, lines.get(order.id) ?? []);
+}
 
-  const lines = await db
-    .select({
-      name: orderItems.name,
-      quantity: orderItems.quantity,
-      unitPriceMinor: orderItems.unitPriceMinor,
-      totalMinor: orderItems.totalMinor,
-      metadata: orderItems.metadata,
-    })
-    .from(orderItems)
-    .where(eq(orderItems.orderId, order.id));
+/**
+ * How many of one person's orders the account area renders at once.
+ *
+ * A cap rather than paging, and declared here rather than in a page, because
+ * this is the module that knows an order is a row plus its lines. A consumer
+ * storefront reaches it after two hundred purchases; a project whose customers
+ * buy daily should add a cursor HERE, so `/account` and `/account/orders`
+ * cannot come to disagree about what "all of them" means.
+ */
+export const ACCOUNT_ORDER_LIMIT = 200;
 
-  return {
-    ...order,
-    source: sourceOfReference(input.reference),
-    lines: lines.map((line) => ({
-      name: line.name,
-      quantity: line.quantity,
-      unitPriceMinor: line.unitPriceMinor,
-      totalMinor: line.totalMinor,
-      licenseKey: line.metadata?.["licenseKey"] ?? null,
-    })),
-  };
+/**
+ * EVERY ORDER THIS PERSON PLACED. The reader the account area is built on.
+ *
+ * USER-SCOPED, with the tenant as a second predicate rather than the first.
+ * `orders.tenant_id` on a storefront purchase is `STOREFRONT_TENANT_ID`, which
+ * is `FIRM_WIDE` — every customer of the shop shares it. Selecting by tenant
+ * alone would hand each buyer the whole shop's order history; selecting by the
+ * buyer's own organisation would match nothing at all, because their orders
+ * were never booked there. `orders.user_id` is the only column that records
+ * whose purchase this was, so it is what the predicate is built from, and the
+ * tenant narrows it to one storefront for the day a project gives each customer
+ * their own.
+ *
+ * A NULL `user_id` — a guest purchase — matches nobody, because SQL equality
+ * against NULL is never true. That is the correct outcome rather than an
+ * oversight: a guest order has no account to show it in, and the fix is an
+ * emailed tokenised link, not a looser predicate here.
+ *
+ * Newest first by `placed_at`, falling back to `created_at`. `placed_at` is
+ * when the customer paid and `created_at` is when the row was written; a
+ * webhook redelivered three days into a retry schedule makes those very
+ * different instants, and ordering on the write time would file a recovered
+ * order at the top of a history it belongs in the middle of.
+ */
+export async function listOrdersForUser(input: {
+  readonly tenantId: string;
+  readonly userId: string;
+  readonly limit?: number;
+}): Promise<readonly FulfilledOrderView[]> {
+  const rows = await db
+    .select(ORDER_VIEW_COLUMNS)
+    .from(orders)
+    .where(and(eq(orders.tenantId, input.tenantId), eq(orders.userId, input.userId)))
+    .orderBy(desc(orders.placedAt), desc(orders.createdAt))
+    .limit(input.limit ?? ACCOUNT_ORDER_LIMIT);
+
+  const lines = await linesByOrder(rows.map((row) => row.id));
+  return rows.map((row) => viewFrom(row, lines.get(row.id) ?? []));
+}
+
+/**
+ * One of a person's orders, by the number printed on their receipt.
+ *
+ * THE OWNERSHIP PREDICATE IS IN THE SQL, never in an `if` after the read. A
+ * page that fetches by order number and then compares `order.userId` is one
+ * deleted early-return away from rendering a stranger's purchase, and that
+ * early return is exactly the line a refactor removes as redundant. Here there
+ * is no row to leak: "no such order" and "not yours" are the same empty result,
+ * which is also what stops the route being an oracle for which order numbers
+ * exist.
+ *
+ * BY ORDER NUMBER RATHER THAN BY `orders.id`. The number is what the customer
+ * has — it is on the receipt, in the confirmation and in the sentence they read
+ * out to support — so it is the handle a support conversation can use.
+ * `formatOrderNumber` warns that the number is not an authorisation token, and
+ * it is not being used as one: the user predicate is the authorisation, and the
+ * number is only an address.
+ */
+export async function readOrderForUser(input: {
+  readonly tenantId: string;
+  readonly userId: string;
+  readonly orderNumber: string;
+}): Promise<FulfilledOrderView | null> {
+  const [order] = await db
+    .select(ORDER_VIEW_COLUMNS)
+    .from(orders)
+    .where(
+      and(
+        eq(orders.tenantId, input.tenantId),
+        eq(orders.orderNumber, input.orderNumber),
+        eq(orders.userId, input.userId),
+      ),
+    )
+    .limit(1);
+
+  if (!order) return null;
+  const lines = await linesByOrder([order.id]);
+  return viewFrom(order, lines.get(order.id) ?? []);
 }
 
 // ---------------------------------------------------------------------------

@@ -408,14 +408,33 @@ describeIntegration("loadStaffPermissions and the '*' sentinel", () => {
     });
   });
 
-  it("resolves a staff assignment filed under any other tenant id to an EMPTY set, not NULL", async () => {
-    // A real seam in `loadStaffPermissions`, worth pinning: the gate query
-    // matches `scope = 'staff'` with NO tenant predicate, while `resolveFor`
-    // then re-queries pinned to '*'. A staff row written with a tenant id —
-    // which the schema permits, the column is plain text — therefore passes the
-    // gate and resolves to nothing. The caller is told "staff with zero
-    // permissions", never "not staff", so the two queries have to agree about
-    // the sentinel or the row becomes unreachable while still granting entry.
+  it("answers NULL for a staff row filed under any tenant id but the sentinel", async () => {
+    // THE SEAM THAT USED TO ANSWER "EMPTY SET" HERE, and why NULL is the right
+    // answer instead. `principal_role.tenant_id` is plain text with a '*'
+    // default, so nothing stops a hand-written row — or a migration, or a
+    // support script — from filing a staff assignment under a real tenant id.
+    //
+    // The gate used to match `scope = 'staff'` with no tenant predicate while
+    // `resolveFor` re-queried pinned to '*'. A misfiled row therefore passed
+    // the gate and resolved to nothing, and every caller reads a non-null
+    // return as ADMISSION: `staffProcedure` throws `notStaff()` on null and
+    // otherwise runs the handler, and `app/admin/layout.tsx` renders the shell
+    // on anything that is not null. So the misfiled row bought entry to the
+    // staff surface on the strength of grants the resolver had already decided
+    // it could not see — the one row in the table that cannot produce a
+    // permission was the row that let you in.
+    //
+    // It also disagreed with the rest of the app. `admin.people` joins
+    // `principal_role` on `scope = 'staff' AND tenant_id = FIRM_WIDE`, so the
+    // same principal was listed as holding no staff role on the very page an
+    // operator would open to find out why they could see an empty panel.
+    //
+    // Pinning the gate to FIRM_WIDE makes the two queries ask one question, and
+    // it restores the meaning of the empty set: a non-null result now says
+    // "holds a firm-wide staff role", and an empty one says "and that role
+    // grants nothing yet" — which is a real state a template with no grants
+    // produces, and which the misfiled row was previously indistinguishable
+    // from.
     await withAppDb(async (tx) => {
       await tx.insert(roleTemplate).values({
         id: ids.misfiledTemplate,
@@ -440,8 +459,51 @@ describeIntegration("loadStaffPermissions and the '*' sentinel", () => {
         principal: buildPrincipal({ userId: ids.misfiledStaff }),
       });
 
+      expect(can).toBeNull();
+
+      // The row is really there, so this is the loader declining to honour it
+      // and not a fixture that failed to write. Without this the test would
+      // pass just as happily against a broken insert.
+      const [row] = await tx
+        .select({ tenantId: principalRole.tenantId })
+        .from(principalRole)
+        .where(
+          and(
+            eq(principalRole.principalId, ids.misfiledStaff),
+            eq(principalRole.scope, "staff"),
+          ),
+        );
+      expect(row?.tenantId).toBe("itest-not-the-sentinel");
+    });
+  });
+
+  it("still answers an EMPTY SET for a firm-wide staff role that grants nothing", async () => {
+    // The other side of the pin, and the state it exists to keep separate from
+    // the one above. A staff template with no grant rows is a real and ordinary
+    // thing — it is what every newly created role looks like for the minute
+    // before anybody ticks a box — and it must resolve to a usable, empty set
+    // so the panel opens and tells its holder they hold nothing, rather than
+    // sending them away as though they were never staff.
+    await withAppDb(async (tx) => {
+      await tx.insert(roleTemplate).values({
+        id: ids.staffTemplate,
+        scope: "staff",
+        tenantId: FIRM_WIDE,
+        key: "itest-empty-staff-role",
+        name: "Integration empty staff role",
+      });
+      await tx.insert(principalRole).values({
+        principalId: ids.staff,
+        scope: "staff",
+        tenantId: FIRM_WIDE,
+        templateId: ids.staffTemplate,
+      });
+
+      const can = await loadStaffPermissions({ principal: staff });
+
       expect(can).not.toBeNull();
       expect(can?.toArray()).toEqual([]);
+      expect(can?.can(ALPHA)).toBe(false);
     });
   });
 

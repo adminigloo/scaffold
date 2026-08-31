@@ -1,5 +1,10 @@
-export { resolveAppEnv, isDeployed } from "./app-env.js";
-export type { AppEnv, EnvSource } from "./app-env.js";
+export {
+  resolveAppEnv,
+  isDeployed,
+  appEnvOrigin,
+  describeAppEnv,
+} from "./app-env.js";
+export type { AppEnv, AppEnvFacts, AppEnvOrigin, EnvSource } from "./app-env.js";
 
 export {
   pointsAtLocalhost,

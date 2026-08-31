@@ -38,7 +38,15 @@ export async function loadTenantPermissions(input: {
   return resolveFor(input.principal.userId, "tenant", input.tenantId);
 }
 
-/** Resolve staff grants, or NULL if this principal holds no staff role. */
+/**
+ * Resolve staff grants, or NULL if this principal holds no FIRM-WIDE staff role.
+ *
+ * The qualifier is the whole of it. NULL means "not staff" and every caller
+ * reads it that way — `staffProcedure` throws `notStaff()`, the admin layout
+ * renders "you are not staff" — while a non-null set is admission to the panel,
+ * empty or not. So the question this asks has to be the same question
+ * `resolveFor` answers, or a row that can grant nothing still opens the door.
+ */
 export async function loadStaffPermissions(input: {
   principal: Principal;
 }): Promise<PermissionSet | null> {

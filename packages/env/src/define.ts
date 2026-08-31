@@ -1,6 +1,6 @@
 import { createEnv } from "@t3-oss/env-nextjs";
 import type { z } from "zod";
-import { resolveAppEnv, type AppEnv, type EnvSource } from "./app-env.js";
+import { isDeployed, resolveAppEnv, type AppEnv, type EnvSource } from "./app-env.js";
 import { assertModeBoundKeys } from "./validators.js";
 
 /**
@@ -128,11 +128,19 @@ export function defineEnv<
     opts.skipValidation ??
     (source.NODE_ENV === "test" || Boolean(source.SKIP_ENV_VALIDATION));
 
-  // Strictness scales with the environment. "staging" and "production" are
-  // deployments serving real requests, so a missing credential there is exactly
-  // the forgotten-Vercel-variable bug this package was written to catch.
-  const optionalUntilDeployed =
-    appEnv === "local" ? (opts.optionalUntilDeployed ?? []) : [];
+  // Strictness scales with the environment, and it asks `isDeployed` rather
+  // than `appEnv !== "local"`. The two used to be the same question and are no
+  // longer: an unlabelled production artefact now resolves to "staging" so that
+  // the danger gates close, and keying credentials off that value would refuse
+  // to boot `pnpm build` and `pnpm start` on a laptop with nothing configured —
+  // both of which set NODE_ENV=production. `isDeployed` is true only where the
+  // platform or the operator SAID this is a deployment, which is exactly the
+  // case where a missing credential is the forgotten-dashboard-variable bug
+  // this package was written to catch rather than a credential nobody has got
+  // round to yet. On Vercel the two predicates coincide and nothing changes.
+  const optionalUntilDeployed = isDeployed(source)
+    ? []
+    : (opts.optionalUntilDeployed ?? []);
   const server = relaxToOptional(opts.server, optionalUntilDeployed);
   const client = relaxToOptional(opts.client, optionalUntilDeployed);
 
