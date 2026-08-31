@@ -1,0 +1,25 @@
+{
+  "packages": [
+    "packages/ai",
+    "packages/auth",
+    "packages/billing",
+    "packages/catalog",
+    "packages/commerce",
+    "packages/db",
+    "packages/email",
+    "packages/env",
+    "packages/observability",
+    "packages/permissions",
+    "packages/stripe",
+    "packages/tenancy",
+    "packages/testing",
+    "packages/trpc"
+  ],
+  "snapshotDir": ".api-snapshots",
+  "mainBranch": "main",
+  "checkVersionBump": false,
+  "outputFormat": "markdown",
+  "ai": {
+    "enabled": false
+  }
+}

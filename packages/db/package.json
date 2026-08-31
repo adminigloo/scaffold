@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/db",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Neon Postgres client, shared column conventions, transaction helpers, and a migration runner that refuses to touch production by accident.",
   "license": "UNLICENSED",
   "type": "module",
@@ -31,14 +31,14 @@
   },
   "peerDependencies": {
     "@neondatabase/serverless": "^1.0.0",
-    "drizzle-orm": "^0.45.0",
-    "zod": "^3.25.0 || ^4.0.0"
+    "drizzle-orm": "catalog:peers",
+    "zod": "catalog:peers"
   },
   "devDependencies": {
     "@neondatabase/serverless": "^1.1.0",
     "@types/ws": "^8.18.1",
-    "drizzle-orm": "^0.45.2",
-    "zod": "^4.5.1"
+    "drizzle-orm": "catalog:",
+    "zod": "catalog:"
   },
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",

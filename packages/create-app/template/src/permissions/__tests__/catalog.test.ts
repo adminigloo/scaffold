@@ -135,17 +135,40 @@ const STAFF_TEMPLATE_KEYS = ["admin", "cs_lead", "cs_agent"];
 const TENANT_TEMPLATE_KEYS = TENANT_ROLE_TEMPLATES.map((template) => template.key);
 
 /**
- * Keys that intentionally reach nobody until an operator edits a template by
- * hand. Written down here so an unreachable key is either a recorded decision
- * or a bug — never "probably fine".
+ * Keys that intentionally reach nobody until an operator grants them by hand.
+ *
+ * Written down here so an unreachable key is either a recorded decision or a
+ * bug — never "probably fine". Check 2 of `assertCatalogConformance` reports
+ * every catalog key no template grants, and the money keys below carry no
+ * `defaultFor` on purpose, so without this list they report on every run
+ * forever. That is how a suite acquires failures people learn to scroll past,
+ * and a suite nobody reads catches nothing.
+ *
+ * ONE LIST FOR BOTH SCOPES, deliberately not two. The exemption records a fact
+ * about the capability — "refunds are granted per deployment, by hand" — not
+ * about which catalog this project's generator happened to spread the key into.
+ * A name the project does not install is inert: `assertCatalogConformance`
+ * only ever asks the set about keys the catalog already declares. So the same
+ * list serves a project generated with no business model and one generated with
+ * all of them, and it does not turn red for a reason that has nothing to do
+ * with granting when a package fragment moves scope.
  */
-const DELIBERATELY_UNREACHABLE: Record<"tenant" | "staff", readonly string[]> = {
-  tenant: [],
-  // Sealed and granted by no template, so every seeded staff role carries an
-  // explicit deny for it. Reading a customer's own screen is not a capability
-  // anyone should acquire by being promoted.
-  staff: ["staff.tenants.impersonate"],
-};
+const DELIBERATELY_UNREACHABLE: readonly string[] = [
+  // staff. Sealed and granted by no template, so every seeded staff role
+  // carries an explicit deny for it. Reading a customer's own screen is not a
+  // capability anyone should acquire by being promoted.
+  "staff.tenants.impersonate",
+  // tenant, from __SCOPE__/stripe. Sealed, and carries no `defaultFor`:
+  // refunds move money out of the account and cannot be taken back, so which
+  // role may issue one is a decision each deployment makes against its own
+  // finance process, not something a fresh install starts already holding.
+  "billing.refund.issue",
+  // From __SCOPE__/commerce, and a SEPARATE capability from the one above
+  // rather than a duplicate of it: this refunds a one-time purchase and is the
+  // storefront ops job, that one refunds a subscription invoice and is
+  // finance's. Same reasoning, same deliberate absence of a `defaultFor`.
+  "orders.refund",
+];
 
 /**
  * Every problem, in one message, with the reason the library wrote.
@@ -198,7 +221,7 @@ describe("permission catalog conformance", () => {
         key,
         grants: seededGrants(tenantCatalog, key),
       })),
-      deliberatelyUnreachable: DELIBERATELY_UNREACHABLE.tenant,
+      deliberatelyUnreachable: DELIBERATELY_UNREACHABLE,
     });
 
     expect(report("tenant catalog", result)).toBe("");
@@ -212,7 +235,7 @@ describe("permission catalog conformance", () => {
         key,
         grants: seededGrants(staffCatalog, key),
       })),
-      deliberatelyUnreachable: DELIBERATELY_UNREACHABLE.staff,
+      deliberatelyUnreachable: DELIBERATELY_UNREACHABLE,
     });
 
     expect(report("staff catalog", result)).toBe("");
@@ -287,52 +310,145 @@ describe("catalog composition", () => {
   });
 });
 
+/**
+ * The keys sealing has been signed off for, in either scope.
+ *
+ * Sealing is not a label. A sealed key gets an explicit `deny` row in every
+ * template that does not already grant it, and a per-person override CANNOT
+ * reopen it — that is the whole mechanism behind "you may not hand this to one
+ * person quietly". Adding or removing `sealed: true` therefore changes who can
+ * hold a capability without changing a single grant, which is why the set is
+ * written down and moving a key in or out has to be a deliberate edit here.
+ *
+ * SEALED AND `defaultFor` ARE NOT OPPOSITES, and this is the part that reads
+ * wrong the first time. `scripts/seed-roles.ts` writes a `deny` row only for
+ * the sealed keys a template's own defaults do NOT already include:
+ *
+ *   const sealed = staffCatalog.keys.filter(
+ *     (k) => staffCatalog.isSealed(k) && !staffCatalog.defaultsFor(t.key).includes(k),
+ *   );
+ *
+ * So `catalog.products.publish`, which is sealed AND carries
+ * `defaultFor: ["admin"]`, gives the admin template an `allow` row and every
+ * other staff template a `deny` row. An admin publishes; a cs_lead is refused;
+ * and no per-person override can make that cs_lead a publisher for the
+ * afternoon. Sealing says "only a role hands this out", never "nobody has it" —
+ * which is why a sealed key with a `defaultFor` is not a contradiction and
+ * must not be "fixed" by deleting one of the two.
+ *
+ * A NAME HERE IS NOT AN ASSERTION THAT THE KEY EXISTS. Which packages
+ * contribute depends on what was installed, so a name this project does not
+ * declare is simply not checked. What is checked is that nothing seals itself
+ * without appearing here, and that nothing here has quietly lost its seal.
+ */
+const SEALED_BY_DECISION: readonly string[] = [
+  // tenant, from __SCOPE__/tenancy. Transfer hands over billing and the power
+  // to remove the previous owner: a complete takeover in one call.
+  "tenant.transfer",
+  // tenant, from __SCOPE__/stripe. Money out of the account, unrecoverable once
+  // the refund clears.
+  "billing.refund.issue",
+  // From __SCOPE__/commerce. The storefront half of the same money path, held
+  // by different people from the subscription half.
+  "orders.refund",
+  // From __SCOPE__/catalog. Publishing is the moment a row stops being a form
+  // somebody is filling in and becomes something a card is charged for, and a
+  // price with the decimal point in the wrong place is cheaper to prevent than
+  // to refund. Granted to `admin` by default and sealed shut for everyone
+  // else — see the note above on why those two coexist.
+  "catalog.products.publish",
+  // staff. Reading a customer's own screen, written to the audit log as
+  // sensitive access.
+  "staff.tenants.impersonate",
+];
+
+/**
+ * Where a catalog's seals and the signed-off list disagree, both ways round.
+ *
+ * Both directions matter and they fail for opposite reasons. A seal nobody
+ * recorded means somebody made a capability ungrantable per person as a side
+ * effect of adding a key. A recorded key that is no longer sealed means the
+ * protection came off: the next seed stops writing its `deny` rows and an
+ * override can quietly hand it out again.
+ */
+function sealingDrift<TKey extends string>(catalog: Catalog<TKey>): string[] {
+  const signedOff = new Set(SEALED_BY_DECISION);
+
+  return [
+    ...catalog.keys
+      .filter((key) => catalog.isSealed(key) && !signedOff.has(key))
+      .map(
+        (key) =>
+          `  ${catalog.scope}: "${key}" is sealed and nobody wrote down why. A ` +
+          `seal makes the key ungrantable to one person, so it belongs in ` +
+          `SEALED_BY_DECISION with its reason — or the seal belongs off it.`,
+      ),
+    ...SEALED_BY_DECISION.filter(
+      (key) => catalog.has(key) && !catalog.isSealed(key),
+    ).map(
+      (key) =>
+        `  ${catalog.scope}: "${key}" is in SEALED_BY_DECISION but is no longer ` +
+        `sealed. The next seed stops writing its deny rows, and a per-person ` +
+        `override can hand it out again with nothing to stop it.`,
+    ),
+  ];
+}
+
 describe("sealed keys", () => {
-  /**
-   * Sealing is not a label. A sealed key gets an explicit `deny` row in every
-   * template that does not grant it, and a per-person override CANNOT reopen
-   * it — that is the whole mechanism behind "you may not hand this to one
-   * person quietly". Adding or removing `sealed: true` therefore changes who
-   * can hold a capability without changing a single grant, so the set is
-   * spelled out here and moving a key in or out has to be a deliberate edit.
-   */
-  it("seals exactly the tenant keys we expect", () => {
-    expect(tenantCatalog.keys.filter((key) => tenantCatalog.isSealed(key))).toEqual([
-      "tenant.transfer",
-    ]);
+  it("seals exactly the tenant keys we have signed off for", () => {
+    expect(sealingDrift(tenantCatalog).join("\n")).toBe("");
   });
 
-  it("seals exactly the staff keys we expect", () => {
-    expect(staffCatalog.keys.filter((key) => staffCatalog.isSealed(key))).toEqual([
-      "staff.tenants.impersonate",
-    ]);
+  it("seals exactly the staff keys we have signed off for", () => {
+    expect(sealingDrift(staffCatalog).join("\n")).toBe("");
   });
 });
 
+/**
+ * `defaultFor` entries naming a template this catalog's scope does not have.
+ *
+ * PER SCOPE, and the per-scope part IS the assertion. Checking against the two
+ * template ladders merged into one set passes anything that names a template
+ * either side ships, and "admin" exists in both — so a package fragment spread
+ * into the wrong catalog keeps granting most of its keys to the admin of the
+ * wrong ladder and looks entirely healthy. Only its owner-only or
+ * cs_agent-only keys reach nobody, and those surface as an anonymous
+ * "unreachable" line that reads like a missing default rather than a misplaced
+ * package.
+ */
 function templatesNamedBy<TKey extends string>(
   catalog: Catalog<TKey>,
-  known: ReadonlySet<string>,
+  known: readonly string[],
 ): string[] {
+  const ladder = new Set(known);
+
   return catalog.keys.flatMap((key) =>
     (catalog.get(key).defaultFor ?? [])
-      .filter((template) => !known.has(template))
-      .map((template) => `  ${catalog.scope}: ${key} -> defaultFor "${template}"`),
+      .filter((template) => !ladder.has(template))
+      .map(
+        (template) =>
+          `  ${catalog.scope}: ${key} -> defaultFor "${template}", which is not a ` +
+          `${catalog.scope} template (${known.join(", ")})`,
+      ),
   );
 }
 
 describe("role templates", () => {
-  it("only names templates the seed script actually creates", () => {
-    const known = new Set([...TENANT_TEMPLATE_KEYS, ...STAFF_TEMPLATE_KEYS]);
+  it("only names templates of its own scope that the seed script creates", () => {
     const unknown = [
-      ...templatesNamedBy(tenantCatalog, known),
-      ...templatesNamedBy(staffCatalog, known),
+      ...templatesNamedBy(tenantCatalog, TENANT_TEMPLATE_KEYS),
+      ...templatesNamedBy(staffCatalog, STAFF_TEMPLATE_KEYS),
     ];
 
     expect(
       unknown.join("\n"),
       `A defaultFor naming a template nobody seeds grants nothing at all. The ` +
         `permission is never handed out, and the role checklist shows it as a ` +
-        `box no role will ever tick.`,
+        `box no role will ever tick.\n` +
+        `When every key a package contributes names the OTHER scope's templates, ` +
+        `the fragment itself is in the wrong catalog. Fix which catalog ` +
+        `src/permissions/catalog.ts spreads it into — not the defaults, because ` +
+        `the defaults are the record of which scope the package was written for.`,
     ).toBe("");
   });
 });

@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/email",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Transactional email with a delivery log. With no API key a send is recorded as skipped instead of throwing, so every feature that sends mail still works before anyone has found a credential.",
   "license": "UNLICENSED",
   "type": "module",
@@ -22,6 +22,11 @@
       "types": "./dist/schema.d.ts",
       "import": "./dist/schema.js",
       "require": "./dist/schema.cjs"
+    },
+    "./emails": {
+      "types": "./dist/emails.d.ts",
+      "import": "./dist/emails.js",
+      "require": "./dist/emails.cjs"
     }
   },
   "files": [
@@ -34,18 +39,25 @@
   "dependencies": {
     "@adminigloo/db": "workspace:^",
     "@adminigloo/env": "workspace:^",
-    "svix": "^1.99.1"
+    "@react-email/components": "^1.0.12",
+    "svix": "catalog:"
   },
   "peerDependencies": {
-    "drizzle-orm": "^0.45.0",
-    "zod": "^3.25.0 || ^4.0.0"
+    "drizzle-orm": "catalog:peers",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zod": "catalog:peers"
   },
   "devDependencies": {
-    "drizzle-orm": "^0.45.2",
-    "zod": "^4.5.1"
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.4",
+    "drizzle-orm": "catalog:",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "zod": "catalog:"
   },
   "scripts": {
-    "build": "tsup src/index.ts src/schema.ts --format esm,cjs --dts --clean",
+    "build": "tsup src/index.ts src/schema.ts src/emails.ts --format esm,cjs --dts --clean",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   }

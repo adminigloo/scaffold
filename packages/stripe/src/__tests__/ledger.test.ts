@@ -273,3 +273,61 @@ describe("claimStatements", () => {
     expect(claimStatements.insert).toMatch(/RETURNING event_id/);
   });
 });
+
+describe("timestamps as the driver actually returns them", () => {
+  // `claimStatements.readExisting` is documented as the canonical way to read
+  // these columns, and a raw execute returns timestamptz as a STRING because
+  // Drizzle installs an identity type parser. The typed select() path returns a
+  // Date. Passing the string used to crash with "claimedAt.getTime is not a
+  // function" — inside a webhook, on the retry path, which only runs when
+  // something has already failed once.
+  const PG_STRING = "2026-08-28 12:00:00.123456+00";
+
+  it("treats a string processed_at as processed", () => {
+    expect(
+      decideClaim({ insertedRow: false, existingProcessedAt: PG_STRING }),
+    ).toEqual({ action: "skip-duplicate" });
+  });
+
+  it("does not throw on a string claimed_at", () => {
+    expect(() =>
+      decideClaim({
+        insertedRow: false,
+        existingProcessedAt: null,
+        existingClaimedAt: PG_STRING,
+        now: new Date("2026-08-28T12:00:30Z"),
+      }),
+    ).not.toThrow();
+  });
+
+  it("applies the lease to a string claim exactly as to a Date", () => {
+    const now = new Date("2026-08-28T13:00:00Z");
+    const stale = "2026-08-28 12:00:00+00";
+    expect(
+      decideClaim({
+        insertedRow: false,
+        existingProcessedAt: null,
+        existingClaimedAt: stale,
+        now,
+      }),
+    ).toEqual({ action: "process", reclaimed: true });
+    expect(
+      decideClaim({
+        insertedRow: false,
+        existingProcessedAt: null,
+        existingClaimedAt: new Date(stale),
+        now,
+      }),
+    ).toEqual({ action: "process", reclaimed: true });
+  });
+
+  it("treats an unparseable timestamp as absent rather than crashing", () => {
+    expect(
+      decideClaim({
+        insertedRow: false,
+        existingProcessedAt: null,
+        existingClaimedAt: "not a timestamp",
+      }),
+    ).toEqual({ action: "process", reclaimed: true });
+  });
+});

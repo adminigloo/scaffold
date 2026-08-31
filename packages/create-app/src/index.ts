@@ -28,16 +28,48 @@ export {
   renderEnvModule,
   renderSchemaModule,
   renderPermissionsCatalog,
+  PACKAGE_PERMISSION_FRAGMENTS,
+  assertPermissionScopes,
+  PermissionScopeMismatchError,
+  renderAppRouter,
+  renderAuditRegistry,
+  renderInvitationMail,
+  renderSiteNav,
+  renderAdminNav,
+  renderHomePage,
   targetNameFor,
   assertTargetUsable,
   TargetNotEmptyError,
   OverlayCollisionError,
+  OverlayMissingError,
+  GeneratorVersionUnreadableError,
 } from "./emit.js";
-export type { EmitPlan } from "./emit.js";
+export type {
+  EmitPlan,
+  PackagePermissionFragment,
+  PermissionScope,
+} from "./emit.js";
+export {
+  buildManifest,
+  renderManifest,
+  MANIFEST_FILENAME,
+  MANIFEST_VERSION,
+} from "./manifest.js";
+export type { ProjectManifest } from "./manifest.js";
+export {
+  CAPABILITY_EVIDENCE,
+  UNDISTINGUISHED_CAPABILITIES,
+  assertCapabilitiesAreProvable,
+  UnprovableCapabilityError,
+} from "./capabilities.js";
+export type { CapabilityEvidence } from "./capabilities.js";
 export {
   DEFAULT_ANSWERS,
   packagesFor,
+  overlayNamesFor,
+  capabilitiesFor,
   requiredEnvFor,
+  optionalEnvFor,
   tenantLabel,
   isPersonalWorkspaceOnly,
   validateProjectName,

@@ -8,15 +8,17 @@
     "typecheck": "pnpm -r typecheck",
     "changeset": "changeset",
     "version-packages": "changeset version",
-    "release": "pnpm build && changeset publish"
+    "release": "pnpm build && changeset publish",
+    "verify:generated": "node scripts/verify-generated.mjs"
   },
   "devDependencies": {
     "@changesets/cli": "^3.0.1",
-    "@trpc/server": "^11.18.0",
+    "@trpc/server": "catalog:",
     "@types/node": "^26.4.0",
-    "stripe": "^22.6.0",
+    "stripe": "catalog:",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "yaml": "^2.9.0"
   }
 }

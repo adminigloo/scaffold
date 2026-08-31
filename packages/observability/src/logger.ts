@@ -20,6 +20,44 @@ export const REDACTED = "[redacted]";
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
 
 /**
+ * The two calls the rest of this package makes on a logger.
+ *
+ * Structural, and structurally satisfied by a pino `Logger`, so an app passes
+ * the logger it already built. Declared here rather than importing pino's type
+ * into `reporter.ts` and `limiter.ts` for the reason `createEmailSender` takes
+ * a transport instead of a Resend client: those two modules need somewhere to
+ * write a line, not a pino instance, and taking the wider type would mean a
+ * test has to construct one.
+ *
+ * Deliberately no `info`/`debug`. Nothing in this package should be narrating
+ * its own success on a hot path; the only lines it writes are the ones saying
+ * that the machinery meant to record a failure has itself failed.
+ */
+export interface LogSink {
+  warn(details: object, message: string): void;
+  error(details: object, message: string): void;
+}
+
+/**
+ * Where the reporter and the limiter write when the caller supplied no logger.
+ *
+ * `console.error`, NOT a lazily constructed `createLogger()`. An app that has
+ * already built a logger with its own `base` fields would end up with a second
+ * pino instance writing lines that disagree about service name and release,
+ * and the disagreement would only show up in the aggregator weeks later. The
+ * fallback exists so that a failure is never silent, not so that it is
+ * beautifully formatted.
+ */
+export const consoleLogSink: LogSink = {
+  warn(details, message) {
+    console.warn(message, details);
+  },
+  error(details, message) {
+    console.error(message, details);
+  },
+};
+
+/**
  * Header paths that need spelling out because they sit deeper than one level.
  *
  * `authorization` itself is not here — it is in `SECRET_PROPERTY_NAMES` below,

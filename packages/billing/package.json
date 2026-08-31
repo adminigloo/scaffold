@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/billing",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Subscriptions and entitlements: a local plan catalog, what a purchase grants, and proration.",
   "license": "UNLICENSED",
   "type": "module",
@@ -36,10 +36,10 @@
     "@adminigloo/permissions": "workspace:^"
   },
   "peerDependencies": {
-    "drizzle-orm": "^0.45.0"
+    "drizzle-orm": "catalog:peers"
   },
   "devDependencies": {
-    "drizzle-orm": "^0.45.2"
+    "drizzle-orm": "catalog:"
   },
   "scripts": {
     "build": "tsup src/index.ts src/schema.ts --format esm,cjs --dts --clean",

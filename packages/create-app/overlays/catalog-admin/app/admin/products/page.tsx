@@ -2,6 +2,10 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { formatMinor, priceRange, type ProductStatus } from "__SCOPE__/catalog";
 import { isDbConfigured } from "__SCOPE__/db";
+import {
+  storefrontUrlFor,
+  type StorefrontLinkable,
+} from "@/components/admin/storefrontUrl";
 import { db } from "@/db";
 import { currentPrincipal } from "@/server/auth";
 import { loadStaffPermissions } from "@/server/permissions";
@@ -42,19 +46,14 @@ export default async function ProductsPage({ searchParams }: PageProps) {
   const params = await searchParams;
   const status = STATUSES.find((candidate) => candidate === params.status);
 
-  let can: Awaited<ReturnType<typeof loadStaffPermissions>> = null;
-  try {
-    const principal = await currentPrincipal();
-    can = principal ? await loadStaffPermissions({ principal }) : null;
-  } catch (error) {
-    // Narrow on purpose. A genuinely unreachable database — a paused Neon
-    // branch, a rotated password — must NOT be dressed up as "not configured
-    // yet": that sends whoever is on call to read /setup instead of the status
-    // page. Only the typed "you have not set DATABASE_URL" error gets the
-    // friendly screen.
-    if (!isDatabaseNotConfigured(error)) throw error;
-    return <NotConfigured />;
-  }
+  // No try/catch, matching every other admin page. The guard above has already
+  // answered "is there a database configured"; what is left for a catch here is
+  // a genuinely unreachable one — a paused Neon branch, a rotated password —
+  // which must NOT be dressed up as "not configured yet", because that sends
+  // whoever is on call to read /setup instead of the status page. Letting it
+  // reach `app/admin/error.tsx` is the correct handling of an incident.
+  const principal = await currentPrincipal();
+  const can = principal ? await loadStaffPermissions({ principal }) : null;
 
   // Checked here as well as in the layout and again on every procedure. A page
   // can be rendered by a route that does not sit under the admin layout, and
@@ -71,8 +70,6 @@ export default async function ProductsPage({ searchParams }: PageProps) {
   }
 
   const products = await loadProducts(status);
-  if (products === null) return <NotConfigured />;
-
   const canCreate = can.can("catalog.products.create");
 
   return (
@@ -116,6 +113,7 @@ export default async function ProductsPage({ searchParams }: PageProps) {
                 <th scope="col" className="px-4 py-2 font-medium">Status</th>
                 <th scope="col" className="px-4 py-2 font-medium">Price</th>
                 <th scope="col" className="px-4 py-2 text-right font-medium">Variants</th>
+                <th scope="col" className="px-4 py-2 text-right font-medium">Storefront</th>
               </tr>
             </thead>
             <tbody>
@@ -142,6 +140,9 @@ export default async function ProductsPage({ searchParams }: PageProps) {
                   <td className="px-4 py-2.5 text-right text-ink-muted tabular-nums">
                     {product.variants.length}
                   </td>
+                  <td className="px-4 py-2.5 text-right">
+                    <StorefrontCell product={product} />
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -152,28 +153,22 @@ export default async function ProductsPage({ searchParams }: PageProps) {
   );
 }
 
-/** The list, or null when the only thing wrong is a missing DATABASE_URL. */
-async function loadProducts(status: ProductStatus | undefined) {
-  try {
-    const caller = await api();
-    const { products } = await caller.catalog.list(status ? { status } : {});
-    return products;
-  } catch (error) {
-    if (isDatabaseNotConfigured(error)) return null;
-    throw error;
-  }
-}
-
 /**
- * Matched by NAME, never with `instanceof`.
+ * The list.
  *
- * pnpm resolves a peer mismatch by installing a second physical copy of a
- * package, and `instanceof` is false across the two class objects while the
- * name survives. Every error class in this codebase declares `readonly name` as
- * an own property for exactly this reason.
+ * NO "there is no database yet" BRANCH, and it had one. The branch caught this
+ * read and asked whether the error was named `DatabaseNotConfiguredError`,
+ * which cannot work through `api()`: a tRPC caller wraps whatever a procedure
+ * throws in a `TRPCError` and hangs the original off `.cause`, so the name
+ * being tested is never the name that arrives. It survived only because the
+ * page already returns `<NotConfigured />` before reaching here — dead code
+ * that read as the guard, which is how the storefront came to have the same
+ * check and no guard above it, and to 500 on a fresh clone.
  */
-function isDatabaseNotConfigured(error: unknown): boolean {
-  return error instanceof Error && error.name === "DatabaseNotConfiguredError";
+async function loadProducts(status: ProductStatus | undefined) {
+  const caller = await api();
+  const { products } = await caller.catalog.list(status ? { status } : {});
+  return products;
 }
 
 function Header() {
@@ -226,6 +221,54 @@ function StatusBadge({ status }: { readonly status: string }) {
     >
       {status}
     </span>
+  );
+}
+
+/**
+ * The live page, or a dash saying there is not one.
+ *
+ * Only `active` products have a public page — the storefront query filters on
+ * the status column, so a link on a draft or an archived row hands somebody a
+ * 404 for a product sitting right in front of them. The difference is drawn the
+ * same way the status column draws it, as something you read rather than
+ * something you discover by clicking: down a list of forty products it is
+ * immediately obvious which ones a customer can actually reach.
+ *
+ * `storefrontUrlFor` decides, not a comparison written out here. The detail
+ * page asks the same function, so the two surfaces cannot come to disagree
+ * about which products are public.
+ */
+function StorefrontCell({
+  product,
+}: {
+  readonly product: StorefrontLinkable & { readonly name: string };
+}) {
+  const href = storefrontUrlFor(product);
+
+  if (href === null) {
+    return (
+      <span className="text-ink-muted">
+        <span aria-hidden="true">—</span>
+        <span className="sr-only">Not on the storefront</span>
+      </span>
+    );
+  }
+
+  return (
+    // A plain <a> and a new tab, as in the admin sidebar: nothing navigates
+    // client-side into a new tab, and an admin checking a page should keep the
+    // filtered list they were working through.
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className={`whitespace-nowrap rounded-[--radius-card] text-accent underline-offset-2 hover:underline ${FOCUS}`}
+    >
+      View <span aria-hidden="true">↗</span>
+      <span className="sr-only">
+        {product.name} on the storefront, opens in a new tab
+      </span>
+    </a>
   );
 }
 
@@ -296,6 +339,25 @@ function EmptyState({
         one the storefront can list it and nobody can buy it.
         {canCreate ? null : " You do not hold the permission to create one."}
       </p>
+      {/* Where it ends up, said before anybody has one. Creating a product and
+          then having to guess at the public URL is the thing this list used to
+          leave people doing; naming /products here means the answer is on the
+          screen you start from rather than the one you never reach. Not shown
+          under a status filter — "no archived products" is not the moment to
+          explain the storefront. */}
+      {filtered ? null : (
+        <p className="mt-1 max-w-[62ch] text-sm text-ink-muted">
+          Once a product is active it appears on the public storefront at{" "}
+          <Link
+            href="/products"
+            className={`text-accent underline underline-offset-2 ${FOCUS}`}
+          >
+            /products
+          </Link>
+          , and every active row in this table links straight to its live page.
+          Drafts and archived products are never shown there.
+        </p>
+      )}
       {canCreate && !filtered ? (
         <Link
           href="/admin/products/new"

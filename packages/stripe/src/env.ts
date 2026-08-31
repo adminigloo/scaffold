@@ -3,15 +3,23 @@ import { prefixedSecret } from "@adminigloo/env";
 /** Stripe server credentials. */
 export function stripeServer() {
   return {
-    STRIPE_SECRET_KEY: prefixedSecret("sk_"),
-    STRIPE_WEBHOOK_SECRET: prefixedSecret("whsec_"),
+    // Optional EVERYWHERE, including on a deployment.
+    //
+    // A project ships before it charges anyone. Requiring these on deploy means
+    // you cannot put the thing online until you have finished a Stripe
+    // onboarding — and the simulated-purchase path exists precisely so the
+    // checkout flow works, and is demonstrable, before that. The moment a key
+    // IS present the mode assertion applies to it in full: a live key still
+    // cannot run outside production.
+    STRIPE_SECRET_KEY: prefixedSecret("sk_").optional(),
+    STRIPE_WEBHOOK_SECRET: prefixedSecret("whsec_").optional(),
   };
 }
 
 /** Stripe browser credentials. */
 export function stripeClient() {
   return {
-    NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: prefixedSecret("pk_"),
+    NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: prefixedSecret("pk_").optional(),
   };
 }
 

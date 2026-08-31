@@ -55,13 +55,22 @@ export interface ClaimInput {
    * row, false when the conflict clause swallowed it.
    */
   readonly insertedRow: boolean;
-  /** `processed_at` of the row that was already there, if any. */
-  readonly existingProcessedAt: Date | null;
+  /**
+   * `processed_at` of the row that was already there, if any.
+   *
+   * Accepts a string as well as a Date. Reading this column through a raw
+   * `db.execute` — which is exactly what `claimStatements.readExisting` is for
+   * — returns the timestamptz as a STRING, because Drizzle installs an identity
+   * type parser. The typed `select()` path returns a Date. Rows from `execute`
+   * are untyped, so TypeScript cannot catch the difference at any call site and
+   * a unit test that builds its own Dates never sees it.
+   */
+  readonly existingProcessedAt: Date | string | null;
   /**
    * `claimed_at` of the row that was already there. NULL means unclaimed —
    * either never claimed, or a previous handler threw and released it.
    */
-  readonly existingClaimedAt?: Date | null;
+  readonly existingClaimedAt?: Date | string | null;
   /** Injected so the lease boundary is testable without faking the clock. */
   readonly now?: Date;
   readonly leaseMs?: number;
@@ -85,6 +94,19 @@ export interface ClaimInput {
  * Kept pure so the branch that decides whether Stripe retries is unit-testable
  * with no database, rather than buried in a transaction callback nobody reads.
  */
+/**
+ * Timestamps arrive as a Date from `select()` and as a string from `execute()`.
+ * Normalising here rather than at each call site is the difference between one
+ * conversion and a crash inside a webhook retry — `claimedAt.getTime is not a
+ * function`, on the path that only runs when something has already gone wrong.
+ */
+function asDate(value: Date | string | null | undefined): Date | null {
+  if (value === null || value === undefined) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 export function decideClaim(input: ClaimInput): ClaimOutcome {
   // The insert is decisive. If the statement returned a row, this instance
   // created it microseconds ago and owns it — any `existingProcessedAt` handed
@@ -94,10 +116,10 @@ export function decideClaim(input: ClaimInput): ClaimOutcome {
   if (input.insertedRow) return { action: "process", reclaimed: false };
 
   // Somebody got there first, and finished.
-  if (input.existingProcessedAt !== null) return { action: "skip-duplicate" };
+  if (asDate(input.existingProcessedAt) !== null) return { action: "skip-duplicate" };
 
   // Unfinished. Whether we may take it over depends entirely on the claim.
-  const claimedAt = input.existingClaimedAt ?? null;
+  const claimedAt = asDate(input.existingClaimedAt);
 
   // Released by a handler that threw, or never claimed at all. Take it.
   if (claimedAt === null) return { action: "process", reclaimed: true };

@@ -29,10 +29,31 @@ import { env } from "@/env";
  *               With no `BOOTSTRAP_ADMIN_EMAIL` set, a deployment grants
  *               nothing automatically and you assign the first role by hand.
  *
- * Atomic by construction. The grant is one INSERT…SELECT…WHERE NOT EXISTS, so
- * two simultaneous first sign-ins cannot both win — the second sees the first's
- * row and inserts nothing. A read-then-write would hand admin to both.
+ * SERIALISED BY AN ADVISORY LOCK, and the reason is worth reading before anyone
+ * "simplifies" it away.
+ *
+ * This used to be a bare `INSERT … SELECT … WHERE NOT EXISTS`, with a comment
+ * claiming that made it atomic. It does not. Under READ COMMITTED the NOT
+ * EXISTS subquery neither sees nor waits on another transaction's uncommitted
+ * INSERT, and `principal_role`'s primary key is (principal_id, scope,
+ * tenant_id) — so two different user ids collide on nothing and
+ * `ON CONFLICT DO NOTHING` has no constraint to fire against. An integration
+ * test firing two concurrent sign-ins on separate connections got TWO
+ * administrators. On a public deployment that is two strangers, not one.
+ *
+ * There is no index that expresses "at most one staff row", so the fix is a
+ * lock rather than a constraint. `pg_advisory_xact_lock` serialises the check
+ * and the insert against every other backend, and releases on commit or
+ * rollback with no cleanup path to forget. It costs one round trip, once, on
+ * the first sign-in of a deployment's life.
  */
+/**
+ * Advisory-lock key. Arbitrary, but must be stable: two deployments of the same
+ * app share a database only if they share this number, and changing it would
+ * silently stop excluding an older running instance mid-rollout.
+ */
+const BOOTSTRAP_LOCK_KEY = 8_140_231;
+
 export async function grantBootstrapAdminIfFirst(
   userId: string,
   email: string | null,
@@ -57,18 +78,24 @@ export async function grantBootstrapAdminIfFirst(
   // template here would create one that the seed then duplicates.
   if (!template) return false;
 
-  const result = await db.execute(sql`
-    insert into principal_role (principal_id, scope, tenant_id, template_id)
-    select ${userId}, 'staff', ${FIRM_WIDE}, ${template.id}
-    where not exists (
-      select 1 from principal_role where scope = 'staff'
-    )
-    on conflict do nothing
-    returning principal_id
-  `);
+  const granted = await db.transaction(async (tx) => {
+    // Serialise every caller of this function, across every connection. The key
+    // is an arbitrary constant — any two backends using the same number
+    // exclude each other, and nothing else in this app takes an advisory lock.
+    await tx.execute(sql`select pg_advisory_xact_lock(${BOOTSTRAP_LOCK_KEY})`);
 
-  const granted =
-    (result as unknown as { rows: unknown[] }).rows.length > 0;
+    const inserted = await tx.execute(sql`
+      insert into principal_role (principal_id, scope, tenant_id, template_id)
+      select ${userId}, 'staff', ${FIRM_WIDE}, ${template.id}
+      where not exists (
+        select 1 from principal_role where scope = 'staff'
+      )
+      on conflict do nothing
+      returning principal_id
+    `);
+
+    return (inserted as unknown as { rows: unknown[] }).rows.length > 0;
+  });
 
   if (granted) {
     console.info(

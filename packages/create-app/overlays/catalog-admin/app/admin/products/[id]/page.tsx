@@ -7,6 +7,10 @@ import {
   type ProductFormInitialVariant,
 } from "@/components/admin/ProductForm";
 import { minorToMajorInput } from "@/components/admin/money";
+import {
+  storefrontUrlFor,
+  type StorefrontLinkable,
+} from "@/components/admin/storefrontUrl";
 import { db } from "@/db";
 import { currentPrincipal } from "@/server/auth";
 import { loadStaffPermissions } from "@/server/permissions";
@@ -35,14 +39,11 @@ export default async function ProductPage({ params }: PageProps) {
   // Before anything queries; see the products list page for why.
   if (!isDbConfigured(db)) return <NotConfigured />;
 
-  let can: Awaited<ReturnType<typeof loadStaffPermissions>> = null;
-  try {
-    const principal = await currentPrincipal();
-    can = principal ? await loadStaffPermissions({ principal }) : null;
-  } catch (error) {
-    if (!isDatabaseNotConfigured(error)) throw error;
-    return <NotConfigured />;
-  }
+  // No try/catch; see the product list for why. The guard above answers "no
+  // database configured", and an unreachable one is an incident for the error
+  // boundary rather than something to dress up as setup advice.
+  const principal = await currentPrincipal();
+  const can = principal ? await loadStaffPermissions({ principal }) : null;
 
   if (!can?.can("catalog.products.view")) {
     return (
@@ -56,13 +57,13 @@ export default async function ProductPage({ params }: PageProps) {
     );
   }
 
-  let loaded: Awaited<ReturnType<typeof loadProduct>>;
-  try {
-    loaded = await loadProduct(id);
-  } catch (error) {
-    if (isDatabaseNotConfigured(error)) return <NotConfigured />;
-    throw error;
-  }
+  // Read straight through. This catch used to ask whether the thrown error was
+  // named `DatabaseNotConfiguredError`, which cannot work: `loadProduct` reads
+  // through `api()`, and a tRPC caller wraps whatever a procedure throws, so
+  // the name never arrived. It looked like the guard and was dead code behind
+  // the real one — the same arrangement that left the storefront with the check
+  // and no guard above it, returning a 500 on a project with no credentials.
+  const loaded = await loadProduct(id);
 
   // `catalog.get` throws NOT_FOUND for an id that is not in this catalog —
   // including one that belongs to another tenant, which is why the router
@@ -119,12 +120,15 @@ export default async function ProductPage({ params }: PageProps) {
                 } still block publishing — they are listed below the variants.`}
           </p>
         </div>
-        <Link
-          href={`/admin/products?status=${loaded.product.status}`}
-          className="rounded-[--radius-card] border border-line bg-surface px-2.5 py-1 text-xs capitalize text-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
-        >
-          {loaded.product.status}
-        </Link>
+        <div className="flex shrink-0 flex-col items-end gap-1.5">
+          <Link
+            href={`/admin/products?status=${loaded.product.status}`}
+            className="rounded-[--radius-card] border border-line bg-surface px-2.5 py-1 text-xs capitalize text-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
+          >
+            {loaded.product.status}
+          </Link>
+          <StorefrontUrl product={loaded.product} />
+        </div>
       </div>
 
       {extraGrants > 0 ? (
@@ -173,9 +177,39 @@ async function loadProduct(id: string) {
   }
 }
 
-/** Matched by NAME, never `instanceof` — see the products list page. */
-function isDatabaseNotConfigured(error: unknown): boolean {
-  return error instanceof Error && error.name === "DatabaseNotConfiguredError";
+/**
+ * The public URL, written out rather than hidden behind a word.
+ *
+ * Somebody who has just published a product wants two things: to look at it,
+ * and to send the address to someone else. Printing the URL answers the second
+ * without a right-click, and the link answers the first — in a new tab, because
+ * this page is a form and losing an unsaved edit to check the shop is a worse
+ * trade than an extra tab.
+ *
+ * A draft says so plainly instead of offering a link that 404s. The storefront
+ * only serves `active`, and `storefrontUrlFor` is the same function the product
+ * list asks, so the two pages cannot disagree about it.
+ */
+function StorefrontUrl({ product }: { readonly product: StorefrontLinkable }) {
+  const href = storefrontUrlFor(product);
+
+  if (href === null) {
+    return (
+      <span className="text-xs text-ink-muted">Not on the storefront yet</span>
+    );
+  }
+
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="rounded-[--radius-card] font-mono text-xs text-accent underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
+    >
+      {href} <span aria-hidden="true">↗</span>
+      <span className="sr-only">(opens in a new tab)</span>
+    </a>
+  );
 }
 
 function Breadcrumb() {

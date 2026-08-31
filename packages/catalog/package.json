@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/catalog",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "The product catalog commerce and billing both sell from: products, variants, and what buying a variant grants. Pure pricing and validation, plus a Stripe sync planner that knows prices are immutable.",
   "license": "UNLICENSED",
   "type": "module",
@@ -36,14 +36,14 @@
     "@adminigloo/permissions": "workspace:^"
   },
   "peerDependencies": {
-    "drizzle-orm": "^0.45.0",
-    "stripe": "^22.0.0",
-    "zod": "^3.25.0 || ^4.0.0"
+    "drizzle-orm": "catalog:peers",
+    "stripe": "catalog:peers",
+    "zod": "catalog:peers"
   },
   "devDependencies": {
-    "drizzle-orm": "^0.45.2",
-    "stripe": "^22.6.0",
-    "zod": "^4.5.1"
+    "drizzle-orm": "catalog:",
+    "stripe": "catalog:",
+    "zod": "catalog:"
   },
   "scripts": {
     "build": "tsup src/index.ts src/schema.ts --format esm,cjs --dts --clean",

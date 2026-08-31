@@ -91,6 +91,28 @@ The production database URL exists in exactly one place: the `production`
 GitHub Environment. It is not in anyone's `.env.local`, which is what makes
 "nobody hand-runs a production migration" true rather than agreed.
 
+### The rate limiter needs Upstash once there is more than one instance
+
+`UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` are optional and the app
+runs without them — `src/server/rate-limit.ts` falls back to counting in the
+process's own memory, which is exactly right for one dev server. On Vercel it is
+not: every instance keeps its own counter, so a limit of five a minute becomes
+five a minute *per instance*, and every cold start resets it to zero. The
+limiter is therefore weakest at the moment traffic has scaled the fleet out,
+which is the moment it is being leant on. Set both in the Preview and Production
+scopes, or accept that the limit is advisory. `/setup` reports the pair under
+"Rate limiting", including the half-configured state.
+
+There are two limiters and they answer a store outage differently, which is a
+deployment decision rather than a detail. `limiter` — the procedure ladder and
+both webhook routes — **fails open**: a Redis blip must not take the product
+down with the component that was protecting it, and everything on it is either
+authenticated, signature-verified or retried by a provider. `failClosedLimiter`
+**refuses** while the store is unreachable, and the endpoints on it are the ones
+where an unlimited request is expensive rather than merely untidy. Losing
+telemetry for the length of an outage is the accepted cost; handing out an
+unbounded write endpoint during the incident that took the store out is not.
+
 ### `NEXT_PUBLIC_*` values are baked in at build time
 
 Correcting one in the Vercel dashboard changes nothing until the deployment is

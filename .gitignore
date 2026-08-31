@@ -5,3 +5,5 @@ dist
 .turbo
 *.tsbuildinfo
 
+# Snapshots of the published type surface, taken per-run by @clerk/break-check.
+.api-snapshots

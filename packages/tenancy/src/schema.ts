@@ -150,6 +150,20 @@ export const tenantInvitations = pgTable(
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
     acceptedAt: timestamp("accepted_at", { withTimezone: true }),
     invitedBy: text("invited_by"),
+    /**
+     * Who withdrew it, mirroring `invited_by`.
+     *
+     * The audit log records the same act, and records it better — with a
+     * request context and an actor the middleware verified. This column exists
+     * because the two answer different questions at different times: an audit
+     * row is a searchable event in a table that is periodically archived, and
+     * this is a property of the invitation itself, available to anybody holding
+     * the row and surviving as long as it does. Withdrawing an invitation is
+     * one of the few acts here that is contentious after the fact ("nobody
+     * cancelled it, the link just stopped working"), and the answer should not
+     * depend on the audit log still holding that week.
+     */
+    revokedBy: text("revoked_by"),
     createdAt: createdAt(),
   },
   (t) => [

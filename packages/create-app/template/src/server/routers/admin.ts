@@ -2,7 +2,7 @@ import { TRPCError } from "@trpc/server";
 import { and, count, desc, eq, ilike, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { users } from "__SCOPE__/auth/schema";
-import { auditEntry, defineAuditedActions } from "__SCOPE__/observability";
+import { auditEntry } from "__SCOPE__/observability";
 import { auditLog, errorLog } from "__SCOPE__/observability/schema";
 import {
   explainPermission,
@@ -19,6 +19,8 @@ import {
 } from "__SCOPE__/permissions/schema";
 import { db } from "@/db";
 import { staffCatalog, tenantCatalog } from "@/permissions/catalog";
+import { auditRegistry } from "../audit";
+import { requestContext } from "../request-context";
 import { createTRPCRouter, requireStaff } from "../trpc";
 
 /**
@@ -32,35 +34,16 @@ import { createTRPCRouter, requireStaff } from "../trpc";
  */
 
 /**
- * Actions this router can write to the audit log.
+ * The audit vocabulary this router writes through lives in `src/server/audit.ts`.
  *
- * Three keys rather than one with the effect in metadata, because the first
- * question asked of an audit log is "who was granted what", and answering it
- * from `action = 'permission.override.granted'` reads an index while answering
- * it from a jsonb field reads the table.
- *
- * When other routers start auditing, move this map to its own module and
- * compose the registry with `contributedBy`, so two of them cannot claim the
- * same key and have one silently win.
+ * It used to be declared here, as `adminAuditedActions`, and it moved the
+ * moment a second router started auditing. Two registries cannot detect a
+ * collision between them, and `recentAudit` below could only label the keys its
+ * own registry held — so an action declared anywhere else rendered in the audit
+ * viewer as a raw string, in the one screen whose entire job is to be read.
+ * `src/server/audit.ts` is generated because which routers exist depends on
+ * what the project installed.
  */
-export const adminAuditedActions = {
-  "permission.override.granted": {
-    label: "Granted a permission to one person",
-    // Sensitive, even though nothing was read. An override is how somebody
-    // comes to hold access their role never gave them, so the review that asks
-    // "who could have seen this data" has to start from the grants — and it
-    // reads the same partial index the reads are recorded in.
-    sensitive: true,
-  },
-  "permission.override.revoked": {
-    label: "Revoked a permission from one person",
-  },
-  "permission.override.cleared": {
-    label: "Removed an override, returning the person to their role template",
-  },
-} as const;
-
-export const adminAuditRegistry = defineAuditedActions(adminAuditedActions);
 
 export type OverrideEffect = "inherit" | "allow" | "deny";
 
@@ -169,38 +152,6 @@ function isSealedFor(
   reason: string,
 ): boolean {
   return reason === "sealed-by-template" || catalog.isSealed(permission);
-}
-
-/**
- * Where the request came from, or nulls.
- *
- * `headers()` only answers inside a request scope. A seed script or a test that
- * drives this router through `createCallerFactory` has no request, and losing
- * the whole permission change over an IP address the row is allowed to leave
- * null would be the wrong trade.
- *
- * Imported here rather than at the top of the file so that loading this router
- * does not load Next's server runtime. Otherwise a unit test that builds a
- * caller to check one permission has to boot the framework first.
- */
-async function requestContext(): Promise<{
-  ipAddress: string | null;
-  userAgent: string | null;
-}> {
-  try {
-    const { headers } = await import("next/headers");
-    const incoming = await headers();
-    // Left-most entry is the original client; the rest are proxies. Spoofable
-    // by a direct caller, which is why it is evidence and not identity — the
-    // actor id recorded beside it is the part that was authenticated.
-    const forwarded = incoming.get("x-forwarded-for")?.split(",")[0]?.trim();
-    return {
-      ipAddress: forwarded || null,
-      userAgent: incoming.get("user-agent"),
-    };
-  } catch {
-    return { ipAddress: null, userAgent: null };
-  }
 }
 
 /**
@@ -505,7 +456,7 @@ export const adminRouter = createTRPCRouter({
         }
 
         await tx.insert(auditLog).values(
-          auditEntry(adminAuditRegistry, {
+          auditEntry(auditRegistry, {
             action:
               input.effect === "allow"
                 ? "permission.override.granted"
@@ -587,8 +538,8 @@ export const adminRouter = createTRPCRouter({
           // it does not. An action named with a bare string literal at a call
           // site shows up here as its key — the visible symptom of the thing
           // `defineAuditedActions` exists to prevent.
-          label: adminAuditRegistry.has(row.action)
-            ? adminAuditRegistry.get(row.action).label
+          label: auditRegistry.has(row.action)
+            ? auditRegistry.get(row.action).label
             : row.action,
         })),
       };

@@ -42,10 +42,22 @@ export async function loadTenantPermissions(input: {
 export async function loadStaffPermissions(input: {
   principal: Principal;
 }): Promise<PermissionSet | null> {
+  // The tenant predicate is NOT optional here, even though staff rows are
+  // supposed to live at FIRM_WIDE.
+  //
+  // Without it this gate and `resolveFor` disagree: the gate matched any staff
+  // row, `resolveFor` re-queried pinned to '*', and a staff row written with a
+  // real tenant id — the column is plain text, nothing stops it — passed the
+  // gate and then resolved to an EMPTY SET. The caller was told "staff who
+  // holds no permissions" when the truth is "not staff at all", and those two
+  // answers take different branches everywhere: one shows an empty admin panel,
+  // the other sends you away. Asking the same question twice, two ways, is how
+  // that gap opens.
   const assignment = await db.query.principalRole.findFirst({
     where: and(
       eq(principalRole.principalId, input.principal.userId),
       eq(principalRole.scope, "staff"),
+      eq(principalRole.tenantId, FIRM_WIDE),
     ),
   });
   if (!assignment) return null;

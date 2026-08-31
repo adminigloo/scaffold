@@ -12,5 +12,13 @@ export default defineConfig({
     // They ARE executed — as part of the generated project, which the CI
     // `generate` job builds and runs. That is the only place they can resolve.
     exclude: ["**/node_modules/**", "**/dist/**", "template/**", "overlays/**"],
+    // Vitest's default is five seconds, which is a budget for a unit test. The
+    // tests here are not unit tests: several of them run `planEmit` once per
+    // configuration, and `planEmit` reads and renders every file in
+    // `template/` and every selected overlay from disk. The evidence sweep in
+    // capabilities.test.ts sat at 4.98 seconds on a quiet machine and timed out
+    // whenever another suite was running beside it — a red suite that says
+    // nothing about the generator and everything about how busy the laptop was.
+    testTimeout: 30_000,
   },
 });

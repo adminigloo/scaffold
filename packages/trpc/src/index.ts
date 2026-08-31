@@ -16,6 +16,7 @@ export type { PermissionDeniedLike } from "./errors.js";
 export { createProcedures } from "./procedures.js";
 export type {
   AuthenticatedOverrides,
+  CreateProceduresOptions,
   PermissionLoaders,
   Procedures,
   ProtectedProcedure,
@@ -27,6 +28,11 @@ export type {
   TenantProcedure,
   TRPCLike,
 } from "./procedures.js";
+
+export type {
+  RateLimitLadderInfo,
+  RateLimitLadderOptions,
+} from "./ratelimit.js";
 
 export { auditProcedureScopes } from "./inventory.js";
 export type { AuditResult, ProcedureEntry, ScopeViolation } from "./inventory.js";

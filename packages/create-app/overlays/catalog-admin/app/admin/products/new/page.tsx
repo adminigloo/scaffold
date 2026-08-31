@@ -20,19 +20,11 @@ export default async function NewProductPage() {
   // could explain itself.
   if (!isDbConfigured(db)) return <NotConfigured />;
 
-  let can: Awaited<ReturnType<typeof loadStaffPermissions>> = null;
-  try {
-    const principal = await currentPrincipal();
-    can = principal ? await loadStaffPermissions({ principal }) : null;
-  } catch (error) {
-    // Only the typed "DATABASE_URL is not set" error gets the friendly screen.
-    // An unreachable database is an incident, and disguising it as setup advice
-    // sends the wrong person to the wrong page.
-    if (!(error instanceof Error && error.name === "DatabaseNotConfiguredError")) {
-      throw error;
-    }
-    return <NotConfigured />;
-  }
+  // No try/catch; see the product list for why. "DATABASE_URL is not set" was
+  // already answered above, and an unreachable database is an incident that
+  // belongs on the error boundary rather than behind setup advice.
+  const principal = await currentPrincipal();
+  const can = principal ? await loadStaffPermissions({ principal }) : null;
 
   // Re-checked on `catalog.create` itself. This is what stops the form being
   // rendered at all, which is kinder than letting someone fill it in and be

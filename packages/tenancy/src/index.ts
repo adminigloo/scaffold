@@ -14,6 +14,22 @@ export {
 } from "./invitations.js";
 export type { InvitationLifecycle, InvitationState, InvitationToken } from "./invitations.js";
 
+export {
+  createInvitationService,
+  DEFAULT_INVITATION_EXPIRY_HOURS,
+  UnknownRoleTemplateError,
+  UnreadableDriverResultError,
+} from "./service.js";
+export type {
+  AcceptResult,
+  CreateInvitationServiceDeps,
+  InvitationDb,
+  InvitationService,
+  InvitationSummary,
+  SendInvitationInput,
+  SentInvitation,
+} from "./service.js";
+
 export { tenancyPermissions } from "./permissions.js";
 export type { TenancyPermission } from "./permissions.js";
 

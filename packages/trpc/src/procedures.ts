@@ -6,11 +6,25 @@ import type { Principal } from "@adminigloo/auth";
 import type { PermissionSet } from "@adminigloo/permissions";
 import type { ScaffoldContext } from "./context.js";
 import { notAMember, notStaff, permissionDenied, permissionDeniedToTRPCError } from "./errors.js";
+import { enforceRateLimit, type RateLimitLadderOptions } from "./ratelimit.js";
 
-/** Input every tenant-scoped procedure carries, merged with the caller's own. */
-export interface TenantInput {
+/**
+ * Input every tenant-scoped procedure carries, merged with the caller's own.
+ *
+ * A TYPE ALIAS AND NOT AN INTERFACE, which is load bearing rather than a style
+ * choice. tRPC's `.input()` refuses to chain onto a builder whose existing
+ * input does not satisfy `Record<string, unknown>`, and an interface has no
+ * implicit index signature, so it never does. Written as an interface, every
+ * `requireTenant("…").input(z.object({ … }))` in every generated app failed to
+ * compile with `Argument of type 'ZodObject<…>' is not assignable to parameter
+ * of type 'TypeError<"All input parsers did not resolve to an object">'` — an
+ * error that names tRPC's internals and points nowhere near this line. Nothing
+ * caught it here because the ladder's own tests never chain a second parser
+ * onto the tenant rung, and no workspace package compiles the template.
+ */
+export type TenantInput = {
   tenantId: string;
-}
+};
 
 /** What `protectedProcedure` adds to the context. */
 export interface AuthenticatedOverrides {
@@ -140,6 +154,17 @@ export interface Procedures<
   requireTenant(permission: string): TenantProcedure<TContext, TMeta>;
 }
 
+export interface CreateProceduresOptions {
+  /**
+   * Install a rate-limit middleware on every rung.
+   *
+   * Omitted, nothing is installed — not a middleware that checks a flag and
+   * returns, no middleware at all. An app that has not opted in pays nothing
+   * and behaves exactly as it did before this option existed.
+   */
+  readonly rateLimit?: RateLimitLadderOptions | undefined;
+}
+
 const tenantInput = z.object({
   // `.min(1)` rather than a bare string: an empty tenant id is falsy, and the
   // handful of places that would go on to write `WHERE tenant_id = ''` or fall
@@ -179,11 +204,38 @@ export function createProcedures<
 >(
   t: TRPCLike<TContext, TMeta>,
   loaders: PermissionLoaders,
+  options: CreateProceduresOptions = {},
 ): Procedures<TContext, TMeta> {
-  const publicProcedure: PublicProcedure<TContext, TMeta> = t.procedure;
+  const rateLimit = options.rateLimit;
 
-  const protectedProcedure: ProtectedProcedure<TContext, TMeta> =
-    publicProcedure.use(tagScope(async (opts) => {
+  /**
+   * The unlimited root every rung is grown from.
+   *
+   * `publicProcedure` below carries the anonymous, IP-keyed budget, and the
+   * authenticated rungs must NOT inherit it — they are keyed by user and
+   * measured against a different number, so inheriting would spend two budgets
+   * for one call and put an office behind one NAT into a shared bucket that
+   * the user key exists to avoid. Building the authenticated rungs from this
+   * root instead of from `publicProcedure` is what keeps it to one budget per
+   * call.
+   */
+  const base: PublicProcedure<TContext, TMeta> = t.procedure;
+
+  const publicProcedure: PublicProcedure<TContext, TMeta> =
+    rateLimit === undefined
+      ? base
+      : base.use(async (opts) => {
+          await enforceRateLimit(rateLimit, {
+            scope: "public",
+            type: opts.type,
+            path: opts.path,
+            ctx: opts.ctx,
+          });
+          return opts.next();
+        });
+
+  const authenticated: ProtectedProcedure<TContext, TMeta> =
+    base.use(tagScope(async (opts) => {
       const { principal } = opts.ctx;
       if (!principal) {
         throw new TRPCError({
@@ -210,7 +262,28 @@ export function createProcedures<
       return result;
     }, "authenticated"));
 
-  const tenantProcedure: TenantProcedure<TContext, TMeta> = protectedProcedure
+  /**
+   * The limit sits BELOW the authentication middleware, deliberately.
+   *
+   * The key is the user id, so there has to be a user before there is a key.
+   * The cost is that an unauthenticated flood against a protected procedure is
+   * refused by the UNAUTHORIZED throw rather than by the limiter, which is the
+   * cheaper of the two rejections anyway.
+   */
+  const protectedProcedure: ProtectedProcedure<TContext, TMeta> =
+    rateLimit === undefined
+      ? authenticated
+      : authenticated.use(async (opts) => {
+          await enforceRateLimit(rateLimit, {
+            scope: "authenticated",
+            type: opts.type,
+            path: opts.path,
+            ctx: opts.ctx,
+          });
+          return opts.next();
+        });
+
+  const tenantResolved: TenantProcedure<TContext, TMeta> = authenticated
     .input(tenantInput)
     .use(tagScope(async (opts) => {
       const { principal, permissionCache } = opts.ctx;
@@ -238,8 +311,21 @@ export function createProcedures<
       return opts.next({ ctx: { tenantId, can } });
     }, "tenant"));
 
-  const staffProcedure: StaffProcedure<TContext, TMeta> =
-    protectedProcedure.use(tagScope(async (opts) => {
+  const tenantProcedure: TenantProcedure<TContext, TMeta> =
+    rateLimit === undefined
+      ? tenantResolved
+      : tenantResolved.use(async (opts) => {
+          await enforceRateLimit(rateLimit, {
+            scope: "tenant",
+            type: opts.type,
+            path: opts.path,
+            ctx: opts.ctx,
+          });
+          return opts.next();
+        });
+
+  const staffResolved: StaffProcedure<TContext, TMeta> =
+    authenticated.use(tagScope(async (opts) => {
       const { principal, permissionCache } = opts.ctx;
       const can = await permissionCache.get(
         `staff:${principal.userId}`,
@@ -252,6 +338,19 @@ export function createProcedures<
 
       return opts.next({ ctx: { can } });
     }, "staff"));
+
+  const staffProcedure: StaffProcedure<TContext, TMeta> =
+    rateLimit === undefined
+      ? staffResolved
+      : staffResolved.use(async (opts) => {
+          await enforceRateLimit(rateLimit, {
+            scope: "staff",
+            type: opts.type,
+            path: opts.path,
+            ctx: opts.ctx,
+          });
+          return opts.next();
+        });
 
   return {
     publicProcedure,

@@ -20,7 +20,7 @@
  * a fixed id, and every id starts with `demo_` so the whole fixture is one
  * predicate away from being found or removed.
  */
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, ne } from "drizzle-orm";
 import { users } from "__SCOPE__/auth/schema";
 import { pointsAtLocalhost, resolveAppEnv } from "__SCOPE__/env";
 import {
@@ -382,7 +382,40 @@ async function seedRoles(): Promise<void> {
   }
 
   const staffTemplateId = staffTemplates.get(DEMO_STAFF.template);
-  if (staffTemplateId !== undefined) {
+
+  // Only once a REAL staff member exists.
+  //
+  // `grantBootstrapAdminIfFirst` gives the first person to sign in an admin
+  // role, and it is guarded by "no staff role exists yet". Seeding a demo staff
+  // row satisfies that guard, so the very next real sign-in silently gets
+  // nothing and lands on "You do not have access to the admin panel" with no
+  // way in short of hand-writing SQL. The demo data would lock you out of the
+  // demo.
+  //
+  // Seeded after you have your own role, the demo lead is still useful: it puts
+  // a second person in /admin/people and gives the impersonation audit entry a
+  // real actor.
+  const realStaff = await db
+    .select({ principalId: principalRole.principalId })
+    .from(principalRole)
+    .where(
+      and(
+        eq(principalRole.scope, "staff"),
+        ne(principalRole.principalId, DEMO_STAFF_ID),
+      ),
+    )
+    .limit(1);
+
+  const seedDemoStaff = staffTemplateId !== undefined && realStaff.length > 0;
+
+  if (!seedDemoStaff && staffTemplateId !== undefined) {
+    console.log(
+      "  staff     skipped — no real staff member yet. Sign in first so " +
+        "the bootstrap grant can reach you, then re-run this seed.",
+    );
+  }
+
+  if (seedDemoStaff) {
     await db
       .insert(principalRole)
       .values({
@@ -552,7 +585,7 @@ async function main(): Promise<void> {
   console.log("Seeding demo data");
   console.log(`  database  ${describeDatabase(env.DATABASE_URL)}`);
   console.log(`  tenant    Northwind Traders (${DEMO_TENANT_ID})`);
-  console.log(`  people    ${DEMO_USERS.length} members, 1 staff`);
+  console.log(`  people    ${DEMO_USERS.length} members`);
   console.log("");
 
   // Relative to one instant, captured once, so the whole fixture tells a single

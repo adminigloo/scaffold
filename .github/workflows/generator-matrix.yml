@@ -1,0 +1,240 @@
+name: Generator matrix
+
+# THE ADDITIVE-OVERLAY RULE, ACTUALLY VERIFIED.
+#
+# `OverlayCollisionError` proves that no two overlays write the same path. That
+# is a much weaker statement than it looks: it says the file sets are disjoint,
+# and says nothing whatever about whether a given combination typechecks,
+# resolves its imports, or builds. The failure mode of additive overlays is
+# exactly the combination nobody ever generated — which is how a hardcoded
+# `/admin` link survived in a project generated with `--admin none`, and how the
+# product builder once emitted admin pages into a project that had deliberately
+# declined an admin panel.
+#
+# Six combinations, chosen to cover six DISTINCT overlay sets rather than six
+# plausible-looking products. The degenerate corners are in on purpose: nobody
+# generates `--model none --admin none` by hand, so nobody finds out that every
+# generated list is empty in it until a client does.
+#
+# `both / full / --ai --email` is deliberately NOT here. The `generate` job in
+# ci.yml already builds that maximal combination on every pull request, and a
+# nightly slot spent repeating it buys nothing.
+#
+# NIGHTLY rather than per-PR because each entry is a full `pnpm install` plus
+# `next build` against the private registry, and six of those cost more than
+# every other job in this repository put together. A regression here is a
+# regression in a combination nobody is generating this afternoon.
+
+on:
+  schedule:
+    # 03:00 UTC. Scheduled workflows only run on the default branch.
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  generate:
+    name: ${{ matrix.id }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      # EVERY combination reports. The first failure is rarely the informative
+      # one — whether the other five also fail is what separates "a package
+      # regressed" from "one overlay pairing broke".
+      fail-fast: false
+      matrix:
+        include:
+          # Overlays: none at all. The floor, and the emptiest artifact the
+          # generator can produce: APP_LINKS is `[]`, there is no /admin and no
+          # shop, and tenancy runs on an invisible personal workspace. Every
+          # generated list being empty at once is only ever exercised here.
+          - id: floor-nothing-installed
+            flags: --model none --admin none --no-ai --no-email --tenant-noun none
+            overlays: none
+
+          # Overlays: stripe. Money with no admin surface anywhere. This is the
+          # pairing that catches catalog-admin leaking: the product builder
+          # needs something to sell AND somewhere to put it, and it emitted
+          # admin pages into projects like this one until it was fixed.
+          - id: money-without-admin
+            flags: --model both --admin none --no-ai --no-email
+            overlays: stripe
+
+          # Overlays: admin-minimal + admin-full. An admin shell with nothing to
+          # sell. Every admin page must hold up with no catalog, no orders and
+          # no Stripe package installed at all.
+          - id: admin-without-money
+            flags: --model none --admin full --no-ai --no-email
+            overlays: admin-minimal, admin-full
+
+          # Overlays: email. The mail templates and /setup/email standing
+          # completely alone — no admin sidebar to hang off, no storefront, and
+          # the footer link is the page's only way in.
+          - id: email-alone
+            flags: --model none --admin none --ai --email --tenant-noun Workspace
+            overlays: email
+
+          # Overlays: admin-minimal + stripe + catalog-admin + email. The
+          # subscription path against the MINIMAL shell, which is the shell the
+          # product builder is least often seen in.
+          - id: subscription-minimal-shell
+            flags: --model subscription --admin minimal --no-ai --email --tenant-noun Team
+            overlays: admin-minimal, stripe, catalog-admin, email
+
+          # Overlays: admin-minimal + admin-full + stripe + catalog-admin. The
+          # one-time path with the full shell and the AI package, and no email —
+          # so the invitation mailer takes its no-Resend branch while everything
+          # else is switched on.
+          - id: one-time-full-shell
+            flags: --model one-time --admin full --ai --no-email --tenant-noun Company
+            overlays: admin-minimal, admin-full, stripe, catalog-admin
+
+    env:
+      # OUTSIDE the workspace, deliberately. pnpm walks up from the directory it
+      # is run in looking for a workspace root, so a generated project sitting
+      # anywhere under the checkout would find this repository's
+      # pnpm-workspace.yaml, join the monorepo, and resolve `catalog:` and
+      # `workspace:` links that a real user's project has no access to. It would
+      # install and build, and it would be testing the wrong thing.
+      APP_DIR: /tmp/matrix/app
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://npm.pkg.github.com
+          scope: "@adminigloo"
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @adminigloo/create-app build
+
+      - name: Generate
+        run: |
+          mkdir -p "$(dirname "$APP_DIR")"
+          cd "$(dirname "$APP_DIR")"
+          node "$GITHUB_WORKSPACE/packages/create-app/dist/index.js" \
+            app --yes ${{ matrix.flags }}
+
+      # The generated manifest, in the log. It states the answers, the packages,
+      # the overlays and the capabilities this run is meant to have, so a failure
+      # further down is read against what the project claimed rather than against
+      # the flags somebody has to re-derive from the job name.
+      - name: What was generated
+        run: |
+          cat "$APP_DIR/adminigloo.json"
+          expected="${{ matrix.overlays }}"
+          read_overlays='const m=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); m.overlays.length ? m.overlays.join(", ") : "none"'
+          actual=$(node -p "$read_overlays" "$APP_DIR/adminigloo.json")
+          if [ "$actual" != "$expected" ]; then
+            echo "::error title=${{ matrix.id }}: overlay set::expected [$expected], generated [$actual]. Either overlayNamesFor changed or this matrix entry is stale — and if it is stale, this combination has been covering something other than what it says."
+            exit 1
+          fi
+          echo "overlays: $actual"
+
+      - name: Install
+        working-directory: ${{ env.APP_DIR }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if pnpm install --no-frozen-lockfile > install.log 2>&1; then
+            exit 0
+          fi
+          bash "$GITHUB_WORKSPACE/.github/scripts/report-matrix-failure.sh" \
+            "${{ matrix.id }}" "${{ matrix.flags }}" "install" install.log
+          exit 1
+
+      # Placeholder credentials, and a superset of what any combination needs.
+      # Every value is SHAPED correctly so boot validation genuinely runs — a
+      # build that passes because validation was skipped proves nothing about the
+      # contract this scaffold exists to enforce. Variables belonging to packages
+      # this combination did not install are inert: src/env.ts is generated from
+      # the fragments the installed packages contributed, so it never looks at
+      # them. Nothing here reaches a network.
+      - name: Credentials
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          cat > .env.local <<'EOF'
+          NEXT_PUBLIC_APP_URL=http://localhost:3000
+          DATABASE_URL=postgresql://u:p@ep-ci-pooler.us-east-2.aws.neon.tech/db
+          DATABASE_URL_UNPOOLED=postgresql://u:p@ep-ci.us-east-2.aws.neon.tech/db
+          CLERK_SECRET_KEY=sk_test_0000000000000000000000000000
+          CLERK_WEBHOOK_SIGNING_SECRET=whsec_0000000000000000000000000000
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_0000000000000000000000000000
+          STRIPE_SECRET_KEY=sk_test_1111111111111111111111111111
+          STRIPE_WEBHOOK_SECRET=whsec_1111111111111111111111111111
+          NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_1111111111111111111111111111
+          RESEND_API_KEY=re_22222222222222222222222222
+          EMAIL_FROM=CI <ci@example.com>
+          ANTHROPIC_API_KEY=sk-ant-api03-3333333333333333333333333
+          EOF
+
+      # BEFORE the build, because `next build` reports a type error wrapped in a
+      # bundler failure and tsc reports the file and the line.
+      - name: Typecheck
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          if pnpm exec tsc --noEmit > tsc.log 2>&1; then
+            exit 0
+          fi
+          bash "$GITHUB_WORKSPACE/.github/scripts/report-matrix-failure.sh" \
+            "${{ matrix.id }}" "${{ matrix.flags }}" "typecheck" tsc.log
+          exit 1
+
+      - name: Build
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          if pnpm exec next build > build.log 2>&1; then
+            exit 0
+          fi
+          bash "$GITHUB_WORKSPACE/.github/scripts/report-matrix-failure.sh" \
+            "${{ matrix.id }}" "${{ matrix.flags }}" "build" build.log
+          exit 1
+
+      # A COMBINATION THAT COMPILES AND CANNOT SERVE A PAGE MUST FAIL HERE.
+      # Everything above this line — install, typecheck, build — was green on a
+      # configuration where every route but `/` answered 500, because none of
+      # them crosses Next's React Server Component boundary and that is where
+      # the failure lived. The sweep reads the route list off the pages the
+      # build emitted, so an overlay that adds a page is covered the day it is
+      # added rather than the day somebody remembers to list it.
+      #
+      # `next start` and not `next dev`: the artifact from the step above is
+      # already on disk, so this costs a boot and eighteen requests. The
+      # per-PR `generate` job in ci.yml sweeps dev as well, where paying for a
+      # cold compile once is worth it.
+      - name: Serve
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          if bash "$GITHUB_WORKSPACE/.github/scripts/route-sweep.sh" \
+            "$APP_DIR" "next start" 3000 pnpm exec next start -p 3000 > serve.log 2>&1
+          then
+            cat serve.log
+            exit 0
+          fi
+          cat serve.log
+          bash "$GITHUB_WORKSPACE/.github/scripts/report-matrix-failure.sh" \
+            "${{ matrix.id }}" "${{ matrix.flags }}" "serve" serve.log
+          exit 1
+
+      # The generated source, so a failure can be reproduced without guessing at
+      # the flags. node_modules and .next are excluded; everything else is small.
+      - name: Keep the generated project
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-${{ matrix.id }}
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            ${{ env.APP_DIR }}
+            !${{ env.APP_DIR }}/node_modules
+            !${{ env.APP_DIR }}/.next

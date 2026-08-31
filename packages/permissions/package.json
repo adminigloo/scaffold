@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/permissions",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Two-layer permission engine. Catalog declared in code, assignments in the database, one resolver for staff and tenant scopes, server and client.",
   "license": "UNLICENSED",
   "type": "module",
@@ -33,10 +33,10 @@
     "@adminigloo/db": "workspace:^"
   },
   "peerDependencies": {
-    "drizzle-orm": "^0.45.0"
+    "drizzle-orm": "catalog:peers"
   },
   "devDependencies": {
-    "drizzle-orm": "^0.45.2"
+    "drizzle-orm": "catalog:"
   },
   "scripts": {
     "build": "tsup src/index.ts src/schema.ts --format esm,cjs --dts --clean",

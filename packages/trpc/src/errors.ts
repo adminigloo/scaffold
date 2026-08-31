@@ -98,3 +98,23 @@ export function notStaff(): TRPCError {
     message: "Staff access required",
   });
 }
+
+/**
+ * The caller has spent their budget for this window.
+ *
+ * TOO_MANY_REQUESTS, which tRPC maps to HTTP 429, so an off-the-shelf client
+ * with retry logic already knows not to hammer it.
+ *
+ * The message names the number of seconds rather than a timestamp. tRPC has no
+ * mechanism for setting a `Retry-After` header from inside a procedure — the
+ * response is one batched envelope that may contain several results — so the
+ * only place the client can learn when to come back is the message, and a
+ * client that does not know cannot do anything except retry immediately.
+ */
+export function tooManyRequests(resetAt: Date, now: number = Date.now()): TRPCError {
+  const seconds = Math.max(1, Math.ceil((resetAt.getTime() - now) / 1000));
+  return new TRPCError({
+    code: "TOO_MANY_REQUESTS",
+    message: `Rate limit exceeded. Try again in ${seconds} second${seconds === 1 ? "" : "s"}.`,
+  });
+}

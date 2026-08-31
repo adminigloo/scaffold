@@ -1,5 +1,33 @@
 export { createLogger, redactValue, REDACT_PATHS, REDACTED } from "./logger.js";
-export type { CreateLoggerOptions, LogLevel } from "./logger.js";
+export type { CreateLoggerOptions, LogLevel, LogSink } from "./logger.js";
+
+export {
+  clientIpFromHeaders,
+  resolveRequestId,
+  REQUEST_ID_HEADER,
+} from "./request.js";
+export type { HeaderSource } from "./request.js";
+
+export { createErrorReporter } from "./reporter.js";
+export type {
+  CreateErrorReporterOptions,
+  ErrorReport,
+  ErrorReporter,
+  ErrorReporterDb,
+} from "./reporter.js";
+
+export {
+  createRateLimiter,
+  rateLimitHeaders,
+  RATE_LIMIT_POLICIES,
+} from "./limiter.js";
+export type {
+  RateLimitCheck,
+  RateLimiter,
+  RateLimiterOptions,
+  RateLimitFetch,
+  RateLimitPolicy,
+} from "./limiter.js";
 
 export {
   defineAuditedActions,

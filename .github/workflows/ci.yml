@@ -28,6 +28,62 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
 
+  api-surface:
+    name: what the published API gained and lost
+    runs-on: ubuntu-latest
+    needs: check
+    # Only on a pull request: the check is a comparison against the base of a
+    # proposed change, and there is nothing to compare a push to main against.
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      # FULL HISTORY. The tool builds the base ref as well as the head, and a
+      # shallow clone has no base ref to build.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      # FOURTEEN PUBLISHED PACKAGES, changesets, and until now nothing checking
+      # that a `patch` did not delete an exported type. Every export is a
+      # permanent API commitment; that is only true if removing one is visible
+      # before it ships rather than in a client's build a week later.
+      #
+      # It snapshots the .d.ts surface either side of the change and posts the
+      # difference as a table on the pull request, so the reviewer sees what was
+      # added and what disappeared without reading a diff of generated types.
+      #
+      # `fail-on-breaking` is ON. A genuine breaking change is not blocked
+      # forever — it is acknowledged in `break-check.config.json`, which makes
+      # the decision a reviewed commit instead of somebody clicking past a
+      # warning. That is the point.
+      #
+      # The config sets `checkVersionBump: false`, and that is not a weakening.
+      # Under changesets the version in package.json is bumped by the release
+      # pull request, not by the pull request that changes the code, so a
+      # version-against-severity comparison on a feature branch is always
+      # comparing against a version that has not moved yet. It would fire on
+      # every honest change and teach everyone to ignore it. What this job
+      # consumes is the severity; matching the changeset to it is the author's
+      # job, and the table is what makes that possible.
+      #
+      # `create-app` is deliberately not in the package list. It publishes a
+      # binary and a template directory, tsup emits no declarations for it, and
+      # a package with no type surface is not something this tool can compare.
+      - uses: clerk/break-check@v1
+        with:
+          config-path: break-check.config.json
+          setup-command: pnpm install --frozen-lockfile && pnpm build
+          fail-on-breaking: true
+          comment: true
+
   generate:
     name: generate a project and build it
     runs-on: ubuntu-latest
@@ -96,6 +152,27 @@ jobs:
           ANTHROPIC_API_KEY=sk-ant-api03-3333333333333333333333333
           EOF
           pnpm exec next build
+
+      # THE STEP THAT WOULD HAVE CAUGHT IT. `tsc --noEmit` and `vitest run` were
+      # both green on a configuration that could not serve a single page: the
+      # invitation template reached `react-dom/server` through React Email, and
+      # nothing a type checker or a plan-level test looks at knows what Next's
+      # React Server Component boundary forbids. A project that compiles and
+      # 500s is not a project, so the build is no longer the last word — the
+      # server has to answer.
+      #
+      # Both modes, and they are not the same test. `next start` serves the
+      # artifact the step above produced; `next dev` compiles each route on
+      # first request through a different path, and it is the one every
+      # developer meets first. Before the live-key step, which deliberately
+      # leaves a failed build behind it.
+      - name: Serve the generated project
+        working-directory: /tmp/e2e/e2e-app
+        run: |
+          bash "$GITHUB_WORKSPACE/.github/scripts/route-sweep.sh" \
+            /tmp/e2e/e2e-app "next start" 3000 pnpm exec next start -p 3000
+          bash "$GITHUB_WORKSPACE/.github/scripts/route-sweep.sh" \
+            /tmp/e2e/e2e-app "next dev" 3001 pnpm exec next dev -p 3001
 
       # The guarantee this whole scaffold exists to provide. If a live key ever
       # stops failing the build, that is the most important regression here.

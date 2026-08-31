@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/stripe",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "The Stripe primitive: session creation, signature verification, an event ledger with two-phase idempotency, and a typed handler registry.",
   "license": "UNLICENSED",
   "type": "module",
@@ -37,14 +37,14 @@
     "@adminigloo/permissions": "workspace:^"
   },
   "peerDependencies": {
-    "drizzle-orm": "^0.45.0",
-    "stripe": "^22.0.0",
-    "zod": "^3.25.0 || ^4.0.0"
+    "drizzle-orm": "catalog:peers",
+    "stripe": "catalog:peers",
+    "zod": "catalog:peers"
   },
   "devDependencies": {
-    "drizzle-orm": "^0.45.2",
-    "stripe": "^22.6.0",
-    "zod": "^4.5.1"
+    "drizzle-orm": "catalog:",
+    "stripe": "catalog:",
+    "zod": "catalog:"
   },
   "scripts": {
     "build": "tsup src/index.ts src/schema.ts --format esm,cjs --dts --clean",

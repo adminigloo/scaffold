@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/tenancy",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Tenants, members and invitations. Owns the organisation model; personal workspaces make tenancy universal so B2C and B2B share one query path.",
   "license": "UNLICENSED",
   "type": "module",
@@ -33,13 +33,14 @@
   },
   "dependencies": {
     "@adminigloo/db": "workspace:^",
-    "@adminigloo/permissions": "workspace:^"
+    "@adminigloo/permissions": "workspace:^",
+    "uuidv7": "^1.2.1"
   },
   "peerDependencies": {
-    "drizzle-orm": "^0.45.0"
+    "drizzle-orm": "catalog:peers"
   },
   "devDependencies": {
-    "drizzle-orm": "^0.45.2"
+    "drizzle-orm": "catalog:"
   },
   "scripts": {
     "build": "tsup src/index.ts src/schema.ts --format esm,cjs --dts --clean",

@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/env",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Boot-time environment validation. Derives APP_ENV from the deployment, binds provider key modes to it, and refuses to build a deployment that points at localhost.",
   "license": "UNLICENSED",
   "type": "module",
@@ -26,11 +26,11 @@
   },
   "peerDependencies": {
     "@t3-oss/env-nextjs": "^0.13.0",
-    "zod": "^3.25.0 || ^4.0.0"
+    "zod": "catalog:peers"
   },
   "devDependencies": {
     "@t3-oss/env-nextjs": "^0.13.11",
-    "zod": "^4.5.1"
+    "zod": "catalog:"
   },
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",

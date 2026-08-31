@@ -4,7 +4,12 @@ import { prefixedSecret } from "@adminigloo/env";
 export function authServer() {
   return {
     CLERK_SECRET_KEY: prefixedSecret("sk_"),
-    CLERK_WEBHOOK_SIGNING_SECRET: prefixedSecret("whsec_"),
+    // Optional. The webhook keeps the mirrored user row FRESH — renames, email
+    // changes, deletions — but `currentPrincipal` creates the row from the
+    // session, so a deployment without it still signs people in. Requiring it
+    // would block every deploy on registering a webhook endpoint that needs the
+    // deployment's URL to exist first, which it does not yet.
+    CLERK_WEBHOOK_SIGNING_SECRET: prefixedSecret("whsec_").optional(),
   };
 }
 
