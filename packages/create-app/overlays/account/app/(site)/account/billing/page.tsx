@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { formatMinor } from "__SCOPE__/catalog";
 import { isDbConfigured } from "__SCOPE__/db";
+import { priceFor, type PlanTier } from "__SCOPE__/billing";
 import {
   Badge,
   Card,
@@ -12,19 +13,36 @@ import {
   buttonClass,
 } from "@/components/ui";
 import { BillingPortalButton } from "@/components/account/BillingPortalButton";
+import { PlanChooser, type ChoosableTier } from "@/components/account/PlanChooser";
+import { SubscriptionActions } from "@/components/account/SubscriptionActions";
 import { db } from "@/db";
+import { plans } from "@/plans";
 import { currentPrincipal } from "@/server/auth";
-import { describeSubscription, formatDay } from "@/account";
+import {
+  describeSubscription,
+  formatDay,
+  metersFor,
+  primaryActionFor,
+  type GrantedEntitlement,
+} from "@/account";
 import {
   readSubscriptionForTenant,
   type AccountSubscription,
 } from "@/server/account";
+// The invoice shape is declared beside the procedure that builds it, because
+// the four states it can be in are that procedure's decision — "no key", "no
+// customer", "Stripe did not answer" and "here they are" need four sentences
+// and one shape.
+import type { InvoiceList } from "@/server/routers/account";
+import { checkoutMode } from "@/server/checkout-mode";
 import { loadTenantPermissions } from "@/server/permissions";
+import { readPlanEntitlements } from "@/server/subscription";
 import { stripe } from "@/server/stripe";
 import { currentTenantFor } from "@/server/tenant";
+import { api } from "@/trpc/server";
 
 /**
- * What is being charged, and the one door out to Stripe.
+ * What is being charged, what it grants, and the ONE thing to do about it.
  *
  * THE ONLY TENANT-SCOPED SURFACE IN THIS OVERLAY, and the split is deliberate.
  * `/account` and `/account/orders` show one person their own purchases, and
@@ -35,27 +53,29 @@ import { currentTenantFor } from "@/server/tenant";
  * organisation, more than one person can be in it, and the renewal amount is
  * the same disclosure as an invoice. That is what a permission is for.
  *
- * TWO KEYS, NOT ONE. `subscriptions.view` gates the state, and
- * `billing.portal.open` gates the door — both TENANT keys, from
- * @__SCOPE_NAME__/billing and @__SCOPE_NAME__/stripe respectively, spread into
- * the tenant catalog and checked with the tenant loader. The package gives view
- * to owner and admin and the portal to owner alone, which is the right shape:
- * seeing what the organisation pays is routine, and holding the ability to
- * cancel it is not.
+ * THREE KEYS, AND EACH GATES A DIFFERENT THING. `subscriptions.view` gates the
+ * state, `subscriptions.manage` gates cancelling, resuming and starting one,
+ * and `billing.portal.open` gates the door out to Stripe. The package gives
+ * view to owner and admin and the other two to the owner alone, which is the
+ * right shape: seeing what the organisation pays is routine, and holding the
+ * ability to stop it is not.
  *
- * DISABLED WITH THE REASON, NOT HIDDEN, when a key is missing. A permission
- * model the client cannot see is a permission model they will not maintain, and
- * a control that silently vanishes produces the support question "why can't I
- * find the cancel button" instead of the answer. That trade goes the other way
- * for a pure disclosure — see `/account`, where the banner is hidden rather
- * than replaced by an apology, because there is nothing there to act on.
+ * *** ONE BANNER AND ONE PRIMARY ACTION, BOTH CHOSEN BY STATE. *** The five
+ * columns that describe a subscription — status, the two period ends,
+ * `cancel_at_period_end` and `trial_ends_at` — all modify the same sentence and
+ * all bear on the same decision, and a page that renders one control per column
+ * asks the reader to combine them. They combine them wrongly, because the
+ * interesting combinations are the rare ones: a trialling subscription already
+ * scheduled to cancel, a past-due one still inside its paid period.
+ * `describeSubscription` collapses them into the sentence and
+ * `primaryActionFor` into the button, both pure, both tested, both server-side
+ * so no component can form a second opinion.
  *
- * DEGRADES WITH NO STRIPE KEY BY CONSTRUCTION. The portal button renders only
- * when `stripe` is non-null, which is the same honest condition
- * `SimulatePurchase` keys off and the one that flips by itself the moment the
- * keys are pasted in. The mutation behind it enforces the same condition
- * server-side and answers with a state rather than a throw, so there is no
- * arrangement in which pressing it produces an error boundary.
+ * DEGRADES WITH NO STRIPE KEY BY CONSTRUCTION, and now does more than degrade:
+ * `checkoutMode()` is handed to the plan chooser, so a deployment with no keys
+ * can start a subscription, watch the entitlements land, cancel it and resume
+ * it — through the same `applySubscription` a real webhook calls. The button
+ * disappears by itself the moment the keys are pasted in.
  */
 export const dynamic = "force-dynamic";
 
@@ -96,7 +116,9 @@ export default async function AccountBillingPage() {
 
   const permissions = await loadTenantPermissions({ principal, tenantId: tenant.id });
   const canView = permissions?.can("subscriptions.view") ?? false;
+  const canManage = permissions?.can("subscriptions.manage") ?? false;
   const canOpenPortal = permissions?.can("billing.portal.open") ?? false;
+  const canSeeInvoices = permissions?.can("billing.invoices.view") ?? false;
 
   if (!canView) {
     return (
@@ -122,14 +144,92 @@ export default async function AccountBillingPage() {
   }
 
   const subscription = await readSubscriptionForTenant(tenant.id);
+  const currentTier =
+    subscription === null ? null : (plans.tierForRow(subscription.planKey) ?? null);
+
+  // The rows the plan actually wrote. Rendered because "you are on Pro" and
+  // "Pro's grants reached your account" are different claims, and only the
+  // second one is what the product enforces — this is the screen where a
+  // mirror that half-worked becomes visible instead of staying a support call.
+  const granted = await readPlanEntitlements(tenant.id);
+  const meters = metersFor(
+    granted.map(
+      (row): GrantedEntitlement => ({
+        feature: row.feature,
+        limitValue: row.limitValue,
+        usedValue: row.usedValue,
+        source: "plan",
+        expiresAt: row.expiresAt,
+        // `source_ref` on a plan row is the TIER key rather than a fulfilment
+        // reference. Carried through so the shape matches; nothing on this
+        // screen reads it, because the tier is already known from the row.
+        reference: row.sourceRef ?? "",
+      }),
+    ),
+  );
+
+  // Through `api()` rather than a direct Stripe call, so the read runs the same
+  // middleware chain a browser request would — the same rung, the same
+  // permission, the same rate limit. Only asked for when the viewer holds the
+  // key, because the procedure would otherwise throw and take the page with it.
+  const invoices: InvoiceList = canSeeInvoices
+    ? await (await api()).account.invoices({ tenantId: tenant.id, limit: 6 })
+    : { status: "no_customer", invoices: [] };
+
+  const mode = checkoutMode();
 
   return (
     <div className="flex flex-col gap-6">
       {subscription === null ? (
         <NoSubscription tenantName={tenant.name} />
       ) : (
-        <SubscriptionCard subscription={subscription} tenantName={tenant.name} />
+        <SubscriptionCard
+          subscription={subscription}
+          tenantId={tenant.id}
+          tenantName={tenant.name}
+          canManage={canManage}
+        />
       )}
+
+      {meters.length > 0 && (
+        <Card>
+          <CardHeader
+            title="What the plan grants"
+            hint="Read from the entitlements the subscription actually wrote, not from the plan's description of itself."
+          />
+          <CardBody className="flex flex-col gap-1">
+            {meters.map((meter) => (
+              <Detail key={meter.feature} label={meter.feature}>
+                {meter.resolved.unlimited
+                  ? "Unlimited"
+                  : `${meter.resolved.used} of ${meter.resolved.limit} used`}
+              </Detail>
+            ))}
+          </CardBody>
+        </Card>
+      )}
+
+      {/* The chooser is rendered whenever there is no live subscription — which
+          covers "never subscribed", "cancelled" and "lapsed" — and beside an
+          existing one so a change of plan is a click rather than a support
+          request. The mutation refuses the tier they are already on. */}
+      <Card>
+        <CardHeader
+          title={subscription?.live === true ? "Change plan" : "Choose a plan"}
+          hint="Every tier and what it includes, from src/plans.ts — the same record the enforcement reads."
+        />
+        <CardBody>
+          <PlanChooser
+            tenantId={tenant.id}
+            tiers={choosableTiers()}
+            intervals={subscribableIntervals()}
+            currencies={plans.currencies}
+            mode={mode}
+            canManage={canManage}
+            currentTierKey={currentTier?.key ?? null}
+          />
+        </CardBody>
+      </Card>
 
       <Card>
         <CardHeader
@@ -139,9 +239,8 @@ export default async function AccountBillingPage() {
         <CardBody className="flex flex-col gap-3">
           <p className="max-w-[62ch] text-sm text-ink-muted">
             Updating a card, downloading a past invoice, changing the billing
-            address or a VAT number, and cancelling — every one of those is in
-            Stripe&rsquo;s own portal. This application never sees a card number,
-            which is the point.
+            address or a VAT number — every one of those is in Stripe&rsquo;s own
+            portal. This application never sees a card number, which is the point.
           </p>
 
           {/* Three states, and each says something different. No Stripe key is
@@ -182,18 +281,31 @@ export default async function AccountBillingPage() {
           )}
         </CardBody>
       </Card>
+
+      <Invoices list={invoices} canSee={canSeeInvoices} />
     </div>
   );
 }
 
 function SubscriptionCard({
   subscription,
+  tenantId,
   tenantName,
+  canManage,
 }: {
   readonly subscription: AccountSubscription;
+  /**
+   * Threaded down rather than read off the subscription row, because the
+   * mutation behind the button NAMES its tenant in the input and that is what
+   * the permission ladder resolves against. Passing the id the page already
+   * proved membership of keeps the check and the render about the same tenant.
+   */
+  readonly tenantId: string;
   readonly tenantName: string;
+  readonly canManage: boolean;
 }) {
   const banner = describeSubscription(subscription);
+  const action = primaryActionFor(subscription);
 
   return (
     <div className="flex flex-col gap-3">
@@ -214,24 +326,42 @@ function SubscriptionCard({
             </Badge>
           }
         />
-        <CardBody className="flex flex-col gap-1">
-          <Detail label="Amount">
-            {formatMinor(subscription.planPriceMinor, subscription.planCurrency)} per{" "}
-            {subscription.interval}
-          </Detail>
-          {subscription.currentPeriodStart !== null &&
-            subscription.currentPeriodEnd !== null && (
-              <Detail label="Current period">
-                {formatDay(subscription.currentPeriodStart)} to{" "}
-                {formatDay(subscription.currentPeriodEnd)}
+        <CardBody className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1">
+            <Detail label="Amount">
+              {formatMinor(subscription.planPriceMinor, subscription.planCurrency)} per{" "}
+              {subscription.interval}
+            </Detail>
+            {subscription.currentPeriodStart !== null &&
+              subscription.currentPeriodEnd !== null && (
+                <Detail label="Current period">
+                  {formatDay(subscription.currentPeriodStart)} to{" "}
+                  {formatDay(subscription.currentPeriodEnd)}
+                </Detail>
+              )}
+            {subscription.trialEndsAt !== null && (
+              <Detail label="Trial ends">{formatDay(subscription.trialEndsAt)}</Detail>
+            )}
+            {subscription.canceledAt !== null && (
+              <Detail label="Cancelled">{formatDay(subscription.canceledAt)}</Detail>
+            )}
+            {subscription.stripeSubscriptionId === null && (
+              <Detail label="Stripe">
+                {/* Honest rather than hidden. A subscription with no Stripe
+                    object is either simulated or comped, and a screen that did
+                    not say so would let a demo be mistaken for a paying
+                    customer. */}
+                Not billed by Stripe — recorded locally
               </Detail>
             )}
-          {subscription.trialEndsAt !== null && (
-            <Detail label="Trial ends">{formatDay(subscription.trialEndsAt)}</Detail>
-          )}
-          {subscription.canceledAt !== null && (
-            <Detail label="Cancelled">{formatDay(subscription.canceledAt)}</Detail>
-          )}
+          </div>
+
+          {/* ONE primary action, chosen by the same state the banner was. */}
+          <SubscriptionActions
+            tenantId={tenantId}
+            action={action}
+            canManage={canManage}
+          />
         </CardBody>
       </Card>
     </div>
@@ -254,30 +384,166 @@ function Detail({
 }
 
 /**
+ * Past invoices, or the honest reason there are none.
+ *
+ * FROM STRIPE, NEVER FROM A LOCAL TABLE. A mirrored invoice table is a second
+ * set of financial records that has to be right and is wrong the first time a
+ * webhook is missed — at which point the customer is reading a receipt list
+ * that disagrees with their bank statement.
+ */
+function Invoices({
+  list,
+  canSee,
+}: {
+  readonly list: InvoiceList;
+  readonly canSee: boolean;
+}) {
+  if (!canSee) return null;
+
+  return (
+    <Card>
+      <CardHeader
+        title="Invoices"
+        hint="Read live from Stripe. The PDF is the document your accountant wants."
+      />
+      <CardBody className="flex flex-col gap-2">
+        {list.invoices.length === 0 ? (
+          <p className="max-w-[62ch] text-sm text-ink-muted">
+            {list.status === "not_configured"
+              ? "This deployment has no Stripe key, so no invoice has ever been raised."
+              : list.status === "unavailable"
+                ? "Stripe did not answer just now. Nothing is wrong with the subscription above — it is read from this application's own records — and the billing portal has every invoice there has ever been."
+                : "Nothing has been invoiced to this __TENANT_LABEL_LOWER__ yet."}
+          </p>
+        ) : (
+          list.invoices.map((invoice) => (
+            <div
+              key={invoice.id}
+              className="flex flex-wrap items-baseline justify-between gap-3 border-b border-line pb-2 last:border-0"
+            >
+              <span className="text-sm text-ink">
+                {formatDay(invoice.createdAt)}
+                {invoice.number !== null && (
+                  <span className="text-ink-muted"> · {invoice.number}</span>
+                )}
+              </span>
+              <span className="flex items-baseline gap-3 text-sm tabular-nums">
+                {formatMinor(invoice.amountPaidMinor, invoice.currency)}
+                {invoice.pdfUrl !== null && (
+                  <a
+                    href={invoice.pdfUrl}
+                    className="text-accent underline underline-offset-2"
+                  >
+                    PDF
+                  </a>
+                )}
+              </span>
+            </div>
+          ))
+        )}
+      </CardBody>
+    </Card>
+  );
+}
+
+/**
  * No row in `subscriptions` for this __TENANT_LABEL_LOWER__.
  *
- * Which is the honest and, today, the usual state: `checkout.createIntent`
- * creates the subscription AT STRIPE and nothing in this scaffold yet mirrors
- * `customer.subscription.*` back into the local table. So this empty state has
- * to be true for a customer who has genuinely never subscribed AND readable to
- * a developer wondering why a subscription they just bought is not here — the
- * sentence about the portal does both, because the portal reads Stripe directly
- * and will show the subscription regardless of what this table holds.
+ * Which is the honest state for a customer who has never subscribed — and, now
+ * that `customer.subscription.*` is mirrored, no longer the state a developer
+ * lands in after buying one. The plan chooser below is the action.
  */
 function NoSubscription({ tenantName }: { readonly tenantName: string }) {
   return (
-    <EmptyState
-      title="No subscription on this __TENANT_LABEL_LOWER__"
-      action={
-        <Link href="/products" className={buttonClass("primary")}>
-          See what is available
-        </Link>
-      }
-    >
-      Nothing recurring is being charged to {tenantName}. A subscription bought
-      from the shop appears here with its renewal date, and anything already at
-      Stripe is visible in the billing portal below whether or not it is recorded
-      here yet.
+    <EmptyState title="No subscription on this __TENANT_LABEL_LOWER__">
+      Nothing recurring is being charged to {tenantName}. Choosing a plan below
+      starts one — and applies everything that plan grants, immediately.
     </EmptyState>
   );
+}
+
+// ---------------------------------------------------------------------------
+// The plan record, rendered
+// ---------------------------------------------------------------------------
+
+/**
+ * Which intervals the chooser offers.
+ *
+ * `catalog.intervals` reports what is actually offered, and `once` is not a
+ * subscription cadence — a plan priced `once` belongs to no toggle. Filtering
+ * here rather than in the component keeps the record's own answer authoritative
+ * and stops the browser from being handed an option the mutation would refuse.
+ */
+function subscribableIntervals(): readonly ("month" | "year")[] {
+  return plans.intervals.filter(
+    (interval): interval is "month" | "year" =>
+      interval === "month" || interval === "year",
+  );
+}
+
+/**
+ * Every active tier, with its prices already formatted.
+ *
+ * FORMATTED ON THE SERVER, always. Amounts are `bigint` minor units and
+ * `formatMinor` is what renders them — JPY has no minor unit, so dividing by a
+ * hundred in the browser prints ¥1,000 as ¥10. It also keeps `bigint` off the
+ * server/client boundary entirely.
+ *
+ * RETIRED TIERS ARE ABSENT rather than disabled: `isActive: false` means closed
+ * to new subscriptions, and a greyed-out card advertising a price nobody may
+ * pay is worse than no card at all. The people already on one still see their
+ * plan name, because that comes from the `plans` row their subscription points
+ * at rather than from this list.
+ */
+function choosableTiers(): readonly ChoosableTier[] {
+  return plans.tiers
+    .filter((tier) => tier.isActive)
+    .map((tier) => ({
+      key: tier.key,
+      name: tier.name,
+      description: tier.description,
+      highlight: tier.highlight,
+      prices: pricesFor(tier),
+      features: featureLines(tier),
+    }));
+}
+
+function pricesFor(tier: PlanTier): Readonly<Record<string, string>> {
+  const prices: Record<string, string> = {};
+  for (const interval of subscribableIntervals()) {
+    for (const currency of plans.currencies) {
+      const amount = priceFor(tier, interval, currency);
+      // `undefined` is a real answer — a tier priced monthly and not yearly is
+      // an ordinary thing to sell — so the key is left out rather than filled
+      // with a zero, which reads as free.
+      if (amount === undefined) continue;
+      prices[`${interval}:${currency}`] = formatMinor(amount, currency);
+    }
+  }
+  return prices;
+}
+
+/**
+ * One line per declared feature, in the record's own order.
+ *
+ * The three kinds read differently and that is the point of having three: a
+ * quota is a number in front of its label, a flag is present or absent, and an
+ * option names the best value the tier allows. `allowed[0]` needs no `??`
+ * because the tuple is non-empty by construction — which is exactly why
+ * `definePlans` types it that way.
+ */
+function featureLines(tier: PlanTier): readonly string[] {
+  const lines: string[] = [];
+  for (const heading of plans.features) {
+    const feature = tier.features[heading.feature];
+    if (feature === undefined) continue;
+    if (feature.kind === "quota") {
+      lines.push(`${feature.limit === null ? "Unlimited" : feature.limit} ${feature.label}`);
+    } else if (feature.kind === "flag") {
+      lines.push(feature.included ? feature.label : `No ${feature.label.toLowerCase()}`);
+    } else {
+      lines.push(`${feature.label}: ${feature.allowed[0]}`);
+    }
+  }
+  return lines;
 }

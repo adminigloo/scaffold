@@ -1,9 +1,14 @@
+import { TRPCError } from "@trpc/server";
+import { z } from "zod";
+import { isLiveStatus, mapStripeSubscriptionStatus } from "__SCOPE__/billing";
 import { auditEntry, defineAuditedActions } from "__SCOPE__/observability";
 import { auditLog } from "__SCOPE__/observability/schema";
-import { createBillingPortalSession } from "__SCOPE__/stripe";
+import { createBillingPortalSession, subscriptionSnapshot } from "__SCOPE__/stripe";
 import { db } from "@/db";
-import { readSubscriptionForTenant } from "@/server/account";
+import { plans } from "@/plans";
+import { readSubscriptionForTenant, type AccountSubscription } from "@/server/account";
 import { stripe } from "@/server/stripe";
+import { applySubscription } from "@/server/subscription";
 import { requestContext } from "../request-context";
 import { findStripeCustomerId } from "./checkout";
 import { createTRPCRouter, requireTenant } from "../trpc";
@@ -181,4 +186,264 @@ export const accountRouter = createTRPCRouter({
 
       return { status: "ready", url: session.url };
     }),
+
+  /**
+   * Schedule this __TENANT_LABEL_LOWER__'s subscription to end when the period
+   * it has already paid for does.
+   *
+   * *** NOT AN IMMEDIATE CANCELLATION, AND THAT IS THE WHOLE DECISION. ***
+   * Ending it now would take away time the customer has already been charged
+   * for, and every one of them writes in to say so. `cancel_at_period_end` is
+   * the state `subscriptions` carries a separate column for, that
+   * `describeSubscription` renders a different sentence for, and that
+   * `subscriptionEntitlementWindow` turns into an `expires_at` on the
+   * entitlement rows — so access ends on the right day BY ITSELF, without
+   * depending on a `customer.subscription.deleted` event that may never arrive.
+   *
+   * THROUGH THE SAME WRITER AS THE WEBHOOK. Stripe is told first and its answer
+   * is what gets mirrored, so the row records what Stripe actually did rather
+   * than what this procedure asked for. With no Stripe object — a simulated or
+   * comped subscription — the same call is made from the row's own fields, and
+   * everything downstream is identical.
+   */
+  cancelSubscription: requireTenant("subscriptions.manage")
+    .meta({ scope: "tenant" })
+    .mutation(async ({ ctx }) => scheduleCancellation(ctx, true)),
+
+  /**
+   * Undo a scheduled cancellation.
+   *
+   * Nothing is charged today: the billing period is untouched, which is why
+   * `describeSubscription` promises exactly that and why this is the one
+   * consequential action a customer can take without a confirmation being
+   * frightening. It is the same mutation as cancelling with the flag inverted,
+   * deliberately — two procedures that differ by a boolean cannot drift the way
+   * two hand-written cancel and resume paths would.
+   */
+  resumeSubscription: requireTenant("subscriptions.manage")
+    .meta({ scope: "tenant" })
+    .mutation(async ({ ctx }) => scheduleCancellation(ctx, false)),
+
+  /**
+   * Past invoices, FROM STRIPE'S API AND NEVER FROM A LOCAL TABLE.
+   *
+   * A mirrored invoice table is a second set of financial records that has to
+   * be right, and it is wrong the first time a webhook is missed — at which
+   * point the customer is looking at a receipt list that disagrees with their
+   * bank statement. Stripe already stores every invoice, renders a hosted page
+   * and a PDF for each, and is the document the customer's accountant will ask
+   * for. Reading them live costs one API call on a page nobody loads often.
+   *
+   * IT ANSWERS WITH AN EMPTY LIST RATHER THAN AN ERROR, on every path where
+   * there is nothing to show: no Stripe key, no customer, or Stripe not
+   * answering. A billing page that throws an error boundary because an optional
+   * credential is missing is the scaffold's no-credentials rule broken on the
+   * one screen where a customer is already anxious. The `status` says which of
+   * the three it was, so the copy can differ while the shape does not.
+   */
+  invoices: requireTenant("billing.invoices.view")
+    .meta({ scope: "tenant" })
+    .input(z.object({ limit: z.number().int().min(1).max(24).default(6) }))
+    .query(async ({ ctx, input }): Promise<InvoiceList> => {
+      if (!stripe) return { status: "not_configured", invoices: [] };
+      const client = stripe;
+
+      const subscription = await readSubscriptionForTenant(ctx.tenantId);
+      const customerId =
+        subscription?.stripeCustomerId ??
+        (await findStripeCustomerId(client, ctx.principal.userId));
+      if (customerId === null) return { status: "no_customer", invoices: [] };
+
+      try {
+        const listed = await client.stripe.invoices.list({
+          customer: customerId,
+          limit: input.limit,
+        });
+        return {
+          status: "ok",
+          invoices: listed.data.map((invoice) => ({
+            id: invoice.id ?? "",
+            // Stripe leaves `number` null on a draft. The id is not a
+            // substitute — it is not what appears on the customer's statement —
+            // so the UI is told there is no number rather than shown a fake one.
+            number: invoice.number,
+            status: invoice.status,
+            // Minor units, as `formatMinor` wants them and as every other
+            // amount in this project is carried. `amount_paid` rather than
+            // `total`: what was actually taken is what a receipt list is for.
+            amountPaidMinor: BigInt(invoice.amount_paid),
+            currency: invoice.currency,
+            createdAt: new Date(invoice.created * 1000),
+            hostedUrl: invoice.hosted_invoice_url ?? null,
+            pdfUrl: invoice.invoice_pdf ?? null,
+          })),
+        };
+      } catch {
+        // Deliberately swallowed. Stripe being slow or down must not take the
+        // billing page with it — the subscription state above comes from our
+        // own tables and is still correct, and the portal button is still the
+        // way to reach every invoice there has ever been.
+        return { status: "unavailable", invoices: [] };
+      }
+    }),
 });
+
+/**
+ * What `invoices` answers. FOUR STATES, ONE SHAPE.
+ *
+ * `invoices` is always an array so the component renders one list and not four,
+ * and `status` is always present so the empty case can say which empty it is.
+ * "This deployment has no Stripe key", "you have never been charged" and
+ * "Stripe did not answer just now" need three different sentences and only one
+ * of them is worth telling an operator about.
+ */
+export interface AccountInvoice {
+  readonly id: string;
+  readonly number: string | null;
+  readonly status: string | null;
+  readonly amountPaidMinor: bigint;
+  readonly currency: string;
+  readonly createdAt: Date;
+  readonly hostedUrl: string | null;
+  readonly pdfUrl: string | null;
+}
+
+export interface InvoiceList {
+  readonly status: "ok" | "not_configured" | "no_customer" | "unavailable";
+  readonly invoices: readonly AccountInvoice[];
+}
+
+/**
+ * Cancel and resume, as one function, because they are one operation.
+ *
+ * THE ORDER IS STRIPE FIRST, MIRROR SECOND. Asking Stripe and mirroring its
+ * answer means the row records what actually happened rather than what was
+ * requested — if Stripe refuses, nothing local changed and the customer sees an
+ * error instead of a subscription that says "ends on the 3rd" and keeps
+ * renewing. Writing locally first and telling Stripe afterwards would leave
+ * exactly that lie behind on any failure.
+ *
+ * THE SIMULATED PATH IS THE SAME CALL WITH THE STRIPE STEP MISSING, not a
+ * separate write. Everything after the snapshot — the staleness check, the
+ * entitlement window, `planGrantDiff`, the audit row — is `applySubscription`,
+ * which is also what the webhook runs. That is the property that makes a
+ * simulated cancellation worth anything as a rehearsal.
+ */
+async function scheduleCancellation(
+  ctx: {
+    readonly tenantId: string;
+    readonly principal: { readonly userId: string };
+  },
+  cancelAtPeriodEnd: boolean,
+): Promise<{ readonly changed: boolean; readonly cancelAtPeriodEnd: boolean }> {
+  const subscription = await readSubscriptionForTenant(ctx.tenantId);
+  if (subscription === null) {
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "There is no subscription on this __TENANT_LABEL_LOWER__ to change.",
+    });
+  }
+
+  if (!isLiveStatus(subscription.status)) {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message:
+        "This subscription has already ended, so there is nothing to cancel or " +
+        "resume. Choosing a plan starts a new one.",
+    });
+  }
+
+  if (subscription.cancelAtPeriodEnd === cancelAtPeriodEnd) {
+    // Not an error and not a write. Two clicks on one button, or two people on
+    // two screens, must not produce a second audit row claiming a change that
+    // did not happen.
+    return { changed: false, cancelAtPeriodEnd };
+  }
+
+  const tier = plans.tier(tierKeyOf(subscription));
+  if (tier === undefined) {
+    throw new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message:
+        `This subscription is on plan row "${subscription.planKey}", which no ` +
+        `tier in src/plans.ts projects. Retire a tier with isActive: false ` +
+        `rather than deleting it — subscribers reference it.`,
+    });
+  }
+
+  const now = new Date();
+
+  if (stripe !== null && subscription.stripeSubscriptionId !== null) {
+    const updated = await stripe.stripe.subscriptions.update(
+      subscription.stripeSubscriptionId,
+      { cancel_at_period_end: cancelAtPeriodEnd },
+    );
+    const snapshot = subscriptionSnapshot(updated);
+
+    await applySubscription({
+      tenantId: ctx.tenantId,
+      tierKey: tier.key,
+      planKey: subscription.planKey,
+      stripeSubscriptionId: snapshot.subscriptionId,
+      stripeCustomerId: snapshot.customerId,
+      status: mapStripeSubscriptionStatus(snapshot.status),
+      currentPeriodStart: snapshot.currentPeriodStart,
+      currentPeriodEnd: snapshot.currentPeriodEnd,
+      cancelAtPeriodEnd: snapshot.cancelAtPeriodEnd,
+      canceledAt: snapshot.canceledAt,
+      trialEndsAt: snapshot.trialEndsAt,
+      // NOW rather than an event time. This is a live read of what Stripe just
+      // did, so it is newer than anything the event stream can deliver — and it
+      // has to win, or the webhook for this very change would arrive a second
+      // later and be refused as stale.
+      observedAt: now,
+      observedBy: `portal:${ctx.principal.userId}`,
+      source: "stripe",
+      action: cancelAtPeriodEnd
+        ? "billing.subscription.cancelled"
+        : "billing.subscription.resumed",
+      actorUserId: ctx.principal.userId,
+    });
+
+    return { changed: true, cancelAtPeriodEnd: snapshot.cancelAtPeriodEnd };
+  }
+
+  await applySubscription({
+    tenantId: ctx.tenantId,
+    tierKey: tier.key,
+    planKey: subscription.planKey,
+    stripeSubscriptionId: null,
+    stripeCustomerId: subscription.stripeCustomerId,
+    status: subscription.status,
+    currentPeriodStart: subscription.currentPeriodStart,
+    currentPeriodEnd: subscription.currentPeriodEnd,
+    cancelAtPeriodEnd,
+    // Stripe stamps `canceled_at` with the time of the REQUEST for a scheduled
+    // cancellation, not the end of the period. Mirroring that here is what
+    // keeps a simulated subscription indistinguishable from a real one on the
+    // screen that renders both.
+    canceledAt: cancelAtPeriodEnd ? now : null,
+    trialEndsAt: subscription.trialEndsAt,
+    observedAt: now,
+    observedBy: `local:${ctx.principal.userId}`,
+    source: "simulated",
+    action: cancelAtPeriodEnd
+      ? "billing.subscription.cancelled"
+      : "billing.subscription.resumed",
+    actorUserId: ctx.principal.userId,
+  });
+
+  return { changed: true, cancelAtPeriodEnd };
+}
+
+/**
+ * The tier a subscription row is on.
+ *
+ * `plans.tierForRow` and never `planKey.split(":")[0]`. The projection's key
+ * shape is `planRowKey`'s to decide, and a second implementation of it here is
+ * a second thing to change the day a currency-less plan key appears — one that
+ * would keep compiling and start resolving the wrong tier.
+ */
+function tierKeyOf(subscription: AccountSubscription): string {
+  return plans.tierForRow(subscription.planKey)?.key ?? subscription.planKey;
+}

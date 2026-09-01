@@ -513,6 +513,10 @@ describe("adminigloo.json — the project manifest", () => {
     const parsed = JSON.parse(plan.files.get(MANIFEST_FILENAME) ?? "") as {
       overlays: string[];
     };
+    // `legal` with no `--marketing`, and that is the disjunction doing its job:
+    // Stripe will not activate an account without a public privacy policy and
+    // terms, so a project that takes money gets both whether or not there is a
+    // marketing site in front of them.
     expect(parsed.overlays).toEqual([
       "admin-minimal",
       "admin-full",
@@ -520,7 +524,42 @@ describe("adminigloo.json — the project manifest", () => {
       "catalog-admin",
       "account",
       "email",
+      "legal",
     ]);
+  });
+
+  it("records the marketing overlays only when the public face was asked for", async () => {
+    const plan = await planEmit(
+      TEMPLATE_DIR,
+      "/out",
+      answers({ businessModel: "both", adminShell: "full", includeMarketing: true }),
+    );
+    const parsed = JSON.parse(plan.files.get(MANIFEST_FILENAME) ?? "") as {
+      overlays: string[];
+    };
+    expect(parsed.overlays).toEqual([
+      "admin-minimal",
+      "admin-full",
+      "stripe",
+      "catalog-admin",
+      "account",
+      "legal",
+      "marketing",
+      "marketing-pricing",
+    ]);
+
+    // The pricing half needs BOTH answers, exactly as catalog-admin does. A
+    // marketing site with nothing to sell gets the landing page and the legal
+    // routes and no pricing page, because `src/plans.ts` does not exist there.
+    const unpriced = await planEmit(
+      TEMPLATE_DIR,
+      "/out",
+      answers({ businessModel: "none", adminShell: "none", includeMarketing: true }),
+    );
+    const parsedUnpriced = JSON.parse(
+      unpriced.files.get(MANIFEST_FILENAME) ?? "",
+    ) as { overlays: string[] };
+    expect(parsedUnpriced.overlays).toEqual(["legal", "marketing"]);
   });
 
   it("records no overlay for the emptiest project there is", async () => {
@@ -1388,13 +1427,42 @@ describe("the footer", () => {
 
   it("names no page the scaffold does not generate", () => {
     // The instruction that produced this list was "do not invent legal pages or
-    // social links". Nothing generates a privacy policy, so nothing may link to
-    // one — a footer full of 404s is worse than a short footer.
+    // social links" — a footer full of 404s is worse than a short footer.
+    //
+    // THE SCAFFOLD NOW GENERATES TWO OF THEM, so the rule has to be stated as
+    // what it always meant rather than as the list it happened to produce:
+    // nothing may be linked that no overlay copies in. /privacy and /terms are
+    // real routes in every configuration that emits the legal overlay and are
+    // checked as such by the link audit below; About, Contact and Blog are
+    // still nowhere in this repository, and a footer entry for one of them
+    // would be a 404 on every page of every project.
     const nav = renderSiteNav(answers({ businessModel: "both", adminShell: "full" }));
     const footer = sectionOf(nav, "FOOTER_LINKS");
-    for (const invented of ["/privacy", "/terms", "/about", "/contact", "/blog"]) {
+    for (const invented of ["/about", "/contact", "/blog", "/careers", "/docs"]) {
       expect(footer).not.toContain(`href: "${invented}"`);
     }
+  });
+
+  it("carries the legal pages wherever the legal overlay is copied, and nowhere else", () => {
+    // The condition is a disjunction, so it has to be checked on both arms and
+    // on neither. The third case is the one a single-condition rule would get
+    // wrong: an internal tool that takes no money and has no public face has no
+    // privacy policy to link to.
+    for (const overrides of [
+      { businessModel: "both", includeMarketing: false },
+      { businessModel: "none", includeMarketing: true },
+    ] as const) {
+      const footer = sectionOf(renderSiteNav(answers(overrides)), "FOOTER_LINKS");
+      expect(footer, JSON.stringify(overrides)).toContain('{ href: "/privacy", label: "Privacy" }');
+      expect(footer, JSON.stringify(overrides)).toContain('{ href: "/terms", label: "Terms" }');
+    }
+
+    const neither = sectionOf(
+      renderSiteNav(answers({ businessModel: "none", includeMarketing: false })),
+      "FOOTER_LINKS",
+    );
+    expect(neither).not.toContain("/privacy");
+    expect(neither).not.toContain("/terms");
   });
 });
 
@@ -1499,6 +1567,28 @@ function hrefsIn(source: string): string[] {
 }
 
 /**
+ * The quoted strings inside `const <name> ... = [ ... ];`.
+ *
+ * For the two generated files that carry a list of URLs and no `href:` — the
+ * sitemap and the robots disallow list. Reading them out of the emitted text
+ * rather than re-deriving them from the answers is the point: a test that asked
+ * `answers.adminShell !== "none"` would be restating the generator and would
+ * agree with it for ever.
+ */
+function quotedStringsIn(source: string, name: string): string[] {
+  const start = source.indexOf(`const ${name}`);
+  if (start < 0) return [];
+  const open = source.indexOf("[", start);
+  const end = source.indexOf("];", open);
+  if (open < 0 || end < 0) return [];
+  const body = source.slice(open, end);
+  // Comment lines first: every entry in these arrays is written under the
+  // reason it is there, and a reason mentioning "/admin" is not an entry.
+  const code = body.replace(/^\s*\/\/.*$/gm, "");
+  return [...code.matchAll(/"([^"]+)"/g)].flatMap((m) => m[1] ?? []);
+}
+
+/**
  * The emitted file with every comment removed — what the project actually RUNS.
  *
  * Almost every assertion in this suite wants this rather than the raw text, and
@@ -1573,10 +1663,21 @@ function resolves(href: string, patterns: readonly string[][]): boolean {
 }
 
 describe("every generated link points at a route in the same plan", () => {
+  // MARKETING IS IN THE GRID, and it has to be: it moves `app/(site)/page.tsx`
+  // from a generated file to an overlay one, adds /pricing, /privacy and
+  // /terms, and moves the orientation page to /setup/start — which is four new
+  // ways for a link and a route to disagree, in a configuration the sweep would
+  // otherwise never visit.
   const CONFIGURATIONS = [...SELLING_MODELS, "none"].flatMap((businessModel) =>
-    [...ADMIN_SHELLS, "none"].map(
-      (adminShell) =>
-        [`--model ${businessModel} --admin ${adminShell}`, { businessModel, adminShell }] as const,
+    [...ADMIN_SHELLS, "none"].flatMap((adminShell) =>
+      [true, false].map(
+        (includeMarketing) =>
+          [
+            `--model ${businessModel} --admin ${adminShell}` +
+              `${includeMarketing ? " --marketing" : ""}`,
+            { businessModel, adminShell, includeMarketing },
+          ] as const,
+      ),
     ),
   ) as readonly (readonly [string, Partial<Answers>])[];
 
@@ -1624,6 +1725,54 @@ describe("every generated link points at a route in the same plan", () => {
     }
 
     expect(checked).toBeGreaterThan(0);
+  });
+
+  it.each(CONFIGURATIONS)("the sitemap lists only pages this plan has, for %s", async (_label, overrides) => {
+    // A sitemap is the one file in a project whose whole purpose is to be read
+    // by something that will follow every line of it. A URL in here that the
+    // build did not emit is a 404 fetched by every crawler that reads the
+    // file, and repeated 404s from a submitted sitemap are reported against the
+    // whole property rather than against the one page.
+    const plan = await planEmit(TEMPLATE_DIR, "/out", answers(overrides));
+    const patterns = routePatternsIn(plan);
+    const paths = quotedStringsIn(
+      plan.files.get(join("app", "sitemap.ts")) ?? "",
+      "PUBLIC_PAGES",
+    );
+
+    expect(paths, "the sitemap lists nothing at all").not.toEqual([]);
+    for (const path of paths) {
+      expect(resolves(path, patterns), `the sitemap lists ${path}, which is not a route`).toBe(
+        true,
+      );
+    }
+  });
+
+  it.each(CONFIGURATIONS)("robots.txt refuses only routes this plan has, for %s", async (_label, overrides) => {
+    // The other direction of the same fault. A rule about `/admin` in a project
+    // generated with `--admin none` is a rule about nothing — harmless on its
+    // own, and evidence that the list is written by hand rather than derived,
+    // which is how the rule that DOES matter goes missing.
+    //
+    // A prefix rather than an exact route: `Disallow: /admin` covers everything
+    // beneath it, and `/api/` covers route handlers that are not pages at all.
+    const plan = await planEmit(TEMPLATE_DIR, "/out", answers(overrides));
+    const patterns = routePatternsIn(plan);
+    const disallowed = quotedStringsIn(
+      plan.files.get(join("app", "robots.ts")) ?? "",
+      "DISALLOWED",
+    );
+
+    expect(disallowed).not.toEqual([]);
+    for (const path of disallowed) {
+      const prefix = path.split("/").filter((s) => s.length > 0);
+      const covered = patterns.some((pattern) =>
+        prefix.every((segment, i) => pattern[i] === segment),
+      );
+      expect(covered, `robots.txt refuses ${path}, which this plan has no route under`).toBe(
+        true,
+      );
+    }
   });
 
   it.each(CONFIGURATIONS)("scans the admin sidebar too, for %s", async (_label, overrides) => {

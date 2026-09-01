@@ -178,6 +178,14 @@ export async function readDeliveriesForOrders(
 export interface AccountSubscription {
   readonly id: string;
   readonly status: SubscriptionStatus;
+  /**
+   * `plans.key` — `<tier>:<interval>:<currency>`. The handle everything that
+   * has to act on this subscription resolves the TIER through, because a
+   * subscription row names a priced row and the record names what that row
+   * includes. Carried on the view so cancel, resume and the plan comparison do
+   * not each re-derive it from the name.
+   */
+  readonly planKey: string;
   readonly planName: string;
   readonly planPriceMinor: bigint;
   readonly planCurrency: string;
@@ -188,6 +196,8 @@ export interface AccountSubscription {
   readonly canceledAt: Date | null;
   readonly trialEndsAt: Date | null;
   readonly stripeCustomerId: string | null;
+  /** NULL for a subscription with no Stripe object — a simulated or comped one. */
+  readonly stripeSubscriptionId: string | null;
   /** True while this row occupies the tenant's one live-subscription slot. */
   readonly live: boolean;
 }
@@ -210,13 +220,14 @@ export interface AccountSubscription {
  * expressing "live first, then newest" as an ORDER BY needs a CASE over the
  * status list, which is the second copy this comment just argued against.
  *
- * NOTHING IN THIS SCAFFOLD WRITES THIS TABLE YET, and that is worth knowing
- * before wondering why the page is empty on a working deployment.
- * `checkout.createIntent` creates the subscription AT STRIPE and no handler
- * mirrors `customer.subscription.*` back into these columns. The columns, the
- * status mapper and this reader are the half that exists; the webhook handler
- * is the half to write, and when it lands this page starts working with no
- * change here.
+ * WHAT WRITES THIS TABLE is `applySubscription` in `@/server/subscription`,
+ * and nothing else. The webhook mirror calls it for a real subscription, the
+ * simulated path calls it for one nobody paid for, cancel and resume call it,
+ * and the staff resync calls it — so every row this reads back was written by
+ * one function through one set of rules. A second writer is the failure that
+ * matters here rather than a tidiness point: the firm owns this table, so two
+ * writers disagreeing is a customer being told the wrong thing about their own
+ * money with nothing to reconcile against.
  */
 export async function readSubscriptionForTenant(
   tenantId: string,
@@ -231,6 +242,8 @@ export async function readSubscriptionForTenant(
       canceledAt: subscriptions.canceledAt,
       trialEndsAt: subscriptions.trialEndsAt,
       stripeCustomerId: subscriptions.stripeCustomerId,
+      stripeSubscriptionId: subscriptions.stripeSubscriptionId,
+      planKey: plans.key,
       planName: plans.name,
       planPriceMinor: plans.priceMinor,
       planCurrency: plans.currency,

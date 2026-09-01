@@ -40,31 +40,41 @@ export const EVERY_CONFIGURATION: readonly Configuration[] = TENANT_NOUNS.flatMa
     BUSINESS_MODELS.flatMap((businessModel) =>
       ADMIN_SHELLS.flatMap((adminShell) =>
         BOTH.flatMap((includeAi) =>
-          BOTH.map((includeEmail): Configuration => {
-            const flags = [
-              "--tenant-noun",
-              tenantNoun,
-              "--model",
-              businessModel,
-              "--admin",
-              adminShell,
-              includeAi ? "--ai" : "--no-ai",
-              includeEmail ? "--email" : "--no-email",
-            ];
-            return {
-              label: flags.join(" "),
-              flags,
-              answers: {
-                ...DEFAULT_ANSWERS,
-                projectName: "acme",
+          BOTH.flatMap((includeEmail) =>
+            // The public face is its own axis, so it is swept like the others.
+            // It has to be: `--marketing` moves `app/(site)/page.tsx` from a
+            // generated file to an overlay one and adds three routes and two
+            // generated modules, which is a bigger structural difference than
+            // `--email` makes — and a dimension left out of this product is a
+            // dimension the exhaustive sweep is not exhaustive over.
+            BOTH.map((includeMarketing): Configuration => {
+              const flags = [
+                "--tenant-noun",
                 tenantNoun,
+                "--model",
                 businessModel,
+                "--admin",
                 adminShell,
-                includeAi,
-                includeEmail,
-              },
-            };
-          }),
+                includeAi ? "--ai" : "--no-ai",
+                includeEmail ? "--email" : "--no-email",
+                includeMarketing ? "--marketing" : "--no-marketing",
+              ];
+              return {
+                label: flags.join(" "),
+                flags,
+                answers: {
+                  ...DEFAULT_ANSWERS,
+                  projectName: "acme",
+                  tenantNoun,
+                  businessModel,
+                  adminShell,
+                  includeAi,
+                  includeEmail,
+                  includeMarketing,
+                },
+              };
+            }),
+          ),
         ),
       ),
     ),

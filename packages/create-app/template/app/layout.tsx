@@ -3,11 +3,25 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { TRPCProvider } from "@/trpc/client";
 import { env } from "@/env";
+import { siteMetadata } from "@/seo";
 import "./globals.css";
 
-export const metadata: Metadata = {
-  title: "__PROJECT_NAME__",
-};
+/**
+ * Everything every page inherits: the base URL relative Open Graph links
+ * resolve against, the title template, the social card defaults, and whether
+ * this deployment may be indexed at all.
+ *
+ * FROM `src/seo.ts` RATHER THAN WRITTEN HERE, because two of those are derived
+ * from the environment and one of them is a decision `app/robots.ts` has to
+ * take identically. A `title` spelled out in this file was the whole of the
+ * metadata for a long time, which meant every relative OG URL resolved against
+ * localhost in production — a shared link rendered as a grey box, and nothing
+ * inside the product could show you that.
+ *
+ * A page overrides a field by exporting its own `metadata`; anything it leaves
+ * out falls through to this.
+ */
+export const metadata: Metadata = siteMetadata;
 
 /**
  * ClerkProvider is mounted only when Clerk is actually configured.

@@ -27,20 +27,24 @@ const EVERY_CONFIGURATION = ["none", "one-time", "subscription", "both"].flatMap
     ["none", "minimal", "full"].flatMap((adminShell) =>
       [true, false].flatMap((includeAi) =>
         [true, false].flatMap((includeEmail) =>
-          ["Organization", "none"].map(
-            (tenantNoun) =>
-              [
-                `--model ${businessModel} --admin ${adminShell}` +
-                  `${includeAi ? " --ai" : ""}${includeEmail ? " --email" : ""}` +
-                  ` --tenant ${tenantNoun}`,
-                {
-                  businessModel,
-                  adminShell,
-                  includeAi,
-                  includeEmail,
-                  tenantNoun,
-                },
-              ] as const,
+          [true, false].flatMap((includeMarketing) =>
+            ["Organization", "none"].map(
+              (tenantNoun) =>
+                [
+                  `--model ${businessModel} --admin ${adminShell}` +
+                    `${includeAi ? " --ai" : ""}${includeEmail ? " --email" : ""}` +
+                    `${includeMarketing ? " --marketing" : ""}` +
+                    ` --tenant ${tenantNoun}`,
+                  {
+                    businessModel,
+                    adminShell,
+                    includeAi,
+                    includeEmail,
+                    includeMarketing,
+                    tenantNoun,
+                  },
+                ] as const,
+            ),
           ),
         ),
       ),

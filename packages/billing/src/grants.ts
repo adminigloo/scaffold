@@ -1,26 +1,27 @@
 import type { EntitlementSource } from "./entitlements.js";
+import {
+  IDENTITY_SEPARATOR,
+  InvalidGrantLimitError,
+  InvalidPlanKeyError,
+  type PlanTier,
+} from "./plans.js";
 
 /**
- * The prefix that marks a key as a feature limit.
+ * The bridge between the plan record and the entitlements table.
  *
- * Grant declarations arrive as a flat record — plan settings, a Stripe product's
- * metadata, a constant in app code — and those bags always carry other keys.
- * The prefix is what stops `trial_days` or `sort_order` being read as a feature;
- * without it, adding an unrelated setting to a plan silently grants every
- * subscriber a feature named after it, with that setting's value as the limit.
+ * `plans.ts` says what a tier includes; this says what rows a tenant on that
+ * tier has to hold, and what to write when they move between tiers. Both take
+ * the RECORD as their input, which is the whole point: a pricing page and an
+ * enforcement check that read two different descriptions of Pro will eventually
+ * describe two different Pros, and the one the customer read is the one they
+ * will hold you to.
+ *
+ * The declarations used to arrive as a flat `grants_*` bag — a settings blob, a
+ * Stripe product's metadata — which is why a prefix was needed to tell a feature
+ * from a `sort_order` sitting beside it. A typed record has no unrelated keys in
+ * it, so the prefix, and the whole class of "an unrelated setting silently
+ * became a feature", is gone.
  */
-export const GRANT_PREFIX = "grants_";
-
-/**
- * What a plan declares, keyed `grants_<feature>`. `null` is unlimited, matching
- * `entitlements.limit_value`.
- */
-export type FeatureGrants = Readonly<Record<string, number | null>>;
-
-/** Only the part of a plan a grant needs. A full row satisfies it. */
-export interface PlanRef {
-  readonly key: string;
-}
 
 /** One entitlement row a purchase creates, before a tenant is attached. */
 export interface PlanGrant {
@@ -32,72 +33,67 @@ export interface PlanGrant {
   readonly sourceRef: string;
 }
 
-export class EmptyPlanKeyError extends Error {
-  readonly name = "EmptyPlanKeyError";
-  constructor() {
-    super(
-      `grantsForPlan was given a plan with an empty key. The key becomes ` +
-        `entitlements.source_ref, and the unique index indexes ` +
-        `coalesce(source_ref, '') — so an empty key collides with every manual ` +
-        `grant that has no ref at all, and the two would upsert over each other.`,
-    );
-  }
-}
-
-export class InvalidGrantLimitError extends Error {
-  readonly name = "InvalidGrantLimitError";
-  constructor(planKey: string, feature: string, limit: number) {
-    super(
-      `Plan "${planKey}" declares ${GRANT_PREFIX}${feature} = ${limit}. A plan ` +
-        `grant must be a whole number >= 0, or null for unlimited. A fraction ` +
-        `would be written into an integer column and silently truncated by the ` +
-        `driver, and a negative grant is a plan that takes capacity away — which ` +
-        `is an override, deliberately written as a negative row by an admin, not ` +
-        `something a purchase should do behind one.`,
-    );
-  }
-}
-
 /**
- * The entitlement rows a purchase of `plan` creates.
+ * The entitlement rows a subscription to `tier` creates.
  *
- * No tenant id and no `usedValue`: this describes what the plan grants, and the
- * writer supplies the tenant. Staying tenant-free is what makes it testable
- * with no database, and what lets the result be diffed against the rows a
- * tenant already holds.
+ * No tenant id and no `usedValue`: this describes what the tier grants, and the
+ * writer supplies the tenant. Staying tenant-free is what makes it testable with
+ * no database, and what lets the result be diffed against the rows a tenant
+ * already holds.
  *
- * `source` is always `plan` and `sourceRef` is always the plan key, which is the
- * pair the unique index keys on — so applying the same plan twice upserts onto
- * the same rows and is a no-op, however many times the webhook is redelivered.
- * A row with no `sourceRef` would be exempt from that (Postgres treats NULLs as
+ * `source` is always `plan` and `sourceRef` is always the TIER key, which is the
+ * pair the unique index keys on — so applying the same tier twice upserts onto
+ * the same rows and is a no-op, however many times the webhook is redelivered. A
+ * row with no `sourceRef` would be exempt from that (Postgres treats NULLs as
  * distinct), which is why this never emits one.
  *
- * The declarations are passed in rather than read off the plan row on purpose:
- * `plans` has no settings blob, because a limit that can be edited in a table
- * re-entitles every subscriber the moment somebody saves the form, with no
- * deploy and no review.
+ * THE TIER KEY, NOT THE `plans.key`. A tier projects one row per (interval,
+ * currency) and the customer is subscribed to exactly one of them, but moving
+ * from monthly to yearly does not change what they are entitled to. If the ref
+ * carried the cadence, that billing change would rewrite every entitlement row
+ * the tenant holds, and each rewrite is a chance to lose `used_value`.
+ *
+ * WHAT EACH KIND BECOMES, and why:
+ *
+ *   quota   the limit, straight through. `null` stays unlimited.
+ *   flag    1 or 0. Zero rather than no row at all, because `entitlements`
+ *           treats a limit of 0 as a feature explicitly WITHHELD — the row stays
+ *           for the audit trail, and it still sums, so buying an add-on that
+ *           grants the same feature turns it on rather than being capped by a
+ *           plan that does not include it.
+ *   option  NOTHING. Entitlement rows sum, and there is no sum of "every 10
+ *           minutes" and "every minute". An option is read off the tier through
+ *           `planAllows`; putting one in this table would produce a row whose
+ *           limit is a number nobody can interpret.
  *
  * Sorted by feature so two calls produce identical output — the diff of a write
  * plan is otherwise pure noise.
  */
-export function grantsForPlan(plan: PlanRef, features: FeatureGrants): readonly PlanGrant[] {
-  if (plan.key.length === 0) throw new EmptyPlanKeyError();
+export function grantsForPlan(tier: PlanTier): readonly PlanGrant[] {
+  // Re-checked here as well as in `definePlans`, which is not duplication: this
+  // is the function that writes the ref, `PlanTier` is a plain interface that a
+  // caller can build by hand, and the type cannot say "a non-empty slug".
+  if (tier.key.length === 0) {
+    throw new InvalidPlanKeyError(tier.key, "it is empty.");
+  }
 
   const grants: PlanGrant[] = [];
-  for (const [declared, limit] of Object.entries(features)) {
-    if (!declared.startsWith(GRANT_PREFIX)) continue;
+  for (const feature of Object.values(tier.features)) {
+    if (feature.kind === "option") continue;
 
-    const feature = declared.slice(GRANT_PREFIX.length);
-    // `grants_` on its own names no feature. Emitting it would create a row
-    // keyed on the empty string, which every later lookup misses and no admin
-    // screen can display.
-    if (feature.length === 0) continue;
+    const limitValue =
+      feature.kind === "quota" ? feature.limit : feature.included ? 1 : 0;
 
-    if (limit !== null && (!Number.isInteger(limit) || limit < 0)) {
-      throw new InvalidGrantLimitError(plan.key, feature, limit);
+    if (limitValue !== null && (!Number.isInteger(limitValue) || limitValue < 0)) {
+      throw new InvalidGrantLimitError(tier.key, feature.feature, limitValue);
     }
 
-    grants.push({ feature, limitValue: limit, source: "plan", sourceRef: plan.key });
+    grants.push({
+      feature: feature.feature,
+      limitValue,
+      source: "plan",
+      sourceRef: tier.key,
+    });
   }
 
   return grants.sort((a, b) => (a.feature < b.feature ? -1 : a.feature > b.feature ? 1 : 0));
@@ -121,47 +117,65 @@ export interface PlanGrantDiff {
  * The part of an entitlement's identity that a plan change may NOT rewrite.
  *
  * The unique index keys on (tenant, feature, source, coalesce(source_ref, '')).
- * The tenant is the same on both sides of a diff and the ref is the one field
- * an upgrade moves, so (source, feature) is what two rows must share to be the
- * same row. NUL as the separator because feature names come from plan settings
- * keys and can contain any printable character a human types: with "-" as the
+ * The tenant is the same on both sides of a diff and the ref is the one field an
+ * upgrade moves, so (source, feature) is what two rows must share to be the same
+ * row. NUL as the separator because feature names are chosen by whoever writes
+ * the plan catalog and can contain any printable character: with "-" as the
  * separator, source `plan` + feature `-seats` and source `plan-` + feature
  * `seats` produce one key, and one row silently reconciles against the other.
+ * `definePlans` refuses a feature name containing NUL, which is what closes the
+ * same hole from the other end.
  */
 function rowIdentity(grant: PlanGrant): string {
-  return `${grant.source}\u0000${grant.feature}`;
+  return `${grant.source}${IDENTITY_SEPARATOR}${grant.feature}`;
 }
 
 /**
- * What to write when a tenant moves from one plan's grants to another's.
+ * What to write when a tenant moves onto `next`, or off a plan entirely.
+ *
+ * `current` is the rows the tenant ACTUALLY HOLDS, read from the database —
+ * every source, not just the plan's. `next` is a tier from the record, or `null`
+ * for a cancellation. Taking the tier rather than a second list of grants is
+ * what keeps the two halves of a plan change reading the same description: a
+ * caller that could hand-assemble `next` is a caller that can hand-assemble a
+ * Pro that the pricing page has never heard of.
  *
  * MATCHED BY (source, feature). Sources are additive and coexist by design — a
  * plan grants 5 seats, an add-on grants 3 more, support grants 2 for a month,
  * and the unique index keeps all three as separate rows. Matching on `feature`
  * alone made the add-on row indistinguishable from a stale plan row, so a plan
- * change removed it: capacity a human deliberately bought or granted, revoked
- * by an upgrade, with nothing in the resulting diff that looks wrong.
+ * change removed it: capacity a human deliberately bought or granted, revoked by
+ * an upgrade, with nothing in the resulting diff that looks wrong.
  *
  * `sourceRef` is the one part of that identity the match ignores, because an
  * upgrade rewrites it — `starter` becomes `pro`. Matching on it would classify
  * every row as a removal plus an insertion, which is exactly the
- * delete-and-recreate this function exists to prevent. `used_value` lives on
- * the row: recreating it resets a tenant's 4 seats in use to 0, and they invite
- * four more people they are not paying for. Nothing about the result looks
- * wrong afterwards.
+ * delete-and-recreate this function exists to prevent. `used_value` lives on the
+ * row: recreating it resets a tenant's 4 seats in use to 0, and they invite four
+ * more people they are not paying for. A customer who has spent 400 of 500
+ * exports and moves to a tier with 5000 must still have spent 400, and the only
+ * way to keep that number is to UPDATE the row it sits on.
  *
  * `change` therefore also fires when only the ref moved and the limit is
- * identical — the row still has to be UPDATEd to point at the new plan, or the
+ * identical — the row still has to be UPDATEd to point at the new tier, or the
  * next diff goes on believing the tenant is on the old one and removes the row
  * as orphaned.
  *
- * Re-applying the same plan yields three empty lists.
+ * ONLY `plan` ROWS ARE EVER REMOVED. `grantsForPlan` emits nothing else, so this
+ * diff owns nothing else; an add-on the customer bought separately, or seats
+ * support granted, survive a downgrade and a cancellation untouched. That used
+ * to be inferred from whatever sources happened to appear in `next`, with a
+ * special case for the empty list. With a tier as the input there is nothing to
+ * infer.
+ *
+ * Re-applying the same tier yields three empty lists.
  */
 export function planGrantDiff(
   current: readonly PlanGrant[],
-  next: readonly PlanGrant[],
+  next: PlanTier | null,
 ): PlanGrantDiff {
-  const nextByIdentity = new Map(next.map((grant) => [rowIdentity(grant), grant]));
+  const target = next === null ? [] : grantsForPlan(next);
+  const nextByIdentity = new Map(target.map((grant) => [rowIdentity(grant), grant]));
 
   // Non-empty tuples, so the "which row do we keep" branch below does not need
   // an undefined check for a case that cannot happen.
@@ -173,53 +187,39 @@ export function planGrantDiff(
     else currentByIdentity.set(key, [grant]);
   }
 
-  /**
-   * Which sources this diff may DELETE from. `next` names them: it is one
-   * origin's grants, and `grantsForPlan` only ever emits `plan`. An empty
-   * `next` is a cancellation, which is still about the plan.
-   *
-   * Everything else in `current` is another origin's row and survives
-   * untouched. A cancelled plan must not take the add-on the customer bought
-   * separately, or the seats support granted, with it.
-   */
-  const owned: ReadonlySet<EntitlementSource> =
-    next.length > 0
-      ? new Set(next.map((grant) => grant.source))
-      : new Set<EntitlementSource>(["plan"]);
-
   const add: PlanGrant[] = [];
   const remove: PlanGrant[] = [];
   const change: PlanGrantChange[] = [];
 
-  for (const [key, target] of nextByIdentity) {
+  for (const [key, wanted] of nextByIdentity) {
     const existing = currentByIdentity.get(key);
     if (!existing) {
-      add.push(target);
+      add.push(wanted);
       continue;
     }
 
-    // Prefer the row that already points at this plan, so re-applying the same
-    // plan is genuinely a no-op instead of rewriting whichever duplicate the
+    // Prefer the row that already points at this tier, so re-applying the same
+    // tier is genuinely a no-op instead of rewriting whichever duplicate the
     // database happened to return first.
-    const keep = existing.find((grant) => grant.sourceRef === target.sourceRef) ?? existing[0];
+    const keep = existing.find((grant) => grant.sourceRef === wanted.sourceRef) ?? existing[0];
 
-    if (keep.limitValue !== target.limitValue || keep.sourceRef !== target.sourceRef) {
-      change.push({ feature: target.feature, previous: keep, next: target });
+    if (keep.limitValue !== wanted.limitValue || keep.sourceRef !== wanted.sourceRef) {
+      change.push({ feature: wanted.feature, previous: keep, next: wanted });
     }
 
     // More than one row for one (source, feature) is the scar of an earlier
-    // upgrade that inserted where it should have updated. Reconcile down to
-    // one: left alone they sum in resolveEntitlements, so the tenant quietly
-    // holds double the limit and every later diff preserves the extra row.
+    // upgrade that inserted where it should have updated. Reconcile down to one:
+    // left alone they sum in resolveEntitlements, so the tenant quietly holds
+    // double the limit and every later diff preserves the extra row.
     for (const extra of existing) if (extra !== keep) remove.push(extra);
   }
 
   for (const [key, existing] of currentByIdentity) {
     if (nextByIdentity.has(key)) continue;
-    // Only rows this diff owns. An add-on or a support grant that happens to
-    // name the same feature as a plan entitlement is not an orphan of the old
-    // plan, and removing it revokes capacity nobody asked to have removed.
-    for (const grant of existing) if (owned.has(grant.source)) remove.push(grant);
+    // Plan rows only. An add-on or a support grant that happens to name the same
+    // feature as a plan entitlement is not an orphan of the old plan, and
+    // removing it revokes capacity nobody asked to have removed.
+    for (const grant of existing) if (grant.source === "plan") remove.push(grant);
   }
 
   return { add, remove, change };

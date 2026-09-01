@@ -165,6 +165,46 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
       ) && mentions(plan, ["src", "server", "trpc.ts"], "rateLimit: { limiter }"),
   },
   {
+    capability: "seo.metadata",
+    why:
+      "A metadataBase for relative Open Graph URLs to resolve against, and a " +
+      "/robots.txt that refuses everything outside production. BOTH, because " +
+      "either alone is a project with one of the two invisible failures still " +
+      "open: a shared link that renders as a grey box, or a preview " +
+      "deployment competing with the client's own site for their brand terms.",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "seo.ts"], "metadataBase", "INDEXABLE") &&
+      mentions(plan, ["app", "robots.ts"], "INDEXABLE"),
+  },
+  {
+    capability: "marketing.landing",
+    why:
+      "A section component from the marketing overlay. NOT `app/(site)/page.tsx`, " +
+      "which every project emits — that path holds the developer's orientation " +
+      "page in a project with no marketing site, so it would prove this " +
+      "capability everywhere and therefore nowhere.",
+    provenBy: (plan) =>
+      exists(plan, "src", "components", "marketing", "Hero.tsx"),
+  },
+  {
+    capability: "marketing.pricing",
+    why:
+      "The public pricing page, which needs both a marketing site and a plan " +
+      "record to read.",
+    provenBy: (plan) => exists(plan, "app", "(site)", "pricing", "page.tsx"),
+  },
+  {
+    capability: "legal.policies",
+    why:
+      "The privacy policy AND the generated record behind it. The page alone " +
+      "would be prose; what makes the claim worth anything is that the " +
+      "subprocessor list is derived from the packages this project installed, " +
+      "which is the paragraph every copied legal template gets wrong.",
+    provenBy: (plan) =>
+      exists(plan, "app", "(site)", "privacy", "page.tsx") &&
+      mentions(plan, ["src", "legal.ts"], "SUBPROCESSORS"),
+  },
+  {
     capability: "admin.shell",
     why: "The panel's index page, from the admin-minimal overlay.",
     provenBy: (plan) => exists(plan, "app", "admin", "page.tsx"),

@@ -5,6 +5,7 @@ import {
   deliveryStageOf,
   formatDay,
   metersFor,
+  primaryActionFor,
   type GrantedEntitlement,
 } from "@/account";
 import {
@@ -134,6 +135,118 @@ describe("describeSubscription", () => {
       expect(banner.title).not.toContain("undefined");
       expect(banner.body).not.toContain("undefined");
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The one primary action
+// ---------------------------------------------------------------------------
+
+describe("primaryActionFor", () => {
+  it("offers to cancel a subscription that is renewing", () => {
+    const action = primaryActionFor(subscription(), NOW);
+    expect(action.kind).toBe("cancel");
+    expect(action.consequential).toBe(true);
+    // The sentence has to say WHEN, because the fear the customer brings to
+    // this button is that pressing it cuts them off today.
+    expect(action.hint).toContain("already paid for");
+  });
+
+  it("offers to RESUME, not cancel, once a cancellation is scheduled", () => {
+    // The ordering bug in button form. Somebody who has already cancelled and
+    // is shown "Cancel subscription" presses it again, and then cannot tell
+    // which of the two took effect.
+    const action = primaryActionFor(subscription({ cancelAtPeriodEnd: true }), NOW);
+    expect(action.kind).toBe("resume");
+  });
+
+  it("puts payment failure above everything else, including a scheduled cancellation", () => {
+    for (const status of ["past_due", "unpaid"] as const) {
+      const action = primaryActionFor(
+        subscription({ status, cancelAtPeriodEnd: true }),
+        NOW,
+      );
+      expect(action.kind, status).toBe("settle");
+    }
+  });
+
+  it("sends an incomplete subscription to finish paying rather than to cancel", () => {
+    const action = primaryActionFor(
+      subscription({ status: "incomplete", currentPeriodEnd: null }),
+      NOW,
+    );
+    expect(action.kind).toBe("settle");
+    expect(action.label).toBe("Finish paying");
+  });
+
+  it("offers NOTHING on a cancelled subscription", () => {
+    // Its action is to start a new one, which is choosing a plan rather than
+    // pressing a button — so the page renders the plan list and this renders
+    // the sentence that points at it.
+    const action = primaryActionFor(subscription({ status: "canceled" }), NOW);
+    expect(action.kind).toBe("none");
+    expect(action.label).toBe("");
+    expect(action.hint).toContain("Choosing a plan");
+  });
+
+  it("says cancelling a trial costs nothing, while the trial is running", () => {
+    const running = primaryActionFor(
+      subscription({ status: "trialing", trialEndsAt: day(3) }),
+      NOW,
+    );
+    expect(running.kind).toBe("cancel");
+    expect(running.hint).toContain("costs nothing");
+  });
+
+  it("closes the trial boundary at the instant it ends", () => {
+    // The same closed boundary the banner and the entitlement resolver use. The
+    // open form leaves a state unreachable in production and permanently flaky
+    // in a test.
+    const over = primaryActionFor(
+      subscription({ status: "trialing", trialEndsAt: NOW }),
+      NOW,
+    );
+    expect(over.kind).toBe("cancel");
+    expect(over.hint).not.toContain("costs nothing");
+  });
+
+  it("never asks for confirmation on an action that changes nothing", () => {
+    // A confirm step on a harmless control teaches people to click past
+    // confirmations, which is how the one that mattered gets clicked past too.
+    for (const status of ["past_due", "unpaid", "incomplete", "canceled"] as const) {
+      expect(
+        primaryActionFor(subscription({ status }), NOW).consequential,
+        status,
+      ).toBe(false);
+    }
+  });
+
+  it("has a sentence for every state, so no button ever stands unexplained", () => {
+    for (const status of [
+      "active",
+      "trialing",
+      "past_due",
+      "unpaid",
+      "incomplete",
+      "canceled",
+    ] as const) {
+      expect(primaryActionFor(subscription({ status }), NOW).hint.length, status)
+        .toBeGreaterThan(20);
+    }
+  });
+
+  it("agrees with the banner about which state is being described", () => {
+    // The two are read together — a banner saying "a payment did not go
+    // through" above a button offering to cancel would be the screen asking the
+    // customer to solve the wrong problem. They are separate pure functions on
+    // purpose, so this is the assertion that keeps their orderings in step.
+    const pastDue = subscription({ status: "past_due", cancelAtPeriodEnd: true });
+    expect(describeSubscription(pastDue, NOW).title).toContain("payment");
+    expect(primaryActionFor(pastDue, NOW).kind).toBe("settle");
+
+    const ending = subscription({ cancelAtPeriodEnd: true });
+    expect(describeSubscription(ending, NOW).title).toContain("ends on");
+    expect(primaryActionFor(ending, NOW).kind).toBe("resume");
   });
 });
 

@@ -1,5 +1,54 @@
 # @adminigloo/stripe
 
+## 0.2.0
+
+### Minor Changes
+
+- Reading a Stripe subscription, and publishing a plan's price to Stripe.
+  
+  Two things a subscription mirror cannot be written without, and both are here
+  rather than in the generated project because both encode knowledge about a
+  pinned API version that a project copy would carry forward silently and wrongly.
+  
+  **`subscriptionSnapshot(subscription)`** flattens a `Stripe.Subscription` into a
+  record with no Stripe types in it. It exists because two of the five fields a
+  mirror needs have MOVED, and reading the old spelling yields `undefined` rather
+  than an error — so the subscription mirrors with no period at all, and the
+  billing page tells the customer their renewal date is "a date we do not hold"
+  while their card is charged every month. Against `2026-08-26.dahlia`:
+  
+  - `subscription.current_period_start` / `current_period_end` are gone. The
+    period is per ITEM now (`items.data[0].current_period_*`), because one
+    subscription can bill several items on different cycles. This scaffold sells
+    one item per subscription, and that assumption is stated here once instead of
+    in the webhook, the resync and whatever comes third.
+  - The status is deliberately NOT narrowed. `mapStripeSubscriptionStatus` in
+    `@adminigloo/billing` is the one place that decides what an unrecognised
+    status means, and it takes `string` precisely so a value Stripe invents next
+    year has an answer — narrowing here would make its default branch look dead.
+  
+  **`subscriptionIdFromInvoice(invoice)`** reads
+  `parent.subscription_details.subscription`, which is where the link went when
+  `invoice.subscription` was removed. It returns NULL for a one-off invoice rather
+  than throwing: a handler that threw would answer 500 to an ordinary event,
+  Stripe would retry for three days, and the endpoint would be disabled with every
+  other event on it.
+  
+  **`SUBSCRIPTION_EVENT_TYPES`** is the list a mirror must cover, exported so a
+  route can assert it against its own registry at module load. An event enabled on
+  the endpoint with no handler is delivered, ledgered and discarded in silence.
+  
+  **`ensurePlanPrice(client, input)`** creates the Stripe Product and Price a plan
+  row bills against and reports the ids to cache. Nothing created them before,
+  which is why a complete plan catalogue had nothing to charge with. It is
+  idempotent three ways over — the cached id is VERIFIED against the record rather
+  than trusted, the Price `lookup_key` is `plans.key` so a cleared cache
+  re-attaches instead of duplicating, and the creates carry idempotency keys for
+  the double-click window. A Stripe Price is immutable, so a repriced tier
+  produces a NEW Price and `transfer_lookup_key` moves the name onto it: the old
+  Price keeps billing the subscribers already on it, which is the only behaviour
+  that does not silently restate what somebody agreed to pay.
+
 ## 0.1.3
 
 ### Patch Changes

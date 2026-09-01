@@ -1,5 +1,192 @@
 # create-adminigloo-app
 
+## 0.11.0
+
+### Minor Changes
+
+- A project that sells something now ships a plan catalogue and a seed that puts it
+  in the database.
+  
+  `@adminigloo/billing` gained a typed plan record; this wires it into the generated
+  project.
+  
+  **`src/plans.ts` is emitted** for any `--model` other than `none`: a
+  `definePlans` call with five tiers, each of which demonstrates something the shape
+  has to survive — a free tier priced at zero rather than absent, two paid tiers
+  whose quotas differ so an upgrade has something to reconcile, an Enterprise tier
+  with no prices at all ("talk to us" is a real tier, not a missing one), and a
+  retired tier that is still in the record because subscriptions reference it. Two
+  currencies and two intervals, because a price matrix that has never held two of
+  anything is a matrix nobody has tested.
+  
+  Generated rather than copied from `template/`, for the reason `src/db/schema.ts`
+  is: it imports `@scope/billing`, which a `--model none` project never installs.
+  Not in an overlay either, and that half is the design — the pricing page beside it
+  next phase is copied source, and a runtime package cannot import from copied
+  source, so a record living there would be invisible to the enforcement that has to
+  honour what the page advertises.
+  
+  **`scripts/seed-plans.ts`** (stripe overlay) writes the record's projection into
+  `plans`, upserting on `key`, and reports every row the record does not account
+  for without deleting any of them. It is chained into `pnpm db:seed:demo` ahead of
+  the shop seed and is separately runnable as `pnpm db:seed:plans`.
+  
+  Unlike the other two seeds it has no localhost gate, deliberately: it writes no
+  fictional people and books no orders, only the projection of a record every
+  environment already ships in its own source. Running it against production is the
+  intended way to publish a price change — the alternative is editing amounts by
+  hand in a table, which is the thing the record exists to stop.
+- The marketing half: a landing page, a pricing page generated from the plan
+  record, legal routes with an accurate subprocessor list, and SEO in every
+  project.
+  
+  The scaffold generated an application and no public face for it. There was no
+  landing page worth showing a client, no pricing page, no privacy policy, no
+  terms, no `metadataBase`, no sitemap and no `robots.txt` — so every generated
+  project shared as a link rendered a grey box, and every staging deployment was
+  crawlable.
+  
+  **A new answer, `--marketing` / `--no-marketing`, defaulting to off.** It selects
+  copied source and nothing else, exactly as `--admin` does. It is its own
+  question because nothing already asked answers it: a project that sells is not
+  necessarily one anybody markets, and a project that sells nothing still has a
+  landing page. It defaults to off because every string on a landing page is a
+  claim only the client can make, and placeholder claims at `/` of an internal
+  tool are worse than no landing page.
+  
+  **Three overlays, three conditions.**
+  
+  - `marketing` — the landing page and its five section components. Selected by
+    `--marketing`.
+  - `marketing-pricing` — the public pricing page. Needs BOTH `--marketing` and a
+    business model, exactly as `catalog-admin` needs both an admin shell and
+    something to sell: the page imports `src/plans.ts`, which a `--model none`
+    project never gets.
+  - `legal` — `/privacy` and `/terms`. Selected by `--marketing` **or** a business
+    model, because Stripe will not activate an account without a public privacy
+    policy and terms of service whether or not there is a marketing site in front
+    of them.
+  
+  **`app/(site)/page.tsx` moves.** With `--marketing`, the landing page owns `/`
+  and the developer's orientation page — the health check and the file map — is
+  written to `/setup/start` instead, beside the other developer surface and linked
+  from `FOOTER_LINKS`. Without it, nothing changes.
+  
+  **The pricing page reads the plan record and nothing else.** Names,
+  descriptions, prices, the monthly/annual toggle, the currency switch, every
+  bullet and every comparison cell come out of the same `definePlans` object
+  `grantsForPlan` turns into entitlement rows — so a tier cannot advertise
+  something the enforcement will not grant. The toggle is a set of links rather
+  than a client component, so the state is in the URL, the page stays a server
+  component, and it works with no JavaScript. Retired tiers are filtered out;
+  unpriced tiers render a contact action; a tier not sold on the selected cadence
+  says so rather than rendering blank. On a project whose `plans` table has not
+  been seeded the prices are still correct — they are source — and the page says
+  plainly that nothing can be subscribed to yet.
+  
+  **The legal pages are accurate about the software.** `src/legal.ts` is
+  generated: the subprocessor list names Stripe only in a project that takes
+  money, Resend only in one that sends mail, Anthropic only in one with `--ai`,
+  and marks Sentry and Upstash as active only once their credential is set. The
+  data categories and the extra terms clauses are generated arrays, so a service
+  with no subscriptions has no renewal clause rather than one hedged with "if
+  applicable". Both pages carry a rendered notice saying they are a starting point
+  for a lawyer, and the company's own facts are obvious placeholders in
+  `src/legal-publisher.ts`.
+  
+  **SEO is unconditional.** `src/seo.ts`, `app/robots.ts` and `app/sitemap.ts` are
+  written for every project, including `--no-marketing` ones, because the two
+  failures they prevent are harms rather than features: without `metadataBase`
+  every relative Open Graph URL resolves against localhost and a shared link
+  renders as a grey box, and a crawled preview deployment outranks the client's
+  real site for their own brand terms. Indexing is allowed only where
+  `resolveAppEnv()` is `production` — not `isDeployed()`, because an unlabelled
+  production artefact resolves to `staging` and reports itself as not deployed,
+  which is exactly the environment that must not be crawled. The decision is one
+  constant, imported by both the metadata and `/robots.txt`, so they cannot
+  disagree. The root layout now takes its metadata from `src/seo.ts` and sets no
+  canonical, since a canonical in the root is inherited by every page beneath it.
+  
+  `SITE_LINKS` gains `/pricing`, `FOOTER_LINKS` gains `/privacy`, `/terms` and
+  `/setup/start`, each only in the configurations that emit the route.
+  `capabilitiesFor` gains `seo.metadata` (every project), `marketing.landing`,
+  `marketing.pricing` and `legal.policies`, each with a row in
+  `CAPABILITY_EVIDENCE`. The exhaustive configuration sweep gained the marketing
+  axis, so every claim above is checked in both states.
+- Subscriptions now do something. A subscription product took money and granted
+  nothing; this closes that.
+  
+  Four things were missing and each made the next one pointless: no webhook
+  mirrored `customer.subscription.*` into the local table, so nothing applied a
+  plan's grants, so `/account/billing` rendered an empty state, and none of it
+  could be exercised at all without Stripe keys.
+  
+  **One writer, five callers.** `src/server/subscription.ts` holds
+  `applySubscription`, and nothing else may write `subscriptions`. The webhook
+  calls it, the simulated path calls it, cancel and resume call it, and the staff
+  re-sync calls it — the same shared-call-site design `fulfilPurchase` is built
+  on, and for the same reason: a deployment with no Stripe keys exercises the real
+  mirroring path every day, so the first real webhook runs code that has already
+  worked a hundred times. It never imports Stripe; `subscriptionSnapshot` is the
+  adapter and lives on the other side of the line.
+  
+  **The mirror.** `customer.subscription.created`, `.updated`, `.deleted`,
+  `invoice.paid` and `invoice.payment_failed`, through the existing leased-claim
+  ledger rather than a second idempotency mechanism. The invoice handlers re-read
+  the subscription and go through the same writer rather than writing the period
+  themselves — an invoice knows its own period and nothing else, so a handler
+  writing from it would be a second writer with a partial view. `event.created` is
+  carried as the watermark and a stale delivery is a no-op that answers 200.
+  `payment_intent.succeeded` gained one guard: an intent carrying NONE of our
+  metadata is a renewal Stripe collected, and is recorded and skipped rather than
+  throwing — every renewal of every subscription would otherwise fail that handler
+  for three days and take the endpoint down.
+  
+  **The grants.** Every mirror write reconciles the tenant's entitlements through
+  `planGrantDiff`, so an upgrade UPDATEs the rows the tenant already holds and
+  `used_value` survives — 400 of 500 exports spent is still 400 spent on the tier
+  above — and only `plan`-sourced rows are ever removed, so a seat pack bought as
+  a product survives a downgrade. A separate sweep writes the expiry window, which
+  is what lets a past-due tenant be suspended without their usage counters being
+  thrown away.
+  
+  **The screen.** `/account/billing` gets one state banner and ONE primary action,
+  both chosen on the server by pure functions with their own tests —
+  `describeSubscription` for the sentence, the new `primaryActionFor` for the
+  button. Cancel schedules for the period end and never cuts access immediately;
+  resume undoes it; both go through the one writer. Invoices are read live from
+  Stripe and answer with an empty list on every path where there is nothing to
+  show. A plan chooser renders the record's own tiers, so the page works with no
+  marketing site behind it.
+  
+  **The simulated path covers subscriptions.** `billing.simulateSubscription`
+  respects `checkoutMode()` — the same single predicate, called first — and writes
+  through the same `applySubscription` a real webhook does, differing only in the
+  reference and the audit action. It can put a subscription into any of the six
+  states, so all five banners and both actions can be seen on a laptop with no
+  Stripe account.
+  
+  **A staff re-sync.** `/admin/billing` (catalog-admin) shows the plan record
+  against the `plans` table against Stripe, and offers two buttons: publish the
+  record's prices to Stripe, and re-pull every subscription through the same
+  writer. This matters more here than it would in another kit precisely because
+  the firm owns the billing tables — a missed webhook leaves them authoritative
+  and wrong with nothing to reconcile against. Gated on a new
+  `staff.billing.resync` key and audited as sensitive.
+  
+  **Real subscriptions can now be started at all.** `billing.subscribeToPlan`
+  opens a hosted Stripe Checkout session in subscription mode, publishing the
+  plan's Price on demand. Hosted rather than a Payment Element because a
+  subscription needs tax, VAT numbers, coupons and a saved payment method — every
+  one of which is a form this firm would otherwise restyle per client — and
+  because `withTenantMetadata` then stamps the tenant onto the Subscription, which
+  is the only reason a later `customer.subscription.updated` can be attributed to
+  anybody.
+  
+  `PACKAGE_VERSIONS.stripe` moves to `0.2.0`: the emitted webhook imports
+  `subscriptionSnapshot`, `subscriptionIdFromInvoice` and
+  `SUBSCRIPTION_EVENT_TYPES`, and the billing router imports `ensurePlanPrice`.
+
 ## 0.10.0
 
 ### Minor Changes

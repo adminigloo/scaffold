@@ -11,6 +11,7 @@ import {
 import { amountMinor, createdAt, idColumn, updatedAt } from "@adminigloo/db";
 import { FIRM_WIDE } from "@adminigloo/permissions";
 import type { EntitlementSource } from "./entitlements.js";
+import type { PlanInterval } from "./plans.js";
 import type { SubscriptionStatus } from "./status.js";
 
 /**
@@ -23,10 +24,15 @@ import type { SubscriptionStatus } from "./status.js";
  * a value added to a Postgres enum can never be removed, so a name chosen badly
  * today is permanent, and the union gives the compile-time check without the
  * one-way door.
+ *
+ * `PlanInterval` MOVED to plans.ts and is re-exported from here unchanged, so
+ * "@adminigloo/billing/schema" still offers it. It was the one union declared in
+ * this file rather than imported into it, and the plan record is now what
+ * decides which cadences a tier can be sold on — leaving the declaration here
+ * would have made the pure module import from the schema, the one direction this
+ * package does not allow.
  */
-
-/** `once` is a lifetime purchase: it never renews, so it never prorates. */
-export type PlanInterval = "month" | "year" | "once";
+export type { PlanInterval } from "./plans.js";
 
 /**
  * The plan catalog. THIS is what a plan means.
@@ -156,6 +162,33 @@ export const subscriptions = pgTable(
     cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
     canceledAt: timestamp("canceled_at", { withTimezone: true }),
     trialEndsAt: timestamp("trial_ends_at", { withTimezone: true }),
+    /**
+     * THE WATERMARK. When the state in the columns above was observed at
+     * Stripe — `event.created`, not the instant the row was written.
+     *
+     * Without it the mirror has nowhere to record which observation it has
+     * already applied, and "which of these two events is newer" becomes
+     * "which arrived second" — which is the one answer that is definitely
+     * wrong. Stripe delivers out of order and redelivers for three days, so a
+     * `customer.subscription.updated` from ten seconds ago routinely lands
+     * after the one that superseded it. `decideSubscriptionWrite` compares
+     * against this column and makes the stale delivery a no-op.
+     *
+     * `updated_at` cannot serve: it is stamped by OUR clock when the row is
+     * written, so a redelivery of an ancient event looks like the newest thing
+     * that ever happened to the subscription.
+     *
+     * Nullable, because a row an admin comped by hand was never observed at
+     * Stripe at all — and a NULL watermark reads as "nothing applied yet",
+     * which is exactly right: the first real observation wins.
+     */
+    lastEventAt: timestamp("last_event_at", { withTimezone: true }),
+    /**
+     * The delivery that carried it, so an operator staring at a wrong row can
+     * find it in `stripe_events` and read the payload. Not a foreign key: the
+     * ledger is prunable and a subscription outlives it.
+     */
+    lastEventId: text("last_event_id"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

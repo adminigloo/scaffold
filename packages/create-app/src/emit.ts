@@ -249,11 +249,60 @@ export async function planEmit(
     // nothing at all and listing the viewer's permission keys instead.
     files.set(join("app", "admin", "page.tsx"), renderAdminDashboard(answers));
   }
-  // Under `(site)`, so the landing page gets the same header and footer as every
-  // other public page. The group is a routing no-op — this is still `/` — and it
-  // is the base template that owns `app/(site)/layout.tsx`, which is what keeps
-  // the storefront overlay additive while its pages inherit the chrome.
-  files.set(join("app", "(site)", "page.tsx"), renderHomePage(answers));
+  // The plan record — what a tier includes, what it costs, and what the `plans`
+  // table has to hold for it. Written only where there is billing to describe:
+  // it imports @scope/billing, which a `--model none` project never installs, so
+  // a copy in `template/` would emit a module that cannot resolve its own
+  // import. It is not in an overlay either, and that is the deliberate half —
+  // the pricing page next to it is copied source, and a runtime package cannot
+  // import from copied source, so a record living there would be invisible to
+  // the entitlement check that has to honour what the page advertises.
+  if (answers.businessModel !== "none") {
+    files.set(join("src", "plans.ts"), renderPlanCatalog(answers));
+  }
+  // THE ORIENTATION PAGE, AND WHERE IT GOES.
+  //
+  // Under `(site)` either way, so it gets the same header and footer as every
+  // other public page. The group is a routing no-op and it is the base template
+  // that owns `app/(site)/layout.tsx`, which is what keeps the storefront and
+  // marketing overlays additive while their pages inherit the chrome.
+  //
+  // WHICH PATH depends on whether this project has a public face. Two files
+  // cannot both be `/`, and when a client is going to be shown this site the
+  // page that belongs there is the landing page, not a list of file paths. So
+  // the marketing overlay owns `app/(site)/page.tsx` and this moves next to
+  // /setup — the other developer surface, footer-linked, and the one somebody
+  // deletes at launch along with it. It is MOVED rather than dropped because it
+  // is the only index of where anything is, including `src/plans.ts`, and a file
+  // nothing points at is a file whose contents get retyped somewhere else.
+  //
+  // Written with `files.set` in both cases, so the overlay never has its page
+  // silently overwritten by this line — which is the one failure the additive
+  // check cannot see, because `OverlayCollisionError` compares an overlay
+  // against the base template and everything below runs after both.
+  files.set(
+    answers.includeMarketing
+      ? join("app", "(site)", "setup", "start", "page.tsx")
+      : join("app", "(site)", "page.tsx"),
+    renderHomePage(answers),
+  );
+  // What every page inherits — the base URL relative OG links resolve against,
+  // the title template, and the one decision about whether this deployment may
+  // be indexed. In EVERY project rather than behind the marketing answer: a
+  // shared link that renders as a grey box and a staging preview that outranks
+  // the client's real site are harms, and a harm must not be opt-in.
+  files.set(join("src", "seo.ts"), renderSeoModule(answers));
+  files.set(join("app", "robots.ts"), renderRobots(answers));
+  files.set(join("app", "sitemap.ts"), renderSitemap(answers));
+  // The derived half of the legal pages: who else sees a customer's data, and
+  // which clauses follow from what this project does. Written on the same
+  // condition that copies the pages, because nothing else imports it — and that
+  // condition is a disjunction rather than the marketing answer alone, since
+  // Stripe will not activate an account without a public privacy policy and
+  // terms whether or not there is a marketing site in front of them.
+  if (answers.includeMarketing || answers.businessModel !== "none") {
+    files.set(join("src", "legal.ts"), renderLegalRecord(answers));
+  }
   files.set(".env.example", renderEnvExample(answers));
   // Written directly, not just as an example. It is gitignored, and it carries
   // the one value that is not a credential — so `pnpm install && pnpm dev`
@@ -465,14 +514,30 @@ export function renderPackageJson(answers: Answers): string {
       // scripts because `scripts/seed-shop.ts` imports the catalog and commerce
       // packages, which a `--model none` project never installs; one entry
       // point because the person seeding wants the demo, not a list of parts.
+      //
+      // THE PLAN CATALOGUE IS CHAINED IN AHEAD OF THE SHOP, and it is the one
+      // link in this chain that is not a fixture: it writes the projection of
+      // `src/plans.ts` into the `plans` table, so the pricing page and the
+      // subscription screens have something to read. A generated project had an
+      // empty `plans` table, which makes every one of them a blank page.
       "db:seed:demo": sells
-        ? "tsx --env-file=.env.local scripts/seed-demo.ts && tsx --env-file=.env.local scripts/seed-shop.ts"
+        ? "tsx --env-file=.env.local scripts/seed-demo.ts && tsx --env-file=.env.local scripts/seed-plans.ts && tsx --env-file=.env.local scripts/seed-shop.ts"
         : "tsx --env-file=.env.local scripts/seed-demo.ts",
       // Separately runnable, because the catalogue is the half you re-seed
       // after buying everything in it, and re-running the people fixture to get
       // it back is a bigger hammer than the job needs.
+      //
+      // `db:seed:plans` is separate for a stronger reason than convenience. It
+      // is the only script here that is safe — and intended — to run against a
+      // deployed database: it writes no fictional people and books no orders,
+      // it applies the record every environment already ships in its own source,
+      // and the alternative is editing prices by hand in production. The other
+      // two refuse outright unless they are pointed at localhost.
       ...(sells
-        ? { "db:seed:shop": "tsx --env-file=.env.local scripts/seed-shop.ts" }
+        ? {
+            "db:seed:plans": "tsx --env-file=.env.local scripts/seed-plans.ts",
+            "db:seed:shop": "tsx --env-file=.env.local scripts/seed-shop.ts",
+          }
         : {}),
       // No --env-file: this runs in CI where .env.local does not exist, and Node
       // treats a missing --env-file as fatal. The script loads it in a try/catch.
@@ -745,6 +810,7 @@ export function renderScaffoldRecord(manifest: ProjectManifest): string {
     `| Admin shell | ${answers.adminShell} |`,
     `| AI routes | ${answers.includeAi ? "yes" : "no"} |`,
     `| Transactional email | ${answers.includeEmail ? "yes" : "no"} |`,
+    `| Public marketing site | ${answers.includeMarketing ? "yes" : "no"} |`,
     `| Personal-workspace only | ${isPersonalWorkspaceOnly(answers) ? "yes" : "no"} |`,
     "",
     "## Installed packages",
@@ -1249,6 +1315,22 @@ const appStaffPermissions = {
     category: "Access",
     defaultFor: ["admin", "cs_lead"],
   },
+  "staff.billing.resync": {
+    label: "Re-sync billing with Stripe",
+    description:
+      "Publishes the plan record's prices to Stripe and re-pulls every " +
+      "subscription into this application's own tables.",
+    category: "Billing",
+    // The firm's own key, not a customer's. Every key in
+    // \`billingPermissions\` is what an OWNER holds over their own
+    // organisation's plan; this is the firm repairing its records across every
+    // customer at once, which only the staff ladder has a rung for.
+    //
+    // cs_lead as well as admin, because the person who needs it is on a call
+    // about a subscription that says the wrong thing — and the alternative to
+    // giving them the button is giving them the database.
+    defaultFor: ["admin", "cs_lead"],
+  },
   "staff.tenants.impersonate": {
     label: "Open a customer's own screen",
     description: "Every entry is written to the audit log as sensitive access.",
@@ -1489,6 +1571,13 @@ export function renderAuditRegistry(answers: Answers): string {
     // sees nothing further.
     imports.push('import { accountAuditedActions } from "./routers/account";');
     fragments.push("accountAuditedActions");
+    // The subscription mirror's vocabulary, on the same one-way terms. It is
+    // declared beside the WRITER rather than beside a router because five
+    // different callers write through that one function — the webhook, the
+    // simulated path, cancel, resume and the staff resync — and an action
+    // declared in one of the five would be invisible to the other four.
+    imports.push('import { subscriptionAuditedActions } from "./subscription";');
+    fragments.push("subscriptionAuditedActions");
   }
 
   return `${imports.join("\n")}
@@ -1609,8 +1698,9 @@ export function renderAppRouter(answers: Answers): string {
   if (answers.includeAi) imports.splice(1, 0, 'import { aiRouter } from "./ai";');
   if (takesMoney) {
     imports.splice(1, 0, 'import { accountRouter } from "./account";');
-    imports.splice(2, 0, 'import { catalogRouter } from "./catalog";');
-    imports.splice(3, 0, 'import { checkoutRouter } from "./checkout";');
+    imports.splice(2, 0, 'import { billingRouter } from "./billing";');
+    imports.splice(3, 0, 'import { catalogRouter } from "./catalog";');
+    imports.splice(4, 0, 'import { checkoutRouter } from "./checkout";');
   }
 
   // What the AI route cost, read back. The route itself is a plain handler —
@@ -1642,12 +1732,20 @@ export function renderAppRouter(answers: Answers): string {
   // request.
   checkout: checkoutRouter,
 
-  // The customer's own account. ONE PROCEDURE, because everything else the
-  // account area does is a server-component read — pages read, routers mutate.
-  // That one is opening the Stripe billing portal, and it is here rather than
-  // in a page so the tenant rung and the audit write are somewhere the scope
-  // audit can see them.
+  // The customer's own account: the Stripe billing portal, cancelling and
+  // resuming a subscription, and the invoice list. Everything else the account
+  // area does is a server-component read — pages read, routers mutate — and
+  // these are here rather than in a page so the tenant rung and the audit
+  // writes are somewhere the scope audit can see them.
   account: accountRouter,
+
+  // The plan catalogue's own end of the money: starting a subscription,
+  // simulating one where there are no Stripe keys, publishing the plan record's
+  // prices to Stripe, and the staff re-sync that puts the firm's own billing
+  // tables back in step with Stripe when a webhook was missed. Separate from
+  // \`checkout\` because that router sells PRODUCTS to anybody and this one sells
+  // the plan catalogue to an organisation.
+  billing: billingRouter,
 `
     : "";
 
@@ -1884,6 +1982,24 @@ export function renderSiteNav(answers: Answers): string {
     });
   }
 
+  // The pricing page, from the marketing-pricing overlay — which needs BOTH a
+  // marketing site and something to sell. Ahead of the shop because for a
+  // subscription product it is the page the whole site exists to reach, and a
+  // storefront of one-off items is the secondary destination rather than the
+  // primary one.
+  if (answers.includeMarketing && answers.businessModel !== "none") {
+    site.push({
+      href: "/pricing",
+      label: "Pricing",
+      why:
+        "Rendered from src/plans.ts, so what a tier advertises is the same " +
+        "record grantsForPlan entitles from. Absent in a project with no " +
+        "marketing site and absent again in one with no plans to price, which " +
+        "is two conditions and therefore two ways this list would have been " +
+        "wrong if it were written by hand.",
+    });
+  }
+
   const app: GeneratedLink[] = [
     {
       href: "/members",
@@ -1978,13 +2094,57 @@ export function renderSiteNav(answers: Answers): string {
     });
   }
 
+  // Where the orientation page went. It is `/` in a project with no marketing
+  // site and `/setup/start` in one that has, because the landing page takes `/`
+  // — see `planEmit`. Beside /setup, since the two are the same kind of surface:
+  // developer-facing, reachable from anywhere, and deleted together at launch.
+  // Without this entry the page still builds, still serves and is linked to by
+  // nothing, which is the exact fault `src/nav.ts` exists to prevent.
+  if (answers.includeMarketing) {
+    footer.push({
+      href: "/setup/start",
+      label: "Where to start",
+      why:
+        "The file map and the health check — what `/` says in a project " +
+        "without a marketing site. The landing page owns `/` here, so this is " +
+        "where it moved, and the footer is the only thing that knows.",
+    });
+  }
+
+  // The legal pages, from the legal overlay. Present whenever the project has a
+  // public face OR takes money — Stripe refuses to activate an account without
+  // a reachable privacy policy and terms of service, so a paid product needs
+  // both even with no marketing site in front of them. Last in the footer,
+  // which is where every reader already looks for them.
+  if (answers.includeMarketing || answers.businessModel !== "none") {
+    footer.push(
+      {
+        href: "/privacy",
+        label: "Privacy",
+        why:
+          "A starting point for a lawyer, and accurate about the one thing a " +
+          "copied template always gets wrong: the subprocessor list is " +
+          "generated from the packages this project actually installed.",
+      },
+      {
+        href: "/terms",
+        label: "Terms",
+        why:
+          "The other half of what Stripe checks before it will activate an " +
+          "account. Its subscription clauses are absent in a project that " +
+          "only takes one-off payments, because `src/legal.ts` is generated.",
+      },
+    );
+  }
+
   // Nothing else in a generated project earns a footer entry, and inventing one
   // would be worse than leaving it out. /checkout means nothing without a
   // product in its query string, /checkout/success is reached by redirect after
   // a payment, a product page needs a slug, /sign-in is already the header's
   // signed-out affordance, /admin belongs to APP_LINKS and would be advertised
-  // to signed-out visitors from here — and there are no legal or social pages
-  // because this scaffold does not generate any.
+  // to signed-out visitors from here — and there is still no About, Contact or
+  // Blog, because the scaffold generates none of the three. /privacy and /terms
+  // are here only in the configurations that actually emit them.
 
   const arrays = [
     renderLinkArray(
@@ -2177,6 +2337,20 @@ export function renderAdminNav(answers: Answers): string {
             "contributed by the catalog package, so a project without a shop " +
             "has neither the page nor the permission — but what keeps this " +
             "entry out of one is the overlay that was not copied.",
+        },
+        {
+          href: "/admin/billing",
+          label: "Plans & billing",
+          permission: "staff.billing.resync",
+          why:
+            "The plan catalogue's state at Stripe, and the re-sync that " +
+            "repairs it. From catalog-admin, so it appears on the same " +
+            "condition the product builder does — a project that sells " +
+            "something AND asked for a shell to put it in. It matters more " +
+            "here than an equivalent screen would in a kit that treats Stripe " +
+            "as the record: this firm owns the subscriptions table, so a " +
+            "missed webhook leaves it authoritative and wrong with nothing " +
+            "else to reconcile against.",
         },
       ],
     });
@@ -3060,7 +3234,16 @@ function tile(props: TileProps): TileProps {
 }
 
 /**
- * `app/(site)/page.tsx` for this project.
+ * The orientation page — `app/(site)/page.tsx`, or `/setup/start` in a project
+ * that generated a marketing site.
+ *
+ * ONE PAGE, TWO ADDRESSES, and `planEmit` picks between them. Its job is to get
+ * whoever just ran the generator to the file they are about to edit, which is a
+ * job worth a route in every configuration and worth `/` in only some of them:
+ * a client being shown the site should land on the landing page, not on a list
+ * of file paths. Marketing copy here would be copy that gets deleted in the
+ * first hour, so this page never grew any — the marketing overlay is where that
+ * lives, and it takes `/` when it is selected.
  *
  * A static landing page could not mention the shop. `/products` only exists
  * once the stripe overlay is selected, so the base template hardcoding it would
@@ -3079,6 +3262,27 @@ export function renderHomePage(answers: Answers): string {
   const uiImports = sells
     ? "Card, CardBody, PageHeader, buttonClass"
     : "Card, CardBody, PageHeader";
+
+  /**
+   * The one entry in the list below that is not in every project.
+   *
+   * A GENERATED ARRAY WITH NO ENTRY, which is the only shape this scaffold
+   * allows: the emitted page must not ask whether billing was installed. The
+   * plan record is the first file anybody editing a subscription product opens,
+   * and a file nothing points at is a file whose contents get retyped somewhere
+   * else — which is exactly the duplication the record exists to end.
+   */
+  const startingPoints = [
+    `  { path: "src/permissions/catalog.ts", what: "Permission keys" },`,
+    ...(sells
+      ? [`  { path: "src/plans.ts", what: "Plans, prices, and what each includes" },`]
+      : []),
+    `  { path: "src/db/schema.ts", what: "Your tables" },`,
+    `  { path: "src/server/routers/_app.ts", what: "Your API" },`,
+    `  { path: "src/trpc/client.tsx", what: "Calling it from a client component" },`,
+    `  { path: "src/trpc/server.ts", what: "Calling it from a server component" },`,
+    `  { path: "app/globals.css", what: "Colours, radius, dark mode" },`,
+  ].join("\n");
 
   const shop = sells
     ? `
@@ -3116,12 +3320,7 @@ import { ${uiImports} } from "@/components/ui";
  * asked for.
  */
 const STARTING_POINTS: readonly { readonly path: string; readonly what: string }[] = [
-  { path: "src/permissions/catalog.ts", what: "Permission keys" },
-  { path: "src/db/schema.ts", what: "Your tables" },
-  { path: "src/server/routers/_app.ts", what: "Your API" },
-  { path: "src/trpc/client.tsx", what: "Calling it from a client component" },
-  { path: "src/trpc/server.ts", what: "Calling it from a server component" },
-  { path: "app/globals.css", what: "Colours, radius, dark mode" },
+${startingPoints}
 ];
 
 export default function Home() {
@@ -3175,5 +3374,887 @@ function Code({ children }: { children: ReactNode }) {
     </code>
   );
 }
+`;
+}
+
+/**
+ * `src/plans.ts` for this project — the plan record.
+ *
+ * ONE OBJECT THAT THE PRICING PAGE, THE ENTITLEMENT CHECK AND THE STRIPE SEED
+ * ALL READ. Two hand-maintained answers to "what does Pro include" is how a page
+ * ends up advertising a tier the code does not honour, and the page is always
+ * the copy that wins the argument with a customer.
+ *
+ * GENERATED RATHER THAN A TEMPLATE FILE, for the reason `src/db/schema.ts` and
+ * `src/permissions/catalog.ts` are: it imports @__SCOPE_NAME__/billing, which a
+ * `--model none` project never installs, so a copy of it in `template/` would
+ * emit a module that cannot resolve its own import. Absence here is a file that
+ * was not written — never an `if` inside one that was.
+ *
+ * NOT AN OVERLAY EITHER, and that is the load-bearing half. An overlay is copied
+ * source the client restyles, and a pricing page is exactly that. But the record
+ * is also read by server code and by the seed, and a runtime package can never
+ * import from an overlay — so putting it in one would give the enforcement no
+ * way to see what the page advertises, which is the whole problem this record
+ * exists to close.
+ *
+ * The tiers below are a STARTING POINT, and the emitted file says so. Every
+ * client's pricing is different; what does not change is the shape, and the
+ * shape is enforced by `definePlans` rather than by this text.
+ */
+/**
+ * "a" or "an" for a word the answers chose.
+ *
+ * The tenant noun is one of five, and two of them start with a vowel — so the
+ * generated pricing copy read "For a organization" in a project generated with
+ * the default. It shipped, and it is the second sentence on the page a customer
+ * lands on. A five-line function rather than a dependency, because the input is
+ * a closed set this file already owns.
+ */
+function article(word: string): "a" | "an" {
+  return /^[aeiou]/i.test(word) ? "an" : "a";
+}
+
+export function renderPlanCatalog(answers: Answers): string {
+  const scope = answers.scope;
+  const label = tenantLabel(answers).toLowerCase();
+
+  return `import { definePlans } from "${scope}/billing";
+
+/**
+ * What each plan includes, what it costs, and nothing else.
+ *
+ * THE SOURCE OF TRUTH. The \`plans\` TABLE is a projection of this object plus a
+ * cache of two Stripe ids; \`pnpm db:seed:plans\` writes that projection and
+ * reports anything in the table this record does not account for. It is that way
+ * round on purpose — a limit that can be edited in a table re-entitles every
+ * subscriber the moment somebody saves a form, with no deploy and no review, and
+ * a pricing page that reads the table renders nothing at all on a fresh clone.
+ *
+ * WHO READS IT. The pricing page renders \`plans.tiers\` and \`plans.features\`.
+ * \`grantsForPlan(tier)\` turns a tier into the \`entitlements\` rows a subscriber
+ * holds, and \`planGrantDiff\` reconciles an upgrade without losing
+ * \`used_value\` — somebody who has spent 400 of their 500 exports and moves to
+ * Pro has still spent 400. \`planAllows(tier, ...)\` answers the option
+ * questions, which never become entitlement rows because there is no sum of
+ * "priority" and "email".
+ *
+ * THREE KINDS, AND THE THIRD IS THE ONE THAT MATTERS. A quota is a number and
+ * reaches \`entitlements.limit_value\` unchanged. A flag is on or off and reaches
+ * it as 1 or 0 — 0 rather than no row at all, so an add-on granting the same
+ * feature can still turn it on, and the audit trail records that the plan
+ * withheld it. An option is a choice from a closed set, which is neither, and it
+ * is what real client pricing is full of: a support tier, a data-retention
+ * window, "check every 10 minutes on Pro and every minute on Business".
+ *
+ * PRICES ARE A MAP over interval and then currency, in MINOR UNITS as
+ * \`bigint\` — the same unit \`formatMinor\` renders and Stripe's \`unit_amount\`
+ * accepts, with no conversion anywhere. Adding a second currency later means
+ * touching the record, the projection, the Stripe sync and every page that
+ * prints a price, all at once, on somebody else's deadline. The nesting is here
+ * from the start so that day is a two-line edit.
+ *
+ * A TIER IS RETIRED, NEVER DELETED. \`starter-legacy\` below is the
+ * demonstration: subscriptions reference the rows a tier projects and
+ * \`entitlements.source_ref\` carries its key, so removing the declaration leaves
+ * those subscribers holding rows no diff can reconcile. \`isActive: false\` takes
+ * it off the pricing page and leaves everything else able to reason about it.
+ *
+ * ADD-ONS ARE NOT MODELLED HERE, deliberately. A seat pack is a PRODUCT in
+ * ${scope}/catalog with an \`entitlement\` grant on it — it already has a price, a
+ * Stripe sync and an admin screen. A second catalog of purchasable things inside
+ * this record would give you two of each, and \`resolveEntitlements\` would sum
+ * rows from both while only one of them had a receipt. What billing owes an
+ * add-on is that a plan change never revokes it, and \`planGrantDiff\` only ever
+ * removes rows whose source is \`plan\`.
+ */
+export const plans = definePlans({
+  /**
+   * The vocabulary, declared ONCE. Every tier below must supply a value for
+   * every entry — that is a compile error, not a convention — because a feature
+   * added to Pro and forgotten on Starter puts a hole in the comparison table
+   * and makes \`checkEntitlement\` answer "your plan does not include seats at
+   * all" when the truth is that somebody missed a line.
+   *
+   * A quota's label is rendered AFTER the number: "10 members".
+   */
+  features: {
+    // \`labelOne\` because the free tier holds one of each, and without it the
+    // first tier on the page reads "1 projects".
+    seats: { kind: "quota", label: "members", labelOne: "member" },
+    projects: { kind: "quota", label: "projects", labelOne: "project" },
+    exports: {
+      kind: "quota",
+      label: "exports a month",
+      labelOne: "export a month",
+    },
+    sso: { kind: "flag", label: "Single sign-on" },
+    support: {
+      kind: "option",
+      label: "Support",
+      // Best first. A tier offers a SUBSET of these, and offering anything not
+      // in this list is refused at construction — which is what stops a value
+      // nobody implemented being sold on the pricing page.
+      values: ["priority", "email", "community"],
+    },
+  },
+
+  /**
+   * The array order IS the pricing page's order, and \`sortOrder\` is derived
+   * from it. There is nothing here to keep in step.
+   */
+  tiers: [
+    {
+      key: "free",
+      name: "Free",
+      description: "Everything one ${label} needs to try this properly.",
+      // A free plan is 0, never absent. \`plans.price_minor\` is 0 and not NULL
+      // for the same reason: NULL propagates through every price computation
+      // and renders a free plan as "no price" rather than as "Free".
+      prices: { month: { gbp: 0n, usd: 0n }, year: { gbp: 0n, usd: 0n } },
+      features: {
+        seats: 3,
+        projects: 1,
+        exports: 100,
+        sso: false,
+        support: ["community"],
+      },
+    },
+    {
+      key: "starter",
+      name: "Starter",
+      description: "For ${article(label)} ${label} that has outgrown the free tier.",
+      prices: {
+        month: { gbp: 700n, usd: 900n },
+        // Two months free, which is why the yearly figure is ten times the
+        // monthly one rather than twelve.
+        year: { gbp: 7000n, usd: 9000n },
+      },
+      features: {
+        seats: 10,
+        projects: 5,
+        exports: 500,
+        sso: false,
+        support: ["email", "community"],
+      },
+    },
+    {
+      key: "pro",
+      name: "Pro",
+      description: "Unlimited seats, priority support and single sign-on.",
+      // At most one tier may claim this. Two "most popular" badges on one page
+      // is not a recommendation.
+      highlight: true,
+      prices: {
+        month: { gbp: 2400n, usd: 2900n },
+        year: { gbp: 24000n, usd: 29000n },
+      },
+      features: {
+        // NULL is unlimited, and it is not a large number. One unlimited row
+        // wins the feature in \`resolveEntitlements\`; a sentinel like 999999
+        // would be capped by anything summing beside it.
+        seats: null,
+        projects: null,
+        exports: 5000,
+        sso: true,
+        support: ["priority", "email", "community"],
+      },
+    },
+    {
+      key: "enterprise",
+      name: "Enterprise",
+      description: "Talk to us. Invoiced annually, with whatever you need on it.",
+      // NO PRICES AT ALL, which is a real tier and not a missing one. It
+      // projects no \`plans\` row, because there is nothing to charge and nothing
+      // for Stripe to hold a price for — so a pricing page renders a "contact
+      // us" button here instead of an amount.
+      prices: {},
+      features: {
+        seats: null,
+        projects: null,
+        exports: null,
+        sso: true,
+        support: ["priority", "email", "community"],
+      },
+    },
+    {
+      key: "starter-legacy",
+      name: "Starter (2024)",
+      description: "Closed to new subscriptions.",
+      // RETIRED, NOT REMOVED. Off the pricing page, still readable by everything
+      // that has to reason about the people on it. Delete the declaration and
+      // their entitlement rows point at a tier \`planGrantDiff\` has never heard
+      // of, so the next plan change removes the lot.
+      isActive: false,
+      prices: {
+        month: { gbp: 500n, usd: 600n },
+        year: { gbp: 5000n, usd: 6000n },
+      },
+      features: {
+        seats: 5,
+        projects: 3,
+        exports: 250,
+        sso: false,
+        support: ["community"],
+      },
+    },
+  ],
+});
+`;
+}
+
+/**
+ * `src/seo.ts` — the metadata every page inherits, and the one decision about
+ * whether this deployment may be indexed.
+ *
+ * WRITTEN FOR EVERY PROJECT, marketing or not, and that placement is the whole
+ * point. Two of the things in here are not marketing at all, they are damage
+ * control:
+ *
+ * WITHOUT `metadataBase`, Next resolves every relative Open Graph and Twitter
+ * URL against `http://localhost:3000`. The build does not warn in a way anybody
+ * reads, the page renders perfectly, and the failure appears only in somebody
+ * else's chat window: a shared link renders as a grey box with no image and no
+ * title. It is invisible from inside the product, which is why it survives to
+ * production and why it belongs in the base rather than behind an answer.
+ *
+ * WITHOUT A NOINDEX ON STAGING, a Neon-branch preview gets crawled. A preview
+ * carrying the client's real copy competes with the client's real site for
+ * their own brand terms, and the fix is a Search Console removal followed by
+ * weeks of waiting — so this is a harm, and a harm must not be opt-in. The
+ * decision is `INDEXABLE`, taken once here and imported by `app/robots.ts`, so
+ * the `<meta name="robots">` tag and `/robots.txt` cannot disagree.
+ *
+ * `resolveAppEnv()` AND NOT `isDeployed()`. The two questions differ exactly
+ * where it matters: an unlabelled production artefact resolves to `staging` and
+ * reports `isDeployed() === false`, so keying on deployment would let precisely
+ * the environment nobody could identify be indexed. Anything that is not
+ * `production` is not indexed, and a host that wants to be indexed says so with
+ * `APP_ENV=production`.
+ *
+ * EVALUATED AT BUILD, which is correct rather than a compromise:
+ * `NEXT_PUBLIC_APP_URL` is inlined at build time by Next, and `VERCEL_ENV` is
+ * present in the build environment, so both halves of this module describe the
+ * same moment. A deployment that changes environment gets a rebuild anyway,
+ * because the URL would otherwise be wrong too.
+ *
+ * NO `alternates.canonical` HERE, deliberately. Metadata is merged field by
+ * field down the tree, so a canonical URL set in the root layout is inherited
+ * by every page that does not override it — and a site whose every page
+ * declares itself canonical to `/` asks Google to drop all of them from the
+ * index. A page that needs a canonical sets its own. The same reasoning keeps
+ * `openGraph.url` out.
+ */
+export function renderSeoModule(answers: Answers): string {
+  const scope = answers.scope;
+  return `import type { Metadata } from "next";
+import { resolveAppEnv } from "${scope}/env";
+import { env } from "@/env";
+
+/**
+ * What this site is called and what it says it is.
+ *
+ * SITE_DESCRIPTION is placeholder copy and the only string here you must
+ * replace. It is what a search result shows, what a shared link shows, and what
+ * an AI crawler quotes — one sentence, written for a person who has never heard
+ * of this product, in about 150 characters. Left as it is, it says nothing.
+ */
+export const SITE_NAME = "${answers.projectName}";
+
+export const SITE_DESCRIPTION =
+  "One sentence about what ${answers.projectName} does and who it is for. " +
+  "Replace this: it is the line search results and shared links show.";
+
+/**
+ * May this deployment be indexed?
+ *
+ * PRODUCTION ONLY, and the comparison is against \`resolveAppEnv()\` rather than
+ * \`isDeployed()\` because an unlabelled production artefact resolves to
+ * \`staging\` and reports itself as not deployed — the exact environment that
+ * must not be crawled. Everything else is a preview, a laptop or a host nobody
+ * named, and none of the three should ever appear in a search result.
+ *
+ * ONE CONSTANT, TWO CONSUMERS. \`siteMetadata\` below writes the robots meta tag
+ * from it and \`app/robots.ts\` writes /robots.txt from it, so the page and the
+ * file cannot say different things.
+ */
+export const INDEXABLE: boolean = resolveAppEnv() === "production";
+
+/**
+ * Inherited by every page. A page overrides a field by exporting its own
+ * \`metadata\`; anything it leaves out falls through to this.
+ */
+export const siteMetadata: Metadata = {
+  // Every relative OG and Twitter URL is resolved against this. Without it they
+  // resolve against localhost and shared links render as a grey box.
+  metadataBase: new URL(env.NEXT_PUBLIC_APP_URL),
+  // \`%s\` is the page's own title. A page exporting \`title: "Pricing"\` becomes
+  // "Pricing · ${answers.projectName}" without repeating the site name in forty files.
+  title: { default: SITE_NAME, template: \`%s · \${SITE_NAME}\` },
+  description: SITE_DESCRIPTION,
+  applicationName: SITE_NAME,
+  openGraph: {
+    type: "website",
+    siteName: SITE_NAME,
+    title: SITE_NAME,
+    description: SITE_DESCRIPTION,
+    // A copy decision rather than a technical one, and it is here so it is made
+    // once. Change it with the rest of the copy if this site is not British.
+    locale: "en_GB",
+  },
+  twitter: {
+    // The large card is the one that shows an image. \`summary\` shows a
+    // thumbnail, which for a product link reads as a broken share.
+    card: "summary_large_image",
+    title: SITE_NAME,
+    description: SITE_DESCRIPTION,
+  },
+  robots: INDEXABLE
+    ? { index: true, follow: true }
+    : {
+        // \`nocache\` as well as \`index: false\`, because the two are answers to
+        // different questions: one asks not to be listed, the other asks not to
+        // be kept. A preview that was crawled before this shipped is still in
+        // the cache until it is told otherwise.
+        index: false,
+        follow: false,
+        nocache: true,
+        googleBot: { index: false, follow: false },
+      },
+};
+`;
+}
+
+/**
+ * `app/robots.ts` — what a crawler is allowed to look at.
+ *
+ * GENERATED, because the disallow list is a list of routes and which routes
+ * exist depends on the answers. A hardcoded `/admin` in a project generated with
+ * `--admin none` is a rule about nothing, and — worse in the other direction —
+ * a project that grew an admin panel with no rule for it publishes the panel's
+ * URL to every crawler that reads the file. The same reasoning that makes
+ * `src/nav.ts` generated makes this generated.
+ *
+ * It states the decision `src/seo.ts` already took rather than taking it again.
+ * Two independent readings of `resolveAppEnv()` are two chances for the meta tag
+ * and the file to disagree, and the disagreement would be invisible: nothing in
+ * the product renders /robots.txt.
+ */
+export function renderRobots(answers: Answers): string {
+  const sells = answers.businessModel !== "none";
+
+  /**
+   * Routes that exist and should not be crawled, as a generated array. Nothing
+   * in the emitted file asks whether a feature was installed — a project without
+   * an admin panel contributes no entry and the array is simply shorter.
+   */
+  const disallowed: { readonly path: string; readonly why: string }[] = [
+    {
+      path: "/api/",
+      why: "Route handlers. Webhooks and the tRPC endpoint answer JSON or 405 to a GET; neither belongs in an index.",
+    },
+    {
+      path: "/setup",
+      why: "The credential report. It never prints a value, but it does list which services this deployment is wired to, which is not a search result anybody wants.",
+    },
+    {
+      path: "/members",
+      why: "Signed-in only. A crawler gets the sign-in redirect, which costs it a request and gains it nothing.",
+    },
+    {
+      path: "/sign-in",
+      why: "An auth screen indexes as a page with no content, and it competes with the real landing page for the brand term.",
+    },
+    { path: "/sign-up", why: "The same, for the other half of the pair." },
+  ];
+
+  if (answers.adminShell !== "none") {
+    disallowed.push({
+      path: "/admin",
+      why: "The admin shell, from the admin overlay. Absent in a project generated with --admin none, which is why this list is generated.",
+    });
+  }
+  if (sells) {
+    disallowed.push(
+      {
+        path: "/account",
+        why: "A customer's own orders and billing. Signed-in only, and never a search result.",
+      },
+      {
+        path: "/checkout",
+        why: "Meaningless without a product in the query string, and a crawler following it would be indexing a payment form.",
+      },
+    );
+  }
+
+  const entries = disallowed
+    .map((entry) => `${indentedComment(entry.why)}  "${entry.path}",\n`)
+    .join("\n");
+
+  return `import type { MetadataRoute } from "next";
+import { env } from "@/env";
+// THE DECISION IS TAKEN ONCE, in src/seo.ts, and imported here. Reading the
+// environment again in this file would let /robots.txt and the robots meta tag
+// on the page disagree — and nothing in the product renders /robots.txt, so the
+// disagreement would only ever be found by a crawler.
+import { INDEXABLE } from "@/seo";
+
+/**
+ * Routes that exist in this project and should not be indexed.
+ *
+ * A generated array, in the order it is written into the file. A project
+ * generated without an admin panel contributes no /admin entry rather than
+ * carrying a rule about a route it does not have.
+ */
+const DISALLOWED: readonly string[] = [
+${entries}];
+
+/**
+ * /robots.txt.
+ *
+ * ANYTHING THAT IS NOT PRODUCTION REFUSES EVERYTHING. A preview deployment
+ * carries the client's real copy at a URL nobody guards, and a crawled preview
+ * competes with the client's own site for their own brand terms — undoing which
+ * is a Search Console removal request followed by weeks of waiting. There is no
+ * version of that trade worth the preview traffic.
+ *
+ * Evaluated at build, like every other metadata route. \`VERCEL_ENV\` is set in
+ * the build environment and \`NEXT_PUBLIC_APP_URL\` is inlined at build anyway,
+ * so a deployment that changes environment needs a rebuild regardless.
+ */
+export default function robots(): MetadataRoute.Robots {
+  if (!INDEXABLE) {
+    return { rules: [{ userAgent: "*", disallow: "/" }] };
+  }
+
+  return {
+    rules: [{ userAgent: "*", allow: "/", disallow: [...DISALLOWED] }],
+    // Absolute, because a sitemap reference in robots.txt must be. A relative
+    // path here is ignored by every crawler that reads it, silently.
+    sitemap: new URL("/sitemap.xml", env.NEXT_PUBLIC_APP_URL).toString(),
+  };
+}
+`;
+}
+
+/**
+ * `app/sitemap.ts` — the public pages this project actually has.
+ *
+ * GENERATED FOR THE SAME REASON `src/nav.ts` IS. A sitemap listing `/pricing` in
+ * a project that never installed the pricing page asks every crawler to fetch a
+ * 404, and repeated 404s from a submitted sitemap are the thing Search Console
+ * reports as an error against the whole property. A sitemap that OMITS a page
+ * the project does have is the quieter half of the same fault.
+ *
+ * NO `lastModified`, `changeFrequency` OR `priority`. Google ignores `priority`
+ * outright and has said so; `changeFrequency` is a hint it mostly disregards;
+ * and a `lastModified` taken from the build clock claims every page changed on
+ * every deploy, which is a lie that trains the crawler to disbelieve the real
+ * ones. A URL list is the part of a sitemap that does anything.
+ */
+export function renderSitemap(answers: Answers): string {
+  const sells = answers.businessModel !== "none";
+
+  const pages: { readonly path: string; readonly why: string }[] = [
+    { path: "/", why: "The landing page. Every project has one." },
+  ];
+
+  if (answers.includeMarketing && sells) {
+    pages.push({
+      path: "/pricing",
+      why: "From the marketing-pricing overlay, which needs both a marketing site and something to sell.",
+    });
+  }
+  if (sells) {
+    pages.push({
+      path: "/products",
+      why: "The storefront, from the stripe overlay. Individual product pages are deliberately absent: they are database rows, so this file cannot know them — add a database read here when the catalogue is worth indexing.",
+    });
+  }
+  if (answers.includeMarketing || sells) {
+    pages.push(
+      {
+        path: "/privacy",
+        why: "From the legal overlay. Low value as a search result and high value as a link a crawler can verify exists, which is what Stripe and an app store both check.",
+      },
+      { path: "/terms", why: "The other half of the pair." },
+    );
+  }
+
+  const entries = pages
+    .map((page) => `${indentedComment(page.why)}  "${page.path}",\n`)
+    .join("\n");
+
+  return `import type { MetadataRoute } from "next";
+import { env } from "@/env";
+
+/**
+ * Every public page this project emitted, as a path.
+ *
+ * Generated from the answers, so a route that was never installed contributes
+ * no entry. Sign-in, sign-up, /setup, /members, /account and /admin are absent
+ * on purpose — they are either private or content-free, and /robots.txt already
+ * asks crawlers not to follow them.
+ */
+const PUBLIC_PAGES: readonly string[] = [
+${entries}];
+
+/**
+ * /sitemap.xml.
+ *
+ * Absolute URLs, built from NEXT_PUBLIC_APP_URL. A sitemap containing relative
+ * paths is rejected wholesale rather than partially, so getting this wrong
+ * costs the whole file.
+ */
+export default function sitemap(): MetadataRoute.Sitemap {
+  return PUBLIC_PAGES.map((path) => ({
+    url: new URL(path, env.NEXT_PUBLIC_APP_URL).toString(),
+  }));
+}
+`;
+}
+
+/**
+ * `src/legal.ts` — the parts of a privacy policy and terms of service that only
+ * the generator can know.
+ *
+ * THE ACCURACY IS THE PRODUCT. Every client arrives with a legal template
+ * copied from another site, and the paragraph it always gets wrong is the one
+ * listing who else sees their customers' data — because that list is a fact
+ * about the software, not about the business, and the person adapting the
+ * template has no way to know it. The generator does: it decided which packages
+ * this project installed.
+ *
+ * A RECORD AND A PAGE, split the same way `src/plans.ts` and the pricing page
+ * are. The pages in `overlays/legal` are copied source, because every client
+ * restyles them and their lawyer rewrites the prose. This file is derived, so
+ * it must not be. What is here is only what follows from the answers; the
+ * company name, the address, the governing law and the contact address are
+ * things nobody but the client knows, and they are placeholders in the copied
+ * pages where they are obvious.
+ *
+ * THE OPTIONAL ROWS ARE THE HONEST PART. Sentry and Upstash are in every
+ * project's environment contract because `@__SCOPE_NAME__/observability` is in
+ * every project — but neither receives a byte until its credential is set. A
+ * list that omitted them would be wrong for every deployment that does set one;
+ * a list that stated them flatly would be wrong for every deployment that does
+ * not. `activatedBy` says which, and the page prints it.
+ */
+export function renderLegalRecord(answers: Answers): string {
+  const sells = answers.businessModel !== "none";
+  const label = tenantLabel(answers).toLowerCase();
+
+  interface Row {
+    readonly name: string;
+    readonly purpose: string;
+    readonly dataShared: string;
+    readonly activatedBy: string | null;
+  }
+
+  const subprocessors: Row[] = [
+    {
+      name: "Clerk",
+      purpose: "Accounts and sign-in",
+      dataShared:
+        "Your name, your email address, and the identifiers Clerk issues for your account and each session.",
+      activatedBy: null,
+    },
+    {
+      name: "Neon",
+      purpose: "The application database",
+      dataShared:
+        "Everything this service stores about you. It is held in Postgres, in the region the database was created in.",
+      activatedBy: null,
+    },
+    {
+      name: "Vercel",
+      purpose: "Hosting and delivery",
+      dataShared:
+        "Every request to this site, including your IP address and browser, in server logs.",
+      activatedBy: null,
+    },
+  ];
+
+  if (sells) {
+    subprocessors.push({
+      name: "Stripe",
+      purpose: "Payments and subscriptions",
+      dataShared:
+        "Your name, email address, billing address and card details. Card numbers are entered directly into Stripe and never reach this service.",
+      activatedBy: null,
+    });
+  }
+  if (answers.includeEmail) {
+    subprocessors.push({
+      name: "Resend",
+      purpose: "Email we send you",
+      dataShared:
+        "The address a message is sent to, and the contents of that message.",
+      activatedBy: null,
+    });
+  }
+  if (answers.includeAi) {
+    subprocessors.push(
+      {
+        name: "Anthropic",
+        purpose: "The assistant",
+        dataShared:
+          "The messages you send to the assistant, and the context this service attaches to them.",
+        activatedBy: "ANTHROPIC_API_KEY",
+      },
+      {
+        name: "OpenAI",
+        purpose: "The assistant, on deployments configured to use it",
+        dataShared: "The same messages and context as above.",
+        activatedBy: "OPENAI_API_KEY",
+      },
+      {
+        name: "Google",
+        purpose: "The assistant, on deployments configured to use it",
+        dataShared: "The same messages and context as above.",
+        activatedBy: "GOOGLE_GENERATIVE_AI_API_KEY",
+      },
+    );
+  }
+
+  // Both from @__SCOPE_NAME__/observability, which every project installs, and
+  // both inert until a credential exists. Listed rather than omitted, because a
+  // deployment that sets SENTRY_DSN is sending stack traces — which can carry a
+  // user id — to a third party, and that is precisely what a subprocessor table
+  // is for.
+  subprocessors.push(
+    {
+      name: "Sentry",
+      purpose: "Error reporting",
+      dataShared:
+        "Stack traces and the request context attached to an error, which can include the id of the signed-in account.",
+      activatedBy: "SENTRY_DSN",
+    },
+    {
+      name: "Upstash",
+      purpose: "Rate limiting",
+      dataShared:
+        "A counter keyed to your IP address or account id. No message contents and no personal details.",
+      activatedBy: "UPSTASH_REDIS_REST_URL",
+    },
+  );
+
+  interface Clause {
+    readonly heading: string;
+    readonly body: string;
+  }
+
+  const dataCategories: Clause[] = [
+    {
+      heading: "Your account",
+      body:
+        "Your name and email address, held so you can sign in and so other " +
+        `people in your ${label} can see who you are.`,
+    },
+    {
+      heading: `Your ${label}`,
+      body:
+        `Which ${label} you belong to, what you may do inside it, and any ` +
+        "invitation sent to you or by you.",
+    },
+    {
+      heading: "An audit trail",
+      body:
+        "A record of administrative actions — who changed what, and when. It " +
+        "is kept deliberately, because the alternative is being unable to " +
+        "answer that question after a security incident.",
+    },
+    {
+      heading: "Errors",
+      body:
+        "When something goes wrong, the failure is recorded with enough " +
+        "context to reproduce it, which can include your account id and the " +
+        "page you were on.",
+    },
+  ];
+
+  if (sells) {
+    dataCategories.push(
+      {
+        heading: "Orders",
+        body:
+          "What you bought, when, for how much, and the reference Stripe gave " +
+          "the payment. Card details are not held here.",
+      },
+      {
+        heading: "What your plan includes",
+        body:
+          "Your subscription, its status, and the allowances it grants you — " +
+          "including how much of each you have used.",
+      },
+    );
+  }
+  if (answers.includeEmail) {
+    dataCategories.push({
+      heading: "Email we sent you",
+      body:
+        "A record that each message was sent, to which address, and whether " +
+        "the provider accepted it.",
+    });
+  }
+  if (answers.includeAi) {
+    dataCategories.push({
+      heading: "Assistant usage",
+      body:
+        "A record of each request to the assistant and its size, so usage can " +
+        "be attributed and limited.",
+    });
+  }
+
+  const extraTerms: Clause[] = [];
+  if (answers.businessModel === "one-time" || answers.businessModel === "both") {
+    extraTerms.push({
+      heading: "Purchases",
+      body:
+        "A purchase is complete when payment succeeds and what you bought is " +
+        "made available to you. Prices are shown before you pay, in the " +
+        "currency stated at checkout, and are the prices charged.",
+    });
+  }
+  if (
+    answers.businessModel === "subscription" ||
+    answers.businessModel === "both"
+  ) {
+    extraTerms.push(
+      {
+        heading: "Subscriptions and renewal",
+        body:
+          "A subscription renews automatically at the end of each period at " +
+          "the price then published, until it is cancelled. Cancelling stops " +
+          "the next renewal; it does not shorten the period already paid for.",
+      },
+      {
+        heading: "Changing plans",
+        body:
+          "Moving between plans changes what your account is entitled to from " +
+          "the moment the change takes effect. Anything you have already used " +
+          "in the current period stays used.",
+      },
+    );
+  }
+  if (sells) {
+    extraTerms.push({
+      heading: "Refunds",
+      body:
+        "STATE YOUR ACTUAL REFUND POLICY HERE. This sentence is a placeholder " +
+        "and is not one: a refund policy is a commercial decision, and in " +
+        "several jurisdictions a consumer has statutory rights that override " +
+        "whatever it says.",
+    });
+  }
+  if (answers.includeAi) {
+    extraTerms.push({
+      heading: "The assistant",
+      body:
+        "Replies from the assistant are generated by a language model. They " +
+        "can be wrong, and they are not professional advice of any kind. " +
+        "Check anything you intend to act on.",
+    });
+  }
+
+  const renderRows = (rows: readonly Row[]): string =>
+    rows
+      .map(
+        (row) =>
+          `  {\n` +
+          `    name: ${JSON.stringify(row.name)},\n` +
+          `    purpose: ${JSON.stringify(row.purpose)},\n` +
+          `    dataShared: ${JSON.stringify(row.dataShared)},\n` +
+          `    activatedBy: ${row.activatedBy === null ? "null" : JSON.stringify(row.activatedBy)},\n` +
+          `  },\n`,
+      )
+      .join("");
+
+  const renderClauses = (clauses: readonly Clause[]): string =>
+    clauses.length === 0
+      ? "[]"
+      : `[\n${clauses
+          .map(
+            (clause) =>
+              `  {\n` +
+              `    heading: ${JSON.stringify(clause.heading)},\n` +
+              `    body:\n      ${JSON.stringify(clause.body)},\n` +
+              `  },\n`,
+          )
+          .join("")}]`;
+
+  return `/**
+ * The parts of ${answers.projectName}'s privacy policy and terms that follow from
+ * what this project is BUILT OUT OF, rather than from what the business decides.
+ *
+ * GENERATED. Every entry below is derived from the packages this project
+ * installed, which is the one thing a legal template copied from another site
+ * cannot get right — and the subprocessor list is the paragraph a regulator, an
+ * enterprise customer's security review and Stripe's account activation all
+ * read first. Regenerating the project regenerates this file; a package added
+ * later is a row added here, not a paragraph somebody remembers to write.
+ *
+ * WHAT IS NOT HERE. The legal entity, its address, the contact address for a
+ * data request, the governing law and the refund policy are facts about the
+ * business, not the software. They are placeholders in \`app/(site)/privacy\` and
+ * \`app/(site)/terms\`, where they are visible and obviously unfinished, rather
+ * than plausible-looking defaults in a generated file nobody re-reads.
+ *
+ * THIS IS A STARTING POINT FOR A LAWYER, NOT ADVICE. It is accurate about the
+ * software and says nothing at all about whether your processing is lawful,
+ * which is the question that actually matters.
+ */
+
+export interface Subprocessor {
+  readonly name: string;
+  /** Why this service is in the stack, in a customer's words. */
+  readonly purpose: string;
+  /** What reaches it. Specific enough that a reader can disagree with it. */
+  readonly dataShared: string;
+  /**
+   * The environment variable that turns this on, or \`null\` when the service is
+   * unconditional.
+   *
+   * The honest half of the list. Sentry and Upstash are in every project's
+   * environment contract and neither receives a byte until its credential is
+   * set — so stating them flatly would be wrong on every deployment that has
+   * not configured them, and omitting them would be wrong on every deployment
+   * that has. Delete the rows you will never enable.
+   */
+  readonly activatedBy: string | null;
+}
+
+/**
+ * Everyone this service can send your data to, and why.
+ *
+ * In the order a reader cares about: identity, storage, hosting, then the
+ * services a particular deployment adds.
+ */
+export const SUBPROCESSORS: readonly Subprocessor[] = [
+${renderRows(subprocessors)}];
+
+/** One heading and one paragraph. The unit both legal pages render. */
+export interface LegalClause {
+  readonly heading: string;
+  readonly body: string;
+}
+
+/**
+ * What this service holds about a person, derived from the tables this project
+ * actually has.
+ *
+ * A project that sells nothing contributes no order paragraph — an absent entry
+ * rather than a paragraph hedged with "if applicable", which is the phrase that
+ * makes a privacy policy unreadable and unverifiable at once.
+ */
+export const DATA_CATEGORIES: readonly LegalClause[] = ${renderClauses(dataCategories)};
+
+/**
+ * Terms that only apply because of what this project does.
+ *
+ * Empty in a project that neither sells nor answers with a model, which is the
+ * correct number of clauses about subscriptions in a service that has none.
+ */
+export const EXTRA_TERMS: readonly LegalClause[] = ${renderClauses(extraTerms)};
 `;
 }

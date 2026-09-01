@@ -290,6 +290,130 @@ export function describeSubscription(
 }
 
 /**
+ * The ONE thing this screen offers to do about the subscription.
+ *
+ * `portal` and `settle` are separate kinds even though both open Stripe's
+ * hosted portal, because the sentence under the button is the whole value of
+ * the control: "your card was declined, update it and the invoice is retried"
+ * and "change your card, address or VAT number" send different people to the
+ * same place for different reasons, and a single generic label makes the
+ * urgent case look optional.
+ */
+export type SubscriptionActionKind = "cancel" | "resume" | "settle" | "portal" | "none";
+
+export interface SubscriptionAction {
+  readonly kind: SubscriptionActionKind;
+  /** The button. Empty for `none`, which renders no button at all. */
+  readonly label: string;
+  /** One sentence under it, saying what pressing it does. */
+  readonly hint: string;
+  /**
+   * Does pressing it change what is charged? Drives the confirm step, and
+   * nothing else — the permission is what decides whether it is offered.
+   */
+  readonly consequential: boolean;
+}
+
+/**
+ * ONE PRIMARY ACTION, CHOSEN BY STATE. Never a row of buttons that are mostly
+ * disabled.
+ *
+ * The same argument `describeSubscription` makes about the banner, applied to
+ * the controls: `subscriptions` carries five fields that all bear on what the
+ * customer should do next, and a screen that renders Cancel, Resume, Change
+ * plan and Update card together — three of them greyed out — asks the reader to
+ * work out which one their situation calls for. They will get it wrong in the
+ * rare combinations, which are precisely the ones that matter: a past-due
+ * subscription that is also scheduled to cancel, a trial somebody wants to stop
+ * before it charges.
+ *
+ * THE ORDER IS THE LOGIC, and it is the banner's order for the same reasons.
+ * Payment failure outranks everything, because it is the only state with money
+ * at stake and something the customer can personally fix. A scheduled
+ * cancellation outranks the ordinary case, because "resume" and "cancel" on the
+ * same screen is how somebody who has already cancelled cancels again and
+ * concludes it did not work.
+ *
+ * A CANCELLED SUBSCRIPTION OFFERS NOTHING HERE, deliberately. Its action is to
+ * start a new one, which is choosing a plan rather than pressing a button — so
+ * the page renders the plan list instead, and a "Resubscribe" button that
+ * scrolled the reader somewhere else would be a control that does nothing.
+ */
+export function primaryActionFor(
+  subscription: SubscriptionState,
+  now: Date = new Date(),
+): SubscriptionAction {
+  if (subscription.status === "canceled") {
+    return {
+      kind: "none",
+      label: "",
+      hint:
+        "This subscription has ended. Choosing a plan below starts a new one, " +
+        "with a new billing period.",
+      consequential: false,
+    };
+  }
+
+  if (subscription.status === "past_due" || subscription.status === "unpaid") {
+    return {
+      kind: "settle",
+      label: "Update payment method",
+      hint:
+        subscription.status === "past_due"
+          ? "The card on file was declined. Updating it retries the outstanding " +
+            "invoice straight away, and access continues in the meantime."
+          : "Every retry has failed, so nothing further is attempted " +
+            "automatically. Settling the invoice from the portal restarts the " +
+            "subscription.",
+      consequential: false,
+    };
+  }
+
+  if (subscription.status === "incomplete") {
+    return {
+      kind: "settle",
+      label: "Finish paying",
+      hint:
+        "The first payment has not completed, so nothing has been charged and " +
+        "nothing has been granted. Finishing the checkout starts the subscription.",
+      consequential: false,
+    };
+  }
+
+  // Before the ordinary cancel, and before the trial line. Somebody who has
+  // already scheduled a cancellation and is offered "Cancel subscription" will
+  // press it again and then wonder which of the two took effect.
+  if (subscription.cancelAtPeriodEnd) {
+    return {
+      kind: "resume",
+      label: "Keep this subscription",
+      hint:
+        "Cancels the scheduled cancellation. The billing period is untouched, " +
+        "so nothing is charged today and the next renewal goes ahead as normal.",
+      consequential: true,
+    };
+  }
+
+  const trialling =
+    subscription.status === "trialing" &&
+    subscription.trialEndsAt !== null &&
+    // Closed boundary, matching the banner and the entitlement resolver: a
+    // trial is over at the instant it ends.
+    subscription.trialEndsAt.getTime() > now.getTime();
+
+  return {
+    kind: "cancel",
+    label: "Cancel subscription",
+    hint: trialling
+      ? "Cancelling during a trial costs nothing and takes effect at the end of " +
+        "the trial. Everything keeps working until then."
+      : "It stops renewing at the end of the period you have already paid for. " +
+        "Nothing is refunded and nothing is cut off early.",
+    consequential: true,
+  };
+}
+
+/**
  * A date a customer can read, in UTC.
  *
  * `en-GB` and an explicit UTC zone rather than the host's locale, for the

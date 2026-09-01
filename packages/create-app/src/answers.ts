@@ -45,6 +45,31 @@ export interface Answers {
   readonly adminShell: AdminShell;
   readonly includeAi: boolean;
   readonly includeEmail: boolean;
+  /**
+   * Does this project have a PUBLIC FACE — a landing page, a pricing page, a
+   * privacy policy — or is it only the application behind the sign-in?
+   *
+   * ITS OWN QUESTION, because nothing else already asked answers it. A project
+   * that sells is not necessarily one anybody markets: a B2B tool sold on a call
+   * still charges a card and still needs terms. A project that sells nothing
+   * still has a landing page, because "landing page" and "shop" are different
+   * things. And an internal admin tool has neither, so `/` is better spent on
+   * the orientation page than on a hero somebody has to delete.
+   *
+   * IT SELECTS COPIED SOURCE AND NOTHING ELSE — no package, no table, no
+   * environment variable — which is exactly what `adminShell` does, and the
+   * precedent that makes this a legitimate answer rather than a flag bolted on
+   * to dodge a decision.
+   *
+   * DEFAULTS TO FALSE. Marketing copy is the one thing in a generated project
+   * that is certainly wrong on arrival: every string is a claim about a product
+   * only the client can make. Turning it on by default would put placeholder
+   * claims at `/` of every internal tool this firm generates. The SEO half is
+   * deliberately NOT behind this answer — see `renderSeoModule` — because a
+   * staging deployment that gets indexed is a harm, and a harm must not be
+   * opt-in.
+   */
+  readonly includeMarketing: boolean;
   /** Scope the packages are published under. */
   readonly scope: string;
 }
@@ -56,6 +81,7 @@ export const DEFAULT_ANSWERS: Answers = {
   adminShell: "minimal",
   includeAi: false,
   includeEmail: false,
+  includeMarketing: false,
   scope: "@adminigloo",
 };
 
@@ -331,6 +357,38 @@ export function overlayNamesFor(answers: Answers): readonly string[] {
   // nothing that ever called a model.
   if (answers.includeAi) names.push("ai");
 
+  // THE PUBLIC FACE, in three overlays rather than one, because the three have
+  // three different conditions and folding them together would make one of the
+  // three wrong in every configuration.
+  //
+  // `legal` is the widest. A privacy policy and terms of service are not
+  // marketing: Stripe will not activate an account without a public URL for
+  // each, so a project that takes money needs both whether or not anybody
+  // markets it — and a project with a marketing site needs both because its
+  // footer links to them. Hence the disjunction. It also carries the one thing a
+  // generic legal template always gets wrong, which is the subprocessor list,
+  // and that list is only accurate because `renderLegalRecord` derives it from
+  // the packages this project actually installed.
+  if (answers.includeMarketing || answers.businessModel !== "none") {
+    names.push("legal");
+  }
+
+  // `marketing` is the landing page and the sections it is composed of. It owns
+  // `app/(site)/page.tsx`, which is why `planEmit` writes the orientation page
+  // to /setup/start instead when this is selected — two files cannot both be
+  // `/`, and the client-facing one is the one that belongs there.
+  if (answers.includeMarketing) names.push("marketing");
+
+  // `marketing-pricing` needs BOTH answers, exactly as `catalog-admin` does. A
+  // pricing page reads `src/plans.ts`, which is written only for a project that
+  // takes money — so copying it into a `--model none` project would emit a page
+  // that cannot resolve its own import, and copying it into a project with no
+  // marketing site would put a public pricing page in an app that has no public
+  // face to reach it from.
+  if (answers.includeMarketing && answers.businessModel !== "none") {
+    names.push("marketing-pricing");
+  }
+
   return names;
 }
 
@@ -367,6 +425,13 @@ export function capabilitiesFor(answers: Answers): readonly string[] {
     "observability.audit-log",
     "observability.error-log",
     "observability.rate-limit",
+    // In the BASE list, and that placement is the claim. Every project resolves
+    // a metadataBase, carries a title template, and refuses indexing anywhere
+    // that is not production — because the harm a missing one does is not
+    // proportional to how much marketing a project has. A preview deployment
+    // that gets crawled outranks the client's real site for their own brand
+    // terms, and undoing it is a Search Console removal plus weeks of waiting.
+    "seo.metadata",
   ];
 
   // Both are tenanted. The difference is whether an organisation is a thing the
@@ -414,6 +479,17 @@ export function capabilitiesFor(answers: Answers): readonly string[] {
 
   if (answers.includeEmail) keys.push("email.transactional");
   if (answers.includeAi) keys.push("ai.streaming");
+
+  // The public face. Three keys rather than one, because a consumer asking
+  // "does this project have a pricing page" is asking something a single
+  // `marketing` key could not answer — `--marketing --model none` has a landing
+  // page and no pricing page at all.
+  if (answers.includeMarketing) keys.push("marketing.landing");
+  if (answers.includeMarketing && takesMoney) keys.push("marketing.pricing");
+  // Claimed on the same disjunction that selects the overlay: a project that
+  // takes money has these pages whether or not it markets itself, because
+  // Stripe requires both before it will activate an account.
+  if (answers.includeMarketing || takesMoney) keys.push("legal.policies");
 
   return [...keys].sort();
 }

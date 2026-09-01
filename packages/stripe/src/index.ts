@@ -46,6 +46,21 @@ export type {
   ReturnUrlPaths,
 } from "./checkout.js";
 
+/**
+ * Reading a subscription out of Stripe, in the one module that knows where its
+ * fields live after two API versions moved them.
+ */
+export {
+  subscriptionSnapshot,
+  subscriptionIdFromInvoice,
+  SUBSCRIPTION_EVENT_TYPES,
+} from "./subscription.js";
+export type { StripeSubscriptionSnapshot } from "./subscription.js";
+
+/** Publishing a plan row to Stripe so there is a Price to bill against. */
+export { ensurePlanPrice, PlanPriceMismatchError } from "./plan-price.js";
+export type { EnsurePlanPriceInput, EnsuredPlanPrice } from "./plan-price.js";
+
 export { stripeServer, stripeClient, STRIPE_MODE_BOUND_KEYS } from "./env.js";
 
 export { stripePermissions } from "./permissions.js";

@@ -66,22 +66,37 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // in 0.2.0 and `src/server/error-reporter.ts` imports it unconditionally, so
   // a project resolving 0.1.x fails to compile on a file every project gets.
   observability: "0.2.1",
-  stripe: "0.1.3",
+  // 0.2.0 for the subscription mirror. The generated webhook route imports
+  // `subscriptionSnapshot`, `subscriptionIdFromInvoice` and
+  // `SUBSCRIPTION_EVENT_TYPES`, and the billing router imports
+  // `ensurePlanPrice`; none of the four exist in 0.1.x, so a project resolving
+  // a caret over the old line fails to compile on files the generator wrote.
+  // The two that read a Stripe subscription would be the worse failure if a
+  // caret somehow admitted them: the period moved onto the subscription ITEM
+  // two API versions ago, and code reading the old field mirrors every
+  // subscription with no period at all.
+  stripe: "0.2.0",
   // 0.2.0 for the variant- and product-name rules. The product builder refuses
   // to start a save that `validateProduct` cannot clear, so a project resolving
   // 0.1.x gets a validator with no opinion about a blank variant name — which
   // is the hole the form used to fall through: it created the product, had
   // `upsertVariant` refuse it, and left a draft with nothing under it.
   catalog: "0.2.0",
-  commerce: "0.1.3",
-  billing: "0.1.2",
+  commerce: "0.1.4",
+  // 0.2.0 for the typed plan record. `src/plans.ts` is emitted into every
+  // project that sells something and calls `definePlans`, which does not exist
+  // in 0.1.x — so a project resolving the old line fails to compile on a file
+  // the generator wrote. The same release changed `grantsForPlan` and
+  // `planGrantDiff` to take a `PlanTier`, and a caret over 0.1.x would resolve
+  // to the signatures nothing here calls.
+  billing: "0.2.0",
   ai: "0.1.3",
   email: "0.2.1",
   // A devDependency of every generated project rather than a dependency, and
   // it belongs here all the same. `renderPackageJson` spelled `^0.1.1` out
   // inline, which put a fourteenth version in a place no drift test looked at —
   // the exact arrangement the rest of this table exists to replace.
-  testing: "0.1.3",
+  testing: "0.1.4",
 };
 
 export class UnknownPackageVersionError extends Error {

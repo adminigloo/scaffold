@@ -117,13 +117,23 @@ function runsUnder(projects: readonly VitestProject[], path: string): boolean {
   });
 }
 
-/** The maximal configuration selects every overlay, so its plan holds them all. */
+/**
+ * The maximal configuration selects every overlay, so its plan holds them all.
+ *
+ * `includeMarketing` is named here rather than left to whichever entry the sweep
+ * happens to produce first. Two of the overlays are only reachable with it, so a
+ * predicate that omitted it would depend on the iteration order of the cartesian
+ * product for its correctness — and the day somebody reorders those loops, three
+ * overlays' test files would silently stop being checked by the one suite whose
+ * entire job is noticing that.
+ */
 const MAXIMAL = EVERY_CONFIGURATION.find(
   (c) =>
     c.answers.businessModel === "both" &&
     c.answers.adminShell === "full" &&
     c.answers.includeAi &&
-    c.answers.includeEmail,
+    c.answers.includeEmail &&
+    c.answers.includeMarketing,
 );
 
 interface ShippedTest {

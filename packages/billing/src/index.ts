@@ -22,20 +22,70 @@ export {
 } from "./status.js";
 export type { SubscriptionStatus } from "./status.js";
 
+/**
+ * The plan record: what a tier includes, what it costs, and what the `plans`
+ * table has to hold for it.
+ *
+ * `IDENTITY_SEPARATOR` is deliberately NOT here. It is the byte grants.ts joins
+ * a row identity with and the byte definePlans refuses inside a feature name —
+ * a detail two modules in this package share, and nothing an application has any
+ * use for.
+ */
 export {
-  grantsForPlan,
-  planGrantDiff,
-  GRANT_PREFIX,
-  EmptyPlanKeyError,
+  definePlans,
+  planAllows,
+  planRowKey,
+  priceFor,
+  reconcilePlans,
   InvalidGrantLimitError,
-} from "./grants.js";
+  InvalidPlanCatalogError,
+  InvalidPlanKeyError,
+} from "./plans.js";
 export type {
-  FeatureGrants,
-  PlanGrant,
-  PlanGrantChange,
-  PlanGrantDiff,
-  PlanRef,
-} from "./grants.js";
+  ExistingPlanRow,
+  OrphanedPlanRow,
+  PlanCatalog,
+  PlanFeature,
+  PlanFeatureDecl,
+  PlanFeatureDecls,
+  PlanFeatureHeading,
+  PlanFeatureValueFor,
+  PlanFlag,
+  PlanFlagDecl,
+  PlanOption,
+  PlanOptionDecl,
+  PlanPrices,
+  PlanQuota,
+  PlanQuotaDecl,
+  PlanReconciliation,
+  PlanRow,
+  PlanTier,
+  PlanTierInput,
+} from "./plans.js";
+
+/**
+ * The two decisions a subscription mirror makes before it writes: which of two
+ * observations is newer, and what each subscription state does to the
+ * entitlement rows the plan granted.
+ *
+ * Pure, and here rather than in the webhook route, because a rule that only
+ * runs behind a signed Stripe request with a live database is a rule nothing
+ * exercises — and both of these fail silently when they are wrong.
+ */
+export {
+  decideSubscriptionWrite,
+  subscriptionEntitlementWindow,
+  PAST_DUE_GRACE_MS,
+} from "./mirror.js";
+export type {
+  EntitlementWindow,
+  EntitlementWindowInput,
+  SubscriptionWriteDecision,
+  SubscriptionWriteInput,
+} from "./mirror.js";
+
+export { grantsForPlan, planGrantDiff } from "./grants.js";
+export type { PlanGrant, PlanGrantChange, PlanGrantDiff } from "./grants.js";
 
 export { billingPermissions } from "./permissions.js";
 export type { BillingPermission } from "./permissions.js";
@@ -55,5 +105,7 @@ export type { BillingPermission } from "./permissions.js";
  * fails.
  *
  * Types are safe to re-export: they erase at build time and pull in nothing.
+ * `PlanInterval` now comes from ./plans.js, which is where it is declared;
+ * ./schema.js re-exports it so "@adminigloo/billing/schema" is unchanged.
  */
-export type { PlanInterval } from "./schema.js";
+export type { PlanInterval } from "./plans.js";

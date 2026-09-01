@@ -30,6 +30,7 @@ export interface CliFlags {
   readonly adminShell?: AdminShell;
   readonly ai?: boolean;
   readonly email?: boolean;
+  readonly marketing?: boolean;
 }
 
 export class UnknownFlagValueError extends Error {
@@ -62,6 +63,7 @@ export function parseArgs(argv: readonly string[]): CliFlags {
   let adminShell: AdminShell | undefined;
   let ai: boolean | undefined;
   let email: boolean | undefined;
+  let marketing: boolean | undefined;
 
   /** Supports both `--flag value` and `--flag=value`. */
   const readValue = (arg: string, prefix: string, index: number): string | undefined =>
@@ -77,6 +79,8 @@ export function parseArgs(argv: readonly string[]): CliFlags {
     else if (arg === "--no-ai") ai = false;
     else if (arg === "--email") email = true;
     else if (arg === "--no-email") email = false;
+    else if (arg === "--marketing") marketing = true;
+    else if (arg === "--no-marketing") marketing = false;
     else if (arg === "--dir" || arg.startsWith("--dir=")) {
       dir = readValue(arg, "--dir", i);
     } else if (arg === "--tenant-noun" || arg.startsWith("--tenant-noun=")) {
@@ -100,7 +104,18 @@ export function parseArgs(argv: readonly string[]): CliFlags {
     }
   }
 
-  return { name, dir, yes, help, tenantNoun, businessModel, adminShell, ai, email };
+  return {
+    name,
+    dir,
+    yes,
+    help,
+    tenantNoun,
+    businessModel,
+    adminShell,
+    ai,
+    email,
+    marketing,
+  };
 }
 
 export const HELP = `
@@ -119,6 +134,11 @@ export const HELP = `
   --admin <a>          none | minimal | full
   --ai / --no-ai       Include streaming route conventions.
   --email / --no-email Include transactional email.
+  --marketing          Landing page, pricing page and legal routes, as source.
+    / --no-marketing   Off by default: every string on a landing page is a claim
+                       only the client can make. Privacy and terms are generated
+                       for any project that takes money either way, because
+                       Stripe will not activate an account without them.
   --help, -h           Show this.
 
   Any flag given is used verbatim; only the rest are prompted for.
@@ -181,6 +201,13 @@ export async function collectAnswers(
     flags.email ??
     (await prompter.confirm("Transactional email?", DEFAULT_ANSWERS.includeEmail));
 
+  const includeMarketing =
+    flags.marketing ??
+    (await prompter.confirm(
+      "Public marketing site? Landing page, pricing and legal, copied as source.",
+      DEFAULT_ANSWERS.includeMarketing,
+    ));
+
   return {
     projectName,
     tenantNoun,
@@ -188,6 +215,7 @@ export async function collectAnswers(
     adminShell,
     includeAi,
     includeEmail,
+    includeMarketing,
     scope: DEFAULT_ANSWERS.scope,
   };
 }
@@ -228,6 +256,16 @@ export function nextSteps(answers: Answers, targetDir: string): string {
     lines.push(
       "Stripe keys must be TEST mode outside production. A live key throws at",
       "boot, and no environment variable turns that check off.",
+      "",
+      // WHERE THE LEGAL PAGES CAME FROM, said once and in the place somebody
+      // reads. Stripe refuses to activate an account without a public privacy
+      // policy and terms of service, which is why they are generated for any
+      // project that takes money rather than only for one with a marketing
+      // site — and why this paragraph is inside the money branch.
+      "/privacy and /terms are generated, and the list of who else sees your",
+      "customers' data is derived from the packages this project installed.",
+      "Fill in src/legal-publisher.ts and have a lawyer read both before you",
+      "ask Stripe to activate the account; it checks that the URLs resolve.",
       "",
       // THE ONE PARAGRAPH THAT MAKES THE SHOP FINDABLE. Everything after "Buy"
       // works with no Stripe account at all — the order, the entitlement, the
