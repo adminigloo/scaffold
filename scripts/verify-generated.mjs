@@ -129,4 +129,51 @@ const sweep = join(REPO, ".github", "scripts", "route-sweep.sh");
 run("serve — next start", "bash", [JSON.stringify(sweep), JSON.stringify(app), '"next start"', "3200", "pnpm", "exec", "next", "start", "-p", "3200"]);
 run("serve — next dev", "bash", [JSON.stringify(sweep), JSON.stringify(app), '"next dev"', "3201", "pnpm", "exec", "next", "dev", "-p", "3201"]);
 
+// ---------------------------------------------------- and build it CONFIGURED
+//
+// Everything above this line runs on a project with no credentials, which was
+// the whole of what this harness ever checked — and it is only half the
+// promise. A generated project must boot with nothing configured AND build with
+// something configured, and the second half had never been exercised anywhere.
+//
+// What it hid: `/setup/email` declared `dynamic = "force-static"` and was the
+// only prerendered page in the app. Prerendering happens at BUILD time, where
+// no proxy has run, and the header in `app/(site)/layout.tsx` reads the Clerk
+// session — but only once Clerk keys exist, because it returns before the read
+// when they do not. So `next build` above passed on every configuration while
+// `next build` with keys in `.env.local` could not complete at all. Five
+// configurations were reported green against a scaffold that no configured
+// project could build.
+//
+// FROM THE SAME FIXTURE CI USES, rather than a second set of fake keys written
+// here. `.github/scripts/ci-credentials.sh` is the one copy — it explains why
+// each value has the shape it has, and it checks itself, which matters because
+// the failure mode of a placeholder is a value that looks right. A local
+// harness carrying its own would be the third copy of a file written to stop
+// there being two, and the two would disagree on the day one of them was
+// corrected. Nothing in it is a secret: every value is synthetic, nothing
+// reaches a network, and no credential of anyone's goes near this script.
+//
+// LAST, and the credentials come back out afterwards. The sweeps above want the
+// credential-free app, and a `.env.local` left holding keys that authenticate
+// nobody would turn the next `pnpm dev` in that directory into a wall of 500s.
+// A failure exits before the restore on purpose — the state that reproduces it
+// is worth more than a tidy directory.
+if (!process.env.SKIP_CONFIGURED_BUILD) {
+  const envPath = join(app, ".env.local");
+  const asGenerated = readFileSync(envPath, "utf8");
+  const credentials = join(REPO, ".github", "scripts", "ci-credentials.sh");
+  if (!existsSync(credentials)) throw new Error(`no credential fixture at ${credentials}`);
+
+  run("write the CI credential fixture", "bash", [
+    JSON.stringify(credentials),
+    JSON.stringify(app),
+  ]);
+  run("next build — configured", "pnpm", ["exec", "next", "build"], { cwd: app });
+  writeFileSync(envPath, asGenerated);
+  console.log("\n=== restored .env.local to what the generator wrote");
+} else {
+  console.log("\nSKIP_CONFIGURED_BUILD set — the with-credentials build did not run.");
+}
+
 console.log(`\n=== ${name} generated, installed, built and served from ${app}`);

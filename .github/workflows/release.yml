@@ -22,6 +22,18 @@ on:
 
 concurrency: ${{ github.workflow }}
 
+# The token the repository's own `.npmrc` asks for. It interpolates
+# `${GITHUB_TOKEN}` for the @adminigloo registry, so every pnpm invocation in
+# the checkout reads it, and without the variable every line of this job was
+# preceded by `WARN Issue while reading .npmrc. Failed to replace env in
+# config: ${GITHUB_TOKEN}`. See the longer note in ci.yml for why that warning
+# was noise rather than a broken authentication path — and why leaving it in
+# place would stop being harmless the moment the root manifest gains a
+# dependency the registry actually has to serve.
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -29,14 +41,20 @@ jobs:
       contents: write
       packages: write
       pull-requests: write
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
+        id: checkout
         with:
           fetch-depth: 0
 
       - uses: pnpm/action-setup@v4
+        id: pnpm
 
       - uses: actions/setup-node@v4
+        id: node
         with:
           node-version: 24
           cache: pnpm
@@ -44,16 +62,22 @@ jobs:
           scope: "@adminigloo"
 
       - run: pnpm install --frozen-lockfile
+        id: install
 
       # Same ordering as CI: packages resolve each other's types from dist.
       - run: pnpm build
+        id: build
       - run: pnpm typecheck
+        id: typecheck
       - run: pnpm test
+        id: test
 
       - name: What would publish
+        id: what-would-publish
         run: pnpm changeset status --since=origin/main || true
 
       - name: Publish
+        id: publish
         if: ${{ !inputs.dry_run }}
         uses: changesets/action@v1
         with:
@@ -61,6 +85,20 @@ jobs:
           publish: pnpm release
           commit: "chore: version packages"
           title: "chore: version packages"
+        # Restated on the step as well as at the workflow level. The action
+        # documents these two as its inputs, and a reader working out why a
+        # publish went to the wrong registry should find them on the step that
+        # publishes rather than sixty lines above it.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # A failed release is the one failure nobody can afford to miss: a package
+      # that did not publish leaves `PACKAGE_VERSIONS` in the generator pinning
+      # a range the registry cannot satisfy, and the symptom appears later, in
+      # somebody else's install. See report-job-failure.mjs.
+      - name: Why this job is red
+        if: failure()
+        env:
+          STEPS: ${{ toJSON(steps) }}
+        run: node .github/scripts/report-job-failure.mjs "release"

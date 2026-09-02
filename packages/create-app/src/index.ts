@@ -70,6 +70,12 @@ export {
 } from "./capabilities.js";
 export type { CapabilityEvidence } from "./capabilities.js";
 export {
+  authScopedLayouts,
+  assertNoPrerenderedAuthRoutes,
+  PrerenderedAuthRouteError,
+} from "./prerender.js";
+export type { AuthScopedLayout } from "./prerender.js";
+export {
   DEFAULT_ANSWERS,
   packagesFor,
   overlayNamesFor,

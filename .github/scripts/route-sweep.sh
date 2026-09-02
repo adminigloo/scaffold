@@ -35,8 +35,8 @@
 # and it is one of the pages the regression took down.
 #
 # Invoked as `bash <path>` rather than executed directly, for the same reason as
-# report-matrix-failure.sh: this repository is developed on Windows, where git
-# cannot record the executable bit.
+# ci-credentials.sh: this repository is developed on Windows, where git cannot
+# record the executable bit.
 #
 # usage: route-sweep.sh <app-dir> <label> <port> <server command...>
 
@@ -71,6 +71,21 @@ if [ "$count" -lt 3 ]; then
 fi
 
 cd "$app" || exit 1
+
+# NOTHING ELSE MAY ALREADY OWN THE PORT. On a fresh runner this is never true;
+# on a laptop it is true constantly, and the way it fails is the worst kind. An
+# orphaned `next start` from an earlier run answers `/`, the readiness loop
+# below is satisfied by a server belonging to a DIFFERENT project, and this
+# sweep then reports that project's answers as this one's — which it did:
+# eleven 500s and three 404s, every one of them a correct response from the
+# wrong application, against a build that was in fact fine. The server we start
+# would meanwhile die of EADDRINUSE inside a log nobody reads, because the
+# sweep had already found something listening.
+if curl -fsS -o /dev/null --max-time 5 "${base}/" 2>/dev/null; then
+  echo "::error title=route sweep::something is already answering on ${base}/, so this sweep would measure it rather than ${label}. Stop it, or run on another port."
+  exit 1
+fi
+
 "$@" > "$log" 2>&1 &
 server=$!
 # Kill the whole group: `next dev` and `next start` both fork workers, and a

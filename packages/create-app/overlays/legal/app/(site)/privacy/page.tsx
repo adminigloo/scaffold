@@ -33,10 +33,21 @@ export const metadata: Metadata = {
  * it is a fact about the software and the person adapting the template has no
  * way to know it.
  *
- * STATIC. Nothing here reads a database, a session or a request, so it renders
- * once at build and is served from the edge. That also means it renders
- * perfectly on a project with no credentials at all, which is the state the
- * route sweep exercises.
+ * READS NOTHING, and that is not the same as being static. No database, no
+ * session, no request, so it renders perfectly on a project with no credentials
+ * at all — which is the state the route sweep exercises, and it is prerendered
+ * there. Add Clerk keys and the same file becomes a per-request render, because
+ * the header in `app/(site)/layout.tsx` above it then reads the session and
+ * Next renders the whole route dynamically once anything in it asks for a
+ * request. Which one you get is a property of the deployment, not of this file.
+ *
+ * DO NOT ADD `export const dynamic = "force-static"` HERE to settle that. It is
+ * the obvious next thought for a document like this one, and it is exactly the
+ * change that made `next build` fail with a Clerk error naming no file in this
+ * directory: forcing the render to happen at build time does not stop the
+ * header above from wanting a session, it only removes the request it would
+ * have read one from. `assertNoPrerenderedAuthRoutes` in the generator refuses
+ * to emit it, so the answer arrives before the build does.
  *
  * The prose around the table is a starting point and says so at the top. The
  * clauses a lawyer will want to rewrite are marked; the ones derived from the

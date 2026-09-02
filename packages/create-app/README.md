@@ -91,6 +91,18 @@ pretending the two cases are equivalent.
 The thing that must never degrade quietly is a **live key outside production**.
 That throws at boot and no environment variable turns the check off.
 
+**And it must build with them.** The rule above is half a promise, and for five
+releases only that half was checked: every harness run and every CI job
+generated a project with no credentials, so every code path that exists *because*
+a key is present was untested. What that hid was a `--email` project that could
+not run `next build` at all once Clerk keys were in `.env.local` — `/setup/email`
+declared `force-static`, prerendering happens at build time where no proxy has
+run, and the header in `app/(site)/layout.tsx` reads a session it can only reach
+through one. With no keys the header returned before the read and the build was
+green. A degradation path that is only ever exercised in its degraded state is
+not a tested path; `scripts/verify-generated.mjs` now builds twice, and
+`assertNoPrerenderedAuthRoutes` refuses the shape at generation.
+
 ### 5. The firm owns the tenant table; Clerk is identity only
 
 Clerk owns credentials and sessions. It owns nothing else. The local `user` row,

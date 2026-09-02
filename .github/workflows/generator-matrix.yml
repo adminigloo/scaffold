@@ -45,6 +45,24 @@ concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: true
 
+# THE TOKEN THE REPOSITORY'S OWN `.npmrc` ASKS FOR, supplied where it is asked
+# for rather than in the two steps that happened to need it.
+#
+# `.npmrc` at the root interpolates `${GITHUB_TOKEN}` for the @adminigloo
+# registry, so EVERY pnpm invocation inside the checkout reads it — and until
+# now only the generated-project install defined the variable. The other jobs
+# printed `WARN Issue while reading .npmrc. Failed to replace env in config:
+# ${GITHUB_TOKEN}` ahead of every line of output, which is the kind of noise
+# that hides a real error, and they installed successfully only because the
+# root workspace resolves every @adminigloo package through `workspace:` and
+# never asks the registry for one. That is a property nobody wrote down: add a
+# single registry-resolved dependency to the root and the install starts
+# failing with a 401 that points at nothing. Defining it here makes the working
+# path the declared one.
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 jobs:
   generate:
     name: ${{ matrix.id }}
@@ -52,6 +70,17 @@ jobs:
     permissions:
       contents: read
       packages: read
+
+    # `shell: bash` rather than the default, and the difference is `pipefail`.
+    # GitHub runs an unqualified `run:` as `bash -e`, where `cmd | tee log`
+    # reports tee's exit status and a failing compiler behind a tee is a green
+    # step. Naming the shell gets `bash --noprofile --norc -eo pipefail`, which
+    # is the only reason the steps below can stream their output and keep a
+    # copy at the same time.
+    defaults:
+      run:
+        shell: bash
+
     strategy:
       # EVERY combination reports. The first failure is rarely the informative
       # one — whether the other five also fail is what separates "a package
@@ -67,13 +96,18 @@ jobs:
             flags: --model none --admin none --no-ai --no-email --tenant-noun none
             overlays: none
 
-          # Overlays: stripe. Money with no admin surface anywhere. This is the
-          # pairing that catches catalog-admin leaking: the product builder
-          # needs something to sell AND somewhere to put it, and it emitted
-          # admin pages into projects like this one until it was fixed.
+          # Overlays: stripe + account + legal. Money with no admin surface
+          # anywhere. This is the pairing that catches catalog-admin leaking:
+          # the product builder needs something to sell AND somewhere to put it,
+          # and it emitted admin pages into projects like this one until it was
+          # fixed. `account` and `legal` come along because anything that can be
+          # bought needs somewhere the buyer can see it afterwards and a public
+          # policy page Stripe will accept — both selected on "takes money"
+          # alone, which is what makes this entry cover them without an admin
+          # shell underneath.
           - id: money-without-admin
             flags: --model both --admin none --no-ai --no-email
-            overlays: stripe
+            overlays: stripe, account, legal
 
           # Overlays: admin-minimal + admin-full. An admin shell with nothing to
           # sell. Every admin page must hold up with no catalog, no orders and
@@ -82,27 +116,28 @@ jobs:
             flags: --model none --admin full --no-ai --no-email
             overlays: admin-minimal, admin-full
 
-          # Overlays: email. The mail templates and /setup/email standing
-          # completely alone — no admin sidebar to hang off, no storefront, and
-          # the footer link is the page's only way in.
+          # Overlays: email + ai. The mail templates and /setup/email standing
+          # with no admin sidebar to hang off and no storefront — the footer
+          # link is the page's only way in — and the streaming assistant beside
+          # them, which is the only place `--ai` without `--model` is built.
           - id: email-alone
             flags: --model none --admin none --ai --email --tenant-noun Workspace
-            overlays: email
+            overlays: email, ai
 
-          # Overlays: admin-minimal + stripe + catalog-admin + email. The
-          # subscription path against the MINIMAL shell, which is the shell the
-          # product builder is least often seen in.
+          # Overlays: admin-minimal + stripe + catalog-admin + account + email +
+          # legal. The subscription path against the MINIMAL shell, which is the
+          # shell the product builder is least often seen in.
           - id: subscription-minimal-shell
             flags: --model subscription --admin minimal --no-ai --email --tenant-noun Team
-            overlays: admin-minimal, stripe, catalog-admin, email
+            overlays: admin-minimal, stripe, catalog-admin, account, email, legal
 
-          # Overlays: admin-minimal + admin-full + stripe + catalog-admin. The
-          # one-time path with the full shell and the AI package, and no email —
-          # so the invitation mailer takes its no-Resend branch while everything
-          # else is switched on.
+          # Overlays: admin-minimal + admin-full + stripe + catalog-admin +
+          # account + ai + legal. The one-time path with the full shell and the
+          # AI package, and no email — so the invitation mailer takes its
+          # no-Resend branch while everything else is switched on.
           - id: one-time-full-shell
             flags: --model one-time --admin full --ai --no-email --tenant-noun Company
-            overlays: admin-minimal, admin-full, stripe, catalog-admin
+            overlays: admin-minimal, admin-full, stripe, catalog-admin, account, ai, legal
 
     env:
       # OUTSIDE the workspace, deliberately. pnpm walks up from the directory it
@@ -115,8 +150,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        id: checkout
       - uses: pnpm/action-setup@v4
+        id: pnpm
       - uses: actions/setup-node@v4
+        id: node
         with:
           node-version: 24
           cache: pnpm
@@ -124,80 +162,95 @@ jobs:
           scope: "@adminigloo"
 
       - run: pnpm install --frozen-lockfile
+        id: install-workspace
       - run: pnpm --filter @adminigloo/create-app build
+        id: build-generator
 
       - name: Generate
+        id: generate
         run: |
           mkdir -p "$(dirname "$APP_DIR")"
           cd "$(dirname "$APP_DIR")"
           node "$GITHUB_WORKSPACE/packages/create-app/dist/index.js" \
-            app --yes ${{ matrix.flags }}
+            app --yes ${{ matrix.flags }} 2>&1 | tee "$RUNNER_TEMP/generate.log"
 
       # The generated manifest, in the log. It states the answers, the packages,
       # the overlays and the capabilities this run is meant to have, so a failure
       # further down is read against what the project claimed rather than against
       # the flags somebody has to re-derive from the job name.
+      #
+      # COMPARED AS A SET, sorted on both sides. `overlayNamesFor` returns its
+      # names in selection order, which is an internal detail that carries no
+      # meaning here — a reordering there is not a regression, and a matrix that
+      # goes red for one teaches everybody to ignore the next honest failure.
+      # Membership is the claim: this entry covers exactly these overlays.
       - name: What was generated
+        id: what-was-generated
         run: |
           cat "$APP_DIR/adminigloo.json"
-          expected="${{ matrix.overlays }}"
-          read_overlays='const m=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); m.overlays.length ? m.overlays.join(", ") : "none"'
-          actual=$(node -p "$read_overlays" "$APP_DIR/adminigloo.json")
-          if [ "$actual" != "$expected" ]; then
-            echo "::error title=${{ matrix.id }}: overlay set::expected [$expected], generated [$actual]. Either overlayNamesFor changed or this matrix entry is stale — and if it is stale, this combination has been covering something other than what it says."
-            exit 1
-          fi
-          echo "overlays: $actual"
+          node -e '
+            const { readFileSync } = require("node:fs");
+            const [, declared, manifestPath, id] = process.argv;
+            const asSet = (names) =>
+              names.map((n) => n.trim()).filter((n) => n !== "" && n !== "none").sort().join(", ") || "none";
+            const expected = asSet(declared.split(","));
+            const actual = asSet(JSON.parse(readFileSync(manifestPath, "utf8")).overlays);
+            if (expected !== actual) {
+              console.log(
+                "::error title=" + id + ": overlay set::expected [" + expected + "], generated [" + actual +
+                "]. Either overlayNamesFor changed or this matrix entry is stale — and if it is stale, this " +
+                "combination has been covering something other than what it says.",
+              );
+              process.exit(1);
+            }
+            console.log("overlays: " + actual);
+          ' "${{ matrix.overlays }}" "$APP_DIR/adminigloo.json" "${{ matrix.id }}"
 
       - name: Install
+        id: install
         working-directory: ${{ env.APP_DIR }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if pnpm install --no-frozen-lockfile > install.log 2>&1; then
-            exit 0
-          fi
-          bash "$GITHUB_WORKSPACE/.github/scripts/report-matrix-failure.sh" \
-            "${{ matrix.id }}" "${{ matrix.flags }}" "install" install.log
-          exit 1
+        run: pnpm install --no-frozen-lockfile 2>&1 | tee "$RUNNER_TEMP/install.log"
 
       # Placeholder credentials, and a superset of what any combination needs.
-      # Every value is SHAPED correctly so boot validation genuinely runs — a
-      # build that passes because validation was skipped proves nothing about the
-      # contract this scaffold exists to enforce. Variables belonging to packages
-      # this combination did not install are inert: src/env.ts is generated from
-      # the fragments the installed packages contributed, so it never looks at
-      # them. Nothing here reaches a network.
-      - name: Credentials
+      # The values, and the reason every one of them is shaped the way the
+      # provider shapes it, live in .github/scripts/ci-credentials.sh — one copy,
+      # because ci.yml writes the same file and the two drifted into carrying the
+      # same malformed Clerk key.
+      # THE UNCONFIGURED BUILD COMES FIRST, AND IT IS NOT AN AFTERTHOUGHT.
+      #
+      # This job used to run every build and every sweep with an empty
+      # `.env.local`, which is why a project that could not build with Clerk
+      # configured shipped three times: the one state nobody exercised was the
+      # one every paying client is in. Writing the credentials earlier fixed
+      # that and created its exact mirror — a pipeline that only ever built the
+      # configured app, blind to the credential-free boot that is the scaffold's
+      # central promise and the state every new user starts in.
+      #
+      # Both, then. This step proves `pnpm install && pnpm dev` works on a
+      # laptop with nothing set; the configured build below proves a real
+      # deployment works. Neither substitutes for the other, and the asymmetry
+      # in either direction is invisible until somebody hits it.
+      - name: Build — no credentials
+        id: build_bare
+        working-directory: ${{ env.APP_DIR }}
+        run: pnpm exec next build 2>&1 | tee "$RUNNER_TEMP/build-bare.log"
+
+      - name: Serve — no credentials
+        id: serve_bare
         working-directory: ${{ env.APP_DIR }}
         run: |
-          cat > .env.local <<'EOF'
-          NEXT_PUBLIC_APP_URL=http://localhost:3000
-          DATABASE_URL=postgresql://u:p@ep-ci-pooler.us-east-2.aws.neon.tech/db
-          DATABASE_URL_UNPOOLED=postgresql://u:p@ep-ci.us-east-2.aws.neon.tech/db
-          CLERK_SECRET_KEY=sk_test_0000000000000000000000000000
-          CLERK_WEBHOOK_SIGNING_SECRET=whsec_0000000000000000000000000000
-          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_0000000000000000000000000000
-          STRIPE_SECRET_KEY=sk_test_1111111111111111111111111111
-          STRIPE_WEBHOOK_SECRET=whsec_1111111111111111111111111111
-          NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_1111111111111111111111111111
-          RESEND_API_KEY=re_22222222222222222222222222
-          EMAIL_FROM=CI <ci@example.com>
-          ANTHROPIC_API_KEY=sk-ant-api03-3333333333333333333333333
-          EOF
+          bash "$GITHUB_WORKSPACE/.github/scripts/route-sweep.sh"             "$APP_DIR" "next start (no credentials)" 3000 pnpm exec next start -p 3000             2>&1 | tee "$RUNNER_TEMP/serve-bare.log"
+
+      - name: Credentials
+        id: credentials
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/ci-credentials.sh" "$APP_DIR"
 
       # BEFORE the build, because `next build` reports a type error wrapped in a
       # bundler failure and tsc reports the file and the line.
       - name: Typecheck
+        id: typecheck
         working-directory: ${{ env.APP_DIR }}
-        run: |
-          if pnpm exec tsc --noEmit > tsc.log 2>&1; then
-            exit 0
-          fi
-          bash "$GITHUB_WORKSPACE/.github/scripts/report-matrix-failure.sh" \
-            "${{ matrix.id }}" "${{ matrix.flags }}" "typecheck" tsc.log
-          exit 1
+        run: pnpm exec tsc --noEmit 2>&1 | tee "$RUNNER_TEMP/typecheck.log"
 
       # Each combination ships a DIFFERENT set of test files, because each ships
       # a different set of overlays, and a suite is only as good as the
@@ -209,26 +262,14 @@ jobs:
       # REQUIRE_DATABASE is deliberately NOT set here, so they skip — and say so
       # in the log, one line per suite.
       - name: Test
+        id: test
         working-directory: ${{ env.APP_DIR }}
-        run: |
-          if pnpm exec vitest run --project=unit > test.log 2>&1; then
-            cat test.log
-            exit 0
-          fi
-          cat test.log
-          bash "$GITHUB_WORKSPACE/.github/scripts/report-matrix-failure.sh" \
-            "${{ matrix.id }}" "${{ matrix.flags }}" "test" test.log
-          exit 1
+        run: pnpm exec vitest run --project=unit 2>&1 | tee "$RUNNER_TEMP/test.log"
 
-      - name: Build
+      - name: Build — configured
+        id: build
         working-directory: ${{ env.APP_DIR }}
-        run: |
-          if pnpm exec next build > build.log 2>&1; then
-            exit 0
-          fi
-          bash "$GITHUB_WORKSPACE/.github/scripts/report-matrix-failure.sh" \
-            "${{ matrix.id }}" "${{ matrix.flags }}" "build" build.log
-          exit 1
+        run: pnpm exec next build 2>&1 | tee "$RUNNER_TEMP/build.log"
 
       # A COMBINATION THAT COMPILES AND CANNOT SERVE A PAGE MUST FAIL HERE.
       # Everything above this line — install, typecheck, build — was green on a
@@ -242,23 +283,18 @@ jobs:
       # already on disk, so this costs a boot and eighteen requests. The
       # per-PR `generate` job in ci.yml sweeps dev as well, where paying for a
       # cold compile once is worth it.
-      - name: Serve
+      - name: Serve — configured
+        id: serve
         working-directory: ${{ env.APP_DIR }}
         run: |
-          if bash "$GITHUB_WORKSPACE/.github/scripts/route-sweep.sh" \
-            "$APP_DIR" "next start" 3000 pnpm exec next start -p 3000 > serve.log 2>&1
-          then
-            cat serve.log
-            exit 0
-          fi
-          cat serve.log
-          bash "$GITHUB_WORKSPACE/.github/scripts/report-matrix-failure.sh" \
-            "${{ matrix.id }}" "${{ matrix.flags }}" "serve" serve.log
-          exit 1
+          bash "$GITHUB_WORKSPACE/.github/scripts/route-sweep.sh" \
+            "$APP_DIR" "next start" 3000 pnpm exec next start -p 3000 \
+            2>&1 | tee "$RUNNER_TEMP/serve.log"
 
       # The generated source, so a failure can be reproduced without guessing at
       # the flags. node_modules and .next are excluded; everything else is small.
       - name: Keep the generated project
+        id: keep
         if: failure()
         uses: actions/upload-artifact@v4
         with:
@@ -269,3 +305,18 @@ jobs:
             ${{ env.APP_DIR }}
             !${{ env.APP_DIR }}/node_modules
             !${{ env.APP_DIR }}/.next
+
+      # WHICH ENTRY, WHICH STEP, AND WHAT IT SAID — at the top of the run page
+      # and in the notification, rather than six red dots and an exit code. See
+      # report-job-failure.mjs: three days of this matrix failing nightly went
+      # unread because nothing in the alert said what had broken.
+      - name: Why this entry is red
+        if: failure()
+        env:
+          STEPS: ${{ toJSON(steps) }}
+          LOG_DIR: ${{ runner.temp }}
+          REPRODUCE: |
+            pnpm --filter @adminigloo/create-app build
+            node packages/create-app/dist/index.js app --yes ${{ matrix.flags }}
+            bash .github/scripts/ci-credentials.sh app
+        run: node "$GITHUB_WORKSPACE/.github/scripts/report-job-failure.mjs" "${{ matrix.id }}"

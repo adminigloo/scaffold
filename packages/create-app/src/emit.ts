@@ -19,6 +19,7 @@ import {
 } from "./manifest.js";
 import { versionRangeFor } from "./versions.js";
 import { assertCapabilitiesAreProvable } from "./capabilities.js";
+import { assertNoPrerenderedAuthRoutes } from "./prerender.js";
 
 export interface EmitPlan {
   readonly targetDir: string;
@@ -328,6 +329,15 @@ export async function planEmit(
   // silent in every project that ships with it. `ai.streaming` was that
   // failure for several releases.
   assertCapabilitiesAreProvable(plan, manifest.capabilities);
+
+  // AND THAT EVERY PAGE IT CONTAINS CAN ACTUALLY BE BUILT BY THE PERSON WHO
+  // RECEIVES IT. Here rather than in a test for the same reason as the line
+  // above: a page under `app/(site)` that forces static rendering fails
+  // `next build` only once Clerk is configured, so a check that runs against a
+  // credential-free project — which is every check this repository had — cannot
+  // see it. This one reads the plan, so credentials are not part of the
+  // question. See `prerender.ts`.
+  assertNoPrerenderedAuthRoutes(plan);
 
   return plan;
 }

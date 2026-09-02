@@ -5,20 +5,50 @@ on:
   push:
     branches: [main]
 
+# THE TOKEN THE REPOSITORY'S OWN `.npmrc` ASKS FOR, supplied where it is asked
+# for rather than in the two steps that happened to need it.
+#
+# `.npmrc` at the root interpolates `${GITHUB_TOKEN}` for the @adminigloo
+# registry, so EVERY pnpm invocation inside the checkout reads it — and until
+# now only the generated-project install defined the variable. Every other job
+# printed `WARN Issue while reading .npmrc. Failed to replace env in config:
+# ${GITHUB_TOKEN}` ahead of every line of output, repeatedly, which is the kind
+# of noise that hides the one line that matters.
+#
+# IT WAS NOT AUTHENTICATING BY LUCK, which is worth writing down because the
+# warning reads as though it were. The root install needs no credential at all:
+# every @adminigloo package it resolves is a `workspace:` link, so it never asks
+# the registry for one. The generated-project installs run OUTSIDE the checkout,
+# where this file is not in scope, and authenticate through two paths that are
+# both configured — the project's own `.npmrc` on `${GITHUB_TOKEN}`, and the
+# user-level npmrc setup-node writes on `${NODE_AUTH_TOKEN}`. What the warning
+# marked was a file asking for a variable almost nothing defined, and the day a
+# registry-resolved dependency reaches the root manifest that stops being
+# harmless: the install would 401 with a message pointing at nothing.
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 jobs:
   check:
     name: typecheck, test, build
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
     steps:
       # FULL HISTORY, for the changeset-coverage step at the end. `changeset
       # status --since` needs the base ref present, and a shallow clone has
       # none — it would report "no packages changed" and pass, which is the
       # worst possible answer from a check like that.
       - uses: actions/checkout@v4
+        id: checkout
         with:
           fetch-depth: 0
       - uses: pnpm/action-setup@v4
+        id: pnpm
       - uses: actions/setup-node@v4
+        id: node
         with:
           node-version: 24
           cache: pnpm
@@ -26,13 +56,17 @@ jobs:
       # A stale lockfile fails here with a clear message rather than three
       # steps later as a missing module. It has happened twice.
       - run: pnpm install --frozen-lockfile
+        id: install
 
       # BUILD FIRST. Packages resolve each other's types from dist/index.d.ts,
       # which is gitignored and absent on a fresh checkout. Typecheck-first
       # passes on a machine with stale build output and fails only in CI.
       - run: pnpm build
+        id: build
       - run: pnpm typecheck
+        id: typecheck
       - run: pnpm test
+        id: test
 
       # EVERY CHANGED PACKAGE CARRIES A CHANGESET, checked rather than
       # remembered. "Changeset per package touched" is a house rule with
@@ -45,10 +79,17 @@ jobs:
       # Pull requests only. On a push to main there is no base to compare
       # against, and `--since` needs one.
       - name: Every changed package carries a changeset
+        id: changesets
         if: github.event_name == 'pull_request'
         run: |
           git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
           pnpm changeset status --since="origin/${{ github.base_ref }}" --verbose
+
+      - name: Why this job is red
+        if: failure()
+        env:
+          STEPS: ${{ toJSON(steps) }}
+        run: node .github/scripts/report-job-failure.mjs "typecheck, test, build"
 
   api-surface:
     name: what the published API gained and lost
@@ -60,15 +101,21 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+    defaults:
+      run:
+        shell: bash
     steps:
       # FULL HISTORY. The tool builds the base ref as well as the head, and a
       # shallow clone has no base ref to build.
       - uses: actions/checkout@v4
+        id: checkout
         with:
           fetch-depth: 0
 
       - uses: pnpm/action-setup@v4
+        id: pnpm
       - uses: actions/setup-node@v4
+        id: node
         with:
           node-version: 24
           cache: pnpm
@@ -100,11 +147,18 @@ jobs:
       # binary and a template directory, tsup emits no declarations for it, and
       # a package with no type surface is not something this tool can compare.
       - uses: clerk/break-check@v1
+        id: break-check
         with:
           config-path: break-check.config.json
           setup-command: pnpm install --frozen-lockfile && pnpm build
           fail-on-breaking: true
           comment: true
+
+      - name: Why this job is red
+        if: failure()
+        env:
+          STEPS: ${{ toJSON(steps) }}
+        run: node .github/scripts/report-job-failure.mjs "what the published API gained and lost"
 
   generate:
     name: generate a project, build it, and run its suite
@@ -113,6 +167,16 @@ jobs:
     permissions:
       contents: read
       packages: read
+
+    # `shell: bash` rather than the default, and the difference is `pipefail`.
+    # GitHub runs an unqualified `run:` as `bash -e`, where `cmd | tee log`
+    # reports tee's exit status — so a failing build behind a tee is a green
+    # step. Naming the shell gets `bash --noprofile --norc -eo pipefail`, which
+    # is what lets the steps below stream their output and keep a copy for the
+    # failure summary at the same time.
+    defaults:
+      run:
+        shell: bash
 
     # A REAL POSTGRES, because the generated project's integration suites assert
     # things only Postgres can enforce — a primary key that arbitrates a claim
@@ -143,10 +207,16 @@ jobs:
           --health-timeout 5s
           --health-retries 12
 
+    env:
+      APP_DIR: /tmp/e2e/e2e-app
+
     steps:
       - uses: actions/checkout@v4
+        id: checkout
       - uses: pnpm/action-setup@v4
+        id: pnpm
       - uses: actions/setup-node@v4
+        id: node
         with:
           node-version: 24
           cache: pnpm
@@ -154,7 +224,9 @@ jobs:
           scope: "@adminigloo"
 
       - run: pnpm install --frozen-lockfile
+        id: install-workspace
       - run: pnpm --filter @adminigloo/create-app build
+        id: build-generator
 
       # The end-to-end test that unit tests cannot do. It runs the generator for
       # real, installs the PUBLISHED packages from the registry, and builds the
@@ -166,21 +238,22 @@ jobs:
       # packages' tables, so they were missing from every migration. Both were
       # only visible by generating a project and building it.
       - name: Generate a full project
+        id: generate
         run: |
           mkdir -p /tmp/e2e && cd /tmp/e2e
           node "$GITHUB_WORKSPACE/packages/create-app/dist/index.js" \
-            e2e-app --yes --model both --admin full --ai --email
+            e2e-app --yes --model both --admin full --ai --email \
+            2>&1 | tee "$RUNNER_TEMP/generate.log"
 
       - name: Install the generated project
-        working-directory: /tmp/e2e/e2e-app
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: pnpm install --no-frozen-lockfile
+        id: install
+        working-directory: ${{ env.APP_DIR }}
+        run: pnpm install --no-frozen-lockfile 2>&1 | tee "$RUNNER_TEMP/install.log"
 
       - name: Typecheck the generated project
-        working-directory: /tmp/e2e/e2e-app
-        run: pnpm exec tsc --noEmit
+        id: typecheck
+        working-directory: ${{ env.APP_DIR }}
+        run: pnpm exec tsc --noEmit 2>&1 | tee "$RUNNER_TEMP/typecheck.log"
 
       # THE ONLY PLACE MOST OF THESE TESTS RUN. `pnpm -r test` at the root
       # excludes `template/` and `overlays/` because to the generator they are
@@ -194,32 +267,43 @@ jobs:
       # and a failing assertion should be reported as a failing assertion rather
       # than as whatever the bundler makes of it. The integration half runs at
       # the end, once there is a schema to run it against.
+      #
+      # BEFORE the credentials step below, deliberately. `src/test/setup.ts`
+      # loads `.env.local` if one exists, so running the unit suite first is
+      # what keeps it a suite about a project with nothing configured.
       - name: Test the generated project — unit
-        working-directory: /tmp/e2e/e2e-app
-        run: pnpm exec vitest run --project=unit
+        id: test-unit
+        working-directory: ${{ env.APP_DIR }}
+        run: pnpm exec vitest run --project=unit 2>&1 | tee "$RUNNER_TEMP/test-unit.log"
 
-      # Placeholder credentials. Every value is shaped correctly so the boot
-      # validation genuinely runs — a build that passes because validation was
-      # skipped proves nothing about the contract this scaffold exists to
-      # enforce. Nothing here reaches a network.
-      - name: Build the generated project
+      # Placeholder credentials. The values, and the reason every one of them is
+      # shaped the way the provider shapes it, live in
+      # .github/scripts/ci-credentials.sh — one copy, because the nightly matrix
+      # writes the same file and the two drifted into carrying the same
+      # malformed Clerk key, which is what kept that matrix red for days.
+      #
+      # A CONFIGURED BUILD IS A DIFFERENT TEST from an unconfigured one, and
+      # this is the only place the difference is exercised. The site header
+      # reads the Clerk session only once Clerk keys exist, and `/setup/email`
+      # is prerendered at build time where no proxy has run — so a build with no
+      # keys never takes that path at all.
+      # The credential-free build, before any key exists. `pnpm install &&
+      # pnpm dev` on a laptop with nothing configured is the scaffold's central
+      # promise, and moving the credentials above the build — the fix for a
+      # configured project that could not build — left nothing exercising it.
+      # Both states, in the order a real project meets them.
+      - name: Build the generated project — no credentials
         working-directory: /tmp/e2e/e2e-app
-        run: |
-          cat > .env.local <<'EOF'
-          NEXT_PUBLIC_APP_URL=http://localhost:3000
-          DATABASE_URL=postgresql://u:p@ep-ci-pooler.us-east-2.aws.neon.tech/db
-          DATABASE_URL_UNPOOLED=postgresql://u:p@ep-ci.us-east-2.aws.neon.tech/db
-          CLERK_SECRET_KEY=sk_test_0000000000000000000000000000
-          CLERK_WEBHOOK_SIGNING_SECRET=whsec_0000000000000000000000000000
-          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_0000000000000000000000000000
-          STRIPE_SECRET_KEY=sk_test_1111111111111111111111111111
-          STRIPE_WEBHOOK_SECRET=whsec_1111111111111111111111111111
-          NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_1111111111111111111111111111
-          RESEND_API_KEY=re_22222222222222222222222222
-          EMAIL_FROM=CI <ci@example.com>
-          ANTHROPIC_API_KEY=sk-ant-api03-3333333333333333333333333
-          EOF
-          pnpm exec next build
+        run: pnpm exec next build 2>&1 | tee "$RUNNER_TEMP/build-bare.log"
+
+      - name: Credentials
+        id: credentials
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/ci-credentials.sh" "$APP_DIR"
+
+      - name: Build the generated project
+        id: build
+        working-directory: ${{ env.APP_DIR }}
+        run: pnpm exec next build 2>&1 | tee "$RUNNER_TEMP/build.log"
 
       # THE STEP THAT WOULD HAVE CAUGHT IT. `tsc --noEmit` and `vitest run` were
       # both green on a configuration that could not serve a single page: the
@@ -235,43 +319,75 @@ jobs:
       # developer meets first. Before the live-key step, which deliberately
       # leaves a failed build behind it.
       - name: Serve the generated project
-        working-directory: /tmp/e2e/e2e-app
+        id: serve
+        working-directory: ${{ env.APP_DIR }}
         run: |
-          bash "$GITHUB_WORKSPACE/.github/scripts/route-sweep.sh" \
-            /tmp/e2e/e2e-app "next start" 3000 pnpm exec next start -p 3000
-          bash "$GITHUB_WORKSPACE/.github/scripts/route-sweep.sh" \
-            /tmp/e2e/e2e-app "next dev" 3001 pnpm exec next dev -p 3001
+          {
+            bash "$GITHUB_WORKSPACE/.github/scripts/route-sweep.sh" \
+              "$APP_DIR" "next start" 3000 pnpm exec next start -p 3000
+            bash "$GITHUB_WORKSPACE/.github/scripts/route-sweep.sh" \
+              "$APP_DIR" "next dev" 3001 pnpm exec next dev -p 3001
+          } 2>&1 | tee "$RUNNER_TEMP/serve.log"
 
       # The guarantee this whole scaffold exists to provide. If a live key ever
       # stops failing the build, that is the most important regression here.
       - name: A live key must refuse to build
-        working-directory: /tmp/e2e/e2e-app
+        id: live-key
+        working-directory: ${{ env.APP_DIR }}
         run: |
           # Assembled from parts on purpose. Written as a literal, this trips
           # GitHub push protection, which cannot tell a deliberately fake live
           # key from a real one — and it is right not to try.
           MODE=live
-          sed -i "s/^STRIPE_SECRET_KEY=.*/STRIPE_SECRET_KEY=sk_${MODE}_9999999999999999999999999999/" .env.local
-          if SKIP_ENV_VALIDATION=1 pnpm exec next build > out.log 2>&1; then
+          sed -i "s|^STRIPE_SECRET_KEY=.*|STRIPE_SECRET_KEY=\"sk_${MODE}_9999999999999999999999999999\"|" .env.local
+          grep -q "sk_${MODE}_" .env.local || {
+            echo "::error::the live key was never written into .env.local, so this step proved nothing"
+            exit 1
+          }
+          if SKIP_ENV_VALIDATION=1 pnpm exec next build > "$RUNNER_TEMP/live-key.log" 2>&1; then
             echo "::error::A live Stripe key built successfully. The mode assertion is broken."
+            tail -40 "$RUNNER_TEMP/live-key.log"
             exit 1
           fi
-          grep -q "KeyModeMismatchError" out.log || {
+          grep -q "KeyModeMismatchError" "$RUNNER_TEMP/live-key.log" || {
             echo "::error::Build failed, but not with KeyModeMismatchError:"
-            tail -20 out.log
+            tail -20 "$RUNNER_TEMP/live-key.log"
             exit 1
           }
           echo "Live key correctly refused, even with SKIP_ENV_VALIDATION=1."
 
       # Proves the composed schema is complete: one migration covering every
       # table from every installed package.
+      #
+      # The credentials are REWRITTEN rather than patched back. The step above
+      # left a live key in the file; restoring it with a second `sed` carrying a
+      # second copy of the test key is how the two copies come to disagree, and
+      # the script is the only place that value is written down.
+      #
+      # `set -a` / `.` / `set +a` as three statements rather than one
+      # `a && b && c`. A failure in the middle of an `&&` list is the one place
+      # `set -e` looks away, and it looked away here: `EMAIL_FROM=CI
+      # <ci@example.com>` was a redirection followed by an unterminated `>`, so
+      # sourcing died on that line with a syntax error, EMAIL_FROM and
+      # ANTHROPIC_API_KEY were never exported, and the step carried on as though
+      # it had worked. The values are quoted now, and a failure here stops.
       - name: Generate migrations from the composed schema
-        working-directory: /tmp/e2e/e2e-app
+        id: migrations
+        working-directory: ${{ env.APP_DIR }}
         run: |
-          sed -i 's/^STRIPE_SECRET_KEY=.*/STRIPE_SECRET_KEY=sk_test_1111111111111111111111111111/' .env.local
-          set -a && . ./.env.local && set +a
+          bash "$GITHUB_WORKSPACE/.github/scripts/ci-credentials.sh" "$APP_DIR"
+          set -a
+          . ./.env.local
+          set +a
           pnpm exec drizzle-kit generate
-          tables=$(grep -c "CREATE TABLE" drizzle/*.sql)
+          # `grep -c` over several files prints `file:count` per file rather
+          # than a number, and `[ "$tables" -ge 14 ]` then fails with "integer
+          # expression expected" — which reads as a broken check rather than a
+          # missing schema. `cat` first, so there is exactly one stream. The
+          # `|| true` is for the empty case: grep exits 1 when it matches
+          # nothing, and under pipefail that would abort before the assertion
+          # below could say what was actually wrong.
+          tables=$(cat drizzle/*.sql | grep -c "CREATE TABLE" || true)
           echo "migration covers $tables tables"
           [ "$tables" -ge 14 ] || {
             echo "::error::Expected at least 14 tables, found $tables — a package's schema is missing from src/db/schema.ts"
@@ -290,7 +406,8 @@ jobs:
       # test and this executes it verbatim; the migration journal it skips is
       # bookkeeping for a deploy, and nothing below reads it.
       - name: Apply the migration to a real Postgres
-        working-directory: /tmp/e2e/e2e-app
+        id: apply-migration
+        working-directory: ${{ env.APP_DIR }}
         env:
           PGPASSWORD: app
         run: |
@@ -312,6 +429,7 @@ jobs:
       # plain listener at all. See .github/scripts/ws-proxy.mjs, including why
       # it is told its target rather than reading it out of the address.
       - name: Bridge the Neon driver to it
+        id: ws-proxy
         env:
           WS_PROXY_TARGET: 127.0.0.1:5432
         run: |
@@ -337,7 +455,8 @@ jobs:
       # applied. Nothing resolves this name — the bridge above already knows
       # where the database is.
       - name: Seed the role catalog
-        working-directory: /tmp/e2e/e2e-app
+        id: seed
+        working-directory: ${{ env.APP_DIR }}
         env:
           DATABASE_URL: postgres://app:app@ci-pooler.invalid:5432/app
           DATABASE_URL_UNPOOLED: postgres://app:app@localhost:5432/app
@@ -358,7 +477,8 @@ jobs:
       # which leaves an already-set variable alone. So these win, and the
       # placeholder Neon URLs the build steps above rely on stay where they are.
       - name: Test the generated project — integration, against that Postgres
-        working-directory: /tmp/e2e/e2e-app
+        id: test-integration
+        working-directory: ${{ env.APP_DIR }}
         env:
           # Repeated rather than anchored: GitHub Actions does not resolve YAML
           # anchors, and a `<<:` merge key reaches the runner as a literal.
@@ -366,4 +486,34 @@ jobs:
           DATABASE_URL_UNPOOLED: postgres://app:app@localhost:5432/app
           DATABASE_WS_PROXY: 127.0.0.1:5433/v1
           REQUIRE_DATABASE: "1"
-        run: pnpm exec vitest run --project=integration
+        run: |
+          pnpm exec vitest run --project=integration 2>&1 \
+            | tee "$RUNNER_TEMP/test-integration.log"
+
+      # The generated source, so a failure can be reproduced without guessing.
+      # node_modules and .next are excluded; everything else is small.
+      - name: Keep the generated project
+        id: keep
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-e2e-app
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            ${{ env.APP_DIR }}
+            !${{ env.APP_DIR }}/node_modules
+            !${{ env.APP_DIR }}/.next
+
+      # WHICH STEP, AND WHAT IT SAID — at the top of the run page and in the
+      # notification. This job failed on every push for three days, including
+      # three tagged releases, and the whole of the signal was an email with a
+      # workflow name and an exit code in it. See report-job-failure.mjs.
+      - name: Why this job is red
+        if: failure()
+        env:
+          STEPS: ${{ toJSON(steps) }}
+          LOG_DIR: ${{ runner.temp }}
+          REPRODUCE: |
+            node scripts/verify-generated.mjs /tmp/verify e2e-app -- --model both --admin full --ai --email
+        run: node .github/scripts/report-job-failure.mjs "generate a project, build it, and run its suite"

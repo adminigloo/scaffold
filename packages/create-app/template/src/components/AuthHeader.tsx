@@ -1,5 +1,6 @@
 import { UserButton } from "@clerk/nextjs";
 import { auth } from "@clerk/nextjs/server";
+import { headers } from "next/headers";
 import Link from "next/link";
 import { env } from "@/env";
 import { APP_LINKS, SITE_LINKS } from "@/nav";
@@ -15,6 +16,11 @@ import { buttonClass } from "@/components/ui";
  *
  * Renders no Clerk UI when Clerk is unconfigured: `auth()` throws without keys,
  * and the root layout mounts no ClerkProvider for `<UserButton>` to read from.
+ *
+ * It renders during a PRERENDER too, and that is not a detail — see `viewerId`
+ * below. A header mounted by a layout is rendered by every route under it, so
+ * whatever it cannot survive, none of those routes can survive either. Chrome
+ * must never be the reason a page fails to build.
  *
  * The public links render in ALL THREE states, including signed out and Clerk
  * off. They are public routes — a storefront you cannot find without an account
@@ -39,7 +45,7 @@ export async function AuthHeader() {
     );
   }
 
-  const { userId } = await auth();
+  const userId = await viewerId();
 
   if (!userId) {
     return (
@@ -59,6 +65,43 @@ export async function AuthHeader() {
       <UserButton />
     </div>
   );
+}
+
+/**
+ * Who is signed in — and null both when nobody is and when nobody asked.
+ *
+ * THE SECOND CASE IS WHY THIS IS A FUNCTION. `auth()` reads request headers
+ * that `proxy.ts` puts there, and a route rendered with
+ * `dynamic = "force-static"` is rendered at BUILD time, where no proxy has run
+ * and there is no request at all. Clerk answers that by throwing "auth() was
+ * called but Clerk can't detect usage of clerkMiddleware()", which names
+ * neither this component nor the page that asked to be prerendered — so
+ * `next build` dies on a route whose own source has nothing to do with
+ * authentication, and the message points at the one file that is innocent.
+ *
+ * It appears only once Clerk is CONFIGURED, because the branch above returns
+ * before `auth()` when it is not. That is the whole reason it shipped: every
+ * check this scaffold runs generated a project with no credentials, so the
+ * header stopped at the first branch and the path that breaks was never taken.
+ *
+ * `headers()` is the detector, not a `try`/`catch` around `auth()`. Next seals
+ * an EMPTY header set for a force-static render and a real request always
+ * carries at least `host`, so an empty set means "there is no request" and
+ * nothing else. Catching the throw instead would also swallow the case this
+ * has to stay loud about — a deployment whose proxy stopped matching a route,
+ * where every signed-in visitor would quietly be handed the signed-out header
+ * and nothing anywhere would say so.
+ *
+ * Signed out is the honest answer for a prerender. Build-time HTML is served
+ * to everybody, so the only header that can be right in it is the one that
+ * assumes nothing about the reader, and the public links render in it either
+ * way. A page that needs the signed-in header must not force static rendering:
+ * `assertNoPrerenderedAuthRoutes` in the generator refuses to emit one that
+ * does, and this is what happens to the ones somebody adds afterwards.
+ */
+async function viewerId(): Promise<string | null> {
+  if ((await headers()).get("host") === null) return null;
+  return (await auth()).userId;
 }
 
 /**
