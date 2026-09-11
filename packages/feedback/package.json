@@ -1,0 +1,50 @@
+{
+  "name": "@adminigloo/feedback",
+  "version": "0.1.0",
+  "description": "The feedback platform primitive: client-key licensing, and the config/upload/submit HTTP contract the feedback widget speaks.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adminigloo/scaffold.git",
+    "directory": "packages/feedback"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./schema": {
+      "types": "./dist/schema.d.ts",
+      "import": "./dist/schema.js",
+      "require": "./dist/schema.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "public"
+  },
+  "dependencies": {
+    "@adminigloo/db": "workspace:^"
+  },
+  "peerDependencies": {
+    "drizzle-orm": "catalog:peers",
+    "zod": "catalog:peers"
+  },
+  "devDependencies": {
+    "drizzle-orm": "catalog:",
+    "zod": "catalog:"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts src/schema.ts --format esm,cjs --dts --clean",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  }
+}
