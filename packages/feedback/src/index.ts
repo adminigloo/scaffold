@@ -1,7 +1,12 @@
 ﻿import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import type { PgDatabase } from "drizzle-orm/pg-core";
 import { z } from "zod";
-import { feedbackClientKeys, feedbackStatuses, feedbackTickets } from "./schema.js";
+import {
+  feedbackClientKeys,
+  feedbackMessages,
+  feedbackStatuses,
+  feedbackTickets,
+} from "./schema.js";
 
 /**
  * The loosest drizzle handle that can run these queries. Naming the app's
@@ -372,6 +377,7 @@ export interface BoardData {
     category: string | null;
     status: string;
     tenantId: string;
+    assignee: string | null;
     reporterName: string | null;
     reporterEmail: string | null;
     pagePathname: string | null;
@@ -424,6 +430,7 @@ export async function listBoardData(db: FeedbackDb): Promise<BoardData> {
       category: feedbackTickets.category,
       status: feedbackTickets.status,
       tenantId: feedbackTickets.tenantId,
+      assignee: feedbackTickets.assignee,
       reporterName: feedbackTickets.reporterName,
       reporterEmail: feedbackTickets.reporterEmail,
       pagePathname: feedbackTickets.pagePathname,
@@ -458,4 +465,84 @@ export async function moveTicket(
     .set({ status: input.statusKey })
     .where(eq(feedbackTickets.id, input.ticketId));
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// The ticket workspace (0.3.0) — conversation and assignment.
+// ---------------------------------------------------------------------------
+
+export interface TicketMessage {
+  id: string;
+  ticketId: string;
+  senderType: "staff" | "reporter" | "system";
+  senderName: string;
+  body: string;
+  createdAt: Date;
+}
+
+/** The full conversation on one ticket, oldest first. */
+export async function listTicketMessages(
+  db: FeedbackDb,
+  ticketId: string,
+): Promise<TicketMessage[]> {
+  return db
+    .select({
+      id: feedbackMessages.id,
+      ticketId: feedbackMessages.ticketId,
+      senderType: feedbackMessages.senderType,
+      senderName: feedbackMessages.senderName,
+      body: feedbackMessages.body,
+      createdAt: feedbackMessages.createdAt,
+    })
+    .from(feedbackMessages)
+    .where(eq(feedbackMessages.ticketId, ticketId))
+    .orderBy(asc(feedbackMessages.createdAt), asc(feedbackMessages.id));
+}
+
+export const addMessageSchema = z.object({
+  ticketId: z.string(),
+  senderType: z.enum(["staff", "reporter", "system"]),
+  senderName: z.string().min(1).max(120),
+  body: z.string().min(1).max(5000),
+});
+
+export async function addTicketMessage(
+  db: FeedbackDb,
+  input: z.infer<typeof addMessageSchema>,
+): Promise<TicketMessage> {
+  const rows = await db
+    .insert(feedbackMessages)
+    .values(input)
+    .returning({
+      id: feedbackMessages.id,
+      ticketId: feedbackMessages.ticketId,
+      senderType: feedbackMessages.senderType,
+      senderName: feedbackMessages.senderName,
+      body: feedbackMessages.body,
+      createdAt: feedbackMessages.createdAt,
+    });
+  const row = rows[0];
+  if (!row) throw new Error("message insert returned no row");
+  return row;
+}
+
+/**
+ * Null assignee unassigns. A "system" message records the handoff in the
+ * conversation itself, so the thread reads as the ticket's history without
+ * joining an audit table.
+ */
+export async function assignTicket(
+  db: FeedbackDb,
+  input: { ticketId: string; assignee: string | null; actorName: string },
+): Promise<void> {
+  await db
+    .update(feedbackTickets)
+    .set({ assignee: input.assignee })
+    .where(eq(feedbackTickets.id, input.ticketId));
+  await addTicketMessage(db, {
+    ticketId: input.ticketId,
+    senderType: "system",
+    senderName: input.actorName,
+    body: input.assignee ? `Assigned to ${input.assignee}` : "Unassigned",
+  });
 }

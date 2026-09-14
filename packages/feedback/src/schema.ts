@@ -90,6 +90,12 @@ export const feedbackTickets = pgTable(
     annotatedScreenshotUrl: text("annotated_screenshot_url"),
     reporterName: text("reporter_name"),
     reporterEmail: text("reporter_email"),
+    /**
+     * Who on staff owns this ticket — display name or email, plain text.
+     * Not an FK: staff identity lives in the consuming platform's user
+     * system, and the board only needs a name to show on the card.
+     */
+    assignee: text("assignee"),
     /** Denormalised from clientMetadata so the triage list can filter without unpacking JSON. */
     pagePathname: text("page_pathname"),
     /** Browser, OS, viewport, URL, click trail, session id — the widget's whole context object. */
@@ -104,4 +110,25 @@ export const feedbackTickets = pgTable(
     index("feedback_tickets_status_idx").on(table.status),
     index("feedback_tickets_created_idx").on(table.createdAt),
   ],
+);
+
+/**
+ * The conversation on a ticket — staff notes and, later, reporter replies.
+ * `senderType` is what renders differently; `senderName` is display text
+ * because neither side's identity system belongs to this schema (staff live
+ * in the platform's user tables, reporters in the buyer's app).
+ */
+export const feedbackMessages = pgTable(
+  "feedback_messages",
+  {
+    id: idColumn(),
+    ticketId: text("ticket_id")
+      .notNull()
+      .references(() => feedbackTickets.id, { onDelete: "cascade" }),
+    senderType: text("sender_type").$type<"staff" | "reporter" | "system">().notNull(),
+    senderName: text("sender_name").notNull(),
+    body: text("body").notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [index("feedback_messages_ticket_idx").on(table.ticketId, table.createdAt)],
 );
