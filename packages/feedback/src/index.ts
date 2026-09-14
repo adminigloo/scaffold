@@ -1,7 +1,7 @@
-﻿import { and, desc, eq, isNull } from "drizzle-orm";
+﻿import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import type { PgDatabase } from "drizzle-orm/pg-core";
 import { z } from "zod";
-import { feedbackClientKeys, feedbackTickets } from "./schema.js";
+import { feedbackClientKeys, feedbackStatuses, feedbackTickets } from "./schema.js";
 
 /**
  * The loosest drizzle handle that can run these queries. Naming the app's
@@ -336,4 +336,126 @@ export function createFeedbackHandlers(options: CreateFeedbackHandlersOptions): 
   }
 
   return { handle };
+}
+
+// ---------------------------------------------------------------------------
+// The board (0.2.0) — server half. The React component is the `./board` entry.
+// ---------------------------------------------------------------------------
+
+export interface BoardStatus {
+  id: string;
+  key: string;
+  label: string;
+  color: string | null;
+  sortOrder: number;
+}
+
+/**
+ * Written on first read of an empty feedback_statuses table, so installing
+ * the board needs a migration and nothing else — no seed script to know
+ * about. Edit the rows afterwards; the board renders whatever is there.
+ */
+export const DEFAULT_BOARD_STATUSES = [
+  { key: "open", label: "Open", color: "#1f6fff", sortOrder: 10 },
+  { key: "in_progress", label: "In progress", color: "#ff8a00", sortOrder: 20 },
+  { key: "resolved", label: "Resolved", color: "#12b23b", sortOrder: 30 },
+  { key: "closed", label: "Closed", color: "#6b7280", sortOrder: 40 },
+] as const;
+
+export interface BoardData {
+  statuses: BoardStatus[];
+  tickets: Array<{
+    id: string;
+    ticketNumber: string;
+    title: string;
+    priority: string;
+    category: string | null;
+    status: string;
+    tenantId: string;
+    reporterName: string | null;
+    reporterEmail: string | null;
+    pagePathname: string | null;
+    screenshotUrl: string | null;
+    annotatedScreenshotUrl: string | null;
+    createdAt: Date;
+  }>;
+}
+
+export async function listBoardData(db: FeedbackDb): Promise<BoardData> {
+  let statuses: BoardStatus[] = await db
+    .select({
+      id: feedbackStatuses.id,
+      key: feedbackStatuses.key,
+      label: feedbackStatuses.label,
+      color: feedbackStatuses.color,
+      sortOrder: feedbackStatuses.sortOrder,
+    })
+    .from(feedbackStatuses)
+    .orderBy(asc(feedbackStatuses.sortOrder));
+
+  if (statuses.length === 0) {
+    // Two concurrent first reads race this insert; the unique index on key
+    // makes the loser a no-op instead of a duplicate column.
+    for (const status of DEFAULT_BOARD_STATUSES) {
+      try {
+        await db.insert(feedbackStatuses).values(status);
+      } catch (error) {
+        if ((error as { code?: string }).code !== "23505") throw error;
+      }
+    }
+    statuses = await db
+      .select({
+        id: feedbackStatuses.id,
+        key: feedbackStatuses.key,
+        label: feedbackStatuses.label,
+        color: feedbackStatuses.color,
+        sortOrder: feedbackStatuses.sortOrder,
+      })
+      .from(feedbackStatuses)
+      .orderBy(asc(feedbackStatuses.sortOrder));
+  }
+
+  const tickets = await db
+    .select({
+      id: feedbackTickets.id,
+      ticketNumber: feedbackTickets.ticketNumber,
+      title: feedbackTickets.title,
+      priority: feedbackTickets.priority,
+      category: feedbackTickets.category,
+      status: feedbackTickets.status,
+      tenantId: feedbackTickets.tenantId,
+      reporterName: feedbackTickets.reporterName,
+      reporterEmail: feedbackTickets.reporterEmail,
+      pagePathname: feedbackTickets.pagePathname,
+      screenshotUrl: feedbackTickets.screenshotUrl,
+      annotatedScreenshotUrl: feedbackTickets.annotatedScreenshotUrl,
+      createdAt: feedbackTickets.createdAt,
+    })
+    .from(feedbackTickets)
+    .orderBy(desc(feedbackTickets.createdAt), desc(feedbackTickets.id))
+    .limit(300);
+
+  return { statuses, tickets };
+}
+
+/**
+ * The one board mutation. Returns false for an unknown status key instead of
+ * writing it — a drop target that does not exist is a stale client, and a
+ * silently invented status would vanish from every column.
+ */
+export async function moveTicket(
+  db: FeedbackDb,
+  input: { ticketId: string; statusKey: string },
+): Promise<boolean> {
+  const status = await db
+    .select({ key: feedbackStatuses.key })
+    .from(feedbackStatuses)
+    .where(eq(feedbackStatuses.key, input.statusKey))
+    .limit(1);
+  if (status.length === 0) return false;
+  await db
+    .update(feedbackTickets)
+    .set({ status: input.statusKey })
+    .where(eq(feedbackTickets.id, input.ticketId));
+  return true;
 }

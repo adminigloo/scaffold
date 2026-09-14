@@ -1,4 +1,4 @@
-import { index, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { index, integer, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { createdAt, idColumn } from "@adminigloo/db";
 
 export type FeedbackPriority = "low" | "medium" | "high" | "critical";
@@ -42,6 +42,28 @@ export const feedbackClientKeys = pgTable(
 );
 
 /**
+ * The board's columns, in order. Rows here ARE the Kanban board: adding one
+ * adds a column, reordering sortOrder reorders the board, and the ticket's
+ * plain-text `status` points at a `key` here. Seeded lazily with the four
+ * defaults on first board read, so installing 0.2.0 needs no seed step.
+ */
+export const feedbackStatuses = pgTable(
+  "feedback_statuses",
+  {
+    id: idColumn(),
+    /** Stable machine name the ticket rows reference: "open", "in_progress". */
+    key: text("key").notNull(),
+    /** What the column header says: "Open", "In progress". */
+    label: text("label").notNull(),
+    /** Column accent, any CSS color. Null renders the neutral accent. */
+    color: text("color"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: createdAt(),
+  },
+  (table) => [uniqueIndex("feedback_statuses_key_idx").on(table.key)],
+);
+
+/**
  * A submitted feedback report, scoped to the tenant whose key submitted it.
  * Deliberately self-contained: reporter identity is denormalised text because
  * the reporter is an end user of the BUYER's app, not a principal in ours.
@@ -58,7 +80,12 @@ export const feedbackTickets = pgTable(
     description: text("description").notNull(),
     priority: text("priority").$type<FeedbackPriority>().notNull().default("medium"),
     category: text("category"),
-    status: text("status").$type<FeedbackTicketStatus>().notNull().default("open"),
+    /**
+     * Plain text pointing at feedback_statuses.key, not $type-narrowed to the
+     * default union: 0.2.0 made statuses configurable, so a custom column key
+     * a client added is a valid value, not a type error.
+     */
+    status: text("status").notNull().default("open"),
     screenshotUrl: text("screenshot_url"),
     annotatedScreenshotUrl: text("annotated_screenshot_url"),
     reporterName: text("reporter_name"),
