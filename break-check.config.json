@@ -8,6 +8,8 @@
     "packages/db",
     "packages/email",
     "packages/env",
+    "packages/feedback",
+    "packages/feedback-widget",
     "packages/observability",
     "packages/permissions",
     "packages/stripe",
