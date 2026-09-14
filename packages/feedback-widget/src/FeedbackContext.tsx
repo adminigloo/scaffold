@@ -11,7 +11,12 @@ import {
 import { captureScreenshot, isUsableScreenshot } from "./screenshot.js";
 import { parseBrowserInfo, parseOSInfo } from "./recorder.js";
 import { useSessionRecorder } from "./useSessionRecorder.js";
-import { FeedbackTransport } from "./transport.js";
+import {
+  FeedbackTransport,
+  type ThreadMessage,
+  type ThreadTicket,
+} from "./transport.js";
+import { loadReports, removeReport, saveReport, type StoredReport } from "./reports.js";
 import { injectStyles } from "./styles.js";
 import type {
   ClientMetadata,
@@ -21,7 +26,19 @@ import type {
   ScreenshotData,
 } from "./types.js";
 
-export type FeedbackStep = "capture" | "annotate" | "describe" | "success";
+export type FeedbackStep =
+  | "capture"
+  | "annotate"
+  | "describe"
+  | "success"
+  | "reports"
+  | "thread";
+
+/** The loaded conversation the thread view renders. */
+export interface ThreadData {
+  ticket: ThreadTicket;
+  messages: ThreadMessage[];
+}
 
 /** Shown until (and in case) the platform's /v1/config is unreachable. */
 const FALLBACK_CATEGORIES: FeedbackCategoryOption[] = [
@@ -43,7 +60,21 @@ export interface FeedbackContextValue {
   isSubmitting: boolean;
   submitError: string | null;
   ticketNumber: string | null;
+  /** Reports this browser has sent, newest first — the "My reports" list. */
+  reports: StoredReport[];
+  /** The report whose thread is open, when step is "thread". */
+  activeReport: StoredReport | null;
+  thread: ThreadData | null;
+  threadLoading: boolean;
+  threadError: string | null;
+  isReplying: boolean;
   openFeedback: () => Promise<void>;
+  /** Open the modal straight onto the report list — no screenshot capture. */
+  openReports: () => void;
+  openThread: (report: StoredReport) => Promise<void>;
+  backToReports: () => void;
+  /** True when the reply landed; the thread is re-fetched before it returns. */
+  sendReply: (body: string) => Promise<boolean>;
   closeFeedback: () => void;
   finishAnnotating: (annotatedDataUrl: string | null) => void;
   setDescription: (value: string) => void;
@@ -84,11 +115,20 @@ export function FeedbackProvider({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [ticketNumber, setTicketNumber] = useState<string | null>(null);
+  const [reports, setReports] = useState<StoredReport[]>([]);
+  const [activeReport, setActiveReport] = useState<StoredReport | null>(null);
+  const [thread, setThread] = useState<ThreadData | null>(null);
+  const [threadLoading, setThreadLoading] = useState(false);
+  const [threadError, setThreadError] = useState<string | null>(null);
+  const [isReplying, setIsReplying] = useState(false);
   const capturingRef = useRef(false);
 
   useEffect(() => {
     injectStyles();
-  }, []);
+    // In an effect, not at render: localStorage does not exist during SSR,
+    // and the first client render must match the server's HTML anyway.
+    setReports(loadReports(config.clientKey));
+  }, [config.clientKey]);
 
   // One config fetch per mount, deferred so it never competes with page load.
   const categoriesLoadedRef = useRef(false);
@@ -134,7 +174,91 @@ export function FeedbackProvider({
     setDescription("");
     setPriority("medium");
     setSubmitError(null);
+    setActiveReport(null);
+    setThread(null);
+    setThreadError(null);
   }, []);
+
+  const openReports = useCallback(() => {
+    // No screenshot, no capture guard: this path photographs nothing. A fresh
+    // read from storage on every open, so a report sent in another tab is
+    // already in the list.
+    setReports(loadReports(config.clientKey));
+    setActiveReport(null);
+    setThread(null);
+    setThreadError(null);
+    setStep("reports");
+    setIsOpen(true);
+  }, [config.clientKey]);
+
+  const openThread = useCallback(
+    async (report: StoredReport) => {
+      setActiveReport(report);
+      setThread(null);
+      setThreadError(null);
+      setStep("thread");
+      setIsOpen(true);
+      setThreadLoading(true);
+      try {
+        const result = await transport.fetchThread(report.ticketNumber, report.token);
+        if (result.ok) {
+          setThread({ ticket: result.ticket, messages: result.messages });
+        } else if (result.gone) {
+          // The platform no longer recognises the pair — the ticket was
+          // deleted, or this entry belongs to a different install. Keeping a
+          // dead row that errors on every tap teaches people the list lies.
+          setReports(removeReport(config.clientKey, report.ticketNumber));
+          setThreadError(
+            `Ticket ${report.ticketNumber} is no longer available, so it has been removed from this list.`,
+          );
+        } else {
+          setThreadError(result.error);
+        }
+      } finally {
+        setThreadLoading(false);
+      }
+    },
+    [transport, config.clientKey],
+  );
+
+  const backToReports = useCallback(() => {
+    setActiveReport(null);
+    setThread(null);
+    setThreadError(null);
+    setStep("reports");
+  }, []);
+
+  const sendReply = useCallback(
+    async (body: string): Promise<boolean> => {
+      if (!activeReport || isReplying) return false;
+      setIsReplying(true);
+      try {
+        const result = await transport.sendReply(
+          activeReport.ticketNumber,
+          activeReport.token,
+          body,
+        );
+        if (!result.ok) {
+          setThreadError(result.error);
+          return false;
+        }
+        // Re-fetch rather than append: the server's copy is the conversation,
+        // and this also picks up any staff reply that landed meanwhile.
+        const refreshed = await transport.fetchThread(
+          activeReport.ticketNumber,
+          activeReport.token,
+        );
+        if (refreshed.ok) {
+          setThread({ ticket: refreshed.ticket, messages: refreshed.messages });
+          setThreadError(null);
+        }
+        return true;
+      } finally {
+        setIsReplying(false);
+      }
+    },
+    [activeReport, isReplying, transport],
+  );
 
   const finishAnnotating = useCallback((annotated: string | null) => {
     setAnnotatedDataUrl(annotated);
@@ -180,6 +304,20 @@ export function FeedbackProvider({
 
       if (result.ok) {
         setTicketNumber(result.ticketNumber);
+        // The follow-up capability, kept where the reporter is: their own
+        // browser. Null from a pre-0.4 platform means the report landed and
+        // there is simply no thread on offer — the list stays as it was.
+        if (result.ticketToken) {
+          const title = (description.split("\n", 1)[0] ?? "").slice(0, 100);
+          setReports(
+            saveReport(config.clientKey, {
+              ticketNumber: result.ticketNumber,
+              title,
+              token: result.ticketToken,
+              createdAt: Date.now(),
+            }),
+          );
+        }
         setStep("success");
       } else {
         setSubmitError(result.error);
@@ -195,6 +333,7 @@ export function FeedbackProvider({
     priority,
     category,
     config.reporter,
+    config.clientKey,
     transport,
     recorder,
     buildClientMetadata,
@@ -226,7 +365,17 @@ export function FeedbackProvider({
     isSubmitting,
     submitError,
     ticketNumber,
+    reports,
+    activeReport,
+    thread,
+    threadLoading,
+    threadError,
+    isReplying,
     openFeedback,
+    openReports,
+    openThread,
+    backToReports,
+    sendReply,
     closeFeedback,
     finishAnnotating,
     setDescription,

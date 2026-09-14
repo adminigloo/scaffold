@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useFeedback } from "./FeedbackContext.js";
 import { AnnotationStage } from "./AnnotationStage.js";
 import { IconCheck, IconSend, IconX } from "./icons.js";
@@ -12,10 +13,24 @@ const PRIORITIES: Array<{ value: FeedbackPriority; label: string }> = [
 
 const MIN_DESCRIPTION = 10;
 
+/** "3m ago" / "2h ago" / "5d ago" — short enough for a list row. */
+function ageOf(value: number | string): string {
+  const then = typeof value === "number" ? value : new Date(value).getTime();
+  const minutes = Math.max(0, Math.round((Date.now() - then) / 60_000));
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
 /**
  * The whole flow in one dialog: capture spinner → annotate → describe →
- * ticket number. Renders nothing while closed; `data-aif-modal` is what the
- * screenshot filter excludes, so the modal never photographs itself.
+ * ticket number — and, since 0.2.0, the other direction: "My reports" lists
+ * what this browser sent and each ticket's thread shows the team's replies,
+ * because feedback someone answered and the reporter never saw is feedback
+ * they stop sending. Renders nothing while closed; `data-aif-modal` is what
+ * the screenshot filter excludes, so the modal never photographs itself.
  */
 export function FeedbackModal() {
   const feedback = useFeedback();
@@ -28,24 +43,54 @@ export function FeedbackModal() {
         ? "Describe what happened"
         : feedback.step === "success"
           ? "Feedback sent"
-          : "Capturing your screen…";
+          : feedback.step === "reports"
+            ? "Everything you've sent from this browser"
+            : feedback.step === "thread"
+              ? (feedback.activeReport?.title ?? "Your report")
+              : "Capturing your screen…";
+
+  const modalTitle =
+    feedback.step === "reports"
+      ? "My reports"
+      : feedback.step === "thread"
+        ? `Ticket ${feedback.activeReport?.ticketNumber ?? ""}`
+        : "Send feedback";
+
+  // The report flow advertises the list only once there is something in it;
+  // the thread view offers the way back instead.
+  const showMyReports =
+    feedback.step !== "reports" &&
+    feedback.step !== "thread" &&
+    feedback.reports.length > 0;
 
   return (
     <div className="aif-root aif-overlay" data-aif-modal role="presentation">
-      <div className="aif-modal" role="dialog" aria-modal="true" aria-label="Send feedback">
+      <div className="aif-modal" role="dialog" aria-modal="true" aria-label={modalTitle}>
         <div className="aif-modal-header">
           <div>
-            <div className="aif-modal-title">Send feedback</div>
+            <div className="aif-modal-title">{modalTitle}</div>
             <div className="aif-modal-sub">{stepTitle}</div>
           </div>
-          <button
-            type="button"
-            className="aif-icon-btn"
-            aria-label="Close"
-            onClick={feedback.closeFeedback}
-          >
-            <IconX />
-          </button>
+          <div className="aif-header-actions">
+            {showMyReports ? (
+              <button type="button" className="aif-btn aif-btn-ghost" onClick={feedback.openReports}>
+                My reports ({feedback.reports.length})
+              </button>
+            ) : null}
+            {feedback.step === "thread" ? (
+              <button type="button" className="aif-btn aif-btn-ghost" onClick={feedback.backToReports}>
+                ← My reports
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="aif-icon-btn"
+              aria-label="Close"
+              onClick={feedback.closeFeedback}
+            >
+              <IconX />
+            </button>
+          </div>
         </div>
 
         <div className="aif-modal-body">
@@ -66,18 +111,11 @@ export function FeedbackModal() {
 
           {feedback.step === "describe" ? <DescribeStep /> : null}
 
-          {feedback.step === "success" ? (
-            <div className="aif-success">
-              <div className="aif-success-badge">
-                <IconCheck />
-              </div>
-              <div className="aif-ticket-number">Ticket {feedback.ticketNumber}</div>
-              <div>Thanks — your report and its context are on their way.</div>
-              <button type="button" className="aif-btn aif-btn-primary" onClick={feedback.closeFeedback}>
-                Done
-              </button>
-            </div>
-          ) : null}
+          {feedback.step === "success" ? <SuccessStep /> : null}
+
+          {feedback.step === "reports" ? <ReportsStep /> : null}
+
+          {feedback.step === "thread" ? <ThreadStep /> : null}
         </div>
       </div>
     </div>
@@ -169,6 +207,158 @@ function DescribeStep() {
         >
           <IconSend />
           {feedback.isSubmitting ? "Sending…" : "Send feedback"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SuccessStep() {
+  const feedback = useFeedback();
+  // Saved only when the platform issued a follow-up token, so this offer is
+  // never made against a platform that cannot honour it.
+  const followable = feedback.reports.some(
+    (report) => report.ticketNumber === feedback.ticketNumber,
+  );
+
+  return (
+    <div className="aif-success">
+      <div className="aif-success-badge">
+        <IconCheck />
+      </div>
+      <div className="aif-ticket-number">Ticket {feedback.ticketNumber}</div>
+      <div>Thanks — your report and its context are on their way.</div>
+      {followable ? (
+        <div className="aif-context-note">
+          When the team answers, their reply appears under My reports — right here, no email
+          needed.
+        </div>
+      ) : null}
+      <div className="aif-success-actions">
+        {followable ? (
+          <button type="button" className="aif-btn aif-btn-ghost" onClick={feedback.openReports}>
+            My reports
+          </button>
+        ) : null}
+        <button type="button" className="aif-btn aif-btn-primary" onClick={feedback.closeFeedback}>
+          Done
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ReportsStep() {
+  const feedback = useFeedback();
+
+  if (feedback.reports.length === 0) {
+    return (
+      <div className="aif-capture">
+        <div>Reports you send from this browser appear here, with the team's replies.</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="aif-reports">
+      {feedback.reports.map((report) => (
+        <button
+          type="button"
+          key={report.ticketNumber}
+          className="aif-report-row"
+          onClick={() => void feedback.openThread(report)}
+        >
+          <span className="aif-report-number">{report.ticketNumber}</span>
+          <span className="aif-report-title">{report.title}</span>
+          <span className="aif-report-age">{ageOf(report.createdAt)}</span>
+        </button>
+      ))}
+      <div className="aif-context-note">
+        This list lives in your browser. Clearing site data forgets it; the reports themselves
+        are safe with the team either way.
+      </div>
+    </div>
+  );
+}
+
+function ThreadStep() {
+  const feedback = useFeedback();
+  const [reply, setReply] = useState("");
+
+  if (feedback.threadLoading) {
+    return (
+      <div className="aif-capture">
+        <div className="aif-spinner" aria-hidden />
+        <div>Loading the conversation…</div>
+      </div>
+    );
+  }
+
+  if (feedback.threadError && !feedback.thread) {
+    return (
+      <div className="aif-form">
+        <div className="aif-error">{feedback.threadError}</div>
+        <button type="button" className="aif-btn aif-btn-ghost" onClick={feedback.backToReports}>
+          Back to my reports
+        </button>
+      </div>
+    );
+  }
+
+  const thread = feedback.thread;
+  if (!thread) return null;
+
+  const canSend = reply.trim().length > 0 && !feedback.isReplying;
+
+  return (
+    <div className="aif-thread">
+      <div className="aif-thread-head">
+        <span className="aif-status-chip">{thread.ticket.statusLabel}</span>
+        <span className="aif-context-note">reported {ageOf(thread.ticket.createdAt)}</span>
+      </div>
+
+      {feedback.threadError ? <div className="aif-error">{feedback.threadError}</div> : null}
+
+      <div className="aif-thread-msgs">
+        {thread.messages.length === 0 ? (
+          <div className="aif-context-note">
+            No replies yet — when the team answers, it shows up right here.
+          </div>
+        ) : (
+          thread.messages.map((message) => (
+            <div
+              key={message.id}
+              className={`aif-msg ${message.senderType === "reporter" ? "aif-msg-mine" : "aif-msg-team"}`}
+            >
+              <div className="aif-msg-meta">
+                <span>{message.senderType === "reporter" ? "You" : message.senderName}</span>
+                <span>{ageOf(message.createdAt)}</span>
+              </div>
+              <div className="aif-msg-body">{message.body}</div>
+            </div>
+          ))
+        )}
+      </div>
+
+      <div className="aif-reply-row">
+        <textarea
+          className="aif-textarea aif-reply-input"
+          placeholder="Write a reply…"
+          value={reply}
+          onChange={(event) => setReply(event.target.value)}
+        />
+        <button
+          type="button"
+          className="aif-btn aif-btn-primary"
+          disabled={!canSend}
+          onClick={() => {
+            void feedback.sendReply(reply.trim()).then((sent) => {
+              if (sent) setReply("");
+            });
+          }}
+        >
+          <IconSend />
+          {feedback.isReplying ? "Sending…" : "Reply"}
         </button>
       </div>
     </div>

@@ -96,6 +96,16 @@ export const feedbackTickets = pgTable(
      * system, and the board only needs a name to show on the card.
      */
     assignee: text("assignee"),
+    /**
+     * SHA-256 hex of the per-ticket reporter token (0.4.0). The plaintext is
+     * returned exactly once, in the submit response, and lives only in the
+     * reporter's own browser — a capability, not an account. It is what lets
+     * an anonymous end user read staff replies and answer them without ever
+     * having an identity here, which is the same reason reporter_name above
+     * is denormalised text. Null on tickets submitted before 0.4: those
+     * reporters hold no token, so their thread is staff-side only.
+     */
+    reporterTokenHash: text("reporter_token_hash"),
     /** Denormalised from clientMetadata so the triage list can filter without unpacking JSON. */
     pagePathname: text("page_pathname"),
     /** Browser, OS, viewport, URL, click trail, session id — the widget's whole context object. */

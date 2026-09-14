@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/feedback-widget",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "The sellable feedback widget: screenshot capture, annotation, session recording, and submission to an AdminIgloo feedback platform — React is its only peer.",
   "license": "UNLICENSED",
   "type": "module",

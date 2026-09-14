@@ -92,13 +92,13 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   billing: "0.2.0",
   ai: "0.1.3",
   email: "0.2.1",
-  // 0.3.0 for the ticket workspace. The emitted board page imports
-  // `TicketPanel` from ./board and the emitted router imports
-  // `listTicketMessages`, `addTicketMessage` and `assignTicket`; none of the
-  // four exist in 0.2.x, so a project resolving the old line fails to compile
-  // on files the generator wrote.
-  feedback: "0.3.0",
-  "feedback-widget": "0.1.0",
+  // 0.4.0 for reporter-side replies. The emitted intake route serves
+  // /v1/thread and /v1/reply only from 0.4.0, and the 0.2.0 widget the same
+  // project installs calls both — a 0.3.x platform would strand every
+  // "My reports" tap on a 404 the widget reads as a deleted ticket.
+  feedback: "0.4.0",
+  // 0.2.0 for the "My reports" view those endpoints exist to serve.
+  "feedback-widget": "0.2.0",
   // A devDependency of every generated project rather than a dependency, and
   // it belongs here all the same. `renderPackageJson` spelled `^0.1.1` out
   // inline, which put a fourteenth version in a place no drift test looked at —

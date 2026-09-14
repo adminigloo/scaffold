@@ -26,18 +26,50 @@ export type { FeedbackPriority, FeedbackTicketStatus } from "./schema.js";
 export const CLIENT_KEY_PREFIX = "aik_";
 export const CLIENT_KEY_HEADER = "x-adminigloo-key";
 
+function randomHexToken(prefix: string): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(20));
+  return prefix + Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 /** 20 random bytes as hex behind the prefix; the plaintext exists only in the issuance response. */
 export function generateClientKey(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(20));
-  return (
-    CLIENT_KEY_PREFIX +
-    Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")
-  );
+  return randomHexToken(CLIENT_KEY_PREFIX);
 }
 
 export async function hashClientKey(key: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key));
-  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+  return sha256Hex(key);
+}
+
+// ---------------------------------------------------------------------------
+// Reporter tokens (0.4.0) — the follow-up capability
+// ---------------------------------------------------------------------------
+
+/**
+ * `aft_…` — "adminigloo feedback ticket". A DIFFERENT prefix from client keys
+ * on purpose: the two secrets have wildly different blast radii (a client key
+ * submits for a whole tenant; a ticket token reads one thread), and a prefix
+ * is what lets a leaked string in a log be triaged at a glance.
+ */
+export const REPORTER_TOKEN_PREFIX = "aft_";
+
+/**
+ * Issued per ticket at submit, returned exactly once in the submit response,
+ * and held only by the reporter's browser. It is a capability, not an
+ * account: end users of the buyer's app have no identity here and must not
+ * need one — the person most likely to report a sign-in problem is the
+ * person who cannot sign in.
+ */
+export function generateReporterToken(): string {
+  return randomHexToken(REPORTER_TOKEN_PREFIX);
+}
+
+export async function hashReporterToken(token: string): Promise<string> {
+  return sha256Hex(token);
 }
 
 export interface IssuedClientKey {
@@ -154,6 +186,21 @@ export const submitPayloadSchema = z.object({
 
 export type SubmitPayload = z.infer<typeof submitPayloadSchema>;
 
+/**
+ * Thread requests are POST bodies rather than GET query strings, so the
+ * ticket token never appears in a URL — request paths land in every hosting
+ * provider's access logs, and a capability in a log line is a capability
+ * whoever reads logs holds.
+ */
+export const threadRequestSchema = z.object({
+  ticketNumber: z.string().min(1).max(20),
+  ticketToken: z.string().min(1).max(100),
+});
+
+export const replyRequestSchema = threadRequestSchema.extend({
+  body: z.string().min(1).max(5000),
+});
+
 export interface FeedbackCategoryOption {
   key: string;
   label: string;
@@ -218,7 +265,10 @@ export interface CreateFeedbackHandlersOptions {
 }
 
 export interface FeedbackHandlers {
-  /** Route by suffix: GET /v1/config, POST /v1/upload, POST /v1/submit, OPTIONS anything. */
+  /**
+   * Route by suffix: GET /v1/config, POST /v1/upload, POST /v1/submit,
+   * POST /v1/thread, POST /v1/reply, OPTIONS anything.
+   */
   handle: (req: Request) => Promise<Response>;
 }
 
@@ -299,6 +349,12 @@ export function createFeedbackHandlers(options: CreateFeedbackHandlersOptions): 
     const payload = parsed.data;
     const title = (payload.description.split("\n", 1)[0] ?? "").slice(0, 100);
 
+    // The follow-up capability, minted with the ticket. The plaintext goes
+    // out in this response and nowhere else; the row keeps only the hash, the
+    // same one-way promise the client keys make.
+    const ticketToken = generateReporterToken();
+    const reporterTokenHash = await hashReporterToken(ticketToken);
+
     // The unique index on ticket_number is the arbiter; two concurrent
     // submits can compute the same number, so the loser retries with a fresh one.
     for (let attempt = 0; ; attempt++) {
@@ -316,17 +372,149 @@ export function createFeedbackHandlers(options: CreateFeedbackHandlersOptions): 
           annotatedScreenshotUrl: payload.annotatedScreenshotUrl,
           reporterName: payload.reporter?.name,
           reporterEmail: payload.reporter?.email,
+          reporterTokenHash,
           pagePathname: payload.clientMetadata.pathname,
           clientMetadata: payload.clientMetadata,
           recentErrors: payload.recentErrors ?? [],
         });
-        return json({ ticketNumber }, 201);
+        return json({ ticketNumber, ticketToken }, 201);
       } catch (error) {
         const code = (error as { code?: string }).code;
         if (code === "23505" && attempt < 3) continue;
         throw error;
       }
     }
+  }
+
+  /**
+   * Resolve a {ticketNumber, ticketToken} pair to the ticket it authorises.
+   *
+   * ONE ANSWER FOR EVERY FAILURE — unknown number, another tenant's ticket, a
+   * pre-0.4 ticket with no token, a wrong token — because distinct answers
+   * would let anyone holding a client key enumerate which ticket numbers
+   * exist and whose they are. 404 with the same body, always.
+   */
+  async function authorizeReporter(
+    auth: VerifiedClientKey,
+    input: z.infer<typeof threadRequestSchema>,
+  ): Promise<
+    | {
+        id: string;
+        ticketNumber: string;
+        title: string;
+        status: string;
+        reporterName: string | null;
+        reporterEmail: string | null;
+        createdAt: Date;
+      }
+    | Response
+  > {
+    const notFound = () => json({ error: "unknown ticket" }, 404);
+    const rows = await db
+      .select({
+        id: feedbackTickets.id,
+        tenantId: feedbackTickets.tenantId,
+        ticketNumber: feedbackTickets.ticketNumber,
+        title: feedbackTickets.title,
+        status: feedbackTickets.status,
+        reporterName: feedbackTickets.reporterName,
+        reporterEmail: feedbackTickets.reporterEmail,
+        reporterTokenHash: feedbackTickets.reporterTokenHash,
+        createdAt: feedbackTickets.createdAt,
+      })
+      .from(feedbackTickets)
+      .where(eq(feedbackTickets.ticketNumber, input.ticketNumber))
+      .limit(1);
+    const ticket = rows[0];
+    if (!ticket) return notFound();
+    if (ticket.tenantId !== auth.tenantId) return notFound();
+    if (!ticket.reporterTokenHash) return notFound();
+    if ((await hashReporterToken(input.ticketToken)) !== ticket.reporterTokenHash) {
+      return notFound();
+    }
+    return ticket;
+  }
+
+  /** Message rows a reporter may see: the conversation, minus the internal handoffs. */
+  function reporterVisible(messages: TicketMessage[]): TicketMessage[] {
+    // System messages are staff narration — "Assigned to X" names your
+    // colleagues and your workload to someone outside the firm. The reporter
+    // sees what was said TO them and BY them, nothing about the kitchen.
+    return messages.filter((message) => message.senderType !== "system");
+  }
+
+  async function handleThread(req: Request): Promise<Response> {
+    const auth = await authenticate(req);
+    if (auth instanceof Response) return auth;
+
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return json({ error: "expected a JSON body" }, 400);
+    }
+    const parsed = threadRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      return json({ error: "invalid payload", issues: parsed.error.issues }, 400);
+    }
+    const ticket = await authorizeReporter(auth, parsed.data);
+    if (ticket instanceof Response) return ticket;
+
+    // The status LABEL rides along so the widget can say "In progress"
+    // without knowing the board's configuration; the raw key would leak an
+    // internal vocabulary a client may have customised.
+    const statusRows = await db
+      .select({ label: feedbackStatuses.label })
+      .from(feedbackStatuses)
+      .where(eq(feedbackStatuses.key, ticket.status))
+      .limit(1);
+
+    const messages = reporterVisible(await listTicketMessages(db, ticket.id));
+    return json({
+      ticket: {
+        ticketNumber: ticket.ticketNumber,
+        title: ticket.title,
+        status: ticket.status,
+        statusLabel: statusRows[0]?.label ?? ticket.status,
+        createdAt: ticket.createdAt,
+      },
+      messages: messages.map((message) => ({
+        id: message.id,
+        senderType: message.senderType,
+        senderName: message.senderName,
+        body: message.body,
+        createdAt: message.createdAt,
+      })),
+    });
+  }
+
+  async function handleReply(req: Request): Promise<Response> {
+    const auth = await authenticate(req);
+    if (auth instanceof Response) return auth;
+
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return json({ error: "expected a JSON body" }, 400);
+    }
+    const parsed = replyRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      return json({ error: "invalid payload", issues: parsed.error.issues }, 400);
+    }
+    const ticket = await authorizeReporter(auth, parsed.data);
+    if (ticket instanceof Response) return ticket;
+
+    // The name is whatever the ticket already carries — the token proves
+    // "the person who filed this", so the reply is attributed to exactly
+    // that, never to a name the request body could invent.
+    const message = await addTicketMessage(db, {
+      ticketId: ticket.id,
+      senderType: "reporter",
+      senderName: ticket.reporterName ?? ticket.reporterEmail ?? "Reporter",
+      body: parsed.data.body,
+    });
+    return json({ message }, 201);
   }
 
   async function handle(req: Request): Promise<Response> {
@@ -337,6 +525,8 @@ export function createFeedbackHandlers(options: CreateFeedbackHandlersOptions): 
     if (pathname.endsWith("/v1/config") && req.method === "GET") return handleConfig(req);
     if (pathname.endsWith("/v1/upload") && req.method === "POST") return handleUpload(req);
     if (pathname.endsWith("/v1/submit") && req.method === "POST") return handleSubmit(req);
+    if (pathname.endsWith("/v1/thread") && req.method === "POST") return handleThread(req);
+    if (pathname.endsWith("/v1/reply") && req.method === "POST") return handleReply(req);
     return json({ error: "not found" }, 404);
   }
 

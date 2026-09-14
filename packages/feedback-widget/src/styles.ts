@@ -134,8 +134,44 @@ const CSS_TEXT = `
 }
 .aif-context-note { font-size: 12px; color: #6b7280; }
 
+/* Header actions (My reports / back) */
+.aif-header-actions { display: flex; align-items: center; gap: 8px; }
+
+/* My reports list */
+.aif-reports { display: flex; flex-direction: column; gap: 8px; }
+.aif-report-row {
+  display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left;
+  border: 1px solid #e7e9ec; border-radius: 10px; padding: 11px 13px;
+  background: #ffffff; cursor: pointer; font: inherit; color: inherit;
+  transition: background .12s ease, border-color .12s ease;
+}
+.aif-report-row:hover { background: #f7f8f9; border-color: #d4d8dd; }
+.aif-report-number { font-weight: 700; font-size: 12px; white-space: nowrap; }
+.aif-report-title {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.aif-report-age { font-size: 12px; color: #6b7280; white-space: nowrap; }
+
+/* Thread view */
+.aif-thread { display: flex; flex-direction: column; gap: 12px; }
+.aif-thread-head { display: flex; align-items: center; gap: 10px; }
+.aif-status-chip {
+  display: inline-flex; align-items: center; border-radius: 999px;
+  padding: 3px 10px; font-size: 12px; font-weight: 600;
+  background: #eef1f4; color: #40444b;
+}
+.aif-thread-msgs { display: flex; flex-direction: column; gap: 8px; }
+.aif-msg { border: 1px solid #e7e9ec; border-radius: 10px; padding: 9px 12px; font-size: 13px; }
+.aif-msg-team { background: #f4f6ff; border-color: #dfe4fb; }
+.aif-msg-mine { background: #ffffff; }
+.aif-msg-meta { display: flex; gap: 8px; font-size: 11px; color: #6b7280; margin-bottom: 3px; }
+.aif-msg-body { white-space: pre-wrap; }
+.aif-reply-row { display: flex; gap: 10px; align-items: flex-end; }
+.aif-reply-input { flex: 1; min-height: 64px; }
+
 /* Success step */
 .aif-success { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 42px 0; text-align: center; }
+.aif-success-actions { display: flex; gap: 10px; margin-top: 4px; }
 .aif-success-badge {
   width: 44px; height: 44px; border-radius: 50%; background: #eaf7ee; color: #217a3c;
   display: flex; align-items: center; justify-content: center;
