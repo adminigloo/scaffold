@@ -1,5 +1,18 @@
 # @adminigloo/feedback-widget
 
+## 0.2.1
+
+### Patch Changes
+
+- The glacier re-skin. Both embedded surfaces — the widget's `aif-` styles and
+  the board's `aib-` styles — now carry their own complete token set as custom
+  properties, including a dark theme decided by `prefers-color-scheme`: they
+  render inside apps whose themes they cannot know, and a hardcoded white
+  dialog in a dark host reads as a foreign object. Visuals move to the glacial
+  teal brand accent (the FAB now wears it), softer radii, a real shadow scale,
+  and status chips as pills. Class names are unchanged, so nothing consuming
+  either surface needs to change.
+
 ## 0.2.0
 
 ### Minor Changes
