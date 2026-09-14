@@ -291,6 +291,27 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
       ) && exists(plan, "src", "emails", "invitation.ts"),
   },
   {
+    capability: "feedback.intake",
+    why:
+      "The key-authenticated API route AND the widget mount that feeds it. " +
+      "Both, because either alone is half a capability: handlers nobody can " +
+      "reach from a page, or a button posting into a 404.",
+    provenBy: (plan) =>
+      mentions(
+        plan,
+        ["app", "api", "igloo", "[...path]", "route.ts"],
+        "createFeedbackHandlers(",
+      ) && exists(plan, "src", "components", "FeedbackWidget.tsx"),
+  },
+  {
+    capability: "feedback.triage",
+    why:
+      "The staff queue page, from the feedback-admin overlay — copied only " +
+      "when the project has both the feedback answer and an admin shell to " +
+      "render it in, the same two-condition shape as the product builder.",
+    provenBy: (plan) => exists(plan, "app", "admin", "feedback", "page.tsx"),
+  },
+  {
     capability: "ai.streaming",
     why:
       "A route that opens a stream through `createStreamRoute`. THE CLAIM " +

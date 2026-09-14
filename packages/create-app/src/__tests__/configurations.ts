@@ -41,39 +41,48 @@ export const EVERY_CONFIGURATION: readonly Configuration[] = TENANT_NOUNS.flatMa
       ADMIN_SHELLS.flatMap((adminShell) =>
         BOTH.flatMap((includeAi) =>
           BOTH.flatMap((includeEmail) =>
-            // The public face is its own axis, so it is swept like the others.
-            // It has to be: `--marketing` moves `app/(site)/page.tsx` from a
-            // generated file to an overlay one and adds three routes and two
-            // generated modules, which is a bigger structural difference than
-            // `--email` makes — and a dimension left out of this product is a
-            // dimension the exhaustive sweep is not exhaustive over.
-            BOTH.map((includeMarketing): Configuration => {
-              const flags = [
-                "--tenant-noun",
-                tenantNoun,
-                "--model",
-                businessModel,
-                "--admin",
-                adminShell,
-                includeAi ? "--ai" : "--no-ai",
-                includeEmail ? "--email" : "--no-email",
-                includeMarketing ? "--marketing" : "--no-marketing",
-              ];
-              return {
-                label: flags.join(" "),
-                flags,
-                answers: {
-                  ...DEFAULT_ANSWERS,
-                  projectName: "acme",
+            // Feedback is an axis for the same reason marketing is, plus one
+            // of its own: it is the first answer that changes a GENERATED base
+            // file (`app/layout.tsx` gains the widget mount), and it selects
+            // one overlay or two depending on the admin shell — a coupling
+            // only a full product can exercise in every pairing.
+            BOTH.flatMap((includeFeedback) =>
+              // The public face is its own axis, so it is swept like the others.
+              // It has to be: `--marketing` moves `app/(site)/page.tsx` from a
+              // generated file to an overlay one and adds three routes and two
+              // generated modules, which is a bigger structural difference than
+              // `--email` makes — and a dimension left out of this product is a
+              // dimension the exhaustive sweep is not exhaustive over.
+              BOTH.map((includeMarketing): Configuration => {
+                const flags = [
+                  "--tenant-noun",
                   tenantNoun,
+                  "--model",
                   businessModel,
+                  "--admin",
                   adminShell,
-                  includeAi,
-                  includeEmail,
-                  includeMarketing,
-                },
-              };
-            }),
+                  includeAi ? "--ai" : "--no-ai",
+                  includeEmail ? "--email" : "--no-email",
+                  includeFeedback ? "--feedback" : "--no-feedback",
+                  includeMarketing ? "--marketing" : "--no-marketing",
+                ];
+                return {
+                  label: flags.join(" "),
+                  flags,
+                  answers: {
+                    ...DEFAULT_ANSWERS,
+                    projectName: "acme",
+                    tenantNoun,
+                    businessModel,
+                    adminShell,
+                    includeAi,
+                    includeEmail,
+                    includeFeedback,
+                    includeMarketing,
+                  },
+                };
+              }),
+            ),
           ),
         ),
       ),

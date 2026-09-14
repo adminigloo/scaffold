@@ -27,23 +27,27 @@ const EVERY_CONFIGURATION = ["none", "one-time", "subscription", "both"].flatMap
     ["none", "minimal", "full"].flatMap((adminShell) =>
       [true, false].flatMap((includeAi) =>
         [true, false].flatMap((includeEmail) =>
-          [true, false].flatMap((includeMarketing) =>
-            ["Organization", "none"].map(
-              (tenantNoun) =>
-                [
-                  `--model ${businessModel} --admin ${adminShell}` +
-                    `${includeAi ? " --ai" : ""}${includeEmail ? " --email" : ""}` +
-                    `${includeMarketing ? " --marketing" : ""}` +
-                    ` --tenant ${tenantNoun}`,
-                  {
-                    businessModel,
-                    adminShell,
-                    includeAi,
-                    includeEmail,
-                    includeMarketing,
-                    tenantNoun,
-                  },
-                ] as const,
+          [true, false].flatMap((includeFeedback) =>
+            [true, false].flatMap((includeMarketing) =>
+              ["Organization", "none"].map(
+                (tenantNoun) =>
+                  [
+                    `--model ${businessModel} --admin ${adminShell}` +
+                      `${includeAi ? " --ai" : ""}${includeEmail ? " --email" : ""}` +
+                      `${includeFeedback ? " --feedback" : ""}` +
+                      `${includeMarketing ? " --marketing" : ""}` +
+                      ` --tenant ${tenantNoun}`,
+                    {
+                      businessModel,
+                      adminShell,
+                      includeAi,
+                      includeEmail,
+                      includeFeedback,
+                      includeMarketing,
+                      tenantNoun,
+                    },
+                  ] as const,
+              ),
             ),
           ),
         ),
@@ -171,6 +175,130 @@ describe("the manifest can prove everything it claims", () => {
       expect(row.why.length, `${row.capability} has no stated evidence`)
         .toBeGreaterThan(40);
     }
+  });
+});
+
+describe("the feedback overlays are what make feedback.* true", () => {
+  it("emits the intake route and the widget mount, only with --feedback", async () => {
+    const withFeedback = await planEmit(
+      TEMPLATE_DIR,
+      "/out",
+      answers({ includeFeedback: true }),
+    );
+    const route = withFeedback.files.get(
+      join("app", "api", "igloo", "[...path]", "route.ts"),
+    );
+    expect(route, "--feedback emits no intake route").toBeDefined();
+    expect(route).toContain("createFeedbackHandlers(");
+    // The layout mounts the wrapper and the wrapper exists. Half of this is a
+    // GENERATED file changing shape on the answer — the first one an optional
+    // feature has ever changed — so it is asserted here rather than assumed.
+    expect(
+      withFeedback.files.get(join("src", "components", "FeedbackWidget.tsx")),
+    ).toContain("FeedbackProvider");
+    expect(withFeedback.files.get(join("app", "layout.tsx"))).toContain(
+      "<FeedbackWidget>",
+    );
+
+    const without = await planEmit(TEMPLATE_DIR, "/out", answers());
+    expect(
+      without.files.has(join("app", "api", "igloo", "[...path]", "route.ts")),
+    ).toBe(false);
+    expect(
+      without.files.has(join("src", "components", "FeedbackWidget.tsx")),
+    ).toBe(false);
+    expect(without.files.get(join("app", "layout.tsx"))).not.toContain(
+      "FeedbackWidget",
+    );
+  });
+
+  it("reads its environment only through src/env.ts", async () => {
+    // The testbed integration this overlay was ported from read
+    // process.env.ADMINIGLOO_FEEDBACK_KEY in the layout and BLOB_READ_WRITE_TOKEN
+    // in the route — both violations of the one hard rule the env module
+    // states. The port routes both through `env`, and this keeps it that way.
+    const plan = await planEmit(TEMPLATE_DIR, "/out", answers({ includeFeedback: true }));
+    for (const path of [
+      join("app", "api", "igloo", "[...path]", "route.ts"),
+      join("src", "components", "FeedbackWidget.tsx"),
+    ]) {
+      const source = plan.files.get(path) ?? "";
+      expect(source, `${path} was not emitted`).not.toBe("");
+      expect(source, `${path} reads process.env directly`).not.toContain(
+        "process.env.",
+      );
+    }
+    const envModule = plan.files.get(join("src", "env.ts")) ?? "";
+    expect(envModule).toContain("ADMINIGLOO_FEEDBACK_KEY");
+    expect(envModule).toContain("BLOB_READ_WRITE_TOKEN");
+  });
+
+  it("mounts a router that reads what the route writes", async () => {
+    // The error-log rule: an intake surface whose tickets nothing reads is a
+    // table filling up in silence. The router must exist AND be mounted, in
+    // every project that takes feedback — including one with no admin shell,
+    // where tRPC is the only reader there is.
+    const plan = await planEmit(
+      TEMPLATE_DIR,
+      "/out",
+      answers({ includeFeedback: true, adminShell: "none" }),
+    );
+    expect(
+      plan.files.get(join("src", "server", "routers", "feedback.ts")),
+    ).toContain("listBoardData");
+    expect(
+      plan.files.get(join("src", "server", "routers", "_app.ts")),
+    ).toContain("feedback: feedbackRouter");
+  });
+
+  it("copies the triage pages only where there is a shell to hold them", async () => {
+    // The catalog-admin rule, applied to feedback: an admin page in a project
+    // generated with --admin none is a route with no layout, no sidebar entry
+    // and no way in.
+    const noShell = await planEmit(
+      TEMPLATE_DIR,
+      "/out",
+      answers({ includeFeedback: true, adminShell: "none" }),
+    );
+    expect(noShell.files.has(join("app", "admin", "feedback", "page.tsx"))).toBe(false);
+
+    const withShell = await planEmit(
+      TEMPLATE_DIR,
+      "/out",
+      answers({ includeFeedback: true, adminShell: "minimal" }),
+    );
+    expect(withShell.files.has(join("app", "admin", "feedback", "page.tsx"))).toBe(true);
+    expect(
+      withShell.files.has(join("app", "admin", "feedback", "board", "page.tsx")),
+    ).toBe(true);
+    // And the sidebar knows, because which items exist is decided at
+    // generation — the People/Roles 404 rule.
+    expect(
+      withShell.files.get(join("src", "components", "admin", "AdminNav.tsx")),
+    ).toContain("/admin/feedback");
+  });
+
+  it("declares the storage SDK the emitted route imports", async () => {
+    // The pino rule: the route chose Vercel Blob, so the app's manifest names
+    // it — the feedback package deliberately depends on no storage vendor.
+    const plan = await planEmit(TEMPLATE_DIR, "/out", answers({ includeFeedback: true }));
+    const pkg = JSON.parse(plan.files.get("package.json") ?? "{}") as {
+      dependencies: Record<string, string>;
+      scripts: Record<string, string>;
+    };
+    expect(pkg.dependencies["@vercel/blob"]).toBeDefined();
+    expect(pkg.dependencies["@adminigloo/feedback"]).toBeDefined();
+    expect(pkg.dependencies["@adminigloo/feedback-widget"]).toBeDefined();
+    // The key-issuing script is reachable as a script entry, because a widget
+    // that stays dark until a command runs needs the command to be findable.
+    expect(pkg.scripts["feedback:issue-key"]).toContain("issue-feedback-key");
+
+    const bare = JSON.parse(
+      (await planEmit(TEMPLATE_DIR, "/out", answers())).files.get("package.json") ?? "{}",
+    ) as { dependencies: Record<string, string>; scripts: Record<string, string> };
+    expect(bare.dependencies["@vercel/blob"]).toBeUndefined();
+    expect(bare.dependencies["@adminigloo/feedback"]).toBeUndefined();
+    expect(bare.scripts["feedback:issue-key"]).toBeUndefined();
   });
 });
 

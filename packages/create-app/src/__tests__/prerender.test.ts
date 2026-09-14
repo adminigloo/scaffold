@@ -64,8 +64,10 @@ const SITE_LAYOUT = `
  * Every configuration planned once, and both properties read off the same
  * sweep.
  *
- * Two hundred and forty `planEmit` calls is fifteen seconds of file reading,
- * and doing it twice to ask two questions about the same plans is thirty. A
+ * Four hundred and eighty `planEmit` calls is half a minute of file reading —
+ * past the default test timeout on its own, which is why the two tests that
+ * await this sweep carry explicit ones — and doing it twice to ask two
+ * questions about the same plans would be a minute. A
  * configuration that trips the rule is recorded rather than thrown, because
  * `planEmit` now runs the assertion itself and an uncaught throw here would
  * report the first bad configuration and hide the shape of the fault.
@@ -173,7 +175,9 @@ describe("the detector finds the layout the session is read from", () => {
         `detector has gone blind and the rule it guards is now decorative:\n\n` +
         `${blind.join("\n")}\n`,
     ).toEqual([]);
-  });
+    // The timeout is the sweep's, not this test's: whichever of the two
+    // sweep-readers runs first pays for all 480 plans.
+  }, 180_000);
 });
 
 describe("no emitted page forces a prerender under it", () => {
@@ -183,7 +187,7 @@ describe("no emitted page forces a prerender under it", () => {
       .map((result) => `${result.label}\n    ${result.refused ?? ""}`);
 
     expect(problems, `\n${problems.join("\n\n")}\n`).toEqual([]);
-  });
+  }, 180_000);
 
   it("holds for the email preview in particular, which is where it broke", async () => {
     // The regression pin. It reads nothing and renders sample data, which is

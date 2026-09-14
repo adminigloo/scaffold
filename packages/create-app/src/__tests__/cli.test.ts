@@ -860,6 +860,8 @@ describe("non-interactive flags", () => {
     expect(parseArgs(["--ai"]).ai).toBe(true);
     expect(parseArgs(["--no-ai"]).ai).toBe(false);
     expect(parseArgs(["--email"]).email).toBe(true);
+    expect(parseArgs(["--feedback"]).feedback).toBe(true);
+    expect(parseArgs(["--no-feedback"]).feedback).toBe(false);
   });
 
   it("does not mistake a flag's value for the project name", () => {
@@ -1035,7 +1037,12 @@ describe("derived modules", () => {
     // tables silently excluded from every migration: the app compiles, boots,
     // and fails on the first insert against a table nobody created.
     const full = renderSchemaModule(
-      answers({ businessModel: "both", includeAi: true, includeEmail: true }),
+      answers({
+        businessModel: "both",
+        includeAi: true,
+        includeEmail: true,
+        includeFeedback: true,
+      }),
     );
     for (const pkg of [
       "auth",
@@ -1048,6 +1055,7 @@ describe("derived modules", () => {
       "billing",
       "ai",
       "email",
+      "feedback",
     ]) {
       expect(full, `missing ${pkg}/schema`).toContain(`@adminigloo/${pkg}/schema"`);
     }
@@ -2978,6 +2986,7 @@ describe("nothing 500s on a project with no credentials", () => {
     adminShell: "full",
     includeAi: true,
     includeEmail: true,
+    includeFeedback: true,
   };
 
   it("asks the database handle before it reads, on every public page that reads", async () => {
@@ -3132,8 +3141,20 @@ describe("this suite's own assertions", () => {
   async function emittedCorpus(): Promise<string[]> {
     const corpus: string[] = [];
     for (const overrides of [
-      { businessModel: "both", adminShell: "full", includeAi: true, includeEmail: true },
-      { businessModel: "none", adminShell: "none", includeAi: false, includeEmail: false },
+      {
+        businessModel: "both",
+        adminShell: "full",
+        includeAi: true,
+        includeEmail: true,
+        includeFeedback: true,
+      },
+      {
+        businessModel: "none",
+        adminShell: "none",
+        includeAi: false,
+        includeEmail: false,
+        includeFeedback: false,
+      },
     ] as const) {
       const plan = await planEmit(TEMPLATE_DIR, "/out", answers(overrides));
       corpus.push(...plan.files.values());

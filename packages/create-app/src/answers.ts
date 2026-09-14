@@ -46,6 +46,22 @@ export interface Answers {
   readonly includeAi: boolean;
   readonly includeEmail: boolean;
   /**
+   * In-app feedback: the end-user widget, the key-authenticated intake API,
+   * and — when there is an admin shell to put them in — the staff queue and
+   * Kanban board that triage what arrives.
+   *
+   * A boolean like `includeAi` rather than a shape of its own, because the
+   * only structural fork inside it (does the triage UI exist?) is already
+   * answered by `adminShell`, exactly the way `catalog-admin` reads two
+   * answers rather than inventing a third.
+   *
+   * DEFAULTS TO FALSE. The widget does not mount until a client key is issued
+   * and pasted into ADMINIGLOO_FEEDBACK_KEY, so a default-on feedback feature
+   * would put an intake API and an empty queue in every internal tool that
+   * never asked for one — surface with nothing behind it.
+   */
+  readonly includeFeedback: boolean;
+  /**
    * Does this project have a PUBLIC FACE — a landing page, a pricing page, a
    * privacy policy — or is it only the application behind the sign-in?
    *
@@ -81,6 +97,7 @@ export const DEFAULT_ANSWERS: Answers = {
   adminShell: "minimal",
   includeAi: false,
   includeEmail: false,
+  includeFeedback: false,
   includeMarketing: false,
   scope: "@adminigloo",
 };
@@ -158,6 +175,14 @@ export function packagesFor(answers: Answers): readonly string[] {
 
   if (answers.includeAi) optional.push("ai");
   if (answers.includeEmail) optional.push("email");
+
+  // Two packages for one answer, deliberately. `feedback` is the platform
+  // half — schema, key issuance, the HTTP handlers — and `feedback-widget` is
+  // the client SDK the layout mounts. They version independently (a widget
+  // capture fix is not a schema change), and a client buying only the widget
+  // against a hosted platform installs exactly one of them, so folding them
+  // into one package here would misstate what is actually for sale.
+  if (answers.includeFeedback) optional.push("feedback", "feedback-widget");
 
   return [...base, ...optional].map((p) => `${answers.scope}/${p}`);
 }
@@ -246,6 +271,13 @@ export function optionalEnvFor(answers: Answers): readonly string[] {
   }
   if (answers.includeEmail) {
     vars.push("EMAIL_REPLY_TO", "RESEND_WEBHOOK_SECRET");
+  }
+  if (answers.includeFeedback) {
+    // Both optional because both degrade rather than disable the app. Without
+    // the key the widget is simply not mounted — the intake API still answers,
+    // so another app holding a key can still submit. Without the blob token,
+    // uploads answer 503 {skipped} and reports arrive without screenshots.
+    vars.push("ADMINIGLOO_FEEDBACK_KEY", "BLOB_READ_WRITE_TOKEN");
   }
   return vars;
 }
@@ -356,6 +388,25 @@ export function overlayNamesFor(answers: Answers): readonly string[] {
   // `--ai` contributed an env fragment, a permission fragment and a table, and
   // nothing that ever called a model.
   if (answers.includeAi) names.push("ai");
+
+  // THE FEEDBACK FEATURE IS TWO OVERLAYS, split the way catalog-admin is split
+  // from stripe and for the same reason: the two halves have two different
+  // conditions, and one directory would be wrong in one configuration each way.
+  //
+  // `feedback` is the intake half — the key-authenticated API route, the staff
+  // router, the widget mount and the key-issuing script. It needs only the
+  // answer: tickets can arrive and be read over tRPC whether or not there is
+  // an admin shell to render them in.
+  if (answers.includeFeedback) names.push("feedback");
+
+  // `feedback-admin` is the triage UI — the queue page and the Kanban board,
+  // both under /admin. An admin surface needs an admin shell to put it in;
+  // copying these pages into a project generated with `--admin none` would
+  // emit routes with no shell layout, no sidebar entry, and no way in — the
+  // exact leak catalog-admin once had.
+  if (answers.includeFeedback && answers.adminShell !== "none") {
+    names.push("feedback-admin");
+  }
 
   // THE PUBLIC FACE, in three overlays rather than one, because the three have
   // three different conditions and folding them together would make one of the
@@ -479,6 +530,15 @@ export function capabilitiesFor(answers: Answers): readonly string[] {
 
   if (answers.includeEmail) keys.push("email.transactional");
   if (answers.includeAi) keys.push("ai.streaming");
+
+  // Two keys for the two halves, because a consumer asking "can this project
+  // receive feedback" and one asking "can staff triage it here" are asking
+  // different questions with different answers: `--feedback --admin none`
+  // takes reports and renders no queue.
+  if (answers.includeFeedback) keys.push("feedback.intake");
+  if (answers.includeFeedback && answers.adminShell !== "none") {
+    keys.push("feedback.triage");
+  }
 
   // The public face. Three keys rather than one, because a consumer asking
   // "does this project have a pricing page" is asking something a single

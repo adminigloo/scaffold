@@ -133,6 +133,7 @@ const MAXIMAL = EVERY_CONFIGURATION.find(
     c.answers.adminShell === "full" &&
     c.answers.includeAi &&
     c.answers.includeEmail &&
+    c.answers.includeFeedback &&
     c.answers.includeMarketing,
 );
 

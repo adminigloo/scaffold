@@ -161,7 +161,9 @@ describe("the generator can produce every configuration", () => {
         `generated. Each entry starts with the exact flags that reproduce it:\n\n` +
         `${problems.join("\n")}\n`,
     ).toEqual([]);
-  });
+    // 480 planEmit calls of real file reading — the sweep outgrew the default
+    // timeout when the feedback axis doubled it.
+  }, 180_000);
 
   it("is reachable through the flags, with nothing left to a prompt", async () => {
     const problems: string[] = [];

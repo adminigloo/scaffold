@@ -233,7 +233,12 @@ describe("PACKAGE_VERSIONS against the release this commit makes", () => {
       answers(),
       answers({ businessModel: "one-time" }),
       answers({ businessModel: "subscription" }),
-      answers({ businessModel: "both", includeAi: true, includeEmail: true }),
+      answers({
+        businessModel: "both",
+        includeAi: true,
+        includeEmail: true,
+        includeFeedback: true,
+      }),
     ];
     for (const a of combos) {
       for (const pkg of packagesFor(a)) {

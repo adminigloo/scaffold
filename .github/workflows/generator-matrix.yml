@@ -116,6 +116,18 @@ jobs:
             flags: --model none --admin full --no-ai --no-email
             overlays: admin-minimal, admin-full
 
+          # Overlays: feedback, alone. The intake half with no admin shell —
+          # the widget mount, the key-authenticated API route and the staff
+          # router standing with no triage page anywhere. This is the pairing
+          # that catches feedback-admin leaking into a project that declined a
+          # shell, and the only place the generated layout's widget mount is
+          # built without the rest of the feature's UI around it. The maximal
+          # `--feedback` shape needs no slot here: ci.yml's generate job builds
+          # it on every pull request.
+          - id: feedback-without-admin
+            flags: --model none --admin none --no-ai --no-email --feedback
+            overlays: feedback
+
           # Overlays: email + ai. The mail templates and /setup/email standing
           # with no admin sidebar to hang off and no storefront — the footer
           # link is the page's only way in — and the streaming assistant beside

@@ -208,6 +208,10 @@ export async function planEmit(
   // — see `renderNextConfig` — and a static file could only carry that as an
   // `if`.
   files.set("next.config.ts", renderNextConfig(answers));
+  // Generated for the feedback mount, and only for it — see `renderRootLayout`
+  // for why the one file that wraps every page cannot stay a template file
+  // once any answer changes what wraps the pages.
+  files.set(join("app", "layout.tsx"), renderRootLayout(answers));
   files.set(join("src", "env.ts"), renderEnvModule(answers));
   files.set(join("src", "db", "schema.ts"), renderSchemaModule(answers));
   files.set(
@@ -461,6 +465,14 @@ export function renderPackageJson(answers: Answers): string {
     // `content_block_delta` narrowing and `finalMessage()` are both typed.
     deps["@anthropic-ai/sdk"] = "^0.122.0";
   }
+  if (answers.includeFeedback) {
+    // Screenshot storage for the intake route. The APP declares it, not
+    // @__SCOPE_NAME__/feedback — the package takes an injected `storeFile` so
+    // it never chooses a storage vendor, and the emitted route is the caller
+    // that chose Vercel Blob. A package imported by an emitted file is a
+    // package the manifest has to name; that is the pino rule.
+    deps["@vercel/blob"] = "^2.8.0";
+  }
   if (answers.businessModel !== "none") {
     deps["stripe"] = "^22.6.0";
     // The Payment Element runs in the browser, so checkout needs the client SDK
@@ -547,6 +559,17 @@ export function renderPackageJson(answers: Answers): string {
         ? {
             "db:seed:plans": "tsx --env-file=.env.local scripts/seed-plans.ts",
             "db:seed:shop": "tsx --env-file=.env.local scripts/seed-shop.ts",
+          }
+        : {}),
+      // The licence artifact of the feedback feature: creates the tenant if
+      // its slug is new, prints the plaintext key exactly once, stores only
+      // the hash. A script entry rather than a documented `pnpm tsx` line,
+      // because the widget stays dark until this runs and a command nobody is
+      // told about is a feature nobody has.
+      ...(answers.includeFeedback
+        ? {
+            "feedback:issue-key":
+              "tsx --env-file=.env.local scripts/issue-feedback-key.ts",
           }
         : {}),
       // No --env-file: this runs in CI where .env.local does not exist, and Node
@@ -654,6 +677,101 @@ export default config;
 }
 
 /**
+ * `app/layout.tsx` for this project.
+ *
+ * GENERATED RATHER THAN COPIED FROM `template/`, for one mount. The feedback
+ * widget has to wrap every page — reports come from the admin shell as much as
+ * from the public site — and the root layout is the only file that wraps
+ * everything. An overlay cannot patch it: overlays are strictly additive and
+ * this is a base file, which is exactly what `OverlayCollisionError` exists to
+ * prevent. So the layout joins `next.config.ts` in being written here, where
+ * the one line that differs between projects can be a literal rather than a
+ * conditional some emitted file carries forever.
+ *
+ * The widget WRAPPER ships in the feedback overlay (`src/components/
+ * FeedbackWidget.tsx`); this file only decides whether to import and mount it.
+ * A project generated without `--feedback` gets a layout with no trace of the
+ * feature — no import of a package it never installed, no flag asking whether
+ * one exists.
+ */
+export function renderRootLayout(answers: Answers): string {
+  const feedbackImport = answers.includeFeedback
+    ? `import { FeedbackWidget } from "@/components/FeedbackWidget";\n`
+    : "";
+  // Inside TRPCProvider, because the wrapper is a configuration check around
+  // provider components and belongs with the other providers rather than
+  // around them — and outside `children` either way, so every route group and
+  // page in the project renders under it.
+  const children = answers.includeFeedback
+    ? "<FeedbackWidget>{children}</FeedbackWidget>"
+    : "{children}";
+
+  return `import { ClerkProvider } from "@clerk/nextjs";
+${feedbackImport}import type { Metadata } from "next";
+import type { ReactNode } from "react";
+import { TRPCProvider } from "@/trpc/client";
+import { env } from "@/env";
+import { siteMetadata } from "@/seo";
+import "./globals.css";
+
+/**
+ * Everything every page inherits: the base URL relative Open Graph links
+ * resolve against, the title template, the social card defaults, and whether
+ * this deployment may be indexed at all.
+ *
+ * FROM \`src/seo.ts\` RATHER THAN WRITTEN HERE, because two of those are derived
+ * from the environment and one of them is a decision \`app/robots.ts\` has to
+ * take identically. A \`title\` spelled out in this file was the whole of the
+ * metadata for a long time, which meant every relative OG URL resolved against
+ * localhost in production — a shared link rendered as a grey box, and nothing
+ * inside the product could show you that.
+ *
+ * A page overrides a field by exporting its own \`metadata\`; anything it leaves
+ * out falls through to this.
+ */
+export const metadata: Metadata = siteMetadata;
+
+/**
+ * ClerkProvider is mounted only when Clerk is actually configured.
+ *
+ * Not a feature flag — a runtime configuration check, and the two are different
+ * things. ClerkProvider decodes the publishable key into a frontend API domain
+ * and throws when it cannot, so on a laptop with no Clerk account yet EVERY
+ * page 500s, including the setup page that would tell you what to do about it.
+ * The first thing you would see after generating a project is a stack trace.
+ *
+ * On a deployment this branch is unreachable: \`env.ts\` marks the Clerk keys as
+ * required once deployed, so a preview build without them fails at boot rather
+ * than quietly rendering an app with no authentication.
+ */
+function AuthProvider({ children }: { children: ReactNode }) {
+  if (!env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) return <>{children}</>;
+  return <ClerkProvider>{children}</ClerkProvider>;
+}
+
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return (
+    // \`suppressHydrationWarning\` on <html> only: the dark theme is pure CSS
+    // (prefers-color-scheme), so nothing here reads the theme at runtime — but
+    // browser extensions routinely stamp attributes on <html> before React
+    // hydrates, and the resulting warning trains people to ignore the console.
+    <html lang="en" suppressHydrationWarning>
+      {/* Explicit background, from a token. A transparent body borrows whatever
+          the browser paints, which in dark mode is white behind a dark page —
+          visible as a flash on navigation and as white gutters on short pages,
+          neither of which points at its own cause. */}
+      <body className="min-h-dvh bg-canvas text-ink antialiased">
+        <AuthProvider>
+          <TRPCProvider>${children}</TRPCProvider>
+        </AuthProvider>
+      </body>
+    </html>
+  );
+}
+`;
+}
+
+/**
  * A ready-to-run `.env.local`.
  *
  * Every credential is present but commented out, with where to get it. An empty
@@ -750,6 +868,20 @@ export function renderEnvLocal(answers: Answers): string {
       "# ANTHROPIC_API_KEY=",
     );
   }
+  if (answers.includeFeedback) {
+    lines.push(
+      "",
+      "# --- Feedback ---------------------------------------------------------------",
+      "# The widget mounts once a client key is here. Issue one — after the",
+      "# database exists and migrations have run — with:",
+      "#   pnpm feedback:issue-key <tenant-slug>",
+      "# It is printed exactly once; only its hash is stored.",
+      "# ADMINIGLOO_FEEDBACK_KEY=",
+      "# Screenshot storage (Vercel -> Storage -> Blob). Without it, reports",
+      "# still arrive — just without images.",
+      "# BLOB_READ_WRITE_TOKEN=",
+    );
+  }
 
   return `${lines.join("\n")}\n`;
 }
@@ -820,6 +952,7 @@ export function renderScaffoldRecord(manifest: ProjectManifest): string {
     `| Admin shell | ${answers.adminShell} |`,
     `| AI routes | ${answers.includeAi ? "yes" : "no"} |`,
     `| Transactional email | ${answers.includeEmail ? "yes" : "no"} |`,
+    `| In-app feedback | ${answers.includeFeedback ? "yes" : "no"} |`,
     `| Public marketing site | ${answers.includeMarketing ? "yes" : "no"} |`,
     `| Personal-workspace only | ${isPersonalWorkspaceOnly(answers) ? "yes" : "no"} |`,
     "",
@@ -993,6 +1126,31 @@ export function renderEnvModule(answers: Answers): string {
     deferred.push('"EMAIL_FROM"');
     features.push(
       `{ name: "Email", vars: ["RESEND_API_KEY", "EMAIL_FROM"], disables: "Sending mail. Sends are recorded as skipped instead." }`,
+    );
+  }
+
+  if (answers.includeFeedback) {
+    // Declared here rather than in an env fragment of @__SCOPE_NAME__/feedback,
+    // the way ALLOW_SIMULATED_CHECKOUT is: neither is a credential the package
+    // consumes. The key is a statement about THIS deployment — which tenant's
+    // widget this app mounts — and the blob token belongs to the storage the
+    // emitted route chose, which the package deliberately knows nothing about.
+    //
+    // Both optional EVERYWHERE, including deployed. A key cannot exist before
+    // the database it is issued against, so hard-requiring it on deployment
+    // would make the first deploy impossible in the exact order the setup
+    // instructions give.
+    serverSpreads.push(
+      "ADMINIGLOO_FEEDBACK_KEY: z.string().min(1).optional()",
+      "BLOB_READ_WRITE_TOKEN: z.string().min(1).optional()",
+    );
+    runtime.push(
+      "ADMINIGLOO_FEEDBACK_KEY: process.env.ADMINIGLOO_FEEDBACK_KEY",
+      "BLOB_READ_WRITE_TOKEN: process.env.BLOB_READ_WRITE_TOKEN",
+    );
+    features.push(
+      `{ name: "Feedback widget", vars: ["ADMINIGLOO_FEEDBACK_KEY"], disables: "Mounting the widget in this app. The intake API still answers, so any other app holding a key can still submit. Issue a key with pnpm feedback:issue-key." }`,
+      `{ name: "Feedback screenshots", vars: ["BLOB_READ_WRITE_TOKEN"], disables: "Storing screenshots. Uploads answer 503 and reports still arrive, without images — the widget says so rather than failing the submit." }`,
     );
   }
 
@@ -1706,6 +1864,9 @@ export function renderAppRouter(answers: Answers): string {
     'import { createTRPCRouter, publicProcedure, requireTenant } from "../trpc";',
   ];
   if (answers.includeAi) imports.splice(1, 0, 'import { aiRouter } from "./ai";');
+  if (answers.includeFeedback) {
+    imports.splice(1, 0, 'import { feedbackRouter } from "./feedback";');
+  }
   if (takesMoney) {
     imports.splice(1, 0, 'import { accountRouter } from "./account";');
     imports.splice(2, 0, 'import { billingRouter } from "./billing";');
@@ -1724,6 +1885,21 @@ export function renderAppRouter(answers: Answers): string {
   // \`ai.chat.use\` the route checks: being allowed to spend money is not the
   // same capability as seeing what everybody spent.
   ai: aiRouter,
+`
+    : "";
+
+  // The staff side of the feedback queue. Mounted on the feedback answer
+  // ALONE, the way \`admin\` is mounted without a shell: the ROUTER is where
+  // the requireStaff rungs live, and it has to exist wherever tickets can
+  // arrive — the triage pages are just one caller, added when there is a
+  // shell to render them in.
+  const feedback = answers.includeFeedback
+    ? `
+  // Reading and working the tickets the intake route writes. Every procedure
+  // is staff-scoped on \`staff.dashboard.view\` — the key that says you may use
+  // the shell — rather than a key of its own; mint one when the queue grows
+  // actions that not every staff member should hold.
+  feedback: feedbackRouter,
 `
     : "";
 
@@ -1792,7 +1968,7 @@ export const appRouter = createTRPCRouter({
   // writes actually live. Mounted even in a project generated without the admin
   // shell, so the panel can be added later without re-deriving its boundary.
   admin: adminRouter,
-${ai}${shop}});
+${ai}${feedback}${shop}});
 
 export type AppRouter = typeof appRouter;
 `;
@@ -1818,6 +1994,8 @@ export function renderSchemaModule(answers: Answers): string {
   }
   if (answers.includeAi) owners.push("ai");
   if (answers.includeEmail) owners.push("email");
+  // The widget package owns no tables; only the platform half does.
+  if (answers.includeFeedback) owners.push("feedback");
 
   /** `@scope/auth/schema` -> `authSchema`. */
   const binding = (owner: string): string => `${owner}Schema`;
@@ -2361,6 +2539,40 @@ export function renderAdminNav(answers: Answers): string {
             "as the record: this firm owns the subscriptions table, so a " +
             "missed webhook leaves it authoritative and wrong with nothing " +
             "else to reconcile against.",
+        },
+      ],
+    });
+  }
+
+  // The triage surfaces from the feedback-admin overlay, which is copied on
+  // the same two-condition shape as catalog-admin: the feedback answer AND a
+  // shell to put the pages in. This function only runs when there is a shell,
+  // so the answer alone decides here. Both entries sit on the shell's own key
+  // — the queue holds nothing a staff viewer may not see, and a key of its
+  // own is worth minting when triage grows actions not every staff member
+  // should hold.
+  if (answers.includeFeedback) {
+    groups.push({
+      heading: "Feedback",
+      items: [
+        {
+          href: "/admin/feedback",
+          label: "Queue",
+          permission: "staff.dashboard.view",
+          why:
+            "Every ticket the widget submitted, newest first, with the " +
+            "screenshot, click trail and browser errors that arrived with " +
+            "it. From the feedback-admin overlay, so a project without the " +
+            "feedback answer has neither this page nor this entry.",
+        },
+        {
+          href: "/admin/feedback/board",
+          label: "Board",
+          permission: "staff.dashboard.view",
+          why:
+            "The same tickets as columns, with drag-to-move and the ticket " +
+            "workspace panel — conversation, status, assignee. A second view " +
+            "over one queue, which is why it sits directly under it.",
         },
       ],
     });
@@ -4027,6 +4239,21 @@ export function renderLegalRecord(answers: Answers): string {
     );
   }
 
+  if (answers.includeFeedback) {
+    // The screenshots the widget captures are page renders, and a page render
+    // is customer data — names, emails, whatever was on screen, minus the
+    // fields the widget redacted. They land in a PUBLIC blob store reachable
+    // by URL, which is exactly the kind of fact a privacy policy exists to
+    // state and a copied template never does.
+    subprocessors.push({
+      name: "Vercel Blob",
+      purpose: "Screenshots attached to feedback reports",
+      dataShared:
+        "The screenshot a reporter chose to attach, which shows whatever was on their screen. Stored publicly, at an unguessable URL.",
+      activatedBy: "BLOB_READ_WRITE_TOKEN",
+    });
+  }
+
   // Both from @__SCOPE_NAME__/observability, which every project installs, and
   // both inert until a credential exists. Listed rather than omitted, because a
   // deployment that sets SENTRY_DSN is sending stack traces — which can carry a
@@ -4113,6 +4340,16 @@ export function renderLegalRecord(answers: Answers): string {
       body:
         "A record of each request to the assistant and its size, so usage can " +
         "be attributed and limited.",
+    });
+  }
+  if (answers.includeFeedback) {
+    dataCategories.push({
+      heading: "Feedback you send",
+      body:
+        "A report submitted through the feedback button: your description, " +
+        "the screenshot if you attached one, the page you were on, recent " +
+        "browser errors, and the name or email you chose to give. Kept so " +
+        "the problem you reported can be found and fixed.",
     });
   }
 

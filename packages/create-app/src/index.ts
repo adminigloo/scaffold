@@ -32,6 +32,7 @@ export {
   assertPermissionScopes,
   PermissionScopeMismatchError,
   renderAppRouter,
+  renderRootLayout,
   renderAuditRegistry,
   renderInvitationMail,
   renderSiteNav,

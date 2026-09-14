@@ -45,6 +45,7 @@ const EVERYTHING: Answers = {
   adminShell: "full",
   includeAi: true,
   includeEmail: true,
+  includeFeedback: true,
 };
 
 describe("the workspace catalog", () => {

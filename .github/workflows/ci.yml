@@ -242,7 +242,7 @@ jobs:
         run: |
           mkdir -p /tmp/e2e && cd /tmp/e2e
           node "$GITHUB_WORKSPACE/packages/create-app/dist/index.js" \
-            e2e-app --yes --model both --admin full --ai --email \
+            e2e-app --yes --model both --admin full --ai --email --feedback \
             2>&1 | tee "$RUNNER_TEMP/generate.log"
 
       - name: Install the generated project
@@ -515,5 +515,5 @@ jobs:
           STEPS: ${{ toJSON(steps) }}
           LOG_DIR: ${{ runner.temp }}
           REPRODUCE: |
-            node scripts/verify-generated.mjs /tmp/verify e2e-app -- --model both --admin full --ai --email
+            node scripts/verify-generated.mjs /tmp/verify e2e-app -- --model both --admin full --ai --email --feedback
         run: node .github/scripts/report-job-failure.mjs "generate a project, build it, and run its suite"

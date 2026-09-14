@@ -30,6 +30,7 @@ export interface CliFlags {
   readonly adminShell?: AdminShell;
   readonly ai?: boolean;
   readonly email?: boolean;
+  readonly feedback?: boolean;
   readonly marketing?: boolean;
 }
 
@@ -63,6 +64,7 @@ export function parseArgs(argv: readonly string[]): CliFlags {
   let adminShell: AdminShell | undefined;
   let ai: boolean | undefined;
   let email: boolean | undefined;
+  let feedback: boolean | undefined;
   let marketing: boolean | undefined;
 
   /** Supports both `--flag value` and `--flag=value`. */
@@ -79,6 +81,8 @@ export function parseArgs(argv: readonly string[]): CliFlags {
     else if (arg === "--no-ai") ai = false;
     else if (arg === "--email") email = true;
     else if (arg === "--no-email") email = false;
+    else if (arg === "--feedback") feedback = true;
+    else if (arg === "--no-feedback") feedback = false;
     else if (arg === "--marketing") marketing = true;
     else if (arg === "--no-marketing") marketing = false;
     else if (arg === "--dir" || arg.startsWith("--dir=")) {
@@ -114,6 +118,7 @@ export function parseArgs(argv: readonly string[]): CliFlags {
     adminShell,
     ai,
     email,
+    feedback,
     marketing,
   };
 }
@@ -134,6 +139,10 @@ export const HELP = `
   --admin <a>          none | minimal | full
   --ai / --no-ai       Include streaming route conventions.
   --email / --no-email Include transactional email.
+  --feedback           In-app feedback: the end-user widget, the key-authenticated
+    / --no-feedback    intake API, and — with an admin shell — the staff queue and
+                       Kanban board. Off by default: the widget does not mount
+                       until a client key is issued and pasted in.
   --marketing          Landing page, pricing page and legal routes, as source.
     / --no-marketing   Off by default: every string on a landing page is a claim
                        only the client can make. Privacy and terms are generated
@@ -200,6 +209,12 @@ export async function collectAnswers(
   const includeEmail =
     flags.email ??
     (await prompter.confirm("Transactional email?", DEFAULT_ANSWERS.includeEmail));
+  const includeFeedback =
+    flags.feedback ??
+    (await prompter.confirm(
+      "In-app feedback? Widget, intake API, and a staff ticket board.",
+      DEFAULT_ANSWERS.includeFeedback,
+    ));
 
   const includeMarketing =
     flags.marketing ??
@@ -215,6 +230,7 @@ export async function collectAnswers(
     adminShell,
     includeAi,
     includeEmail,
+    includeFeedback,
     includeMarketing,
     scope: DEFAULT_ANSWERS.scope,
   };
@@ -251,6 +267,24 @@ export function nextSteps(answers: Answers, targetDir: string): string {
     "  pnpm dev",
     "",
   ];
+
+  if (answers.includeFeedback) {
+    lines.push(
+      // The one feature here that is dark until a key exists, and the command
+      // that turns it on. The widget mount is a configuration check, so
+      // nothing anywhere errors while the key is absent — which means nothing
+      // anywhere would ever have told you this command exists.
+      "The feedback widget mounts once a client key exists. With DATABASE_URL",
+      "set and migrations run:",
+      "",
+      "  pnpm feedback:issue-key <tenant-slug>",
+      "",
+      "It prints the key once; put it in ADMINIGLOO_FEEDBACK_KEY in .env.local.",
+      "Screenshot uploads also want BLOB_READ_WRITE_TOKEN — without it, reports",
+      "still arrive, just without images.",
+      "",
+    );
+  }
 
   if (answers.businessModel !== "none") {
     lines.push(
