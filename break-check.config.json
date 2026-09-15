@@ -12,6 +12,7 @@
     "packages/feedback-widget",
     "packages/observability",
     "packages/permissions",
+    "packages/seo-reports",
     "packages/stripe",
     "packages/tenancy",
     "packages/testing",
