@@ -3,9 +3,16 @@ import { z } from "zod";
 import {
   addTicketMessage,
   assignTicket,
+  createStatus,
+  createStatusSchema,
+  deleteStatus,
   listBoardData,
   listTicketMessages,
+  markTicketRead,
   moveTicket,
+  reorderStatuses,
+  updateStatus,
+  updateStatusSchema,
 } from "__SCOPE__/feedback";
 import { feedbackTickets } from "__SCOPE__/feedback/schema";
 import { tenants } from "__SCOPE__/tenancy/schema";
@@ -112,6 +119,49 @@ export const feedbackRouter = createTRPCRouter({
     )
     .mutation(async ({ input }) => {
       await assignTicket(db, input);
+      return { ok: true };
+    }),
+
+  /**
+   * Stamp the ticket as seen by the team — the board's unread mark reads
+   * against this. Fired when the workspace panel opens, so the pill clears
+   * itself the way an inbox does: by looking, not by an extra chore.
+   */
+  markRead: requireStaff("staff.dashboard.view")
+    .meta({ scope: "staff" })
+    .input(z.object({ ticketId: z.string() }))
+    .mutation(async ({ input }) => {
+      await markTicketRead(db, input.ticketId);
+      return { ok: true };
+    }),
+
+  // Column administration (0.5.0). The board renders whatever rows exist, so
+  // these four ARE the board settings screen's whole server side. Same key
+  // as the rest of the router: configuring columns is triage work, not a
+  // separate privilege — mint one if that stops being true for your team.
+  createStatus: requireStaff("staff.dashboard.view")
+    .meta({ scope: "staff" })
+    .input(createStatusSchema)
+    .mutation(({ input }) => createStatus(db, input)),
+
+  updateStatus: requireStaff("staff.dashboard.view")
+    .meta({ scope: "staff" })
+    .input(updateStatusSchema)
+    .mutation(async ({ input }) => {
+      await updateStatus(db, input);
+      return { ok: true };
+    }),
+
+  deleteStatus: requireStaff("staff.dashboard.view")
+    .meta({ scope: "staff" })
+    .input(z.object({ statusId: z.string() }))
+    .mutation(({ input }) => deleteStatus(db, input.statusId)),
+
+  reorderStatuses: requireStaff("staff.dashboard.view")
+    .meta({ scope: "staff" })
+    .input(z.object({ orderedIds: z.array(z.string()).min(1).max(50) }))
+    .mutation(async ({ input }) => {
+      await reorderStatuses(db, input.orderedIds);
       return { ok: true };
     }),
 });

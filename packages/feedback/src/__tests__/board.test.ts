@@ -9,6 +9,9 @@ import { DEFAULT_BOARD_STATUSES, listBoardData, moveTicket } from "../index.js";
 function fakeDb(state: {
   statusRows?: Array<{ id: string; key: string; label: string; color: string | null; sortOrder: number }>;
   knownKeys?: string[];
+  ticketRows?: Array<Record<string, unknown>>;
+  /** Latest reporter message per ticket, as the grouped query returns it. */
+  replyRows?: Array<{ ticketId: string; latest: Date }>;
 }) {
   const inserted: Array<Record<string, unknown>> = [];
   const updates: Array<Record<string, unknown>> = [];
@@ -28,6 +31,15 @@ function fakeDb(state: {
             }),
           };
         }
+        // The unread computation: latest reporter message per ticket,
+        // where(senderType).groupBy(ticketId), awaited directly.
+        if ("latest" in fields) {
+          return {
+            where: () => ({
+              groupBy: () => Promise.resolve(state.replyRows ?? []),
+            }),
+          };
+        }
         return {
           orderBy: () => {
             selectCount += 1;
@@ -40,7 +52,7 @@ function fakeDb(state: {
                 : (state.statusRows ?? []);
               return Object.assign(Promise.resolve(rows), { limit: async () => [] });
             }
-            return { limit: async () => [] };
+            return { limit: async () => state.ticketRows ?? [] };
           },
         };
       },
@@ -77,6 +89,51 @@ describe("listBoardData", () => {
     const board = await listBoardData(db);
     expect(inserted).toHaveLength(0);
     expect(board.statuses[0]?.key).toBe("triage");
+  });
+
+  it("marks unread exactly when the reporter replied after the last staff read", async () => {
+    const ticket = (id: string, lastStaffReadAt: Date | null) => ({
+      id,
+      ticketNumber: `FB-0000${id}`,
+      title: "t",
+      priority: "medium",
+      category: null,
+      status: "open",
+      tenantId: "t1",
+      assignee: null,
+      reporterName: null,
+      reporterEmail: null,
+      pagePathname: null,
+      screenshotUrl: null,
+      annotatedScreenshotUrl: null,
+      createdAt: new Date("2026-09-14T10:00:00Z"),
+      lastStaffReadAt,
+    });
+    const { db } = fakeDb({
+      statusRows: [{ id: "s1", key: "open", label: "Open", color: null, sortOrder: 1 }],
+      ticketRows: [
+        // Replied after the team last looked — the one that must light up.
+        ticket("1", new Date("2026-09-14T11:00:00Z")),
+        // Replied, but the team opened it afterwards.
+        ticket("2", new Date("2026-09-14T13:00:00Z")),
+        // Never read, never replied to: nothing to announce.
+        ticket("3", null),
+      ],
+      replyRows: [
+        { ticketId: "1", latest: new Date("2026-09-14T12:00:00Z") },
+        { ticketId: "2", latest: new Date("2026-09-14T12:00:00Z") },
+      ],
+    });
+    const board = await listBoardData(db);
+    expect(
+      board.tickets.map((t) => [t.id, t.hasUnreadReporterReply]),
+    ).toEqual([
+      ["1", true],
+      ["2", false],
+      ["3", false],
+    ]);
+    // The raw read-timestamp stays server-side; the flag is the contract.
+    expect(board.tickets[0]).not.toHaveProperty("lastStaffReadAt");
   });
 });
 

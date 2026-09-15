@@ -92,13 +92,18 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   billing: "0.2.0",
   ai: "0.1.3",
   email: "0.2.1",
-  // 0.4.0 for reporter-side replies. The emitted intake route serves
-  // /v1/thread and /v1/reply only from 0.4.0, and the 0.2.0 widget the same
-  // project installs calls both — a 0.3.x platform would strand every
-  // "My reports" tap on a 404 the widget reads as a deleted ticket.
-  feedback: "0.4.0",
-  // 0.2.0 for the "My reports" view those endpoints exist to serve.
-  "feedback-widget": "0.2.0",
+  // 0.5.0 for the column editor and unread marks. The emitted router imports
+  // `createStatus`, `deleteStatus`, `markTicketRead` and friends; none exist
+  // in 0.4.x, so a project resolving the old line fails to compile on files
+  // the generator wrote. (0.4.0 was the same story for the /v1/thread and
+  // /v1/reply endpoints the 0.2.x widget calls.)
+  feedback: "0.5.0",
+  // 0.2.1 — 0.2.0 brought the "My reports" view the thread endpoints exist
+  // to serve; the patch is the glacier re-skin with the widget's own dark
+  // theme, which a caret would cover anyway. Pinned at the workspace version
+  // because the drift test rightly refuses a pin pointing at a release that
+  // is neither current nor pending.
+  "feedback-widget": "0.2.1",
   // A devDependency of every generated project rather than a dependency, and
   // it belongs here all the same. `renderPackageJson` spelled `^0.1.1` out
   // inline, which put a fourteenth version in a place no drift test looked at —

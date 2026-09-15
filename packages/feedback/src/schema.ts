@@ -106,6 +106,15 @@ export const feedbackTickets = pgTable(
      * reporters hold no token, so their thread is staff-side only.
      */
     reporterTokenHash: text("reporter_token_hash"),
+    /**
+     * When ANY staff member last opened this ticket's workspace (0.5.0).
+     * Ticket-level rather than per-viewer, deliberately: staff identity lives
+     * in the consuming platform, not here, and the question triage actually
+     * asks is "has the team seen the reporter's latest reply", not "has
+     * Dallin". A reporter message newer than this timestamp is what lights
+     * the unread mark on the board card.
+     */
+    lastStaffReadAt: timestamp("last_staff_read_at", { withTimezone: true }),
     /** Denormalised from clientMetadata so the triage list can filter without unpacking JSON. */
     pagePathname: text("page_pathname"),
     /** Browser, OS, viewport, URL, click trail, session id — the widget's whole context object. */

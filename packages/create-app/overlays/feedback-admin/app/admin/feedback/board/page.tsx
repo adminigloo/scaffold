@@ -30,6 +30,7 @@ export default function FeedbackBoardPage() {
   const move = api.feedback.move.useMutation();
   const addMessage = api.feedback.addMessage.useMutation();
   const assign = api.feedback.assign.useMutation();
+  const markRead = api.feedback.markRead.useMutation();
 
   const [openId, setOpenId] = useState<string | null>(null);
   const messages = api.feedback.messages.useQuery(
@@ -67,7 +68,12 @@ export default function FeedbackBoardPage() {
           statuses={board.data?.statuses ?? []}
           tickets={board.data?.tickets ?? []}
           onMove={handleMove}
-          onOpen={(ticket) => setOpenId(ticket.id)}
+          onOpen={(ticket) => {
+            setOpenId(ticket.id);
+            // Opening the workspace IS reading it: the card's "reply" pill
+            // clears the way an inbox does — by looking, not by a chore.
+            void markRead.mutateAsync({ ticketId: ticket.id }).then(() => board.refetch());
+          }}
         />
       )}
 

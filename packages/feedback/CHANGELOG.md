@@ -1,5 +1,21 @@
 # @adminigloo/feedback
 
+## 0.5.0
+
+### Minor Changes
+
+- The support console half-step: the board's columns become editable and the
+  reporter's replies become visible without opening every ticket. Platform:
+  `createStatus`/`updateStatus`/`deleteStatus`/`reorderStatuses` (a key is
+  permanent — tickets reference it as text; deletion refuses while a column
+  holds tickets and says how many), `markTicketRead`, and `listBoardData` now
+  computes `hasUnreadReporterReply` per ticket in one grouped query — the
+  board card wears a "reply" pill until the workspace is opened. One
+  migration: `feedback_tickets.last_staff_read_at`. create-app: the feedback
+  overlay's router grows the five procedures, the board page clears the pill
+  by looking, the feedback-admin overlay gains `/admin/feedback/statuses`
+  (the column editor) and the sidebar's Feedback group gains its entry.
+
 ## 0.4.1
 
 ### Patch Changes

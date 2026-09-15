@@ -2574,6 +2574,16 @@ export function renderAdminNav(answers: Answers): string {
             "workspace panel — conversation, status, assignee. A second view " +
             "over one queue, which is why it sits directly under it.",
         },
+        {
+          href: "/admin/feedback/statuses",
+          label: "Columns",
+          permission: "staff.dashboard.view",
+          why:
+            "The board's column editor (0.5.0): rows in feedback_statuses ARE " +
+            "the columns, and this is the screen that edits them. Under the " +
+            "views it configures, on the same key — configuring columns is " +
+            "triage work until a team says otherwise.",
+        },
       ],
     });
   }

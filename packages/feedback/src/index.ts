@@ -1,4 +1,4 @@
-﻿import { and, asc, desc, eq, isNull } from "drizzle-orm";
+﻿import { and, asc, desc, eq, isNull, max } from "drizzle-orm";
 import type { PgDatabase } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import {
@@ -574,6 +574,8 @@ export interface BoardData {
     screenshotUrl: string | null;
     annotatedScreenshotUrl: string | null;
     createdAt: Date;
+    /** A reporter message the team has not opened the ticket since (0.5.0). */
+    hasUnreadReporterReply: boolean;
   }>;
 }
 
@@ -611,7 +613,7 @@ export async function listBoardData(db: FeedbackDb): Promise<BoardData> {
       .orderBy(asc(feedbackStatuses.sortOrder));
   }
 
-  const tickets = await db
+  const rows = await db
     .select({
       id: feedbackTickets.id,
       ticketNumber: feedbackTickets.ticketNumber,
@@ -627,12 +629,174 @@ export async function listBoardData(db: FeedbackDb): Promise<BoardData> {
       screenshotUrl: feedbackTickets.screenshotUrl,
       annotatedScreenshotUrl: feedbackTickets.annotatedScreenshotUrl,
       createdAt: feedbackTickets.createdAt,
+      lastStaffReadAt: feedbackTickets.lastStaffReadAt,
     })
     .from(feedbackTickets)
     .orderBy(desc(feedbackTickets.createdAt), desc(feedbackTickets.id))
     .limit(300);
 
+  // One grouped query for the whole board, not one per ticket: the latest
+  // reporter message per ticket, compared against when the team last opened
+  // it. Unread is a property the LIST needs, so it is computed where the
+  // list is built rather than by three-hundred round trips from a client.
+  const latestReplies: Array<{ ticketId: string; latest: Date | string | null }> = await db
+    .select({
+      ticketId: feedbackMessages.ticketId,
+      latest: max(feedbackMessages.createdAt),
+    })
+    .from(feedbackMessages)
+    .where(eq(feedbackMessages.senderType, "reporter"))
+    .groupBy(feedbackMessages.ticketId);
+  const latestReplyByTicket = new Map(
+    latestReplies.map((row) => [
+      row.ticketId,
+      row.latest === null ? null : new Date(row.latest),
+    ]),
+  );
+
+  const tickets = rows.map(({ lastStaffReadAt, ...ticket }) => {
+    const latest = latestReplyByTicket.get(ticket.id) ?? null;
+    return {
+      ...ticket,
+      hasUnreadReporterReply:
+        latest !== null && (lastStaffReadAt === null || latest > lastStaffReadAt),
+    };
+  });
+
   return { statuses, tickets };
+}
+
+// ---------------------------------------------------------------------------
+// Status administration (0.5.0) — the board's columns become editable.
+// ---------------------------------------------------------------------------
+
+/** Stable machine names only: the ticket rows reference these as plain text. */
+export const statusKeySchema = z
+  .string()
+  .min(1)
+  .max(50)
+  .regex(/^[a-z][a-z0-9_]*$/, "lowercase letters, digits and underscores");
+
+export const createStatusSchema = z.object({
+  key: statusKeySchema,
+  label: z.string().min(1).max(60),
+  color: z.string().max(30).nullish(),
+  sortOrder: z.number().int().min(0).max(100000).optional(),
+});
+
+/**
+ * KEY IS NOT UPDATABLE, and that is the design rather than an omission:
+ * tickets reference a status by its key as plain text, so renaming a key
+ * would strand every ticket in a column that no longer exists. The label is
+ * what people see and it changes freely; the key is an identifier.
+ */
+export const updateStatusSchema = z.object({
+  id: z.string(),
+  label: z.string().min(1).max(60).optional(),
+  color: z.string().max(30).nullish(),
+  sortOrder: z.number().int().min(0).max(100000).optional(),
+});
+
+export async function createStatus(
+  db: FeedbackDb,
+  input: z.infer<typeof createStatusSchema>,
+): Promise<BoardStatus> {
+  const parsed = createStatusSchema.parse(input);
+  const sortOrder =
+    parsed.sortOrder ??
+    // Default to the end of the board: the person adding a column almost
+    // always means "after the ones I have", and 10-spacing leaves room to
+    // reorder without renumbering everything.
+    (await db
+      .select({ sortOrder: feedbackStatuses.sortOrder })
+      .from(feedbackStatuses)
+      .orderBy(desc(feedbackStatuses.sortOrder))
+      .limit(1)
+      .then((rows: Array<{ sortOrder: number }>) => (rows[0]?.sortOrder ?? 0) + 10));
+  const rows = await db
+    .insert(feedbackStatuses)
+    .values({ key: parsed.key, label: parsed.label, color: parsed.color ?? null, sortOrder })
+    .returning({
+      id: feedbackStatuses.id,
+      key: feedbackStatuses.key,
+      label: feedbackStatuses.label,
+      color: feedbackStatuses.color,
+      sortOrder: feedbackStatuses.sortOrder,
+    });
+  const row = rows[0];
+  if (!row) throw new Error("status insert returned no row");
+  return row;
+}
+
+export async function updateStatus(
+  db: FeedbackDb,
+  input: z.infer<typeof updateStatusSchema>,
+): Promise<void> {
+  const parsed = updateStatusSchema.parse(input);
+  const patch: Record<string, unknown> = {};
+  if (parsed.label !== undefined) patch["label"] = parsed.label;
+  if (parsed.color !== undefined) patch["color"] = parsed.color;
+  if (parsed.sortOrder !== undefined) patch["sortOrder"] = parsed.sortOrder;
+  if (Object.keys(patch).length === 0) return;
+  await db.update(feedbackStatuses).set(patch).where(eq(feedbackStatuses.id, parsed.id));
+}
+
+export type DeleteStatusResult =
+  | { deleted: true }
+  | { deleted: false; reason: "unknown" | "occupied"; ticketCount?: number };
+
+/**
+ * Refuses to delete a column that holds tickets, and says how many — the
+ * alternative is tickets whose status points at nothing, which vanish from
+ * every column of the board while still existing in the queue. Move them
+ * first; the refusal message is the instruction.
+ */
+export async function deleteStatus(
+  db: FeedbackDb,
+  statusId: string,
+): Promise<DeleteStatusResult> {
+  const rows = await db
+    .select({ id: feedbackStatuses.id, key: feedbackStatuses.key })
+    .from(feedbackStatuses)
+    .where(eq(feedbackStatuses.id, statusId))
+    .limit(1);
+  const status = rows[0];
+  if (!status) return { deleted: false, reason: "unknown" };
+
+  const occupants = await db
+    .select({ id: feedbackTickets.id })
+    .from(feedbackTickets)
+    .where(eq(feedbackTickets.status, status.key));
+  if (occupants.length > 0) {
+    return { deleted: false, reason: "occupied", ticketCount: occupants.length };
+  }
+
+  await db.delete(feedbackStatuses).where(eq(feedbackStatuses.id, statusId));
+  return { deleted: true };
+}
+
+/** The full column order, as ids. Renumbers in tens so gaps stay available. */
+export async function reorderStatuses(
+  db: FeedbackDb,
+  orderedIds: readonly string[],
+): Promise<void> {
+  for (const [index, id] of orderedIds.entries()) {
+    await db
+      .update(feedbackStatuses)
+      .set({ sortOrder: (index + 1) * 10 })
+      .where(eq(feedbackStatuses.id, id));
+  }
+}
+
+/**
+ * Stamp the ticket as seen by the team. Called when the workspace panel
+ * opens; what it clears is the unread mark `listBoardData` computes.
+ */
+export async function markTicketRead(db: FeedbackDb, ticketId: string): Promise<void> {
+  await db
+    .update(feedbackTickets)
+    .set({ lastStaffReadAt: new Date() })
+    .where(eq(feedbackTickets.id, ticketId));
 }
 
 /**

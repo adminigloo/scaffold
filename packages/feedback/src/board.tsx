@@ -26,6 +26,8 @@ export interface BoardTicketView {
   assignee?: string | null;
   reporterName?: string | null;
   reporterEmail?: string | null;
+  /** Optional so a consumer on a pre-0.5 server half still typechecks. */
+  hasUnreadReporterReply?: boolean | null;
   pagePathname?: string | null;
   screenshotUrl?: string | null;
   annotatedScreenshotUrl?: string | null;
@@ -130,6 +132,9 @@ const CSS_TEXT = `
 .aib-empty { font-size: 12px; color: var(--aib-ink-faint); text-align: center; padding: 14px 0; }
 .aib-assignee { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--aib-accent);
   background: var(--aib-accent-soft); border-radius: 999px; padding: 1px 8px; }
+.aib-unread { display: inline-flex; align-items: center; gap: 4px; font-size: 9px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .05em; color: var(--aib-on-accent);
+  background: var(--aib-accent); border-radius: 999px; padding: 1px 7px; }
 
 /* Ticket panel */
 .aib-panel-backdrop { position: fixed; inset: 0; z-index: 2147483002; background: var(--aib-scrim); }
@@ -420,6 +425,12 @@ export function FeedbackBoard({ statuses, tickets, onMove, onOpen }: FeedbackBoa
                 >
                   <div className="aib-card-top">
                     <span className="aib-num">{ticket.ticketNumber}</span>
+                    {/* The reporter answered and nobody has opened the ticket
+                        since. THE signal triage scans for — opening the panel
+                        clears it via the consumer's markRead call. */}
+                    {ticket.hasUnreadReporterReply ? (
+                      <span className="aib-unread">reply</span>
+                    ) : null}
                     <span className={`aib-chip aib-chip-${ticket.priority}`}>{ticket.priority}</span>
                   </div>
                   <div className="aib-card-title">{ticket.title}</div>
