@@ -92,12 +92,13 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   billing: "0.2.0",
   ai: "0.1.3",
   email: "0.2.1",
-  // 0.5.0 for the column editor and unread marks. The emitted router imports
+  // 0.6.0 for the onEvent producer hook (optional, so the emitted route
+  // needs no change); 0.5.0 was the column editor and unread marks. The emitted router imports
   // `createStatus`, `deleteStatus`, `markTicketRead` and friends; none exist
   // in 0.4.x, so a project resolving the old line fails to compile on files
   // the generator wrote. (0.4.0 was the same story for the /v1/thread and
   // /v1/reply endpoints the 0.2.x widget calls.)
-  feedback: "0.5.0",
+  feedback: "0.6.0",
   // 0.2.1 — 0.2.0 brought the "My reports" view the thread endpoints exist
   // to serve; the patch is the glacier re-skin with the widget's own dark
   // theme, which a caret would cover anyway. Pinned at the workspace version

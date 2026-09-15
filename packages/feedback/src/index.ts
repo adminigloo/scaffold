@@ -252,6 +252,28 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
+/**
+ * What the intake surface can tell the rest of the platform (0.6.0). Two
+ * events, because these are the two moments a human should hear about:
+ * something new arrived, and somebody outside answered.
+ */
+export type FeedbackEvent =
+  | {
+      type: "ticket.created";
+      ticketNumber: string;
+      title: string;
+      tenantId: string;
+      priority: string;
+    }
+  | {
+      type: "reporter.replied";
+      ticketId: string;
+      ticketNumber: string;
+      title: string;
+      /** The reply text, capped — a notification body, not the thread. */
+      excerpt: string;
+    };
+
 export interface CreateFeedbackHandlersOptions {
   db: FeedbackDb;
   /**
@@ -262,6 +284,15 @@ export interface CreateFeedbackHandlersOptions {
    */
   storeFile?: (path: string, file: Blob, contentType: string) => Promise<{ url: string }>;
   categories?: FeedbackCategoryOption[];
+  /**
+   * Fired after a ticket is created and after a reporter replies — the hook
+   * a consuming app hangs its notifications on. AWAITED, so a serverless
+   * response cannot end before the listener's write lands; CAUGHT, so a
+   * broken listener can never fail the submit it is announcing. Wiring the
+   * inbox is the consumer's business — this package refuses to know who
+   * "staff" are, the same way it refuses to know a storage vendor.
+   */
+  onEvent?: (event: FeedbackEvent) => void | Promise<void>;
 }
 
 export interface FeedbackHandlers {
@@ -275,6 +306,16 @@ export interface FeedbackHandlers {
 export function createFeedbackHandlers(options: CreateFeedbackHandlersOptions): FeedbackHandlers {
   const { db, storeFile } = options;
   const categories = options.categories ?? DEFAULT_CATEGORIES;
+
+  async function emit(event: FeedbackEvent): Promise<void> {
+    if (!options.onEvent) return;
+    try {
+      await options.onEvent(event);
+    } catch {
+      // A listener that throws must never fail the request it is
+      // announcing. The event is best-effort by contract; the ticket is not.
+    }
+  }
 
   async function authenticate(req: Request): Promise<VerifiedClientKey | Response> {
     const key = req.headers.get(CLIENT_KEY_HEADER);
@@ -376,6 +417,13 @@ export function createFeedbackHandlers(options: CreateFeedbackHandlersOptions): 
           pagePathname: payload.clientMetadata.pathname,
           clientMetadata: payload.clientMetadata,
           recentErrors: payload.recentErrors ?? [],
+        });
+        await emit({
+          type: "ticket.created",
+          ticketNumber,
+          title,
+          tenantId: auth.tenantId,
+          priority: payload.priority,
         });
         return json({ ticketNumber, ticketToken }, 201);
       } catch (error) {
@@ -513,6 +561,13 @@ export function createFeedbackHandlers(options: CreateFeedbackHandlersOptions): 
       senderType: "reporter",
       senderName: ticket.reporterName ?? ticket.reporterEmail ?? "Reporter",
       body: parsed.data.body,
+    });
+    await emit({
+      type: "reporter.replied",
+      ticketId: ticket.id,
+      ticketNumber: ticket.ticketNumber,
+      title: ticket.title,
+      excerpt: parsed.data.body.slice(0, 140),
     });
     return json({ message }, 201);
   }

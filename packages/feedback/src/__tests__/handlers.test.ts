@@ -343,6 +343,49 @@ describe("the reporter thread (0.4.0)", () => {
     });
   });
 
+  it("announces the two human moments, and a broken listener fails nothing", async () => {
+    const events: Array<{ type: string }> = [];
+    const { db } = fakeDb({ keyRows: [{ id: "k1", tenantId: "t1" }] });
+    const { handle } = createFeedbackHandlers({
+      db,
+      onEvent: (event) => {
+        events.push(event);
+        // Every listener call throws — and every request below must still
+        // succeed, because the event is best-effort and the ticket is not.
+        throw new Error("listener exploded");
+      },
+    });
+    const submit = await handle(
+      new Request(`${BASE}/v1/submit`, {
+        method: "POST",
+        headers: { [CLIENT_KEY_HEADER]: KEY, "content-type": "application/json" },
+        body: JSON.stringify(validPayload()),
+      }),
+    );
+    expect(submit.status).toBe(201);
+
+    const { db: db2 } = fakeDb({
+      keyRows: [{ id: "k1", tenantId: "t1" }],
+      ticketRows: [await ticketRow()],
+    });
+    const events2: Array<Record<string, unknown>> = [];
+    const { handle: handle2 } = createFeedbackHandlers({
+      db: db2,
+      onEvent: (event) => void events2.push(event),
+    });
+    const reply = await handle2(
+      post("/v1/reply", { ticketNumber: "FB-00007", ticketToken: TOKEN, body: "Still happening." }),
+    );
+    expect(reply.status).toBe(201);
+
+    expect(events.map((e) => e.type)).toEqual(["ticket.created"]);
+    expect(events2[0]).toMatchObject({
+      type: "reporter.replied",
+      ticketNumber: "FB-00007",
+      excerpt: "Still happening.",
+    });
+  });
+
   it("rejects an empty or oversize reply before touching the ticket", async () => {
     const { db, inserted } = fakeDb({
       keyRows: [{ id: "k1", tenantId: "t1" }],

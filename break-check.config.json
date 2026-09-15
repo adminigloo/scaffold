@@ -10,6 +10,7 @@
     "packages/env",
     "packages/feedback",
     "packages/feedback-widget",
+    "packages/notifications",
     "packages/observability",
     "packages/permissions",
     "packages/seo-reports",

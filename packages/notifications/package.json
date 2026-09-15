@@ -1,13 +1,13 @@
 {
-  "name": "@adminigloo/feedback",
-  "version": "0.6.0",
-  "description": "The feedback platform primitive: client-key licensing, the config/upload/submit HTTP contract the feedback widget speaks, and the Kanban board for triaging what arrives.",
+  "name": "@adminigloo/notifications",
+  "version": "0.1.0",
+  "description": "An in-app inbox as a primitive: durable per-recipient notifications your events write and your header badge reads — no third-party inbox service holding your customers' activity.",
   "license": "UNLICENSED",
   "type": "module",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/adminigloo/scaffold.git",
-    "directory": "packages/feedback"
+    "directory": "packages/notifications"
   },
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -22,11 +22,6 @@
       "types": "./dist/schema.d.ts",
       "import": "./dist/schema.js",
       "require": "./dist/schema.cjs"
-    },
-    "./board": {
-      "types": "./dist/board.d.ts",
-      "import": "./dist/board.js",
-      "require": "./dist/board.cjs"
     }
   },
   "files": [
@@ -41,23 +36,15 @@
   },
   "peerDependencies": {
     "drizzle-orm": "catalog:peers",
-    "zod": "catalog:peers",
-    "react": "^18.0.0 || ^19.0.0"
+    "zod": "catalog:peers"
   },
   "devDependencies": {
     "drizzle-orm": "catalog:",
-    "zod": "catalog:",
-    "react": "^19.2.4",
-    "@types/react": "^19.2.7"
+    "zod": "catalog:"
   },
   "scripts": {
     "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsup",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
-  },
-  "peerDependenciesMeta": {
-    "react": {
-      "optional": true
-    }
   }
 }
