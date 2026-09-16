@@ -340,7 +340,12 @@ describe("SEO, which is in every project on purpose", () => {
     // only in somebody else's chat window, as a grey box.
     const plan = await planEmit(TEMPLATE_DIR, "/out", answers());
     const seo = plan.files.get(SEO) ?? "";
-    expect(seo).toContain("metadataBase: new URL(env.NEXT_PUBLIC_APP_URL)");
+    // Guarded, because this module loads during `next build` on machines that
+    // legitimately lack the variable — CI first among them — and
+    // `new URL(undefined)` fails the whole build from inside /_not-found.
+    expect(seo).toContain(
+      "metadataBase: env.NEXT_PUBLIC_APP_URL ? new URL(env.NEXT_PUBLIC_APP_URL) : undefined",
+    );
     expect(seo).toContain("openGraph");
     expect(seo).toContain("card: \"summary_large_image\"");
 

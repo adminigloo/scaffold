@@ -31,6 +31,9 @@ export interface CliFlags {
   readonly ai?: boolean;
   readonly email?: boolean;
   readonly feedback?: boolean;
+  readonly seoReports?: boolean;
+  readonly notifications?: boolean;
+  readonly storage?: boolean;
   readonly marketing?: boolean;
 }
 
@@ -65,6 +68,9 @@ export function parseArgs(argv: readonly string[]): CliFlags {
   let ai: boolean | undefined;
   let email: boolean | undefined;
   let feedback: boolean | undefined;
+  let seoReports: boolean | undefined;
+  let notifications: boolean | undefined;
+  let storage: boolean | undefined;
   let marketing: boolean | undefined;
 
   /** Supports both `--flag value` and `--flag=value`. */
@@ -83,6 +89,12 @@ export function parseArgs(argv: readonly string[]): CliFlags {
     else if (arg === "--no-email") email = false;
     else if (arg === "--feedback") feedback = true;
     else if (arg === "--no-feedback") feedback = false;
+    else if (arg === "--seo-reports") seoReports = true;
+    else if (arg === "--no-seo-reports") seoReports = false;
+    else if (arg === "--notifications") notifications = true;
+    else if (arg === "--no-notifications") notifications = false;
+    else if (arg === "--storage") storage = true;
+    else if (arg === "--no-storage") storage = false;
     else if (arg === "--marketing") marketing = true;
     else if (arg === "--no-marketing") marketing = false;
     else if (arg === "--dir" || arg.startsWith("--dir=")) {
@@ -119,6 +131,9 @@ export function parseArgs(argv: readonly string[]): CliFlags {
     ai,
     email,
     feedback,
+    seoReports,
+    notifications,
+    storage,
     marketing,
   };
 }
@@ -143,6 +158,16 @@ export const HELP = `
     / --no-feedback    intake API, and — with an admin shell — the staff queue and
                        Kanban board. Off by default: the widget does not mount
                        until a client key is issued and pasted in.
+  --seo-reports        SEO & AEO self-audits: the site crawls its own sitemap and
+    / --no-seo-reports scores how search and answer engines read it, receipts in
+                       your own database. The report page rides the admin shell.
+  --notifications      An in-app inbox: durable per-recipient rows your events
+    / --no-notifications
+                       write and your badge reads. Ships the primitive and the
+                       inbox page; producers are yours to wire.
+  --storage            Tenant-scoped file storage: rows in your own database,
+    / --no-storage     bytes behind an adapter you own (Vercel Blob as emitted).
+                       The library page rides the admin shell.
   --marketing          Landing page, pricing page and legal routes, as source.
     / --no-marketing   Off by default: every string on a landing page is a claim
                        only the client can make. Privacy and terms are generated
@@ -216,6 +241,25 @@ export async function collectAnswers(
       DEFAULT_ANSWERS.includeFeedback,
     ));
 
+  const includeSeoReports =
+    flags.seoReports ??
+    (await prompter.confirm(
+      "SEO & AEO self-audits? The site crawls its own sitemap and keeps the receipts.",
+      DEFAULT_ANSWERS.includeSeoReports,
+    ));
+  const includeNotifications =
+    flags.notifications ??
+    (await prompter.confirm(
+      "In-app notifications? A durable inbox your events write and your badge reads.",
+      DEFAULT_ANSWERS.includeNotifications,
+    ));
+  const includeStorage =
+    flags.storage ??
+    (await prompter.confirm(
+      "File storage? Tenant-scoped uploads with the rows in your own database.",
+      DEFAULT_ANSWERS.includeStorage,
+    ));
+
   const includeMarketing =
     flags.marketing ??
     (await prompter.confirm(
@@ -231,6 +275,9 @@ export async function collectAnswers(
     includeAi,
     includeEmail,
     includeFeedback,
+    includeSeoReports,
+    includeNotifications,
+    includeStorage,
     includeMarketing,
     scope: DEFAULT_ANSWERS.scope,
   };
@@ -282,6 +329,34 @@ export function nextSteps(answers: Answers, targetDir: string): string {
       "It prints the key once; put it in ADMINIGLOO_FEEDBACK_KEY in .env.local.",
       "Screenshot uploads also want BLOB_READ_WRITE_TOKEN — without it, reports",
       "still arrive, just without images.",
+      "",
+    );
+  }
+
+  if (answers.includeSeoReports && answers.adminShell !== "none") {
+    lines.push(
+      // The one feature that works on first boot with no credential at all,
+      // and the button that proves it.
+      "Run your first SEO & AEO audit from /admin/seo once the app is up — it",
+      "crawls this deployment's own sitemap, so there is nothing to configure.",
+      "",
+    );
+  }
+
+  if (answers.includeNotifications) {
+    lines.push(
+      "Notifications ship as a primitive: the inbox reads rows, and your events",
+      "write them. Wire your first producer — feedback's onEvent hook is the",
+      "proven shape — or the inbox stays honestly empty.",
+      "",
+    );
+  }
+
+  if (answers.includeStorage && !answers.includeFeedback) {
+    lines.push(
+      // Feedback's block already explains the same variable when both are on.
+      "File uploads turn on with BLOB_READ_WRITE_TOKEN (Vercel -> Storage ->",
+      "Blob). Until then /admin/files says exactly that, in one sentence.",
       "",
     );
   }

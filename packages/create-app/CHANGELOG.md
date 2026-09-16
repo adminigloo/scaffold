@@ -1,5 +1,20 @@
 # create-adminigloo-app
 
+## 0.14.0
+
+### Minor Changes
+
+- The suite catches up with the site that proved it. Three new answers —
+  `--seo-reports`, `--notifications`, `--storage` — each split on the
+  feedback shape: the server half (router, helpers, upload route) needs
+  only its answer, the `-admin` half rides the shell, and every overlay
+  file is the one running on adminigloo.com, placeholdered. Every project
+  now also serves `/llms.txt`, generated from the answers the way the
+  sitemap is, with the one-sentence summary left loudly to its owner —
+  and the three SEO emissions (metadataBase, robots' sitemap line, the
+  sitemap itself) learned to sit out a build that has no base URL instead
+  of failing it from inside /_not-found.
+
 ## 0.13.1
 
 ### Patch Changes

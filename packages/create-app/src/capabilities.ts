@@ -312,6 +312,52 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
     provenBy: (plan) => exists(plan, "app", "admin", "feedback", "page.tsx"),
   },
   {
+    capability: "seo.audits",
+    why:
+      "The staff router whose mutation actually crawls the deployment and " +
+      "stores the report — audits can run over tRPC (or a cron) whether or " +
+      "not a shell renders them.",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "server", "routers", "seo.ts"], "runSeoReport("),
+  },
+  {
+    capability: "seo.reports",
+    why:
+      "The report page under the shell, from the seo-admin overlay — the " +
+      "same two-condition shape as feedback.triage.",
+    provenBy: (plan) => exists(plan, "app", "admin", "seo", "page.tsx"),
+  },
+  {
+    capability: "notifications.fanout",
+    why:
+      "The notify helper that fans out at write time AND the recipient-scoped " +
+      "router that reads it back. The inbox PAGE is the other key; a project " +
+      "without a shell can still write and read rows over tRPC.",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "server", "notify.ts"], "notify(") &&
+      exists(plan, "src", "server", "routers", "notifications.ts"),
+  },
+  {
+    capability: "notifications.inbox",
+    why: "The inbox page under the shell, from the notifications-admin overlay.",
+    provenBy: (plan) => exists(plan, "app", "admin", "inbox", "page.tsx"),
+  },
+  {
+    capability: "storage.files",
+    why:
+      "The upload route handler AND the adapter that owns the vendor choice. " +
+      "Files can arrive over HTTP whether or not a shell lists them — the " +
+      "library page is the other key.",
+    provenBy: (plan) =>
+      mentions(plan, ["app", "api", "files", "route.ts"], "storeFile(") &&
+      exists(plan, "src", "server", "blob-store.ts"),
+  },
+  {
+    capability: "storage.library",
+    why: "The staff library page under the shell, from the storage-admin overlay.",
+    provenBy: (plan) => exists(plan, "app", "admin", "files", "page.tsx"),
+  },
+  {
     capability: "ai.streaming",
     why:
       "A route that opens a stream through `createStreamRoute`. THE CLAIM " +

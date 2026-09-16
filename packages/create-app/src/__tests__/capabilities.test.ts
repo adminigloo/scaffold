@@ -28,25 +28,35 @@ const EVERY_CONFIGURATION = ["none", "one-time", "subscription", "both"].flatMap
       [true, false].flatMap((includeAi) =>
         [true, false].flatMap((includeEmail) =>
           [true, false].flatMap((includeFeedback) =>
-            [true, false].flatMap((includeMarketing) =>
-              ["Organization", "none"].map(
-                (tenantNoun) =>
-                  [
-                    `--model ${businessModel} --admin ${adminShell}` +
-                      `${includeAi ? " --ai" : ""}${includeEmail ? " --email" : ""}` +
-                      `${includeFeedback ? " --feedback" : ""}` +
-                      `${includeMarketing ? " --marketing" : ""}` +
-                      ` --tenant ${tenantNoun}`,
-                    {
-                      businessModel,
-                      adminShell,
-                      includeAi,
-                      includeEmail,
-                      includeFeedback,
-                      includeMarketing,
-                      tenantNoun,
-                    },
-                  ] as const,
+            // One axis for the three newest suite features, the same trade
+            // configurations.ts makes and for the same reason: they are
+            // independent of each other, coupled only to the shell, and
+            // three private axes here would multiply the sweep by eight.
+            [true, false].flatMap((includeSuite) =>
+              [true, false].flatMap((includeMarketing) =>
+                ["Organization", "none"].map(
+                  (tenantNoun) =>
+                    [
+                      `--model ${businessModel} --admin ${adminShell}` +
+                        `${includeAi ? " --ai" : ""}${includeEmail ? " --email" : ""}` +
+                        `${includeFeedback ? " --feedback" : ""}` +
+                        `${includeSuite ? " --seo-reports --notifications --storage" : ""}` +
+                        `${includeMarketing ? " --marketing" : ""}` +
+                        ` --tenant ${tenantNoun}`,
+                      {
+                        businessModel,
+                        adminShell,
+                        includeAi,
+                        includeEmail,
+                        includeFeedback,
+                        includeSeoReports: includeSuite,
+                        includeNotifications: includeSuite,
+                        includeStorage: includeSuite,
+                        includeMarketing,
+                        tenantNoun,
+                      },
+                    ] as const,
+                ),
               ),
             ),
           ),
@@ -102,10 +112,17 @@ describe("the manifest can prove everything it claims", () => {
     // project grew the thing and the manifest never said so. A `--admin none`
     // project that somehow emitted app/admin/page.tsx would pass every other
     // test in this file.
-    for (const [label, overrides] of EVERY_CONFIGURATION) {
-      const plan = await planEmit(TEMPLATE_DIR, "/out", answers(overrides));
-      const claimed = new Set(capabilitiesFor(answers(overrides)));
+    // Planned in parallel like the prune test below: sequential awaits here
+    // timed out the day the suite-feature axis doubled the matrix.
+    const planned = await Promise.all(
+      EVERY_CONFIGURATION.map(async ([label, overrides]) => ({
+        label,
+        plan: await planEmit(TEMPLATE_DIR, "/out", answers(overrides)),
+        claimed: new Set(capabilitiesFor(answers(overrides))),
+      })),
+    );
 
+    for (const { label, plan, claimed } of planned) {
       for (const row of CAPABILITY_EVIDENCE) {
         if (claimed.has(row.capability)) continue;
         if (

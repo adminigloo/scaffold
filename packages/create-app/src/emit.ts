@@ -297,6 +297,7 @@ export async function planEmit(
   // shared link that renders as a grey box and a staging preview that outranks
   // the client's real site are harms, and a harm must not be opt-in.
   files.set(join("src", "seo.ts"), renderSeoModule(answers));
+  files.set(join("app", "llms.txt", "route.ts"), renderLlmsTxt(answers));
   files.set(join("app", "robots.ts"), renderRobots(answers));
   files.set(join("app", "sitemap.ts"), renderSitemap(answers));
   // The derived half of the legal pages: who else sees a customer's data, and
@@ -471,6 +472,13 @@ export function renderPackageJson(answers: Answers): string {
     // it never chooses a storage vendor, and the emitted route is the caller
     // that chose Vercel Blob. A package imported by an emitted file is a
     // package the manifest has to name; that is the pino rule.
+    deps["@vercel/blob"] = "^2.8.0";
+  }
+  if (answers.includeStorage) {
+    // The file library's adapter in src/server/blob-store.ts — same rule and
+    // same vendor as feedback's screenshots, declared by the app because the
+    // storage package never imports an SDK. Assigning the same range twice
+    // when both features are on is a no-op by design.
     deps["@vercel/blob"] = "^2.8.0";
   }
   if (answers.businessModel !== "none") {
@@ -883,6 +891,18 @@ export function renderEnvLocal(answers: Answers): string {
     );
   }
 
+  if (answers.includeStorage && !answers.includeFeedback) {
+    // When feedback is also on, its block above already introduces the same
+    // variable; a second copy would be the duplicate the reader trips on.
+    lines.push(
+      "",
+      "# --- File storage -----------------------------------------------------------",
+      "# The library at /admin/files turns on with this (Vercel -> Storage -> Blob).",
+      "# Until then the page says so in one sentence; nothing errors.",
+      "# BLOB_READ_WRITE_TOKEN=",
+    );
+  }
+
   return `${lines.join("\n")}\n`;
 }
 
@@ -953,6 +973,9 @@ export function renderScaffoldRecord(manifest: ProjectManifest): string {
     `| AI routes | ${answers.includeAi ? "yes" : "no"} |`,
     `| Transactional email | ${answers.includeEmail ? "yes" : "no"} |`,
     `| In-app feedback | ${answers.includeFeedback ? "yes" : "no"} |`,
+    `| SEO & AEO reports | ${answers.includeSeoReports ? "yes" : "no"} |`,
+    `| In-app notifications | ${answers.includeNotifications ? "yes" : "no"} |`,
+    `| File storage | ${answers.includeStorage ? "yes" : "no"} |`,
     `| Public marketing site | ${answers.includeMarketing ? "yes" : "no"} |`,
     `| Personal-workspace only | ${isPersonalWorkspaceOnly(answers) ? "yes" : "no"} |`,
     "",
@@ -1151,6 +1174,20 @@ export function renderEnvModule(answers: Answers): string {
     features.push(
       `{ name: "Feedback widget", vars: ["ADMINIGLOO_FEEDBACK_KEY"], disables: "Mounting the widget in this app. The intake API still answers, so any other app holding a key can still submit. Issue a key with pnpm feedback:issue-key." }`,
       `{ name: "Feedback screenshots", vars: ["BLOB_READ_WRITE_TOKEN"], disables: "Storing screenshots. Uploads answer 503 and reports still arrive, without images — the widget says so rather than failing the submit." }`,
+    );
+  }
+
+  if (answers.includeStorage) {
+    // The same blob token feedback's screenshots use — one store per project.
+    // Guarded so a project with both features declares the variable once:
+    // Zod would not mind the duplicate key, but the person reading the file
+    // would rightly ask which one wins.
+    if (!answers.includeFeedback) {
+      serverSpreads.push("BLOB_READ_WRITE_TOKEN: z.string().min(1).optional()");
+      runtime.push("BLOB_READ_WRITE_TOKEN: process.env.BLOB_READ_WRITE_TOKEN");
+    }
+    features.push(
+      `{ name: "File storage", vars: ["BLOB_READ_WRITE_TOKEN"], disables: "Uploads. /admin/files says so in one sentence; listing and deleting existing rows still work, and nothing else is affected." }`,
     );
   }
 
@@ -1867,6 +1904,15 @@ export function renderAppRouter(answers: Answers): string {
   if (answers.includeFeedback) {
     imports.splice(1, 0, 'import { feedbackRouter } from "./feedback";');
   }
+  if (answers.includeStorage) {
+    imports.splice(1, 0, 'import { filesRouter } from "./files";');
+  }
+  if (answers.includeNotifications) {
+    imports.splice(1, 0, 'import { notificationsRouter } from "./notifications";');
+  }
+  if (answers.includeSeoReports) {
+    imports.splice(1, 0, 'import { seoRouter } from "./seo";');
+  }
   if (takesMoney) {
     imports.splice(1, 0, 'import { accountRouter } from "./account";');
     imports.splice(2, 0, 'import { billingRouter } from "./billing";');
@@ -1900,6 +1946,32 @@ export function renderAppRouter(answers: Answers): string {
   // the shell — rather than a key of its own; mint one when the queue grows
   // actions that not every staff member should hold.
   feedback: feedbackRouter,
+`
+    : "";
+
+  const seo = answers.includeSeoReports
+    ? `
+  // SEO & AEO audits of THIS deployment, run on demand from the admin. The
+  // crawl targets NEXT_PUBLIC_APP_URL over the public internet — the audit
+  // must see what a crawler sees, headers, redirects and all.
+  seo: seoRouter,
+`
+    : "";
+
+  const notifications = answers.includeNotifications
+    ? `
+  // Each signed-in person's own inbox. The recipient comes from the session,
+  // never from input — a guessed id reads nothing and marks nothing.
+  notifications: notificationsRouter,
+`
+    : "";
+
+  const storage = answers.includeStorage
+    ? `
+  // The staff file library. Listing and deleting only — the upload is the
+  // /api/files route handler, per the large-payloads rule at the top of this
+  // file.
+  files: filesRouter,
 `
     : "";
 
@@ -1968,7 +2040,7 @@ export const appRouter = createTRPCRouter({
   // writes actually live. Mounted even in a project generated without the admin
   // shell, so the panel can be added later without re-deriving its boundary.
   admin: adminRouter,
-${ai}${feedback}${shop}});
+${ai}${feedback}${seo}${notifications}${storage}${shop}});
 
 export type AppRouter = typeof appRouter;
 `;
@@ -1996,9 +2068,17 @@ export function renderSchemaModule(answers: Answers): string {
   if (answers.includeEmail) owners.push("email");
   // The widget package owns no tables; only the platform half does.
   if (answers.includeFeedback) owners.push("feedback");
+  if (answers.includeSeoReports) owners.push("seo-reports");
+  if (answers.includeNotifications) owners.push("notifications");
+  if (answers.includeStorage) owners.push("storage");
 
-  /** `@scope/auth/schema` -> `authSchema`. */
-  const binding = (owner: string): string => `${owner}Schema`;
+  /**
+   * `@scope/auth/schema` -> `authSchema`; `seo-reports` -> `seoReportsSchema`.
+   * Camelised because a hyphen survives a package name and not an identifier —
+   * `seo-reportsSchema` is the syntax error this line exists to never emit.
+   */
+  const binding = (owner: string): string =>
+    `${owner.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase())}Schema`;
 
   const imports = owners.map(
     (owner) => `import * as ${binding(owner)} from "${scope}/${owner}/schema";`,
@@ -2480,10 +2560,7 @@ export function renderAdminNav(answers: Answers): string {
   const sells = answers.businessModel !== "none";
   const full = answers.adminShell === "full";
 
-  const groups: GeneratedNavGroup[] = [
-    {
-      heading: "Overview",
-      items: [
+  const overviewItems: GeneratedNavItem[] = [
         {
           href: "/admin",
           label: "Dashboard",
@@ -2505,9 +2582,25 @@ export function renderAdminNav(answers: Answers): string {
             "support call. On the shell's own key rather than a key of its own, " +
             "because it shows the viewer nothing they are not already holding.",
         },
-      ],
-    },
   ];
+
+  // The inbox belongs beside the dashboard, not in a feature group: it is the
+  // first screen a shift starts on, and events from EVERY feature write it.
+  // From the notifications-admin overlay, which this function only runs
+  // alongside — no shell, no entry, no page.
+  if (answers.includeNotifications) {
+    overviewItems.push({
+      href: "/admin/inbox",
+      label: "Inbox",
+      permission: "staff.dashboard.view",
+      why:
+        "Your own notifications, resolved from the session server-side. " +
+        "Rows are written by events at the moment they happen, so this page " +
+        "answers \"what happened while I was away\" without four screens.",
+    });
+  }
+
+  const groups: GeneratedNavGroup[] = [{ heading: "Overview", items: overviewItems }];
 
   // The product builder lives in `catalog-admin`, which is copied only when the
   // project sells something AND asked for a shell to put it in. Absence here is
@@ -2586,6 +2679,38 @@ export function renderAdminNav(answers: Answers): string {
         },
       ],
     });
+  }
+
+  // Operating the site itself rather than any customer's account: the
+  // self-audit and the file library. One group for however many of the two
+  // were asked for, because a heading over a single link is still better than
+  // that link filed under "Accounts" where nobody thinks to look for it.
+  const operations: GeneratedNavItem[] = [];
+  if (answers.includeSeoReports) {
+    operations.push({
+      href: "/admin/seo",
+      label: "SEO & AEO",
+      permission: "staff.dashboard.view",
+      why:
+        "The site grading itself: audit runs from the seo-reports package, " +
+        "receipts in this project's own seo_reports table. From the " +
+        "seo-admin overlay, so a project without the answer has neither " +
+        "this page nor this entry.",
+    });
+  }
+  if (answers.includeStorage) {
+    operations.push({
+      href: "/admin/files",
+      label: "Files",
+      permission: "staff.dashboard.view",
+      why:
+        "The firm's file library from the storage package: rows in " +
+        "stored_files, bytes in the blob store behind the adapter, and " +
+        "deleting one removes both.",
+    });
+  }
+  if (operations.length > 0) {
+    groups.push({ heading: "Operations", items: operations });
   }
 
   const accounts: GeneratedNavItem[] = [
@@ -3919,7 +4044,12 @@ export const INDEXABLE: boolean = resolveAppEnv() === "production";
 export const siteMetadata: Metadata = {
   // Every relative OG and Twitter URL is resolved against this. Without it they
   // resolve against localhost and shared links render as a grey box.
-  metadataBase: new URL(env.NEXT_PUBLIC_APP_URL),
+  //
+  // Guarded, not asserted: NEXT_PUBLIC_APP_URL is optional-until-deployed, and
+  // this module loads during \`next build\` on machines that legitimately lack
+  // it — CI most of all. \`new URL(undefined)\` there fails the whole build from
+  // inside the /_not-found page, which points at everything except this line.
+  metadataBase: env.NEXT_PUBLIC_APP_URL ? new URL(env.NEXT_PUBLIC_APP_URL) : undefined,
   // \`%s\` is the page's own title. A page exporting \`title: "Pricing"\` becomes
   // "Pricing · ${answers.projectName}" without repeating the site name in forty files.
   title: { default: SITE_NAME, template: \`%s · \${SITE_NAME}\` },
@@ -4062,8 +4192,12 @@ export default function robots(): MetadataRoute.Robots {
   return {
     rules: [{ userAgent: "*", allow: "/", disallow: [...DISALLOWED] }],
     // Absolute, because a sitemap reference in robots.txt must be. A relative
-    // path here is ignored by every crawler that reads it, silently.
-    sitemap: new URL("/sitemap.xml", env.NEXT_PUBLIC_APP_URL).toString(),
+    // path here is ignored by every crawler that reads it, silently — so with
+    // no base URL configured the line is omitted rather than emitted wrong.
+    // Unreachable on an INDEXABLE deployment, where the variable is required.
+    ...(env.NEXT_PUBLIC_APP_URL
+      ? { sitemap: new URL("/sitemap.xml", env.NEXT_PUBLIC_APP_URL).toString() }
+      : {}),
   };
 }
 `;
@@ -4139,9 +4273,92 @@ ${entries}];
  * costs the whole file.
  */
 export default function sitemap(): MetadataRoute.Sitemap {
+  // No base URL, no sitemap: entries must be absolute, and a build without
+  // NEXT_PUBLIC_APP_URL (CI, a fresh laptop) has nothing true to make them
+  // absolute WITH. Empty is honest; localhost URLs in a sitemap are not.
+  if (!env.NEXT_PUBLIC_APP_URL) return [];
+  const base = env.NEXT_PUBLIC_APP_URL;
   return PUBLIC_PAGES.map((path) => ({
-    url: new URL(path, env.NEXT_PUBLIC_APP_URL).toString(),
+    url: new URL(path, base).toString(),
   }));
+}
+`;
+}
+
+/**
+ * `app/llms.txt/route.ts` — the routing table answer engines read first.
+ *
+ * llms.txt is to ChatGPT, Claude and Perplexity what sitemap.xml is to
+ * Google: a machine-readable map of where the substance lives, with one
+ * sentence of context per link so an engine routes a question to the right
+ * page instead of guessing from anchor text. The seo-reports package's own
+ * AEO audit fails any site that does not serve one — including, for a while,
+ * the site that ships the package. This emission closes that gap for every
+ * generated project on its first boot.
+ *
+ * ALWAYS EMITTED, like robots.txt and the sitemap: answer-engine visibility
+ * is plumbing, not marketing, and the page list is derived from the answers
+ * exactly the way the sitemap's is — a route that was never installed
+ * contributes no line.
+ *
+ * THE SUMMARY LINE IS THE CLIENT'S. Everything else here is a fact the
+ * generator knows; what the product IS in one sentence is a claim only its
+ * owner can make, and an answer engine will quote it verbatim. The emitted
+ * default states only the project name, with the instruction to replace it
+ * beside it, because a placeholder that reads like copy is a placeholder
+ * that ships.
+ */
+export function renderLlmsTxt(answers: Answers): string {
+  const sells = answers.businessModel !== "none";
+
+  const pages: { readonly path: string; readonly line: string }[] = [
+    { path: "/", line: "The landing page." },
+  ];
+  if (answers.includeMarketing && sells) {
+    pages.push({ path: "/pricing", line: "Plans and pricing." });
+  }
+  if (sells) {
+    pages.push({ path: "/products", line: "Published products available to buy." });
+  }
+  if (answers.includeMarketing || sells) {
+    pages.push(
+      { path: "/privacy", line: "Privacy policy; the subprocessor list is derived from the software actually installed." },
+      { path: "/terms", line: "Terms of service." },
+    );
+  }
+
+  const entries = pages
+    .map((page) => `- [${page.path === "/" ? "Home" : page.path.slice(1)}](\${base}${page.path === "/" ? "/" : page.path}): ${page.line}`)
+    .join("\n");
+
+  return `/**
+ * The routing table answer engines read first — sitemap.xml for the systems
+ * that answer instead of listing. Generated from the answers, so a route that
+ * was never installed contributes no line; the summary under the heading is
+ * YOURS to write, because an answer engine will quote it verbatim and the
+ * generator refuses to put words in your mouth.
+ *
+ * A route handler rather than a static file so the body can derive from the
+ * environment. Content is deliberately terse — this is a map, not a pitch.
+ */
+import { env } from "@/env";
+
+export function GET(): Response {
+  // Paths stay relative until the deployment knows its own address; engines
+  // only ever read this from a live site, where the variable is required.
+  const base = env.NEXT_PUBLIC_APP_URL ?? "";
+  const body = \`# ${answers.projectName}
+
+> ${answers.projectName}. Replace this line with the one sentence you would
+> say on the phone about what this product is — engines quote it verbatim.
+
+## Pages
+
+${entries}
+\`;
+  return new Response(body, {
+    headers: { "content-type": "text/plain; charset=utf-8" },
+  });
 }
 `;
 }

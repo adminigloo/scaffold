@@ -862,6 +862,53 @@ describe("non-interactive flags", () => {
     expect(parseArgs(["--email"]).email).toBe(true);
     expect(parseArgs(["--feedback"]).feedback).toBe(true);
     expect(parseArgs(["--no-feedback"]).feedback).toBe(false);
+    expect(parseArgs(["--seo-reports"]).seoReports).toBe(true);
+    expect(parseArgs(["--no-seo-reports"]).seoReports).toBe(false);
+    expect(parseArgs(["--notifications"]).notifications).toBe(true);
+    expect(parseArgs(["--no-notifications"]).notifications).toBe(false);
+    expect(parseArgs(["--storage"]).storage).toBe(true);
+    expect(parseArgs(["--no-storage"]).storage).toBe(false);
+  });
+
+  /**
+   * One flag at a time, because the sweep deliberately toggles the three
+   * suite features together on one axis. These pin the independence that
+   * trade relies on: each flag alone installs its own package, its own
+   * overlays and its own capability keys, and nobody else's.
+   */
+  it("keeps the three suite flags independent of each other", () => {
+    const seo = answers({ includeSeoReports: true, adminShell: "full" });
+    expect(packagesFor(seo)).toContain("@adminigloo/seo-reports");
+    expect(packagesFor(seo)).not.toContain("@adminigloo/notifications");
+    expect(packagesFor(seo)).not.toContain("@adminigloo/storage");
+    expect(overlayNamesFor(seo)).toEqual(
+      expect.arrayContaining(["seo-reports", "seo-admin"]),
+    );
+    expect(capabilitiesFor(seo)).toEqual(
+      expect.arrayContaining(["seo.audits", "seo.reports"]),
+    );
+
+    const notif = answers({ includeNotifications: true, adminShell: "none" });
+    expect(packagesFor(notif)).toContain("@adminigloo/notifications");
+    expect(overlayNamesFor(notif)).toContain("notifications");
+    // No shell, no inbox page — the same fork feedback-admin takes.
+    expect(overlayNamesFor(notif)).not.toContain("notifications-admin");
+    expect(capabilitiesFor(notif)).toContain("notifications.fanout");
+    expect(capabilitiesFor(notif)).not.toContain("notifications.inbox");
+
+    const storage = answers({ includeStorage: true, adminShell: "minimal" });
+    expect(packagesFor(storage)).toContain("@adminigloo/storage");
+    expect(overlayNamesFor(storage)).toEqual(
+      expect.arrayContaining(["storage", "storage-admin"]),
+    );
+    expect(capabilitiesFor(storage)).toEqual(
+      expect.arrayContaining(["storage.files", "storage.library"]),
+    );
+    // The blob token is named once even when feedback would name it too.
+    const both = answers({ includeStorage: true, includeFeedback: true });
+    expect(
+      optionalEnvFor(both).filter((v) => v === "BLOB_READ_WRITE_TOKEN"),
+    ).toHaveLength(1);
   });
 
   it("does not mistake a flag's value for the project name", () => {
@@ -2369,6 +2416,11 @@ describe("the audit vocabulary", () => {
  * not a page nobody noticed.
  */
 const UNLINKED_BY_DESIGN: Readonly<Record<string, string>> = {
+  "/llms.txt":
+    "read by answer-engine crawlers, the way /robots.txt and /sitemap.xml " +
+    "are — those two escape this list only because Next emits them from " +
+    "metadata files instead of a route handler. A nav link to a plain-text " +
+    "routing table would be a link to a page no person wants.",
   "/invite/[token]":
     "arrives in an email. The URL carries a one-time token, so there is no " +
     "stable href to put in a nav, and a link to it in the header would be a " +

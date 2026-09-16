@@ -62,6 +62,39 @@ export interface Answers {
    */
   readonly includeFeedback: boolean;
   /**
+   * SEO & AEO self-audits: the site crawling its own sitemap and scoring how
+   * search engines and answer engines will read it, receipts in the app's own
+   * database. The staff report page rides `adminShell`, the same fork
+   * feedback's triage UI takes.
+   *
+   * DEFAULTS TO FALSE, but for a different reason than the others: the audit
+   * has no credential to wait for — it would work on first boot. It is off by
+   * default because it is a SELLABLE feature, and the generator's rule is
+   * that what is for sale arrives by being asked for.
+   */
+  readonly includeSeoReports: boolean;
+  /**
+   * The in-app inbox: durable per-recipient notifications your events write
+   * and your header badge reads. The package ships the primitive; PRODUCERS
+   * ARE THE PROJECT'S TO WIRE — feedback's `onEvent` hook is the proven first
+   * one, and adminigloo.com's intake route is the shape to copy.
+   *
+   * DEFAULTS TO FALSE: an inbox nothing writes to is a page that teaches
+   * people to stop checking it.
+   */
+  readonly includeNotifications: boolean;
+  /**
+   * Tenant-scoped file storage: rows in the app's own database, bytes behind
+   * a two-method adapter the app owns (the emitted one chooses Vercel Blob).
+   * The upload is a plain route handler — files do not ride superjson — and
+   * the staff library page rides `adminShell`.
+   *
+   * DEFAULTS TO FALSE. Without BLOB_READ_WRITE_TOKEN the library says so in
+   * one sentence instead of erroring, so default-on would only add surface
+   * with nothing behind it — the feedback-widget rule.
+   */
+  readonly includeStorage: boolean;
+  /**
    * Does this project have a PUBLIC FACE — a landing page, a pricing page, a
    * privacy policy — or is it only the application behind the sign-in?
    *
@@ -98,6 +131,9 @@ export const DEFAULT_ANSWERS: Answers = {
   includeAi: false,
   includeEmail: false,
   includeFeedback: false,
+  includeSeoReports: false,
+  includeNotifications: false,
+  includeStorage: false,
   includeMarketing: false,
   scope: "@adminigloo",
 };
@@ -183,6 +219,9 @@ export function packagesFor(answers: Answers): readonly string[] {
   // against a hosted platform installs exactly one of them, so folding them
   // into one package here would misstate what is actually for sale.
   if (answers.includeFeedback) optional.push("feedback", "feedback-widget");
+  if (answers.includeSeoReports) optional.push("seo-reports");
+  if (answers.includeNotifications) optional.push("notifications");
+  if (answers.includeStorage) optional.push("storage");
 
   return [...base, ...optional].map((p) => `${answers.scope}/${p}`);
 }
@@ -279,7 +318,14 @@ export function optionalEnvFor(answers: Answers): readonly string[] {
     // uploads answer 503 {skipped} and reports arrive without screenshots.
     vars.push("ADMINIGLOO_FEEDBACK_KEY", "BLOB_READ_WRITE_TOKEN");
   }
-  return vars;
+  if (answers.includeStorage) {
+    // Same variable feedback's screenshots use — one blob store per project,
+    // so the file library and the screenshots share a credential.
+    vars.push("BLOB_READ_WRITE_TOKEN");
+  }
+  // Deduped, not sorted: two features naming one variable (the blob token)
+  // must not print it twice, and order is the order the reader meets them.
+  return [...new Set(vars)];
 }
 
 /** Singular noun used in generated UI copy. `none` means a B2C project. */
@@ -406,6 +452,24 @@ export function overlayNamesFor(answers: Answers): readonly string[] {
   // exact leak catalog-admin once had.
   if (answers.includeFeedback && answers.adminShell !== "none") {
     names.push("feedback-admin");
+  }
+
+  // THE THREE NEWEST SUITE FEATURES, each split on the feedback shape: the
+  // server half (router, helpers, API routes) needs only its answer, because
+  // it is reachable over tRPC or HTTP whether or not there is a shell; the
+  // `-admin` half is pages, and pages without a shell are the catalog-admin
+  // leak all over again.
+  if (answers.includeSeoReports) names.push("seo-reports");
+  if (answers.includeSeoReports && answers.adminShell !== "none") {
+    names.push("seo-admin");
+  }
+  if (answers.includeNotifications) names.push("notifications");
+  if (answers.includeNotifications && answers.adminShell !== "none") {
+    names.push("notifications-admin");
+  }
+  if (answers.includeStorage) names.push("storage");
+  if (answers.includeStorage && answers.adminShell !== "none") {
+    names.push("storage-admin");
   }
 
   // THE PUBLIC FACE, in three overlays rather than one, because the three have
@@ -538,6 +602,22 @@ export function capabilitiesFor(answers: Answers): readonly string[] {
   if (answers.includeFeedback) keys.push("feedback.intake");
   if (answers.includeFeedback && answers.adminShell !== "none") {
     keys.push("feedback.triage");
+  }
+
+  // Split the way feedback is, for the same reason: "can this project audit
+  // itself / fan out notifications / store files" and "is there a staff
+  // screen for it here" are different questions with different answers.
+  if (answers.includeSeoReports) keys.push("seo.audits");
+  if (answers.includeSeoReports && answers.adminShell !== "none") {
+    keys.push("seo.reports");
+  }
+  if (answers.includeNotifications) keys.push("notifications.fanout");
+  if (answers.includeNotifications && answers.adminShell !== "none") {
+    keys.push("notifications.inbox");
+  }
+  if (answers.includeStorage) keys.push("storage.files");
+  if (answers.includeStorage && answers.adminShell !== "none") {
+    keys.push("storage.library");
   }
 
   // The public face. Three keys rather than one, because a consumer asking

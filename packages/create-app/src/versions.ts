@@ -92,6 +92,14 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   billing: "0.2.0",
   ai: "0.1.3",
   email: "0.2.1",
+  // First releases, all three proven on adminigloo.com before they were
+  // offered here — the same publish → dogfood → template rhythm feedback
+  // followed. The emitted routers import from each unconditionally, so a
+  // caret over nothing older can resolve wrong; these exist to move IN STEP
+  // with the workspace versions the drift test reads.
+  "seo-reports": "0.1.0",
+  notifications: "0.1.0",
+  storage: "0.1.0",
   // 0.6.0 for the onEvent producer hook (optional, so the emitted route
   // needs no change); 0.5.0 was the column editor and unread marks. The emitted router imports
   // `createStatus`, `deleteStatus`, `markTicketRead` and friends; none exist
