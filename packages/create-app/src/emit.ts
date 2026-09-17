@@ -2677,6 +2677,16 @@ export function renderAdminNav(answers: Answers): string {
             "views it configures, on the same key — configuring columns is " +
             "triage work until a team says otherwise.",
         },
+        {
+          href: "/admin/feedback/categories",
+          label: "Categories",
+          permission: "staff.dashboard.view",
+          why:
+            "The widget's dropdown editor (0.7.0): rows in feedback_categories " +
+            "ARE what a reporter can call their report, and showToCustomer is " +
+            "the curation — a staff-only category exists for triage without " +
+            "ever being offered to the person filing a bug.",
+        },
       ],
     });
   }

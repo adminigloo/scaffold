@@ -1,5 +1,17 @@
 # create-adminigloo-app
 
+## 0.16.0
+
+### Minor Changes
+
+- Generated projects get the serious board. The feedback router grows the
+  0.7.0 procedures — bulk move, archive, the terminal sweep, and category
+  administration — and the admin pages are the ones proven on
+  adminigloo.com: the board with selection, the archive controls and the
+  eye toggle; the columns editor with terminal, WIP and aging settings on
+  a quiet second line; and a new categories page where showToCustomer
+  keeps a staff-only category out of the widget without a deploy.
+
 ## 0.15.0
 
 ### Minor Changes

@@ -2,15 +2,26 @@ import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import {
   addTicketMessage,
+  archiveTerminalTickets,
+  archiveTicket,
   assignTicket,
+  createCategory,
+  createCategorySchema,
   createStatus,
   createStatusSchema,
+  deleteCategory,
   deleteStatus,
   listBoardData,
+  listCategories,
   listTicketMessages,
   markTicketRead,
   moveTicket,
+  moveTickets,
+  reorderCategories,
   reorderStatuses,
+  unarchiveTicket,
+  updateCategory,
+  updateCategorySchema,
   updateStatus,
   updateStatusSchema,
 } from "__SCOPE__/feedback";
@@ -73,7 +84,8 @@ export const feedbackRouter = createTRPCRouter({
   /** Columns + tickets for the Kanban view. Seeds the default columns on first read. */
   board: requireStaff("staff.dashboard.view")
     .meta({ scope: "staff" })
-    .query(() => listBoardData(db)),
+    .input(z.object({ includeArchived: z.boolean().default(false) }).optional())
+    .query(({ input }) => listBoardData(db, { includeArchived: input?.includeArchived ?? false })),
 
   /** Drag-and-drop lands here. False from the package means a stale client, not a write. */
   move: requireStaff("staff.dashboard.view")
@@ -83,6 +95,36 @@ export const feedbackRouter = createTRPCRouter({
       const moved = await moveTicket(db, input);
       return { moved };
     }),
+
+  /** The selection's move (0.7.0) — one statement server-side, one event on the board. */
+  moveMany: requireStaff("staff.dashboard.view")
+    .meta({ scope: "staff" })
+    .input(
+      z.object({
+        ticketIds: z.array(z.string()).min(1).max(200),
+        statusKey: z.string().max(50),
+      }),
+    )
+    .mutation(({ input }) => moveTickets(db, input)),
+
+  // Archive (0.7.0): tickets leave the board without leaving the record.
+  archive: requireStaff("staff.dashboard.view")
+    .meta({ scope: "staff" })
+    .input(z.object({ ticketId: z.string(), archivedBy: z.string().min(1).max(120) }))
+    .mutation(async ({ input }) => ({ archived: await archiveTicket(db, input) })),
+
+  unarchive: requireStaff("staff.dashboard.view")
+    .meta({ scope: "staff" })
+    .input(z.object({ ticketId: z.string() }))
+    .mutation(async ({ input }) => ({
+      unarchived: await unarchiveTicket(db, input.ticketId),
+    })),
+
+  /** "Archive Done (N)": sweep every finished column in one statement. */
+  archiveTerminal: requireStaff("staff.dashboard.view")
+    .meta({ scope: "staff" })
+    .input(z.object({ archivedBy: z.string().min(1).max(120) }))
+    .mutation(({ input }) => archiveTerminalTickets(db, input)),
 
   /** The conversation on one ticket, oldest first. */
   messages: requireStaff("staff.dashboard.view")
@@ -162,6 +204,39 @@ export const feedbackRouter = createTRPCRouter({
     .input(z.object({ orderedIds: z.array(z.string()).min(1).max(50) }))
     .mutation(async ({ input }) => {
       await reorderStatuses(db, input.orderedIds);
+      return { ok: true };
+    }),
+
+  // Category administration (0.7.0). Same shape as the four above, because
+  // it is the same feature one field over: rows are the widget's dropdown,
+  // and the delete refusal names the tickets still carrying the key.
+  listCategories: requireStaff("staff.dashboard.view")
+    .meta({ scope: "staff" })
+    .query(() => listCategories(db)),
+
+  createCategory: requireStaff("staff.dashboard.view")
+    .meta({ scope: "staff" })
+    .input(createCategorySchema)
+    .mutation(({ input }) => createCategory(db, input)),
+
+  updateCategory: requireStaff("staff.dashboard.view")
+    .meta({ scope: "staff" })
+    .input(updateCategorySchema)
+    .mutation(async ({ input }) => {
+      await updateCategory(db, input);
+      return { ok: true };
+    }),
+
+  deleteCategory: requireStaff("staff.dashboard.view")
+    .meta({ scope: "staff" })
+    .input(z.object({ categoryId: z.string() }))
+    .mutation(({ input }) => deleteCategory(db, input.categoryId)),
+
+  reorderCategories: requireStaff("staff.dashboard.view")
+    .meta({ scope: "staff" })
+    .input(z.object({ orderedIds: z.array(z.string()).min(1).max(50) }))
+    .mutation(async ({ input }) => {
+      await reorderCategories(db, input.orderedIds);
       return { ok: true };
     }),
 });

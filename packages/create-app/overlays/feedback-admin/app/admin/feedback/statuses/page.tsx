@@ -161,6 +161,14 @@ export default function FeedbackStatusesPage() {
   );
 }
 
+/** "" ↔ null for the optional number fields, without NaN leaking through. */
+function parseHours(value: string): number | null {
+  const trimmed = value.trim();
+  if (trimmed === "") return null;
+  const n = Number.parseInt(trimmed, 10);
+  return Number.isNaN(n) || n < 1 ? null : n;
+}
+
 function StatusRow({
   status,
   ticketCount,
@@ -171,9 +179,25 @@ function StatusRow({
   isFirst,
   isLast,
 }: {
-  readonly status: { id: string; key: string; label: string; color: string | null };
+  readonly status: {
+    id: string;
+    key: string;
+    label: string;
+    color: string | null;
+    isTerminal: boolean;
+    wipLimit: number | null;
+    agingWarnHours: number | null;
+    agingStaleHours: number | null;
+  };
   readonly ticketCount: number;
-  readonly onSave: (patch: { label?: string; color?: string | null }) => Promise<void>;
+  readonly onSave: (patch: {
+    label?: string;
+    color?: string | null;
+    isTerminal?: boolean;
+    wipLimit?: number | null;
+    agingWarnHours?: number | null;
+    agingStaleHours?: number | null;
+  }) => Promise<void>;
   readonly onDelete: () => Promise<void>;
   readonly onMoveUp: () => void;
   readonly onMoveDown: () => void;
@@ -182,45 +206,89 @@ function StatusRow({
 }) {
   const [label, setLabel] = useState(status.label);
   const [color, setColor] = useState(status.color ?? "");
-  const dirty = label !== status.label || (color || null) !== status.color;
+  const [terminal, setTerminal] = useState(status.isTerminal);
+  const [wip, setWip] = useState(status.wipLimit?.toString() ?? "");
+  const [warn, setWarn] = useState(status.agingWarnHours?.toString() ?? "");
+  const [stale, setStale] = useState(status.agingStaleHours?.toString() ?? "");
+  const dirty =
+    label !== status.label ||
+    (color || null) !== status.color ||
+    terminal !== status.isTerminal ||
+    parseHours(wip) !== status.wipLimit ||
+    parseHours(warn) !== status.agingWarnHours ||
+    parseHours(stale) !== status.agingStaleHours;
 
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-control border border-line px-3 py-2">
-      <span
-        aria-hidden
-        className="h-3 w-3 shrink-0 rounded-pill border border-line"
-        style={{ background: status.color ?? "var(--color-line)" }}
-      />
-      <code className="w-28 truncate font-mono text-xs text-ink-muted" title={status.key}>
-        {status.key}
-      </code>
-      <Input value={label} onChange={(event) => setLabel(event.target.value)} className="w-44" />
-      <Input
-        value={color}
-        onChange={(event) => setColor(event.target.value)}
-        placeholder="#1f6fff"
-        className="w-28 font-mono"
-      />
-      <Badge tone={ticketCount > 0 ? "accent" : "neutral"}>
-        {ticketCount} ticket{ticketCount === 1 ? "" : "s"}
-      </Badge>
-      <div className="ml-auto flex items-center gap-1">
-        <Button onClick={onMoveUp} disabled={isFirst} aria-label={`Move ${status.label} up`}>
-          ↑
-        </Button>
-        <Button onClick={onMoveDown} disabled={isLast} aria-label={`Move ${status.label} down`}>
-          ↓
-        </Button>
-        <Button
-          variant="primary"
-          disabled={!dirty}
-          onClick={() => void onSave({ label: label.trim(), color: color.trim() || null })}
-        >
-          Save
-        </Button>
-        <Button variant="danger" onClick={() => void onDelete()}>
-          Delete
-        </Button>
+    <div className="flex flex-col gap-2 rounded-control border border-line px-3 py-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <span
+          aria-hidden
+          className="h-3 w-3 shrink-0 rounded-pill border border-line"
+          style={{ background: status.color ?? "var(--color-line)" }}
+        />
+        <code className="w-28 truncate font-mono text-xs text-ink-muted" title={status.key}>
+          {status.key}
+        </code>
+        <Input value={label} onChange={(event) => setLabel(event.target.value)} className="w-44" />
+        <Input
+          value={color}
+          onChange={(event) => setColor(event.target.value)}
+          placeholder="#1f6fff"
+          className="w-28 font-mono"
+        />
+        <Badge tone={ticketCount > 0 ? "accent" : "neutral"}>
+          {ticketCount} ticket{ticketCount === 1 ? "" : "s"}
+        </Badge>
+        <div className="ml-auto flex items-center gap-1">
+          <Button onClick={onMoveUp} disabled={isFirst} aria-label={`Move ${status.label} up`}>
+            ↑
+          </Button>
+          <Button onClick={onMoveDown} disabled={isLast} aria-label={`Move ${status.label} down`}>
+            ↓
+          </Button>
+          <Button
+            variant="primary"
+            disabled={!dirty}
+            onClick={() =>
+              void onSave({
+                label: label.trim(),
+                color: color.trim() || null,
+                isTerminal: terminal,
+                wipLimit: parseHours(wip),
+                agingWarnHours: parseHours(warn),
+                agingStaleHours: parseHours(stale),
+              })
+            }
+          >
+            Save
+          </Button>
+          <Button variant="danger" onClick={() => void onDelete()}>
+            Delete
+          </Button>
+        </div>
+      </div>
+      {/* The column's kanban settings (0.7.0), one quiet second line. */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 pl-5 text-xs text-ink-muted">
+        <label className="flex items-center gap-1.5">
+          <input
+            type="checkbox"
+            checked={terminal}
+            onChange={(event) => setTerminal(event.target.checked)}
+          />
+          Terminal — work here is finished; &ldquo;Archive done&rdquo; sweeps it
+        </label>
+        <label className="flex items-center gap-1.5">
+          WIP limit
+          <Input value={wip} onChange={(event) => setWip(event.target.value)} placeholder="—" className="w-16" />
+        </label>
+        <label className="flex items-center gap-1.5" title="Hours in this column before the card gets an amber dot">
+          Age warn (h)
+          <Input value={warn} onChange={(event) => setWarn(event.target.value)} placeholder="—" className="w-16" />
+        </label>
+        <label className="flex items-center gap-1.5" title="Hours in this column before the dot turns red">
+          Age stale (h)
+          <Input value={stale} onChange={(event) => setStale(event.target.value)} placeholder="—" className="w-16" />
+        </label>
       </div>
     </div>
   );
