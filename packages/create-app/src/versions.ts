@@ -106,7 +106,10 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // in 0.4.x, so a project resolving the old line fails to compile on files
   // the generator wrote. (0.4.0 was the same story for the /v1/thread and
   // /v1/reply endpoints the 0.2.x widget calls.)
-  feedback: "0.6.0",
+  // 0.7.0 is the serious board: DB-row categories, terminal/WIP/aging on
+  // statuses, soft archive, bulk move. The emitted router imports
+  // `listCategories`, `archiveTicket` and friends; none exist in 0.6.x.
+  feedback: "0.7.0",
   // 0.2.1 — 0.2.0 brought the "My reports" view the thread endpoints exist
   // to serve; the patch is the glacier re-skin with the widget's own dark
   // theme, which a caret would cover anyway. Pinned at the workspace version

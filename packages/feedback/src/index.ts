@@ -1,7 +1,8 @@
-﻿import { and, asc, desc, eq, isNull, max } from "drizzle-orm";
+﻿import { and, asc, desc, eq, inArray, isNull, max } from "drizzle-orm";
 import type { PgDatabase } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import {
+  feedbackCategories,
   feedbackClientKeys,
   feedbackMessages,
   feedbackStatuses,
@@ -327,7 +328,11 @@ export function createFeedbackHandlers(options: CreateFeedbackHandlersOptions): 
   async function handleConfig(req: Request): Promise<Response> {
     const auth = await authenticate(req);
     if (auth instanceof Response) return auth;
-    return json({ categories });
+    // Configured rows win; an empty table means "the defaults", so an install
+    // that never opens the category editor keeps the dropdown it always had
+    // (0.7.0 — the same lazy-config contract the board's statuses set).
+    const configured = await customerCategoryOptions(db);
+    return json({ categories: configured.length > 0 ? configured : categories });
   }
 
   async function handleUpload(req: Request): Promise<Response> {
@@ -598,19 +603,38 @@ export interface BoardStatus {
   label: string;
   color: string | null;
   sortOrder: number;
+  isTerminal: boolean;
+  wipLimit: number | null;
+  agingWarnHours: number | null;
+  agingStaleHours: number | null;
+  allowAiTransition: boolean;
 }
 
 /**
  * Written on first read of an empty feedback_statuses table, so installing
  * the board needs a migration and nothing else — no seed script to know
  * about. Edit the rows afterwards; the board renders whatever is there.
+ * Resolved and Closed seed as terminal: they are what "Archive Done" sweeps.
  */
 export const DEFAULT_BOARD_STATUSES = [
   { key: "open", label: "Open", color: "#1f6fff", sortOrder: 10 },
   { key: "in_progress", label: "In progress", color: "#ff8a00", sortOrder: 20 },
-  { key: "resolved", label: "Resolved", color: "#12b23b", sortOrder: 30 },
-  { key: "closed", label: "Closed", color: "#6b7280", sortOrder: 40 },
+  { key: "resolved", label: "Resolved", color: "#12b23b", sortOrder: 30, isTerminal: true },
+  { key: "closed", label: "Closed", color: "#6b7280", sortOrder: 40, isTerminal: true },
 ] as const;
+
+const BOARD_STATUS_COLUMNS = {
+  id: feedbackStatuses.id,
+  key: feedbackStatuses.key,
+  label: feedbackStatuses.label,
+  color: feedbackStatuses.color,
+  sortOrder: feedbackStatuses.sortOrder,
+  isTerminal: feedbackStatuses.isTerminal,
+  wipLimit: feedbackStatuses.wipLimit,
+  agingWarnHours: feedbackStatuses.agingWarnHours,
+  agingStaleHours: feedbackStatuses.agingStaleHours,
+  allowAiTransition: feedbackStatuses.allowAiTransition,
+} as const;
 
 export interface BoardData {
   statuses: BoardStatus[];
@@ -629,20 +653,27 @@ export interface BoardData {
     screenshotUrl: string | null;
     annotatedScreenshotUrl: string | null;
     createdAt: Date;
+    /** When the ticket last changed column; null means never moved (age from createdAt). */
+    statusChangedAt: Date | null;
+    archivedAt: Date | null;
+    archivedBy: string | null;
     /** A reporter message the team has not opened the ticket since (0.5.0). */
     hasUnreadReporterReply: boolean;
   }>;
+  /**
+   * How many un-archived tickets sit in terminal columns right now — the
+   * number on the "Archive Done (N)" button, counted in the database rather
+   * than from the capped page of tickets above.
+   */
+  archivableCount: number;
 }
 
-export async function listBoardData(db: FeedbackDb): Promise<BoardData> {
+export async function listBoardData(
+  db: FeedbackDb,
+  options: { includeArchived?: boolean } = {},
+): Promise<BoardData> {
   let statuses: BoardStatus[] = await db
-    .select({
-      id: feedbackStatuses.id,
-      key: feedbackStatuses.key,
-      label: feedbackStatuses.label,
-      color: feedbackStatuses.color,
-      sortOrder: feedbackStatuses.sortOrder,
-    })
+    .select(BOARD_STATUS_COLUMNS)
     .from(feedbackStatuses)
     .orderBy(asc(feedbackStatuses.sortOrder));
 
@@ -657,13 +688,7 @@ export async function listBoardData(db: FeedbackDb): Promise<BoardData> {
       }
     }
     statuses = await db
-      .select({
-        id: feedbackStatuses.id,
-        key: feedbackStatuses.key,
-        label: feedbackStatuses.label,
-        color: feedbackStatuses.color,
-        sortOrder: feedbackStatuses.sortOrder,
-      })
+      .select(BOARD_STATUS_COLUMNS)
       .from(feedbackStatuses)
       .orderBy(asc(feedbackStatuses.sortOrder));
   }
@@ -684,11 +709,31 @@ export async function listBoardData(db: FeedbackDb): Promise<BoardData> {
       screenshotUrl: feedbackTickets.screenshotUrl,
       annotatedScreenshotUrl: feedbackTickets.annotatedScreenshotUrl,
       createdAt: feedbackTickets.createdAt,
+      statusChangedAt: feedbackTickets.statusChangedAt,
+      archivedAt: feedbackTickets.archivedAt,
+      archivedBy: feedbackTickets.archivedBy,
       lastStaffReadAt: feedbackTickets.lastStaffReadAt,
     })
     .from(feedbackTickets)
+    // Archived tickets leave the board by default; the eye toggle brings them
+    // back greyed rather than moving them anywhere. Same rows, one predicate.
+    .where(options.includeArchived ? undefined : isNull(feedbackTickets.archivedAt))
     .orderBy(desc(feedbackTickets.createdAt), desc(feedbackTickets.id))
     .limit(300);
+
+  const terminalKeys = statuses.filter((s) => s.isTerminal).map((s) => s.key);
+  const archivable =
+    terminalKeys.length === 0
+      ? []
+      : await db
+          .select({ id: feedbackTickets.id })
+          .from(feedbackTickets)
+          .where(
+            and(
+              inArray(feedbackTickets.status, terminalKeys),
+              isNull(feedbackTickets.archivedAt),
+            ),
+          );
 
   // One grouped query for the whole board, not one per ticket: the latest
   // reporter message per ticket, compared against when the team last opened
@@ -718,7 +763,7 @@ export async function listBoardData(db: FeedbackDb): Promise<BoardData> {
     };
   });
 
-  return { statuses, tickets };
+  return { statuses, tickets, archivableCount: archivable.length };
 }
 
 // ---------------------------------------------------------------------------
@@ -732,12 +777,34 @@ export const statusKeySchema = z
   .max(50)
   .regex(/^[a-z][a-z0-9_]*$/, "lowercase letters, digits and underscores");
 
-export const createStatusSchema = z.object({
-  key: statusKeySchema,
-  label: z.string().min(1).max(60),
-  color: z.string().max(30).nullish(),
-  sortOrder: z.number().int().min(0).max(100000).optional(),
-});
+/**
+ * Warn must come before stale when both are set — an amber that fires after
+ * the red is a config that looks fine and behaves backwards, refused here
+ * once for every surface that edits a column.
+ */
+function agingOrdered(input: {
+  agingWarnHours?: number | null | undefined;
+  agingStaleHours?: number | null | undefined;
+}): boolean {
+  if (input.agingWarnHours == null || input.agingStaleHours == null) return true;
+  return input.agingWarnHours < input.agingStaleHours;
+}
+
+const AGING_MESSAGE = "agingWarnHours must be less than agingStaleHours";
+
+export const createStatusSchema = z
+  .object({
+    key: statusKeySchema,
+    label: z.string().min(1).max(60),
+    color: z.string().max(30).nullish(),
+    sortOrder: z.number().int().min(0).max(100000).optional(),
+    isTerminal: z.boolean().optional(),
+    wipLimit: z.number().int().min(1).max(9999).nullish(),
+    agingWarnHours: z.number().int().min(1).max(8760).nullish(),
+    agingStaleHours: z.number().int().min(1).max(8760).nullish(),
+    allowAiTransition: z.boolean().optional(),
+  })
+  .refine(agingOrdered, { message: AGING_MESSAGE });
 
 /**
  * KEY IS NOT UPDATABLE, and that is the design rather than an omission:
@@ -745,12 +812,19 @@ export const createStatusSchema = z.object({
  * would strand every ticket in a column that no longer exists. The label is
  * what people see and it changes freely; the key is an identifier.
  */
-export const updateStatusSchema = z.object({
-  id: z.string(),
-  label: z.string().min(1).max(60).optional(),
-  color: z.string().max(30).nullish(),
-  sortOrder: z.number().int().min(0).max(100000).optional(),
-});
+export const updateStatusSchema = z
+  .object({
+    id: z.string(),
+    label: z.string().min(1).max(60).optional(),
+    color: z.string().max(30).nullish(),
+    sortOrder: z.number().int().min(0).max(100000).optional(),
+    isTerminal: z.boolean().optional(),
+    wipLimit: z.number().int().min(1).max(9999).nullish(),
+    agingWarnHours: z.number().int().min(1).max(8760).nullish(),
+    agingStaleHours: z.number().int().min(1).max(8760).nullish(),
+    allowAiTransition: z.boolean().optional(),
+  })
+  .refine(agingOrdered, { message: AGING_MESSAGE });
 
 export async function createStatus(
   db: FeedbackDb,
@@ -770,14 +844,18 @@ export async function createStatus(
       .then((rows: Array<{ sortOrder: number }>) => (rows[0]?.sortOrder ?? 0) + 10));
   const rows = await db
     .insert(feedbackStatuses)
-    .values({ key: parsed.key, label: parsed.label, color: parsed.color ?? null, sortOrder })
-    .returning({
-      id: feedbackStatuses.id,
-      key: feedbackStatuses.key,
-      label: feedbackStatuses.label,
-      color: feedbackStatuses.color,
-      sortOrder: feedbackStatuses.sortOrder,
-    });
+    .values({
+      key: parsed.key,
+      label: parsed.label,
+      color: parsed.color ?? null,
+      sortOrder,
+      isTerminal: parsed.isTerminal ?? false,
+      wipLimit: parsed.wipLimit ?? null,
+      agingWarnHours: parsed.agingWarnHours ?? null,
+      agingStaleHours: parsed.agingStaleHours ?? null,
+      allowAiTransition: parsed.allowAiTransition ?? false,
+    })
+    .returning(BOARD_STATUS_COLUMNS);
   const row = rows[0];
   if (!row) throw new Error("status insert returned no row");
   return row;
@@ -792,6 +870,13 @@ export async function updateStatus(
   if (parsed.label !== undefined) patch["label"] = parsed.label;
   if (parsed.color !== undefined) patch["color"] = parsed.color;
   if (parsed.sortOrder !== undefined) patch["sortOrder"] = parsed.sortOrder;
+  if (parsed.isTerminal !== undefined) patch["isTerminal"] = parsed.isTerminal;
+  if (parsed.wipLimit !== undefined) patch["wipLimit"] = parsed.wipLimit;
+  if (parsed.agingWarnHours !== undefined) patch["agingWarnHours"] = parsed.agingWarnHours;
+  if (parsed.agingStaleHours !== undefined) patch["agingStaleHours"] = parsed.agingStaleHours;
+  if (parsed.allowAiTransition !== undefined) {
+    patch["allowAiTransition"] = parsed.allowAiTransition;
+  }
   if (Object.keys(patch).length === 0) return;
   await db.update(feedbackStatuses).set(patch).where(eq(feedbackStatuses.id, parsed.id));
 }
@@ -871,9 +956,256 @@ export async function moveTicket(
   if (status.length === 0) return false;
   await db
     .update(feedbackTickets)
-    .set({ status: input.statusKey })
+    // The aging clock: every card ages from the moment it entered its
+    // column, so a fresh move resets the dot rather than inheriting it.
+    .set({ status: input.statusKey, statusChangedAt: new Date() })
     .where(eq(feedbackTickets.id, input.ticketId));
   return true;
+}
+
+/**
+ * The same move, for a selection (0.7.0). One statement, not a loop of
+ * `moveTicket`s: thirty tickets moving is one board event, and thirty
+ * separate updates is thirty chances for a refresh to catch it half-done.
+ * Unknown ids are skipped by the WHERE; the count reported is what changed.
+ */
+export async function moveTickets(
+  db: FeedbackDb,
+  input: { ticketIds: readonly string[]; statusKey: string },
+): Promise<{ moved: number } | { moved: 0; reason: "unknown-status" }> {
+  if (input.ticketIds.length === 0) return { moved: 0 };
+  if (input.ticketIds.length > 200) {
+    throw new Error("moveTickets caps at 200 ids per call");
+  }
+  const status = await db
+    .select({ key: feedbackStatuses.key })
+    .from(feedbackStatuses)
+    .where(eq(feedbackStatuses.key, input.statusKey))
+    .limit(1);
+  if (status.length === 0) return { moved: 0, reason: "unknown-status" };
+  const rows: Array<{ id: string }> = await db
+    .update(feedbackTickets)
+    .set({ status: input.statusKey, statusChangedAt: new Date() })
+    .where(inArray(feedbackTickets.id, [...input.ticketIds]))
+    .returning({ id: feedbackTickets.id });
+  return { moved: rows.length };
+}
+
+// ---------------------------------------------------------------------------
+// Archive (0.7.0) — the Done column stays readable in month three.
+// ---------------------------------------------------------------------------
+
+/**
+ * Soft, reversible, and scoped in the WHERE: archiving an already-archived
+ * ticket changes nothing, so a double-click cannot overwrite who archived it
+ * first. `archivedBy` is display text, like `assignee`.
+ */
+export async function archiveTicket(
+  db: FeedbackDb,
+  input: { ticketId: string; archivedBy: string },
+): Promise<boolean> {
+  const rows: Array<{ id: string }> = await db
+    .update(feedbackTickets)
+    .set({ archivedAt: new Date(), archivedBy: input.archivedBy })
+    .where(and(eq(feedbackTickets.id, input.ticketId), isNull(feedbackTickets.archivedAt)))
+    .returning({ id: feedbackTickets.id });
+  return rows.length > 0;
+}
+
+export async function unarchiveTicket(db: FeedbackDb, ticketId: string): Promise<boolean> {
+  const rows: Array<{ id: string }> = await db
+    .update(feedbackTickets)
+    .set({ archivedAt: null, archivedBy: null })
+    .where(eq(feedbackTickets.id, ticketId))
+    .returning({ id: feedbackTickets.id });
+  return rows.length > 0;
+}
+
+/**
+ * "Archive Done (N)": every un-archived ticket sitting in a terminal column,
+ * in one statement. Terminal is the flag on the status row, not a name — a
+ * client who renamed "closed" to "shipped" gets the same sweep.
+ */
+export async function archiveTerminalTickets(
+  db: FeedbackDb,
+  input: { archivedBy: string },
+): Promise<{ archived: number }> {
+  const terminal: Array<{ key: string }> = await db
+    .select({ key: feedbackStatuses.key })
+    .from(feedbackStatuses)
+    .where(eq(feedbackStatuses.isTerminal, true));
+  if (terminal.length === 0) return { archived: 0 };
+  const rows: Array<{ id: string }> = await db
+    .update(feedbackTickets)
+    .set({ archivedAt: new Date(), archivedBy: input.archivedBy })
+    .where(
+      and(
+        inArray(
+          feedbackTickets.status,
+          terminal.map((row) => row.key),
+        ),
+        isNull(feedbackTickets.archivedAt),
+      ),
+    )
+    .returning({ id: feedbackTickets.id });
+  return { archived: rows.length };
+}
+
+// ---------------------------------------------------------------------------
+// Category administration (0.7.0) — the widget's dropdown becomes rows,
+// on exactly the shape the status editor set: rows are the options, the
+// ticket's plain-text `category` points at `key`, delete refuses while
+// occupied, and the key itself is immutable because tickets reference it.
+// ---------------------------------------------------------------------------
+
+export interface CategoryRow {
+  id: string;
+  key: string;
+  label: string;
+  description: string | null;
+  sortOrder: number;
+  showToCustomer: boolean;
+}
+
+const CATEGORY_COLUMNS = {
+  id: feedbackCategories.id,
+  key: feedbackCategories.key,
+  label: feedbackCategories.label,
+  description: feedbackCategories.description,
+  sortOrder: feedbackCategories.sortOrder,
+  showToCustomer: feedbackCategories.showToCustomer,
+} as const;
+
+/** Every category, customer-visible or not — the admin editor's read. */
+export async function listCategories(db: FeedbackDb): Promise<CategoryRow[]> {
+  return db
+    .select(CATEGORY_COLUMNS)
+    .from(feedbackCategories)
+    .orderBy(asc(feedbackCategories.sortOrder), asc(feedbackCategories.key));
+}
+
+/**
+ * What the widget's dropdown offers, in option shape. Empty when the table
+ * is empty — the caller (the /v1/config handler) falls back to the built-in
+ * list then, so an install that never configures categories keeps the
+ * defaults instead of losing the dropdown.
+ */
+export async function customerCategoryOptions(db: FeedbackDb): Promise<FeedbackCategoryOption[]> {
+  const rows = await db
+    .select(CATEGORY_COLUMNS)
+    .from(feedbackCategories)
+    .where(eq(feedbackCategories.showToCustomer, true))
+    .orderBy(asc(feedbackCategories.sortOrder), asc(feedbackCategories.key));
+  return rows.map((row) => ({
+    key: row.key,
+    label: row.label,
+    ...(row.description === null ? {} : { description: row.description }),
+  }));
+}
+
+export const createCategorySchema = z.object({
+  key: statusKeySchema,
+  label: z.string().min(1).max(60),
+  description: z.string().max(200).nullish(),
+  sortOrder: z.number().int().min(0).max(100000).optional(),
+  showToCustomer: z.boolean().optional(),
+});
+
+/** Key immutable, same rationale as updateStatusSchema one section up. */
+export const updateCategorySchema = z.object({
+  id: z.string(),
+  label: z.string().min(1).max(60).optional(),
+  description: z.string().max(200).nullish(),
+  sortOrder: z.number().int().min(0).max(100000).optional(),
+  showToCustomer: z.boolean().optional(),
+});
+
+export async function createCategory(
+  db: FeedbackDb,
+  input: z.infer<typeof createCategorySchema>,
+): Promise<CategoryRow> {
+  const parsed = createCategorySchema.parse(input);
+  const sortOrder =
+    parsed.sortOrder ??
+    (await db
+      .select({ sortOrder: feedbackCategories.sortOrder })
+      .from(feedbackCategories)
+      .orderBy(desc(feedbackCategories.sortOrder))
+      .limit(1)
+      .then((rows: Array<{ sortOrder: number }>) => (rows[0]?.sortOrder ?? 0) + 10));
+  const rows = await db
+    .insert(feedbackCategories)
+    .values({
+      key: parsed.key,
+      label: parsed.label,
+      description: parsed.description ?? null,
+      sortOrder,
+      showToCustomer: parsed.showToCustomer ?? true,
+    })
+    .returning(CATEGORY_COLUMNS);
+  const row = rows[0];
+  if (!row) throw new Error("category insert returned no row");
+  return row;
+}
+
+export async function updateCategory(
+  db: FeedbackDb,
+  input: z.infer<typeof updateCategorySchema>,
+): Promise<void> {
+  const parsed = updateCategorySchema.parse(input);
+  const patch: Record<string, unknown> = {};
+  if (parsed.label !== undefined) patch["label"] = parsed.label;
+  if (parsed.description !== undefined) patch["description"] = parsed.description;
+  if (parsed.sortOrder !== undefined) patch["sortOrder"] = parsed.sortOrder;
+  if (parsed.showToCustomer !== undefined) patch["showToCustomer"] = parsed.showToCustomer;
+  if (Object.keys(patch).length === 0) return;
+  await db.update(feedbackCategories).set(patch).where(eq(feedbackCategories.id, parsed.id));
+}
+
+export type DeleteCategoryResult =
+  | { deleted: true }
+  | { deleted: false; reason: "unknown" | "occupied"; ticketCount?: number };
+
+/**
+ * Refused while tickets carry the key — a deleted category would leave them
+ * labelled with a word no editor can explain. Hide it from the widget with
+ * showToCustomer instead; delete when its history is gone.
+ */
+export async function deleteCategory(
+  db: FeedbackDb,
+  categoryId: string,
+): Promise<DeleteCategoryResult> {
+  const rows = await db
+    .select({ id: feedbackCategories.id, key: feedbackCategories.key })
+    .from(feedbackCategories)
+    .where(eq(feedbackCategories.id, categoryId))
+    .limit(1);
+  const category = rows[0];
+  if (!category) return { deleted: false, reason: "unknown" };
+
+  const occupants = await db
+    .select({ id: feedbackTickets.id })
+    .from(feedbackTickets)
+    .where(eq(feedbackTickets.category, category.key));
+  if (occupants.length > 0) {
+    return { deleted: false, reason: "occupied", ticketCount: occupants.length };
+  }
+
+  await db.delete(feedbackCategories).where(eq(feedbackCategories.id, categoryId));
+  return { deleted: true };
+}
+
+/** The full option order, as ids. Renumbers in tens so gaps stay available. */
+export async function reorderCategories(
+  db: FeedbackDb,
+  orderedIds: readonly string[],
+): Promise<void> {
+  for (const [index, id] of orderedIds.entries()) {
+    await db
+      .update(feedbackCategories)
+      .set({ sortOrder: (index + 1) * 10 })
+      .where(eq(feedbackCategories.id, id));
+  }
 }
 
 // ---------------------------------------------------------------------------

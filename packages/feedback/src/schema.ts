@@ -1,4 +1,4 @@
-import { index, integer, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { boolean, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { createdAt, idColumn } from "@adminigloo/db";
 
 export type FeedbackPriority = "low" | "medium" | "high" | "critical";
@@ -58,9 +58,64 @@ export const feedbackStatuses = pgTable(
     /** Column accent, any CSS color. Null renders the neutral accent. */
     color: text("color"),
     sortOrder: integer("sort_order").notNull().default(0),
+    /**
+     * "Work here is finished." What bulk-archive sweeps, what a board may
+     * choose to de-emphasise. A flag rather than a naming convention, because
+     * a client who renames "closed" to "shipped" has not changed its meaning.
+     */
+    isTerminal: boolean("is_terminal").notNull().default(false),
+    /**
+     * How many tickets this column comfortably holds. Null = uncounted. The
+     * board renders count/limit and turns the column's header loud past it —
+     * a limit, not a lock: kanban WIP limits exist to be seen, not enforced.
+     */
+    wipLimit: integer("wip_limit"),
+    /**
+     * Card aging, in hours since the ticket last changed status. Warn is the
+     * quiet amber dot, stale the loud one. Both null = this column does not
+     * age (a Done column full of old cards is finished, not neglected).
+     */
+    agingWarnHours: integer("aging_warn_hours"),
+    agingStaleHours: integer("aging_stale_hours"),
+    /**
+     * May an automated agent move tickets INTO this column? Stored now, read
+     * by nothing yet: the AI layer that respects it ships later, and adding a
+     * boolean today beats migrating a config table under live installs then.
+     */
+    allowAiTransition: boolean("allow_ai_transition").notNull().default(false),
     createdAt: createdAt(),
   },
   (table) => [uniqueIndex("feedback_statuses_key_idx").on(table.key)],
+);
+
+/**
+ * What a reporter may call their report — the widget's dropdown, as rows.
+ * Same design as feedback_statuses one table up: rows ARE the options, the
+ * ticket's plain-text `category` points at `key`, and an admin curates the
+ * list without a deploy. `showToCustomer` is the curation: an internal
+ * "escalated" category can exist for triage without ever being offered to
+ * the person filing a bug.
+ *
+ * NO SEED ROWS, unlike statuses: a board needs columns to exist at all, but
+ * the widget already falls back to the built-in category list when this
+ * table is empty — so an empty table means "the defaults", not "no dropdown".
+ */
+export const feedbackCategories = pgTable(
+  "feedback_categories",
+  {
+    id: idColumn(),
+    /** Stable machine name the ticket rows reference: "bug", "billing". */
+    key: text("key").notNull(),
+    /** What the dropdown says: "Bug report", "Billing question". */
+    label: text("label").notNull(),
+    /** One line under the label in the widget. Null renders nothing. */
+    description: text("description"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    /** Offered in the widget, or triage-side only. */
+    showToCustomer: boolean("show_to_customer").notNull().default(true),
+    createdAt: createdAt(),
+  },
+  (table) => [uniqueIndex("feedback_categories_key_idx").on(table.key)],
 );
 
 /**
@@ -115,6 +170,22 @@ export const feedbackTickets = pgTable(
      * the unread mark on the board card.
      */
     lastStaffReadAt: timestamp("last_staff_read_at", { withTimezone: true }),
+    /**
+     * When this ticket last changed column (0.7.0). Null on tickets that
+     * predate the column and on tickets never moved — readers fall back to
+     * createdAt, so "how long has this sat here" is always answerable and
+     * never lies older than the ticket itself.
+     */
+    statusChangedAt: timestamp("status_changed_at", { withTimezone: true }),
+    /**
+     * Soft archive (0.7.0). Archived tickets leave the board and the queue by
+     * default and keep every message and receipt — the Done column stays
+     * readable in month three without anything being deleted. `archivedBy` is
+     * display text like `assignee`, because staff identity lives in the
+     * consuming platform.
+     */
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    archivedBy: text("archived_by"),
     /** Denormalised from clientMetadata so the triage list can filter without unpacking JSON. */
     pagePathname: text("page_pathname"),
     /** Browser, OS, viewport, URL, click trail, session id — the widget's whole context object. */
@@ -128,6 +199,9 @@ export const feedbackTickets = pgTable(
     index("feedback_tickets_tenant_idx").on(table.tenantId),
     index("feedback_tickets_status_idx").on(table.status),
     index("feedback_tickets_created_idx").on(table.createdAt),
+    // The board's default read is WHERE archived_at IS NULL; the eye-toggle
+    // read is the complement. Both walk this.
+    index("feedback_tickets_archived_idx").on(table.archivedAt),
   ],
 );
 

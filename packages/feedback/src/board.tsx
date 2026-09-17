@@ -14,6 +14,11 @@ export interface BoardStatusView {
   label: string;
   color?: string | null;
   sortOrder?: number;
+  /** All optional so a consumer on a pre-0.7 server still typechecks. */
+  isTerminal?: boolean | null;
+  wipLimit?: number | null;
+  agingWarnHours?: number | null;
+  agingStaleHours?: number | null;
 }
 
 export interface BoardTicketView {
@@ -33,6 +38,10 @@ export interface BoardTicketView {
   annotatedScreenshotUrl?: string | null;
   /** Date or ISO string — serialization boundaries turn Dates into strings. */
   createdAt: Date | string;
+  /** When the ticket last changed column (0.7.0). Aging falls back to createdAt. */
+  statusChangedAt?: Date | string | null;
+  /** Set = archived. The card renders dimmed with a badge; it never renders at all unless the consumer asked the server for archived rows. */
+  archivedAt?: Date | string | null;
 }
 
 export interface TicketMessageView {
@@ -50,6 +59,13 @@ export interface FeedbackBoardProps {
   onMove: (ticketId: string, statusKey: string) => void | Promise<void>;
   /** Card click. Wire this to open the TicketPanel. */
   onOpen?: (ticket: BoardTicketView) => void;
+  /**
+   * Bulk move (0.7.0). Providing this is what turns selection ON: cards grow
+   * checkboxes, column headers a tri-state select-all, a floating bar appears
+   * when anything is selected, and dragging a selected card carries the whole
+   * selection. Absent, the board is exactly the single-drag board it was.
+   */
+  onMoveMany?: (ticketIds: string[], statusKey: string) => void | Promise<void>;
 }
 
 const STYLE_ID = "aib-styles";
@@ -136,6 +152,42 @@ const CSS_TEXT = `
   text-transform: uppercase; letter-spacing: .05em; color: var(--aib-on-accent);
   background: var(--aib-accent); border-radius: 999px; padding: 1px 7px; }
 
+/* WIP limits (0.7.0): the count turns into count/limit and the header speaks
+   up — amber at the limit, loud past it. A limit, not a lock. */
+.aib-col-head.aib-wip-full { box-shadow: inset 0 -2px 0 var(--aib-warn); }
+.aib-col-head.aib-wip-over { box-shadow: inset 0 -2px 0 var(--aib-danger); }
+.aib-col-count.aib-wip-full { color: var(--aib-warn); font-weight: 700; }
+.aib-col-count.aib-wip-over { color: var(--aib-danger); font-weight: 700; }
+
+/* Card aging (0.7.0): a dot that darkens as the card sits in its column. */
+.aib-age { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.aib-age-warn { background: var(--aib-warn); }
+.aib-age-stale { background: var(--aib-danger); }
+
+/* Archived cards (visible only when the consumer asked for them). */
+.aib-card.aib-archived { opacity: .55; }
+.aib-archived-chip { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--aib-ink-faint); border: 1px dashed var(--aib-line-strong); border-radius: 999px; padding: 1px 6px; }
+
+/* Bulk selection (0.7.0). The checkbox only exists when onMoveMany does. */
+.aib-check { flex: none; margin: 0; accent-color: var(--aib-accent); cursor: pointer; }
+.aib-col-check { margin-right: 2px; }
+.aib-bulkbar { position: sticky; left: 0; bottom: 0; z-index: 5; display: flex; align-items: center; gap: 10px;
+  margin-top: 10px; padding: 10px 14px; border: 1px solid var(--aib-line-strong); border-radius: 12px;
+  background: var(--aib-surface); box-shadow: var(--aib-shadow-panel); width: max-content; }
+.aib-bulkbar-count { font-size: 13px; font-weight: 600; }
+.aib-bulkbar .aib-select { width: auto; }
+.aib-bulk-clear { border: 0; background: transparent; color: var(--aib-ink-muted); font-size: 13px;
+  cursor: pointer; padding: 4px 6px; border-radius: 8px; }
+.aib-bulk-clear:hover { background: var(--aib-surface-2); color: var(--aib-ink); }
+.aib-bulk-apply { border: 0; border-radius: 8px; background: var(--aib-accent); color: var(--aib-on-accent);
+  font-size: 13px; font-weight: 600; padding: 7px 12px; cursor: pointer; }
+.aib-bulk-apply:hover { background: var(--aib-accent-strong); }
+.aib-bulk-apply:disabled { background: var(--aib-ink-faint); cursor: default; }
+.aib-archive-btn { align-self: flex-end; flex: none; border: 1px solid var(--aib-line-strong); border-radius: 8px;
+  background: var(--aib-surface); color: var(--aib-ink-muted); font-size: 12px; padding: 7px 10px; cursor: pointer; }
+.aib-archive-btn:hover { color: var(--aib-ink); border-color: var(--aib-ink-faint); }
+
 /* Ticket panel */
 .aib-panel-backdrop { position: fixed; inset: 0; z-index: 2147483002; background: var(--aib-scrim); }
 .aib-panel { position: fixed; top: 0; right: 0; bottom: 0; z-index: 2147483003; width: min(480px, 96vw);
@@ -198,6 +250,12 @@ export interface TicketPanelProps {
   onSend: (body: string) => void | Promise<void>;
   onAssign: (assignee: string | null) => void | Promise<void>;
   onMove: (statusKey: string) => void | Promise<void>;
+  /**
+   * Archive / unarchive (0.7.0), rendered only when provided. Which of the
+   * two the button means comes from the ticket's own archivedAt — the panel
+   * reports the intent, the consumer flips the row.
+   */
+  onArchive?: () => void | Promise<void>;
 }
 
 /**
@@ -215,6 +273,7 @@ export function TicketPanel({
   onSend,
   onAssign,
   onMove,
+  onArchive,
 }: TicketPanelProps): ReactElement {
   useEffect(() => {
     injectStyles();
@@ -295,6 +354,15 @@ export function TicketPanel({
               }}
             />
           </label>
+          {onArchive ? (
+            <button
+              type="button"
+              className="aib-archive-btn"
+              onClick={() => void onArchive()}
+            >
+              {ticket.archivedAt != null ? "Unarchive" : "Archive"}
+            </button>
+          ) : null}
         </div>
 
         <div className="aib-thread">
@@ -346,7 +414,30 @@ function ageOf(createdAt: Date | string): string {
   return `${days}d`;
 }
 
-export function FeedbackBoard({ statuses, tickets, onMove, onOpen }: FeedbackBoardProps): ReactElement {
+/** Hours a card has sat in its current column. Aging falls back to createdAt. */
+function hoursInColumn(ticket: BoardTicketView): number {
+  const anchor = ticket.statusChangedAt ?? ticket.createdAt;
+  const then = typeof anchor === "string" ? new Date(anchor) : anchor;
+  return (Date.now() - then.getTime()) / 3_600_000;
+}
+
+function agingClass(ticket: BoardTicketView, status: BoardStatusView): string | null {
+  const warn = status.agingWarnHours ?? null;
+  const stale = status.agingStaleHours ?? null;
+  if (warn === null && stale === null) return null;
+  const hours = hoursInColumn(ticket);
+  if (stale !== null && hours >= stale) return "aib-age-stale";
+  if (warn !== null && hours >= warn) return "aib-age-warn";
+  return null;
+}
+
+export function FeedbackBoard({
+  statuses,
+  tickets,
+  onMove,
+  onOpen,
+  onMoveMany,
+}: FeedbackBoardProps): ReactElement {
   useEffect(() => {
     injectStyles();
   }, []);
@@ -357,10 +448,59 @@ export function FeedbackBoard({ statuses, tickets, onMove, onOpen }: FeedbackBoa
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [overColumn, setOverColumn] = useState<string | null>(null);
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const [applying, setApplying] = useState(false);
+  const [bulkTarget, setBulkTarget] = useState("");
 
   const statusOf = useCallback(
     (ticket: BoardTicketView) => overrides[ticket.id] ?? ticket.status,
     [overrides],
+  );
+
+  /**
+   * Move a set of tickets optimistically. One code path for a single drag, a
+   * drag that carries the selection, and the bulk bar — the rollback story
+   * must not differ between the three.
+   */
+  const moveSet = useCallback(
+    async (ids: readonly string[], statusKey: string) => {
+      const moving = ids.filter((id) => {
+        const ticket = tickets.find((t) => t.id === id);
+        return ticket !== undefined && (overrides[id] ?? ticket.status) !== statusKey;
+      });
+      if (moving.length === 0) return;
+
+      const previous = new Map(
+        moving.map((id) => [id, overrides[id] ?? tickets.find((t) => t.id === id)!.status]),
+      );
+      setOverrides((prev) => {
+        const next = { ...prev };
+        for (const id of moving) next[id] = statusKey;
+        return next;
+      });
+      try {
+        if (moving.length === 1) {
+          await onMove(moving[0]!, statusKey);
+        } else {
+          // moveSet is only reachable with >1 ids when onMoveMany exists:
+          // selection UI does not render without it.
+          await onMoveMany!(moving, statusKey);
+        }
+        setSelected((prev) => {
+          if (prev.size === 0) return prev;
+          const next = new Set(prev);
+          for (const id of moving) next.delete(id);
+          return next.size === prev.size ? prev : next;
+        });
+      } catch {
+        setOverrides((prev) => {
+          const next = { ...prev };
+          for (const [id, status] of previous) next[id] = status;
+          return next;
+        });
+      }
+    },
+    [tickets, overrides, onMove, onMoveMany],
   );
 
   const handleDrop = useCallback(
@@ -369,96 +509,210 @@ export function FeedbackBoard({ statuses, tickets, onMove, onOpen }: FeedbackBoa
       const ticketId = draggingId;
       setDraggingId(null);
       if (!ticketId) return;
-      const ticket = tickets.find((t) => t.id === ticketId);
-      if (!ticket || statusOf(ticket) === statusKey) return;
-
-      const previous = statusOf(ticket);
-      setOverrides((prev) => ({ ...prev, [ticketId]: statusKey }));
+      // Dragging a selected card carries the whole selection; dragging an
+      // unselected one moves just it, leaving the selection alone.
+      const ids =
+        onMoveMany && selected.has(ticketId) ? [...selected] : [ticketId];
       setBusyId(ticketId);
       try {
-        await onMove(ticketId, statusKey);
-      } catch {
-        setOverrides((prev) => ({ ...prev, [ticketId]: previous }));
+        await moveSet(ids, statusKey);
       } finally {
         setBusyId(null);
       }
     },
-    [draggingId, tickets, statusOf, onMove],
+    [draggingId, selected, onMoveMany, moveSet],
   );
+
+  const applyBulk = useCallback(async () => {
+    if (!bulkTarget || selected.size === 0) return;
+    setApplying(true);
+    try {
+      await moveSet([...selected], bulkTarget);
+      setBulkTarget("");
+    } finally {
+      setApplying(false);
+    }
+  }, [bulkTarget, selected, moveSet]);
+
+  const toggleTicket = useCallback((ticketId: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(ticketId)) next.delete(ticketId);
+      else next.add(ticketId);
+      return next;
+    });
+  }, []);
 
   const ordered = [...statuses].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
 
   return (
-    <div className="aib-board">
-      {ordered.map((status) => {
-        const cards = tickets.filter((ticket) => statusOf(ticket) === status.key);
-        return (
-          <div
-            key={status.key}
-            className={`aib-col${overColumn === status.key ? " aib-over" : ""}`}
-            onDragOver={(event) => {
-              event.preventDefault();
-              setOverColumn(status.key);
-            }}
-            onDragLeave={() => setOverColumn((current) => (current === status.key ? null : current))}
-            onDrop={(event) => {
-              event.preventDefault();
-              void handleDrop(status.key);
-            }}
-          >
-            <div className="aib-col-head">
-              <span className="aib-col-dot" style={{ background: status.color ?? "#9aa0a8" }} />
-              <span className="aib-col-title">{status.label}</span>
-              <span className="aib-col-count">{cards.length}</span>
-            </div>
-            <div className="aib-col-body">
-              {cards.length === 0 ? <div className="aib-empty">No tickets</div> : null}
-              {cards.map((ticket) => (
-                <div
-                  key={ticket.id}
-                  className={`aib-card${draggingId === ticket.id ? " aib-dragging" : ""}${busyId === ticket.id ? " aib-busy" : ""}`}
-                  draggable
-                  onDragStart={() => setDraggingId(ticket.id)}
-                  onDragEnd={() => setDraggingId(null)}
-                  onClick={onOpen ? () => onOpen(ticket) : undefined}
-                  style={onOpen ? { cursor: "pointer" } : undefined}
+    <div>
+      <div className="aib-board">
+        {ordered.map((status) => {
+          const cards = tickets.filter((ticket) => statusOf(ticket) === status.key);
+          const limit = status.wipLimit ?? null;
+          const wipState =
+            limit === null ? null : cards.length > limit ? "over" : cards.length === limit ? "full" : null;
+          const selectedHere = cards.filter((card) => selected.has(card.id)).length;
+          return (
+            <div
+              key={status.key}
+              className={`aib-col${overColumn === status.key ? " aib-over" : ""}`}
+              onDragOver={(event) => {
+                event.preventDefault();
+                setOverColumn(status.key);
+              }}
+              onDragLeave={() => setOverColumn((current) => (current === status.key ? null : current))}
+              onDrop={(event) => {
+                event.preventDefault();
+                void handleDrop(status.key);
+              }}
+            >
+              <div className={`aib-col-head${wipState ? ` aib-wip-${wipState}` : ""}`}>
+                {onMoveMany && cards.length > 0 ? (
+                  <input
+                    type="checkbox"
+                    className="aib-check aib-col-check"
+                    aria-label={`Select all in ${status.label}`}
+                    checked={selectedHere > 0 && selectedHere === cards.length}
+                    ref={(el) => {
+                      // The tri-state: some-but-not-all renders as indeterminate,
+                      // which only exists as a DOM property.
+                      if (el) el.indeterminate = selectedHere > 0 && selectedHere < cards.length;
+                    }}
+                    onChange={() =>
+                      setSelected((prev) => {
+                        const next = new Set(prev);
+                        const all = selectedHere === cards.length;
+                        for (const card of cards) {
+                          if (all) next.delete(card.id);
+                          else next.add(card.id);
+                        }
+                        return next;
+                      })
+                    }
+                  />
+                ) : null}
+                <span className="aib-col-dot" style={{ background: status.color ?? "#9aa0a8" }} />
+                <span className="aib-col-title">{status.label}</span>
+                <span
+                  className={`aib-col-count${wipState ? ` aib-wip-${wipState}` : ""}`}
+                  title={
+                    wipState === "over"
+                      ? "Over the WIP limit"
+                      : wipState === "full"
+                        ? "At the WIP limit"
+                        : undefined
+                  }
                 >
-                  <div className="aib-card-top">
-                    <span className="aib-num">{ticket.ticketNumber}</span>
-                    {/* The reporter answered and nobody has opened the ticket
-                        since. THE signal triage scans for — opening the panel
-                        clears it via the consumer's markRead call. */}
-                    {ticket.hasUnreadReporterReply ? (
-                      <span className="aib-unread">reply</span>
-                    ) : null}
-                    <span className={`aib-chip aib-chip-${ticket.priority}`}>{ticket.priority}</span>
-                  </div>
-                  <div className="aib-card-title">{ticket.title}</div>
-                  <div className="aib-card-meta">
-                    <span>{ageOf(ticket.createdAt)}</span>
-                    {ticket.pagePathname ? <span>{ticket.pagePathname}</span> : null}
-                    {ticket.assignee ? <span className="aib-assignee">{ticket.assignee}</span> : null}
-                    {ticket.reporterName || ticket.reporterEmail ? (
-                      <span>{ticket.reporterName ?? ticket.reporterEmail}</span>
-                    ) : null}
-                    {(ticket.annotatedScreenshotUrl ?? ticket.screenshotUrl) ? (
-                      <a
-                        href={ticket.annotatedScreenshotUrl ?? ticket.screenshotUrl ?? "#"}
-                        target="_blank"
-                        rel="noreferrer"
-                        draggable={false}
-                        onClick={(event) => event.stopPropagation()}
-                      >
-                        screenshot ↗
-                      </a>
-                    ) : null}
-                  </div>
-                </div>
-              ))}
+                  {limit === null ? cards.length : `${cards.length}/${limit}`}
+                </span>
+              </div>
+              <div className="aib-col-body">
+                {cards.length === 0 ? <div className="aib-empty">No tickets</div> : null}
+                {cards.map((ticket) => {
+                  const age = agingClass(ticket, status);
+                  const archived = ticket.archivedAt != null;
+                  return (
+                    <div
+                      key={ticket.id}
+                      className={`aib-card${draggingId === ticket.id ? " aib-dragging" : ""}${busyId === ticket.id ? " aib-busy" : ""}${archived ? " aib-archived" : ""}`}
+                      draggable
+                      onDragStart={() => setDraggingId(ticket.id)}
+                      onDragEnd={() => setDraggingId(null)}
+                      onClick={onOpen ? () => onOpen(ticket) : undefined}
+                      style={onOpen ? { cursor: "pointer" } : undefined}
+                    >
+                      <div className="aib-card-top">
+                        {onMoveMany ? (
+                          <input
+                            type="checkbox"
+                            className="aib-check"
+                            aria-label={`Select ${ticket.ticketNumber}`}
+                            checked={selected.has(ticket.id)}
+                            onChange={() => toggleTicket(ticket.id)}
+                            onClick={(event) => event.stopPropagation()}
+                          />
+                        ) : null}
+                        {/* The dot ages with time-in-column against this
+                            column's own thresholds — a Done column with no
+                            thresholds never nags about finished work. */}
+                        {age ? (
+                          <span
+                            className={`aib-age ${age}`}
+                            title={`${Math.floor(hoursInColumn(ticket) / 24)}d in this column`}
+                          />
+                        ) : null}
+                        <span className="aib-num">{ticket.ticketNumber}</span>
+                        {archived ? <span className="aib-archived-chip">archived</span> : null}
+                        {/* The reporter answered and nobody has opened the ticket
+                            since. THE signal triage scans for — opening the panel
+                            clears it via the consumer's markRead call. */}
+                        {ticket.hasUnreadReporterReply ? (
+                          <span className="aib-unread">reply</span>
+                        ) : null}
+                        <span className={`aib-chip aib-chip-${ticket.priority}`}>{ticket.priority}</span>
+                      </div>
+                      <div className="aib-card-title">{ticket.title}</div>
+                      <div className="aib-card-meta">
+                        <span>{ageOf(ticket.createdAt)}</span>
+                        {ticket.pagePathname ? <span>{ticket.pagePathname}</span> : null}
+                        {ticket.assignee ? <span className="aib-assignee">{ticket.assignee}</span> : null}
+                        {ticket.reporterName || ticket.reporterEmail ? (
+                          <span>{ticket.reporterName ?? ticket.reporterEmail}</span>
+                        ) : null}
+                        {(ticket.annotatedScreenshotUrl ?? ticket.screenshotUrl) ? (
+                          <a
+                            href={ticket.annotatedScreenshotUrl ?? ticket.screenshotUrl ?? "#"}
+                            target="_blank"
+                            rel="noreferrer"
+                            draggable={false}
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            screenshot ↗
+                          </a>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
+
+      {onMoveMany && selected.size > 0 ? (
+        <div className="aib-bulkbar">
+          <span className="aib-bulkbar-count">
+            {selected.size} selected
+          </span>
+          <select
+            className="aib-select"
+            aria-label="Move selection to"
+            value={bulkTarget}
+            onChange={(event) => setBulkTarget(event.target.value)}
+          >
+            <option value="">Move to…</option>
+            {ordered.map((status) => (
+              <option key={status.key} value={status.key}>
+                {status.label}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="aib-bulk-apply"
+            disabled={!bulkTarget || applying}
+            onClick={() => void applyBulk()}
+          >
+            {applying ? "…" : "Apply"}
+          </button>
+          <button type="button" className="aib-bulk-clear" onClick={() => setSelected(new Set())}>
+            Clear
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

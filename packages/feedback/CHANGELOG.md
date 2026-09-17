@@ -1,5 +1,24 @@
 # @adminigloo/feedback
 
+## 0.7.0
+
+### Minor Changes
+
+- The serious board. Categories become rows the way statuses did in 0.5.0
+  — the widget's dropdown is now an admin decision (`show_to_customer`),
+  not a deploy, with the same occupied-delete refusal and the same
+  immutable keys. Columns learn what kanban columns know: `isTerminal`
+  marks where work is finished, `wipLimit` puts a count/limit on the
+  header that turns amber at the line and loud past it, and two aging
+  thresholds put a quiet dot on cards that have sat too long — aged from
+  `statusChangedAt`, which every move now stamps, so a fresh column
+  resets the clock. Tickets grow a soft archive (`archivedAt`/`archivedBy`)
+  with `archiveTerminalTickets` sweeping every finished column in one
+  statement, and the board component grows selection: provide
+  `onMoveMany` and cards get checkboxes, columns a tri-state select-all,
+  a floating bar appears, and dragging a selected card carries the whole
+  selection. Without it, the board is exactly the board it was.
+
 ## 0.6.0
 
 ### Minor Changes

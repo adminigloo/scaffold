@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/feedback",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "The feedback platform primitive: client-key licensing, the config/upload/submit HTTP contract the feedback widget speaks, and the Kanban board for triaging what arrives.",
   "license": "UNLICENSED",
   "type": "module",
