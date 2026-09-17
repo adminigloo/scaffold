@@ -68,8 +68,8 @@ export default function InboxPage() {
                     aria-hidden
                     className={
                       row.readAt === null
-                        ? "mt-1 h-2 w-2 shrink-0 self-center rounded-full bg-accent"
-                        : "mt-1 h-2 w-2 shrink-0 self-center rounded-full bg-transparent"
+                        ? "mt-1 h-2 w-2 shrink-0 self-center rounded-pill bg-accent"
+                        : "mt-1 h-2 w-2 shrink-0 self-center rounded-pill bg-transparent"
                     }
                   />
                   <span className="min-w-0 flex-1">
@@ -83,11 +83,11 @@ export default function InboxPage() {
                       {row.title}
                     </span>
                     {row.body ? (
-                      <span className="block truncate text-xs text-ink-muted">{row.body}</span>
+                      <span className="block truncate text-xs text-ink-faint">{row.body}</span>
                     ) : null}
                   </span>
                   <Badge tone="neutral">{row.kind.split(".")[0]}</Badge>
-                  <span className="shrink-0 text-xs text-ink-muted tabular-nums">
+                  <span className="shrink-0 text-xs text-ink-faint tabular-nums">
                     {ageOf(row.createdAt)}
                   </span>
                 </span>

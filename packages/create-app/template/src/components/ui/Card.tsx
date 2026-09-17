@@ -12,7 +12,7 @@ export function Card({ className, ...rest }: ComponentProps<"div">) {
   return (
     <div
       className={cx(
-        "bg-surface border border-line rounded-[--radius-card] overflow-hidden",
+        "bg-surface border border-line rounded-[--radius-card] overflow-hidden shadow-card",
         className,
       )}
       {...rest}

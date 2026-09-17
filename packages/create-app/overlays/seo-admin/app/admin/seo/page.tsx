@@ -26,7 +26,7 @@ type SiteCheck = {
 type ReportPage = { path: string; checks: SiteCheck[] };
 
 const STATUS_TONE: Record<SiteCheck["status"], BadgeTone> = {
-  pass: "neutral",
+  pass: "ok",
   warn: "warn",
   fail: "danger",
 };
@@ -95,7 +95,7 @@ export default function SeoReportsPage() {
                     <span className="min-w-0 flex-1 truncate text-xs">
                       {new Date(row.finishedAt).toLocaleString()}
                     </span>
-                    <span className="text-xs text-ink-muted tabular-nums">{row.pageCount}p</span>
+                    <span className="text-xs text-ink-faint tabular-nums">{row.pageCount}p</span>
                   </button>
                 </li>
               ))}
@@ -136,7 +136,7 @@ export default function SeoReportsPage() {
                           ? "warn"
                           : "pass";
                       return (
-                        <details key={page.path} className="rounded-[--radius-card] border border-line">
+                        <details key={page.path} className="rounded-control border border-line">
                           <summary className="flex cursor-pointer items-center gap-2 px-3 py-2">
                             <code className="min-w-0 flex-1 truncate font-mono text-xs text-ink">
                               {page.path}
@@ -171,7 +171,7 @@ function ScoreTile({ label, value }: { readonly label: string; readonly value: n
         <p className="text-[11px] font-semibold tracking-wider text-ink-muted uppercase">{label}</p>
         <p className="mt-1 text-3xl font-semibold tracking-tight tabular-nums">
           {value}
-          <span className="text-base font-normal text-ink-muted">/100</span>
+          <span className="text-base font-normal text-ink-faint">/100</span>
         </p>
       </CardBody>
     </Card>

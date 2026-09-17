@@ -18,7 +18,7 @@ export function EmptyState({
   readonly action?: ReactNode;
 }) {
   return (
-    <div className="rounded-[--radius-card] border border-dashed border-line px-4 py-8 text-center">
+    <div className="rounded-[--radius-card] border border-dashed border-line-strong/60 bg-surface/50 px-4 py-10 text-center">
       <p className="text-sm font-medium text-ink">{title}</p>
       <div className="mx-auto mt-1 max-w-[58ch] text-sm text-ink-muted">{children}</div>
       {action && <div className="mt-3 flex justify-center">{action}</div>}

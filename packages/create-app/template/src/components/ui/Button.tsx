@@ -4,9 +4,9 @@ import { cx } from "./cx";
 export type ButtonVariant = "primary" | "secondary" | "danger";
 
 const BASE =
-  "inline-flex items-center justify-center gap-1.5 rounded-[--radius-card] " +
-  "px-3 py-1.5 text-sm font-medium no-underline transition-colors " +
-  "disabled:pointer-events-none disabled:opacity-50";
+  "inline-flex items-center justify-center gap-1.5 rounded-control " +
+  "px-3.5 py-2 text-sm font-medium no-underline transition-colors " +
+  "active:translate-y-px disabled:pointer-events-none disabled:opacity-50";
 
 /**
  * `text-surface`, NOT `text-white`.
@@ -21,8 +21,11 @@ const BASE =
  * "delete" should cost a beat of hesitation.
  */
 const VARIANTS: Record<ButtonVariant, string> = {
-  primary: "bg-accent text-surface hover:opacity-90",
-  secondary: "border border-line bg-surface text-ink hover:bg-canvas",
+  // A real hover colour, not an opacity fade — opacity lets the canvas bleed
+  // through the fill and reads as a rendering glitch on any tinted background.
+  primary: "bg-accent text-surface shadow-card hover:bg-accent-strong",
+  secondary:
+    "border border-line bg-surface text-ink shadow-card hover:border-line-strong hover:bg-canvas",
   danger:
     "border border-danger bg-surface text-danger hover:bg-danger hover:text-surface",
 };

@@ -14,7 +14,12 @@ import { cx } from "./cx";
 export function Table({ className, ...rest }: ComponentProps<"table">) {
   return (
     <div className="w-full overflow-x-auto">
-      <table className={cx("w-full border-collapse text-sm", className)} {...rest} />
+      {/* tabular-nums so amounts, counts and timestamps line up down a column
+          — proportional digits make a money column read like a ransom note. */}
+      <table
+        className={cx("w-full border-collapse text-sm tabular-nums", className)}
+        {...rest}
+      />
     </div>
   );
 }
@@ -28,7 +33,17 @@ export function TBody(props: ComponentProps<"tbody">) {
 }
 
 export function TR({ className, ...rest }: ComponentProps<"tr">) {
-  return <tr className={cx("border-b border-line last:border-0", className)} {...rest} />;
+  // The hover wash is scoped to body rows by the `tbody &` variant — a header
+  // row that lights up on hover advertises an interaction that does not exist.
+  return (
+    <tr
+      className={cx(
+        "border-b border-line transition-colors last:border-0 [tbody_&]:hover:bg-canvas/60",
+        className,
+      )}
+      {...rest}
+    />
+  );
 }
 
 export function TH({ className, ...rest }: ComponentProps<"th">) {

@@ -23,19 +23,49 @@
    nothing at all. That is deliberate and it is the enforcement mechanism: an
    off-palette colour fails visibly in review instead of drifting into a theme
    nobody re-tests.
+
+   THE VOCABULARY, in three layers people compose rather than invent:
+
+     ground     canvas → surface → surface-raised, separated by line /
+                line-strong. Depth comes from these plus the shadow scale —
+                never from a fourth grey somebody mixes inline.
+     content    ink → ink-muted → ink-faint. Faint is for timestamps and
+                metadata that must be findable, not readable at a glance.
+     meaning    accent (brand, glacial teal), ok, warn, danger — each with a
+                -soft fill for chips and tinted rows. Soft fills carry their
+                FULL-STRENGTH partner as text: soft-on-soft is how a status
+                chip becomes unreadable the moment a monitor is cheap.
    --------------------------------------------------------------------------- */
 @theme {
   --color-*: initial;
 
+  --color-canvas: #f5f7f9;
   --color-surface: #ffffff;
-  --color-canvas: #f7f8f9;
-  --color-ink: #12161a;
-  --color-ink-muted: #5f6a76;
-  --color-line: #e3e6ea;
-  --color-accent: #17635a;
-  --color-accent-soft: #e2efec;
+  /* Same as surface in light — elevation here is carried by shadow. Dark mode
+     separates them, because shadows die on a dark ground and a lighter fill is
+     the only elevation signal that survives. */
+  --color-surface-raised: #ffffff;
+
+  --color-ink: #0e161c;
+  --color-ink-muted: #55636f;
+  --color-ink-faint: #8494a1;
+
+  --color-line: #e1e7ec;
+  --color-line-strong: #c3ced7;
+
+  /* The brand: glacial teal. Chosen against both of its jobs at once — link
+     text on canvas (5.0:1) and the fill under a filled button's light label
+     (4.6:1). -strong is the pressed/hover state, one step deeper. */
+  --color-accent: #0f766e;
+  --color-accent-strong: #0c5f59;
+  --color-accent-soft: #d9efec;
+
+  --color-ok: #187339;
+  --color-ok-soft: #ddf2e3;
   --color-danger: #a02e21;
+  --color-danger-soft: #fbe9e6;
   --color-warn: #7d5a0c;
+  --color-warn-soft: #f8efd7;
 
   /* Kept from the stock palette because they are structural, not decorative:
      `border-transparent` and `text-current` have no themed equivalent, and
@@ -47,19 +77,40 @@
   --color-white: #ffffff;
   --color-black: #000000;
 
-  --radius-card: 6px;
+  /* Three radii and no more. Containers, controls, pills. A fourth radius is
+     how a product starts looking like four products. */
+  --radius-card: 10px;
+  --radius-control: 8px;
+  --radius-pill: 999px;
 
+  /* Elevation, as a scale rather than ad-hoc rgba strings. `card` is ambient —
+     barely there, it separates a card from the canvas without announcing it.
+     `raised` is for things that float (menus, popovers, the widget). `overlay`
+     is for things that interrupt (modals).
+
+     The hue in these is glacier blue, not gray — Stripe ships navy-tinted
+     shadow tokens for the same reason: on a light page, gray shade reads as
+     dirt and tinted shade reads as light. Same alphas, colder color. */
+  --shadow-card: 0 1px 2px rgb(23 64 120 / 0.07), 0 1px 1px rgb(23 64 120 / 0.04);
+  --shadow-raised: 0 4px 12px rgb(23 64 120 / 0.10), 0 1px 3px rgb(23 64 120 / 0.07);
+  --shadow-overlay: 0 24px 64px rgb(13 41 82 / 0.26), 0 4px 16px rgb(13 41 82 / 0.12);
+
+  /* Inter, loaded by app/layout.tsx through next/font and handed down as a
+     variable — with the system stack behind it, so a blocked font download
+     degrades to the old look rather than to a browser default serif. */
   --font-sans:
-    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
-    Arial, sans-serif;
+    var(--font-inter, ui-sans-serif), ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono:
     ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono",
     monospace;
+
 }
 
 /* ---------------------------------------------------------------------------
-   DARK MODE. Only the colour tokens are redefined; every radius, font and
-   spacing value is shared, so the two themes cannot drift structurally.
+   DARK MODE. Only the colour and shadow tokens are redefined; every radius,
+   font and spacing value is shared, so the two themes cannot drift
+   structurally.
 
    Plain `:root` rather than another `@theme` block: `@theme` output lands in
    the `theme` cascade layer, and an unlayered rule beats a layered one no
@@ -70,22 +121,41 @@
    contrast under its label. The light theme can satisfy both with white text;
    the dark theme cannot. So filled controls use `text-surface`, not
    `text-white`: surface is #ffffff in light mode (identical result) and near
-   black in dark mode, where #3aa892 under dark text reads at 6:1. Writing
-   `bg-accent text-white` by hand gives 2.9:1 in dark mode and fails AA —
-   compose <Button> from src/components/ui instead, which gets this right.
+   black in dark mode, where dark text on #45c4ad reads well past AA. Writing
+   `bg-accent text-white` by hand fails AA in dark mode — compose <Button>
+   from src/components/ui instead, which gets this right.
    --------------------------------------------------------------------------- */
 @media (prefers-color-scheme: dark) {
   :root {
-    --color-surface: #15191d;
-    --color-canvas: #0d1013;
-    --color-ink: #e7ecef;
-    --color-ink-muted: #96a1ac;
-    --color-line: #262c33;
-    --color-accent: #3aa892;
-    --color-accent-soft: #10302a;
+    --color-canvas: #0b0f13;
+    --color-surface: #12181d;
+    --color-surface-raised: #1a222a;
+
+    --color-ink: #e8edf1;
+    --color-ink-muted: #93a2ae;
+    --color-ink-faint: #61707c;
+
+    --color-line: #232d35;
+    --color-line-strong: #38454f;
+
+    --color-accent: #45c4ad;
+    --color-accent-strong: #6cd6c3;
+    --color-accent-soft: #113029;
+
+    --color-ok: #56c586;
+    --color-ok-soft: #10301d;
     --color-danger: #e08272;
+    --color-danger-soft: #391712;
     --color-warn: #cfa14e;
-  }
+    --color-warn-soft: #32270f;
+
+    /* Ambient shadow barely registers on a dark canvas; deepen it and let
+       surface-raised carry most of the elevation story. */
+    --shadow-card: 0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow-raised: 0 4px 14px rgb(0 0 0 / 0.5), 0 1px 3px rgb(0 0 0 / 0.4);
+    --shadow-overlay: 0 24px 64px rgb(0 0 0 / 0.65), 0 4px 16px rgb(0 0 0 / 0.5);
+
+}
 }
 
 @layer base {
@@ -102,6 +172,14 @@
     color: var(--color-ink);
     font-family: var(--font-sans);
     line-height: 1.55;
+    font-feature-settings: "cv11", "ss01";
+  }
+
+  /* Selection in the brand, not the browser's default blue — the kind of
+     five-minute detail a prospect never names and always notices. */
+  ::selection {
+    background-color: var(--color-accent-soft);
+    color: var(--color-ink);
   }
 
   /* Every interactive element gets a visible focus ring, by default, without

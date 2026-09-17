@@ -9,8 +9,9 @@ import { cx } from "./cx";
  * is the single most common way a themed form ends up with one white box in it.
  */
 const CONTROL =
-  "w-full rounded-[--radius-card] border border-line bg-surface px-2.5 py-1.5 " +
-  "text-sm text-ink placeholder:text-ink-muted disabled:opacity-60";
+  "w-full rounded-control border border-line bg-surface px-3 py-2 " +
+  "text-sm text-ink transition-colors placeholder:text-ink-faint " +
+  "hover:border-line-strong disabled:opacity-60";
 
 export function Input({ className, ...rest }: ComponentProps<"input">) {
   return <input className={cx(CONTROL, className)} {...rest} />;

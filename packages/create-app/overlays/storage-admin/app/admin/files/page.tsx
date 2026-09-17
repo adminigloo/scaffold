@@ -117,7 +117,7 @@ export default function FilesPage() {
                     >
                       {file.filename}
                     </a>
-                    <p className="mt-0.5 font-mono text-[11px] text-ink-muted">
+                    <p className="mt-0.5 font-mono text-[11px] text-ink-faint">
                       {file.contentType} · {prettySize(file.sizeBytes)} · {ageOf(file.createdAt)}
                     </p>
                   </div>

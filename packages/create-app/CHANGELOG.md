@@ -1,5 +1,21 @@
 # create-adminigloo-app
 
+## 0.15.0
+
+### Minor Changes
+
+- The template gets its winter coat: the glacier design system, ported
+  from the site that has worn it in production since 0.13. The token
+  vocabulary grows the ok family, ink-faint, line-strong, surface-raised,
+  accent-strong, the control and pill radii, and glacier-tinted shadows —
+  gray shade reads as dirt on a light page, tinted shade reads as light —
+  and all eight UI primitives are the versions adminigloo.com actually
+  runs. The marketing-only kit (display serif, aurora washes, grain)
+  deliberately stays behind: those are the front door's dinner jacket,
+  and a generated project should get the workshop's good lighting without
+  someone else's landing-page wardrobe. The three newest admin pages go
+  back to speaking the full vocabulary the template finally has.
+
 ## 0.14.0
 
 ### Minor Changes
