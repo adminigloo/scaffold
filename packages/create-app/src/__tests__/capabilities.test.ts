@@ -40,7 +40,7 @@ const EVERY_CONFIGURATION = ["none", "one-time", "subscription", "both"].flatMap
                       `--model ${businessModel} --admin ${adminShell}` +
                         `${includeAi ? " --ai" : ""}${includeEmail ? " --email" : ""}` +
                         `${includeFeedback ? " --feedback" : ""}` +
-                        `${includeSuite ? " --seo-reports --notifications --storage" : ""}` +
+                        `${includeSuite ? " --seo-reports --notifications --storage --assistant" : ""}` +
                         `${includeMarketing ? " --marketing" : ""}` +
                         ` --tenant ${tenantNoun}`,
                       {
@@ -52,6 +52,7 @@ const EVERY_CONFIGURATION = ["none", "one-time", "subscription", "both"].flatMap
                         includeSeoReports: includeSuite,
                         includeNotifications: includeSuite,
                         includeStorage: includeSuite,
+                        includeAssistant: includeSuite,
                         includeMarketing,
                         tenantNoun,
                       },

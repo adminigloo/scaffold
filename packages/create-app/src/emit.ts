@@ -1913,6 +1913,9 @@ export function renderAppRouter(answers: Answers): string {
   if (answers.includeSeoReports) {
     imports.splice(1, 0, 'import { seoRouter } from "./seo";');
   }
+  if (answers.includeAssistant) {
+    imports.splice(1, 0, 'import { assistantRouter } from "./assistant";');
+  }
   if (takesMoney) {
     imports.splice(1, 0, 'import { accountRouter } from "./account";');
     imports.splice(2, 0, 'import { billingRouter } from "./billing";');
@@ -1972,6 +1975,15 @@ export function renderAppRouter(answers: Answers): string {
   // /api/files route handler, per the large-payloads rule at the top of this
   // file.
   files: filesRouter,
+`
+    : "";
+
+  const assistant = answers.includeAssistant
+    ? `
+  // The AI assistant's editable brain: personality sections with versions and
+  // rollback, per-tenant overlays, glossary, change log. Your AI route calls
+  // assemblePrompt to build its system prompt from these rows.
+  assistant: assistantRouter,
 `
     : "";
 
@@ -2040,7 +2052,7 @@ export const appRouter = createTRPCRouter({
   // writes actually live. Mounted even in a project generated without the admin
   // shell, so the panel can be added later without re-deriving its boundary.
   admin: adminRouter,
-${ai}${feedback}${seo}${notifications}${storage}${shop}});
+${ai}${feedback}${seo}${notifications}${storage}${assistant}${shop}});
 
 export type AppRouter = typeof appRouter;
 `;
@@ -2071,6 +2083,7 @@ export function renderSchemaModule(answers: Answers): string {
   if (answers.includeSeoReports) owners.push("seo-reports");
   if (answers.includeNotifications) owners.push("notifications");
   if (answers.includeStorage) owners.push("storage");
+  if (answers.includeAssistant) owners.push("assistant");
 
   /**
    * `@scope/auth/schema` -> `authSchema`; `seo-reports` -> `seoReportsSchema`.
@@ -2717,6 +2730,18 @@ export function renderAdminNav(answers: Answers): string {
         "The firm's file library from the storage package: rows in " +
         "stored_files, bytes in the blob store behind the adapter, and " +
         "deleting one removes both.",
+    });
+  }
+  if (answers.includeAssistant) {
+    operations.push({
+      href: "/admin/assistant",
+      label: "Assistant",
+      permission: "staff.dashboard.view",
+      why:
+        "The AI assistant's editable personality from the assistant package: " +
+        "versioned sections, tenant overlays, glossary and change log. From " +
+        "the assistant-admin overlay, so a project without the answer has " +
+        "neither the editor nor this entry.",
     });
   }
   if (operations.length > 0) {

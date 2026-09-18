@@ -909,6 +909,21 @@ describe("non-interactive flags", () => {
     expect(
       optionalEnvFor(both).filter((v) => v === "BLOB_READ_WRITE_TOKEN"),
     ).toHaveLength(1);
+
+    const assistant = answers({ includeAssistant: true, adminShell: "none" });
+    expect(packagesFor(assistant)).toContain("@adminigloo/assistant");
+    expect(overlayNamesFor(assistant)).toContain("assistant");
+    // No shell, no editor page — brain over tRPC still, editor is the other key.
+    expect(overlayNamesFor(assistant)).not.toContain("assistant-admin");
+    expect(capabilitiesFor(assistant)).toContain("assistant.brain");
+    expect(capabilitiesFor(assistant)).not.toContain("assistant.editor");
+    // Independent of --ai: the editable brain ships whether or not it streams.
+    expect(packagesFor(answers({ includeAssistant: true })).includes("@adminigloo/ai")).toBe(false);
+  });
+
+  it("parses the assistant flag in both spellings", () => {
+    expect(parseArgs(["--assistant"]).assistant).toBe(true);
+    expect(parseArgs(["--no-assistant"]).assistant).toBe(false);
   });
 
   it("does not mistake a flag's value for the project name", () => {

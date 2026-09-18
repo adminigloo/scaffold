@@ -358,6 +358,20 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
     provenBy: (plan) => exists(plan, "app", "admin", "files", "page.tsx"),
   },
   {
+    capability: "assistant.brain",
+    why:
+      "The router whose procedures publish and version the personality, over " +
+      "tRPC whether or not a shell renders an editor. The editor page is the " +
+      "other key.",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "server", "routers", "assistant.ts"], "publishSection"),
+  },
+  {
+    capability: "assistant.editor",
+    why: "The staff personality editor under the shell, from the assistant-admin overlay.",
+    provenBy: (plan) => exists(plan, "app", "admin", "assistant", "page.tsx"),
+  },
+  {
     capability: "ai.streaming",
     why:
       "A route that opens a stream through `createStreamRoute`. THE CLAIM " +

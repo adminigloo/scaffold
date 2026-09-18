@@ -77,6 +77,7 @@ export const EVERY_CONFIGURATION: readonly Configuration[] = TENANT_NOUNS.flatMa
                     includeSuite ? "--seo-reports" : "--no-seo-reports",
                     includeSuite ? "--notifications" : "--no-notifications",
                     includeSuite ? "--storage" : "--no-storage",
+                    includeSuite ? "--assistant" : "--no-assistant",
                     includeMarketing ? "--marketing" : "--no-marketing",
                   ];
                   return {
@@ -94,6 +95,7 @@ export const EVERY_CONFIGURATION: readonly Configuration[] = TENANT_NOUNS.flatMa
                       includeSeoReports: includeSuite,
                       includeNotifications: includeSuite,
                       includeStorage: includeSuite,
+                      includeAssistant: includeSuite,
                       includeMarketing,
                     },
                   };

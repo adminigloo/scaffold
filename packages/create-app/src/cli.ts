@@ -34,6 +34,7 @@ export interface CliFlags {
   readonly seoReports?: boolean;
   readonly notifications?: boolean;
   readonly storage?: boolean;
+  readonly assistant?: boolean;
   readonly marketing?: boolean;
 }
 
@@ -71,6 +72,7 @@ export function parseArgs(argv: readonly string[]): CliFlags {
   let seoReports: boolean | undefined;
   let notifications: boolean | undefined;
   let storage: boolean | undefined;
+  let assistant: boolean | undefined;
   let marketing: boolean | undefined;
 
   /** Supports both `--flag value` and `--flag=value`. */
@@ -95,6 +97,8 @@ export function parseArgs(argv: readonly string[]): CliFlags {
     else if (arg === "--no-notifications") notifications = false;
     else if (arg === "--storage") storage = true;
     else if (arg === "--no-storage") storage = false;
+    else if (arg === "--assistant") assistant = true;
+    else if (arg === "--no-assistant") assistant = false;
     else if (arg === "--marketing") marketing = true;
     else if (arg === "--no-marketing") marketing = false;
     else if (arg === "--dir" || arg.startsWith("--dir=")) {
@@ -134,6 +138,7 @@ export function parseArgs(argv: readonly string[]): CliFlags {
     seoReports,
     notifications,
     storage,
+    assistant,
     marketing,
   };
 }
@@ -168,6 +173,10 @@ export const HELP = `
   --storage            Tenant-scoped file storage: rows in your own database,
     / --no-storage     bytes behind an adapter you own (Vercel Blob as emitted).
                        The library page rides the admin shell.
+  --assistant          The AI assistant's editable brain: a personality stored
+    / --no-assistant   as versioned, revertible rows an admin edits without a
+                       deploy, plus the assemblePrompt function your AI route
+                       calls. The editor rides the admin shell.
   --marketing          Landing page, pricing page and legal routes, as source.
     / --no-marketing   Off by default: every string on a landing page is a claim
                        only the client can make. Privacy and terms are generated
@@ -259,6 +268,12 @@ export async function collectAnswers(
       "File storage? Tenant-scoped uploads with the rows in your own database.",
       DEFAULT_ANSWERS.includeStorage,
     ));
+  const includeAssistant =
+    flags.assistant ??
+    (await prompter.confirm(
+      "AI assistant brain? An editable, versioned personality your AI route assembles its prompt from.",
+      DEFAULT_ANSWERS.includeAssistant,
+    ));
 
   const includeMarketing =
     flags.marketing ??
@@ -278,6 +293,7 @@ export async function collectAnswers(
     includeSeoReports,
     includeNotifications,
     includeStorage,
+    includeAssistant,
     includeMarketing,
     scope: DEFAULT_ANSWERS.scope,
   };

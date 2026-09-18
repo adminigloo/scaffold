@@ -100,6 +100,10 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   "seo-reports": "0.1.0",
   notifications: "0.1.0",
   storage: "0.1.0",
+  // First release: the editable brain. The emitted router imports
+  // createSection/publishSection/assemblePrompt and friends; the app's AI
+  // route imports assemblePrompt — none exist below 0.1.0.
+  assistant: "0.1.0",
   // 0.6.0 for the onEvent producer hook (optional, so the emitted route
   // needs no change); 0.5.0 was the column editor and unread marks. The emitted router imports
   // `createStatus`, `deleteStatus`, `markTicketRead` and friends; none exist

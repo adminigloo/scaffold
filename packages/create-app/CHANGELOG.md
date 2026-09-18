@@ -1,5 +1,19 @@
 # create-adminigloo-app
 
+## 0.17.0
+
+### Minor Changes
+
+- Generated projects can grow a brain. A new `--assistant` flag installs
+  @adminigloo/assistant, registers its staff router, and — with an admin shell —
+  emits the personality editor the site runs on: versioned sections with
+  rollback, per-tenant overlays, a glossary, and the change log. Independent of
+  `--ai` on purpose: the editable, revertible personality is config a project
+  wants whether or not it streams, and the app's own AI route calls the
+  package's `assemblePrompt` to build its system prompt from it. Verified by
+  generating a maximal project with the flag from packed tarballs and serving
+  it, editor and all.
+
 ## 0.16.0
 
 ### Minor Changes

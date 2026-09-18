@@ -95,6 +95,20 @@ export interface Answers {
    */
   readonly includeStorage: boolean;
   /**
+   * The AI assistant's editable brain: a personality stored as versioned,
+   * revertible database rows an admin edits without a deploy, per-tenant
+   * overlays, a glossary, and a change log — plus the `assemblePrompt`
+   * function the app's own AI route calls to build its system prompt from
+   * them. The staff editor rides `adminShell`.
+   *
+   * DEFAULTS TO FALSE, and independent of `includeAi`: the brain is editable
+   * config whether or not this project streams. A project with both gets the
+   * natural pairing — the AI route assembles its prompt from the brain — but
+   * that wiring is the app's to make; the flag ships the config and the
+   * function, not an opinion about the route.
+   */
+  readonly includeAssistant: boolean;
+  /**
    * Does this project have a PUBLIC FACE — a landing page, a pricing page, a
    * privacy policy — or is it only the application behind the sign-in?
    *
@@ -134,6 +148,7 @@ export const DEFAULT_ANSWERS: Answers = {
   includeSeoReports: false,
   includeNotifications: false,
   includeStorage: false,
+  includeAssistant: false,
   includeMarketing: false,
   scope: "@adminigloo",
 };
@@ -222,6 +237,7 @@ export function packagesFor(answers: Answers): readonly string[] {
   if (answers.includeSeoReports) optional.push("seo-reports");
   if (answers.includeNotifications) optional.push("notifications");
   if (answers.includeStorage) optional.push("storage");
+  if (answers.includeAssistant) optional.push("assistant");
 
   return [...base, ...optional].map((p) => `${answers.scope}/${p}`);
 }
@@ -471,6 +487,10 @@ export function overlayNamesFor(answers: Answers): readonly string[] {
   if (answers.includeStorage && answers.adminShell !== "none") {
     names.push("storage-admin");
   }
+  if (answers.includeAssistant) names.push("assistant");
+  if (answers.includeAssistant && answers.adminShell !== "none") {
+    names.push("assistant-admin");
+  }
 
   // THE PUBLIC FACE, in three overlays rather than one, because the three have
   // three different conditions and folding them together would make one of the
@@ -618,6 +638,10 @@ export function capabilitiesFor(answers: Answers): readonly string[] {
   if (answers.includeStorage) keys.push("storage.files");
   if (answers.includeStorage && answers.adminShell !== "none") {
     keys.push("storage.library");
+  }
+  if (answers.includeAssistant) keys.push("assistant.brain");
+  if (answers.includeAssistant && answers.adminShell !== "none") {
+    keys.push("assistant.editor");
   }
 
   // The public face. Three keys rather than one, because a consumer asking
