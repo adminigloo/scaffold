@@ -18,3 +18,28 @@ export {
   type RunLoopOptions,
   type ToolRun,
 } from "./loop.js";
+
+export { estimateTokens, withinBudget } from "./tokens.js";
+
+export {
+  createSection,
+  createSectionSchema,
+  deactivateSection,
+  listSectionVersions,
+  listSections,
+  publishSection,
+  publishSectionSchema,
+  rollbackSection,
+  sectionKeySchema,
+  SectionBudgetError,
+  type AssistantDb,
+  type CreateSectionInput,
+  type DeactivateResult,
+  type PublishResult,
+  type SectionRow,
+  type VersionRow,
+} from "./brain.js";
+
+export { assemblePrompt, type AssembledPrompt, type PromptMeta } from "./assemble.js";
+
+export { DEFAULT_SECTIONS, seedDefaultSections } from "./seed.js";
