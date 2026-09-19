@@ -1,5 +1,24 @@
 # @adminigloo/assistant
 
+## 0.1.1
+
+### Patch Changes
+
+- Review-pass fixes to the editable brain. The prompt fingerprint now hashes
+  section and tenant-rule CONTENT, not its estimated token count — two
+  personalities of the same length no longer collide, so the flight recorder
+  can actually tie a message to the config that produced it. `publishSection`
+  wraps its four writes in a transaction and maps a raced unique-violation to
+  the `conflict` its type already promised, instead of leaking a 500. Tenant
+  rules and glossary terms move into the package with their own change-log
+  writes and token-budget enforcement — the audit trail is now complete and
+  the overlay that travels in every turn is bounded, closing the two gaps the
+  router had left open. A new `listSectionsForEditor` returns each section's
+  head version in one query so the admin editor stops firing one per card.
+  Glossary create upserts on the key, so re-adding a removed term reactivates
+  it rather than dead-ending on the unique index. Plus a correct stop-reason
+  type on the loop and honest docs on the provider's history contract.
+
 ## 0.1.0
 
 ### Minor Changes

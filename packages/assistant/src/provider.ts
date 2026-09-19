@@ -5,9 +5,12 @@
  * must never mean "re-audit the loop".
  *
  * Neutral message blocks are ALSO the persistence format. What the model saw
- * is what the database holds, so rehydrated history replays byte-equivalent
- * — the property that makes conversations continuable, evals reproducible,
- * and the source system's client-authoritative-history flaw impossible here.
+ * is what the database holds, so when the runtime persists and rehydrates from
+ * these (0.2's answering engine), history replays byte-equivalent — the
+ * property that makes conversations continuable, evals reproducible, and the
+ * source system's client-authoritative-history flaw designed out. Until that
+ * runtime ships, the 0.1 dogfood route still streams directly with
+ * client-supplied messages; the block format is what 0.2 rehydrates against.
  */
 
 export type ContentBlock =

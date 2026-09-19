@@ -22,11 +22,18 @@ export {
 export { estimateTokens, withinBudget } from "./tokens.js";
 
 export {
+  createGlossaryTerm,
+  createGlossaryTermSchema,
   createSection,
   createSectionSchema,
+  createTenantRule,
+  createTenantRuleSchema,
+  deactivateGlossaryTerm,
   deactivateSection,
+  deactivateTenantRule,
   listSectionVersions,
   listSections,
+  listSectionsForEditor,
   publishSection,
   publishSectionSchema,
   rollbackSection,
@@ -35,6 +42,7 @@ export {
   type AssistantDb,
   type CreateSectionInput,
   type DeactivateResult,
+  type EditorSectionRow,
   type PublishResult,
   type SectionRow,
   type VersionRow,

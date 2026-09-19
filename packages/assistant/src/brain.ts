@@ -62,6 +62,29 @@ async function bumpConfigVersion(db: AssistantDb): Promise<void> {
     });
 }
 
+export interface EditorSectionRow extends SectionRow {
+  /** The current head version, so the editor knows the publish base without a per-card query. */
+  headVersion: number;
+}
+
+/**
+ * The active sections plus each one's head version, for the editor. A single
+ * query with a correlated subquery instead of one version-history fetch per
+ * card: N sections were N round trips before, and the editor only needs the
+ * head number until someone opens the history.
+ */
+export async function listSectionsForEditor(db: AssistantDb): Promise<EditorSectionRow[]> {
+  const headSub = db
+    .select({ v: sql<number>`max(${assistantSectionVersions.versionNumber})` })
+    .from(assistantSectionVersions)
+    .where(eq(assistantSectionVersions.sectionId, assistantSections.id));
+  return db
+    .select({ ...SECTION_COLUMNS, headVersion: sql<number>`coalesce((${headSub}), 0)` })
+    .from(assistantSections)
+    .where(eq(assistantSections.isActive, true))
+    .orderBy(asc(assistantSections.sortOrder), asc(assistantSections.key));
+}
+
 /** The active sections, in assembly order. */
 export async function listSections(db: AssistantDb): Promise<SectionRow[]> {
   return db
@@ -197,30 +220,55 @@ export async function publishSection(
   }
 
   const nextVersion = headVersion + 1;
-  // Snapshot the OUTGOING content as the new version, then move the live row.
-  // The version row is the content history; the live row is just the head.
-  await db.insert(assistantSectionVersions).values({
-    sectionId: parsed.sectionId,
-    versionNumber: nextVersion,
-    content: parsed.content,
-    changeSummary: parsed.changeSummary ?? null,
-    createdBy: actor ?? null,
-  });
-  await db
-    .update(assistantSections)
-    .set({ content: parsed.content, ...(parsed.label ? { label: parsed.label } : {}) })
-    .where(eq(assistantSections.id, parsed.sectionId));
-  await db.insert(assistantChangeLog).values({
-    entityType: "section",
-    entityId: parsed.sectionId,
-    entityKey: section.key,
-    action: "published",
-    sectionId: parsed.sectionId,
-    versionNumber: nextVersion,
-    changeSummary: parsed.changeSummary ?? null,
-    performedBy: actor ?? null,
-  });
-  await bumpConfigVersion(db);
+  // Four writes as one transaction: a crash between them must never leave a
+  // version row without its live-row move, or a change-log line for a publish
+  // that half-happened. And the base-version compare above is only optimistic
+  // — two publishes at the same base both compute this nextVersion, so the
+  // unique index on (sectionId, versionNumber) is the real arbiter. The loser
+  // hits 23505; we translate it to the same `conflict` the type promises
+  // rather than letting a raw driver error surface as a 500 (the house rule:
+  // never throw where the shape already has a refusal).
+  try {
+    await db.transaction(async (tx: AssistantDb) => {
+      // Snapshot the new content as the next version, then move the live row.
+      // The version row is the content history; the live row is just the head.
+      await tx.insert(assistantSectionVersions).values({
+        sectionId: parsed.sectionId,
+        versionNumber: nextVersion,
+        content: parsed.content,
+        changeSummary: parsed.changeSummary ?? null,
+        createdBy: actor ?? null,
+      });
+      await tx
+        .update(assistantSections)
+        .set({ content: parsed.content, ...(parsed.label ? { label: parsed.label } : {}) })
+        .where(eq(assistantSections.id, parsed.sectionId));
+      await tx.insert(assistantChangeLog).values({
+        entityType: "section",
+        entityId: parsed.sectionId,
+        entityKey: section.key,
+        action: "published",
+        sectionId: parsed.sectionId,
+        versionNumber: nextVersion,
+        changeSummary: parsed.changeSummary ?? null,
+        performedBy: actor ?? null,
+      });
+      await bumpConfigVersion(tx);
+    });
+  } catch (error) {
+    if ((error as { code?: string }).code === "23505") {
+      // A concurrent publish took this version number first. Re-read the head
+      // so the caller learns where it actually is now.
+      const [now] = await db
+        .select({ versionNumber: assistantSectionVersions.versionNumber })
+        .from(assistantSectionVersions)
+        .where(eq(assistantSectionVersions.sectionId, parsed.sectionId))
+        .orderBy(desc(assistantSectionVersions.versionNumber))
+        .limit(1);
+      return { published: false, reason: "conflict", headVersion: now?.versionNumber ?? nextVersion };
+    }
+    throw error;
+  }
   return { published: true, versionNumber: nextVersion };
 }
 
@@ -338,4 +386,159 @@ export async function deactivateSection(
   });
   await bumpConfigVersion(db);
   return { deactivated: true };
+}
+
+// ---------------------------------------------------------------------------
+// Tenant overlays and glossary — the per-customer layer and the term list.
+//
+// These live in the PACKAGE, not the consuming router, so they write the
+// change log and enforce their token budget the same way sections do. The
+// admin change-log page promises "no path to change the assistant that
+// doesn't leave a row"; that promise is only true if these functions own the
+// log write rather than leaving it to whoever calls them. And the overlay
+// travels in every user turn, so its budget is enforced here for the same
+// reason a section's is — a maxTokens nothing checks is the scar this suite
+// keeps re-learning.
+// ---------------------------------------------------------------------------
+
+export const createTenantRuleSchema = z.object({
+  tenantId: z.string().min(1).max(200),
+  sectionKey: z.string().max(60).nullish(),
+  label: z.string().min(1).max(80),
+  instruction: z.string().min(1).max(2000),
+  maxTokens: z.number().int().min(50).max(2000).optional(),
+});
+
+export async function createTenantRule(
+  db: AssistantDb,
+  input: z.infer<typeof createTenantRuleSchema>,
+  actor?: string,
+): Promise<{ id: string } | { error: "budget"; maxTokens: number }> {
+  const parsed = createTenantRuleSchema.parse(input);
+  const maxTokens = parsed.maxTokens ?? 200;
+  if (!withinBudget(parsed.instruction, maxTokens)) return { error: "budget", maxTokens };
+
+  const rows = await db
+    .insert(assistantTenantRules)
+    .values({
+      tenantId: parsed.tenantId,
+      sectionKey: parsed.sectionKey ?? null,
+      label: parsed.label,
+      instruction: parsed.instruction,
+      maxTokens,
+      createdBy: actor ?? null,
+    })
+    .returning({ id: assistantTenantRules.id });
+  const row = rows[0];
+  if (!row) throw new Error("tenant rule insert returned no row");
+  await db.insert(assistantChangeLog).values({
+    entityType: "tenant_rule",
+    entityId: row.id,
+    entityKey: parsed.sectionKey ?? null,
+    action: "created",
+    changeSummary: `${parsed.tenantId}: ${parsed.label}`,
+    performedBy: actor ?? null,
+  });
+  await bumpConfigVersion(db);
+  return { id: row.id };
+}
+
+export async function deactivateTenantRule(
+  db: AssistantDb,
+  ruleId: string,
+  actor?: string,
+): Promise<boolean> {
+  const rows = await db
+    .update(assistantTenantRules)
+    .set({ isActive: false })
+    .where(and(eq(assistantTenantRules.id, ruleId), eq(assistantTenantRules.isActive, true)))
+    .returning({ id: assistantTenantRules.id, sectionKey: assistantTenantRules.sectionKey });
+  const row = rows[0];
+  if (!row) return false;
+  await db.insert(assistantChangeLog).values({
+    entityType: "tenant_rule",
+    entityId: ruleId,
+    entityKey: row.sectionKey,
+    action: "deactivated",
+    performedBy: actor ?? null,
+  });
+  await bumpConfigVersion(db);
+  return true;
+}
+
+export const createGlossaryTermSchema = z.object({
+  termKey: sectionKeySchema,
+  preferred: z.string().min(1).max(120),
+  aliases: z.array(z.string().min(1).max(60)).max(20).optional(),
+  definition: z.string().max(500).nullish(),
+  category: z.string().max(60).nullish(),
+});
+
+/**
+ * Upsert on the term key: a term deactivated earlier is reactivated rather
+ * than colliding with the unique index. Without this, re-adding a removed term
+ * is a silent 23505 dead-end — the term vanished from the list but still owns
+ * its key.
+ */
+export async function createGlossaryTerm(
+  db: AssistantDb,
+  input: z.infer<typeof createGlossaryTermSchema>,
+  actor?: string,
+): Promise<{ id: string }> {
+  const parsed = createGlossaryTermSchema.parse(input);
+  const rows = await db
+    .insert(assistantGlossary)
+    .values({
+      termKey: parsed.termKey,
+      preferred: parsed.preferred,
+      aliases: parsed.aliases ?? [],
+      definition: parsed.definition ?? null,
+      category: parsed.category ?? null,
+    })
+    .onConflictDoUpdate({
+      target: assistantGlossary.termKey,
+      set: {
+        preferred: parsed.preferred,
+        aliases: parsed.aliases ?? [],
+        definition: parsed.definition ?? null,
+        category: parsed.category ?? null,
+        isActive: true,
+      },
+    })
+    .returning({ id: assistantGlossary.id });
+  const row = rows[0];
+  if (!row) throw new Error("glossary insert returned no row");
+  await db.insert(assistantChangeLog).values({
+    entityType: "glossary",
+    entityId: row.id,
+    entityKey: parsed.termKey,
+    action: "created",
+    changeSummary: parsed.preferred,
+    performedBy: actor ?? null,
+  });
+  await bumpConfigVersion(db);
+  return { id: row.id };
+}
+
+export async function deactivateGlossaryTerm(
+  db: AssistantDb,
+  termId: string,
+  actor?: string,
+): Promise<boolean> {
+  const rows = await db
+    .update(assistantGlossary)
+    .set({ isActive: false })
+    .where(eq(assistantGlossary.id, termId))
+    .returning({ id: assistantGlossary.id, termKey: assistantGlossary.termKey });
+  const row = rows[0];
+  if (!row) return false;
+  await db.insert(assistantChangeLog).values({
+    entityType: "glossary",
+    entityId: termId,
+    entityKey: row.termKey,
+    action: "deactivated",
+    performedBy: actor ?? null,
+  });
+  await bumpConfigVersion(db);
+  return true;
 }

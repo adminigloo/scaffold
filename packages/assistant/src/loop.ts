@@ -92,7 +92,7 @@ export async function runAssistantLoop(options: RunLoopOptions): Promise<LoopRes
   for (let step = 0; step < options.maxSteps; step++) {
     const stepBlocks: ContentBlock[] = [];
     const toolCalls: Array<{ toolCallId: string; name: string; input: unknown }> = [];
-    let stopReason: StepUsage extends never ? never : string = "end_turn";
+    let stopReason: "end_turn" | "tool_use" | "max_tokens" | "aborted" = "end_turn";
 
     const stream = provider.stream({
       system: options.system,

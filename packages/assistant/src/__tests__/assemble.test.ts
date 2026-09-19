@@ -104,4 +104,37 @@ describe("assemblePrompt", () => {
     expect(a.meta.fingerprint).toBe(b.meta.fingerprint);
     expect(a.meta.fingerprint).not.toBe(c.meta.fingerprint);
   });
+
+  it("distinguishes SAME-LENGTH different content — the fingerprint hashes text, not length", async () => {
+    // The bug the earlier test missed: a length-based fingerprint would
+    // collide two different personalities that happen to estimate the same
+    // token count. These two contents are the same length, different words.
+    // Same length, different words — a length-based fingerprint would collide.
+    const warm = "You are a calm, patient guide.";
+    const terse = "You are a terse, abrupt agent.";
+    expect(warm.length).toBe(terse.length);
+    const a = await assemblePrompt(
+      fakeDb({ sections: [{ ...coreSection, content: warm }] }),
+      { tenantId: "t1", turnText: "x" },
+    );
+    const b = await assemblePrompt(
+      fakeDb({ sections: [{ ...coreSection, content: terse }] }),
+      { tenantId: "t1", turnText: "x" },
+    );
+    expect(a.system.length).toBe(b.system.length);
+    expect(a.meta.fingerprint).not.toBe(b.meta.fingerprint);
+  });
+
+  it("distinguishes same-length different tenant-rule wording", async () => {
+    const rule = (instruction: string) => ({ sectionKey: "core", label: "tone", instruction });
+    const a = await assemblePrompt(
+      fakeDb({ sections: [coreSection], tenantRules: [rule("Always be very brief here.")] }),
+      { tenantId: "t1", turnText: "x" },
+    );
+    const b = await assemblePrompt(
+      fakeDb({ sections: [coreSection], tenantRules: [rule("Always be more warm here.")] }),
+      { tenantId: "t1", turnText: "x" },
+    );
+    expect(a.meta.fingerprint).not.toBe(b.meta.fingerprint);
+  });
 });

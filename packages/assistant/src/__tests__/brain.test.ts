@@ -18,6 +18,7 @@ function fakeDb(state: {
   targetVersionContent?: string | null;
   referencingRules?: number;
   maxOrder?: number;
+  conflictOnVersionInsert?: boolean;
 }) {
   const inserts: Record<string, Array<Record<string, unknown>>> = {};
   const updates: Array<Record<string, unknown>> = [];
@@ -80,6 +81,18 @@ function fakeDb(state: {
         },
       }),
     }),
+    // publishSection wraps its writes in a transaction; the fake runs the
+    // callback against the same accumulating handle so inserts/updates still
+    // land where the assertions look. A configured conflict makes the version
+    // insert throw 23505, exactly as the real unique index would.
+    transaction: async (fn: (tx: unknown) => Promise<unknown>) => {
+      if (state.conflictOnVersionInsert) {
+        const err = new Error("duplicate key") as Error & { code: string };
+        err.code = "23505";
+        throw err;
+      }
+      return fn(db);
+    },
   };
   return { db: db as never, inserts, updates };
 }
@@ -182,6 +195,19 @@ describe("publishSection", () => {
       reason: "unknown",
     });
   });
+
+  it("maps a unique-violation from a raced version insert to conflict, not a throw", async () => {
+    // Two publishers at the same base both pass the compare, both compute the
+    // same next version; the unique index rejects the loser with 23505. That
+    // must surface as the `conflict` the return type promises, never a 500.
+    const { db } = fakeDb({ section, headVersion: 2, conflictOnVersionInsert: true });
+    const result = await publishSection(db, {
+      sectionId: "sec_1",
+      baseVersion: 2,
+      content: "You are the assistant, racing.",
+    });
+    expect(result).toEqual({ published: false, reason: "conflict", headVersion: 2 });
+  });
 });
 
 describe("rollbackSection", () => {
@@ -198,6 +224,30 @@ describe("rollbackSection", () => {
       content: "You are the original.",
       changeSummary: "rolled back to v2",
     });
+  });
+
+  it("runs publish checks: a rollback to content that now violates budget is refused", async () => {
+    // The invariant the title claimed but the happy-path test never proved —
+    // a rollback is a publish of old content, so a lowered budget refuses it
+    // rather than resurrecting oversized content past the guard.
+    const { db, inserts } = fakeDb({
+      section: { ...section, maxTokens: 20 },
+      headVersion: 3,
+      targetVersionContent: "You are " + "x".repeat(4000),
+    });
+    const result = await rollbackSection(db, { sectionId: "sec_1", toVersion: 1 });
+    expect(result).toEqual({ published: false, reason: "budget", maxTokens: 20 });
+    expect(inserts["assistant_section_versions"]).toBeUndefined();
+  });
+
+  it("runs publish checks: a rollback that drops a required phrase is refused", async () => {
+    const { db } = fakeDb({
+      section,
+      headVersion: 3,
+      targetVersionContent: "an old version with no identity phrase",
+    });
+    const result = await rollbackSection(db, { sectionId: "sec_1", toVersion: 1 });
+    expect(result).toEqual({ published: false, reason: "missing_phrase", phrase: "You are" });
   });
 
   it("reports unknown for a version that never existed", async () => {

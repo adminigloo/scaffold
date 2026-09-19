@@ -105,8 +105,9 @@ export const assistantSectionVersions = pgTable(
  * holds in unit tests and races in production.
  *
  * `aiInstruction`/`aiSuggestion` are the Prompt Tuner's fields (0.4). Present
- * from 0.1 with a contract test exercising them, so the shape is proven three
- * releases before the Tuner writes through it — the delivery review's warning.
+ * from 0.1 so the migration is stable before the Tuner writes through it; the
+ * one-active-draft invariant is enforced by the partial unique index below,
+ * and the CRUD that exercises it ships with the Tuner in 0.4.
  */
 export const assistantDrafts = pgTable(
   "assistant_drafts",
