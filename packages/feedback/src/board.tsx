@@ -52,6 +52,42 @@ export interface TicketMessageView {
   createdAt: Date | string;
 }
 
+/** The client context a report arrived with — the widget's clientMetadata. */
+export interface TicketContextView {
+  browser?: string | null;
+  os?: string | null;
+  viewport?: { width?: number | null; height?: number | null } | null;
+  url?: string | null;
+  pathname?: string | null;
+  clickTrail?: Array<{
+    type?: string | null;
+    target?: string | null;
+    value?: string | null;
+    timestamp?: number | null;
+  }> | null;
+}
+
+/** A browser error captured with the report — the widget's recentErrors. */
+export interface TicketErrorView {
+  type?: string | null;
+  message?: string | null;
+  url?: string | null;
+  lineNumber?: number | null;
+  columnNumber?: number | null;
+}
+
+/**
+ * The heavy half of a ticket — the report body and the captured context — kept
+ * OUT of the board payload (which caps at hundreds of cards) and fetched by the
+ * consumer only when a panel opens. Hand it to `TicketPanel.detail`; absent,
+ * the panel still shows the report's screenshot, which rides on the card.
+ */
+export interface TicketDetailView {
+  description?: string | null;
+  context?: TicketContextView | null;
+  errors?: TicketErrorView[] | null;
+}
+
 export interface FeedbackBoardProps {
   statuses: BoardStatusView[];
   tickets: BoardTicketView[];
@@ -225,6 +261,26 @@ const CSS_TEXT = `
   font-size: 13px; font-weight: 600; padding: 9px 14px; cursor: pointer; transition: background .12s ease; }
 .aib-send:hover { background: var(--aib-accent-strong); }
 .aib-send:disabled { background: var(--aib-ink-faint); cursor: default; }
+
+/* Ticket detail (0.7.1): the report, its annotated screenshot inline, and the
+   captured context — everything in the one panel, no new tabs. */
+.aib-detail { display: flex; flex-direction: column; gap: 12px; padding-bottom: 12px;
+  border-bottom: 1px solid var(--aib-line); margin-bottom: 2px; }
+.aib-report { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.5; color: var(--aib-ink); }
+.aib-shot-wrap { display: block; }
+.aib-shot { display: block; width: 100%; border: 1px solid var(--aib-line); border-radius: 10px; }
+.aib-shot-label { display: block; margin-top: 5px; font-size: 11px; color: var(--aib-ink-faint); }
+.aib-detail-h { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--aib-ink-muted); margin: 2px 0 4px; }
+.aib-kv { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; font-size: 12px; color: var(--aib-ink);
+  overflow-wrap: anywhere; }
+.aib-kv b { color: var(--aib-ink-muted); font-weight: 600; margin-right: 5px; }
+.aib-trail { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px;
+  color: var(--aib-ink-muted); overflow-wrap: anywhere; }
+.aib-errs { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.aib-err { font-size: 12px; color: var(--aib-danger); overflow-wrap: anywhere; }
+.aib-err b { color: var(--aib-ink); }
 `;
 
 function injectStyles(): void {
@@ -244,6 +300,13 @@ export interface TicketPanelProps {
   ticket: BoardTicketView;
   messages: TicketMessageView[];
   statuses: BoardStatusView[];
+  /**
+   * The report body, captured context and browser errors, fetched on open.
+   * Optional: without it the panel still shows the annotated screenshot (which
+   * travels on the card) and the conversation — the detail simply fills in as
+   * the consumer's fetch resolves.
+   */
+  detail?: TicketDetailView | null;
   /** Shown as the sender on messages this viewer writes. */
   currentUser: string;
   onClose: () => void;
@@ -268,6 +331,7 @@ export function TicketPanel({
   ticket,
   messages,
   statuses,
+  detail,
   currentUser,
   onClose,
   onSend,
@@ -307,15 +371,6 @@ export function TicketPanel({
               {ticket.pagePathname ? <span>{ticket.pagePathname}</span> : null}
               {ticket.reporterName || ticket.reporterEmail ? (
                 <span>from {ticket.reporterName ?? ticket.reporterEmail}</span>
-              ) : null}
-              {(ticket.annotatedScreenshotUrl ?? ticket.screenshotUrl) ? (
-                <a
-                  href={ticket.annotatedScreenshotUrl ?? ticket.screenshotUrl ?? "#"}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  screenshot ↗
-                </a>
               ) : null}
             </div>
           </div>
@@ -366,6 +421,7 @@ export function TicketPanel({
         </div>
 
         <div className="aib-thread">
+          <TicketReport ticket={ticket} detail={detail} />
           {messages.length === 0 ? (
             <div className="aib-thread-empty">No notes yet — the report above is the whole story so far.</div>
           ) : null}
@@ -403,6 +459,110 @@ export function TicketPanel({
         </div>
       </aside>
     </>
+  );
+}
+
+/**
+ * Everything the report itself carries, rendered inline at the top of the
+ * panel: the body, the annotated screenshot as an image (annotated preferred,
+ * click to enlarge — the original is never shown, only the marked-up one),
+ * and the captured context as readable rows rather than a JSON dump. The
+ * screenshot comes off the ticket (always present); the rest fills in from
+ * `detail` when the consumer's fetch resolves.
+ */
+function TicketReport({
+  ticket,
+  detail,
+}: {
+  ticket: BoardTicketView;
+  detail?: TicketDetailView | null;
+}): ReactElement | null {
+  const shot = ticket.annotatedScreenshotUrl ?? ticket.screenshotUrl ?? null;
+  const annotated = ticket.annotatedScreenshotUrl != null;
+  const context = detail?.context ?? null;
+  const errors = detail?.errors ?? [];
+  const trail = Array.isArray(context?.clickTrail) ? context!.clickTrail! : [];
+  const viewport = context?.viewport;
+
+  if (!detail?.description && !shot && !context && errors.length === 0) return null;
+
+  return (
+    <div className="aib-detail">
+      {detail?.description ? <div className="aib-report">{detail.description}</div> : null}
+
+      {shot ? (
+        <a className="aib-shot-wrap" href={shot} target="_blank" rel="noreferrer">
+          <img
+            className="aib-shot"
+            src={shot}
+            alt={`Screenshot for ${ticket.ticketNumber}`}
+            loading="lazy"
+          />
+          <span className="aib-shot-label">
+            {annotated ? "Annotated screenshot · click to enlarge" : "Screenshot · click to enlarge"}
+          </span>
+        </a>
+      ) : null}
+
+      {context ? (
+        <div>
+          <div className="aib-detail-h">Context</div>
+          <div className="aib-kv">
+            {context.browser ? (
+              <div>
+                <b>Browser</b>
+                {context.browser}
+              </div>
+            ) : null}
+            {context.os ? (
+              <div>
+                <b>OS</b>
+                {context.os}
+              </div>
+            ) : null}
+            {viewport && (viewport.width || viewport.height) ? (
+              <div>
+                <b>Viewport</b>
+                {viewport.width ?? "?"}×{viewport.height ?? "?"}
+              </div>
+            ) : null}
+            {context.pathname || context.url ? (
+              <div>
+                <b>Page</b>
+                {context.pathname ?? context.url}
+              </div>
+            ) : null}
+          </div>
+
+          {trail.length > 0 ? (
+            <>
+              <div className="aib-detail-h">Click trail</div>
+              <ul className="aib-trail">
+                {trail.slice(-12).map((step, index) => (
+                  <li key={index}>
+                    [{step.type ?? "?"}] {step.target ?? ""}
+                    {step.value ? ` "${step.value}"` : ""}
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : null}
+        </div>
+      ) : null}
+
+      {errors.length > 0 ? (
+        <div>
+          <div className="aib-detail-h">Browser errors</div>
+          <ul className="aib-errs">
+            {errors.map((error, index) => (
+              <li key={index} className="aib-err">
+                <b>{error.type ?? "Error"}</b> {error.message ?? ""}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
