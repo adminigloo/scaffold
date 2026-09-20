@@ -72,7 +72,7 @@ export const createProductSchema = z.object({
   isEstimatable: z.boolean().default(true),
   sortOrder: z.number().int().default(0),
 });
-export type CreateProductInput = z.infer<typeof createProductSchema>;
+export type CreateProductInput = z.input<typeof createProductSchema>;
 
 export type ProductRow = typeof estimatorProducts.$inferSelect;
 export type ComponentRow = typeof estimatorComponents.$inferSelect;
@@ -212,7 +212,7 @@ export const createComponentSchema = z.object({
   unitType: z.enum(UNIT_TYPES).default("flat"),
   unitCost: centsField.default(0),
 });
-export type CreateComponentInput = z.infer<typeof createComponentSchema>;
+export type CreateComponentInput = z.input<typeof createComponentSchema>;
 
 export async function createComponent(
   db: EstimatorDb,
@@ -245,7 +245,7 @@ export const attachComponentSchema = z.object({
   componentId: z.string().min(1),
   quantityMilli: z.number().int().min(1).default(1000),
 });
-export type AttachComponentInput = z.infer<typeof attachComponentSchema>;
+export type AttachComponentInput = z.input<typeof attachComponentSchema>;
 
 export async function attachComponent(
   db: EstimatorDb,
@@ -274,7 +274,7 @@ export const createOptionSchema = z.object({
   optionType: z.string().max(60).default("custom"),
   sortOrder: z.number().int().default(0),
 });
-export type CreateOptionInput = z.infer<typeof createOptionSchema>;
+export type CreateOptionInput = z.input<typeof createOptionSchema>;
 
 export async function createOption(db: EstimatorDb, input: CreateOptionInput): Promise<OptionRow> {
   const values = createOptionSchema.parse(input);
@@ -289,7 +289,7 @@ export const createOptionValueSchema = z.object({
   isDefault: z.boolean().default(false),
   sortOrder: z.number().int().default(0),
 });
-export type CreateOptionValueInput = z.infer<typeof createOptionValueSchema>;
+export type CreateOptionValueInput = z.input<typeof createOptionValueSchema>;
 
 export async function createOptionValue(
   db: EstimatorDb,
@@ -308,7 +308,7 @@ export const calculateEstimateSchema = z.object({
   quantity: z.number().int().min(1).max(1000).default(1),
   optionValueIds: z.array(z.string()).max(50).default([]),
 });
-export type CalculateEstimateInput = z.infer<typeof calculateEstimateSchema>;
+export type CalculateEstimateInput = z.input<typeof calculateEstimateSchema>;
 
 /**
  * Price a product against a measurement and chosen options — the query behind
@@ -433,7 +433,7 @@ export const createEstimateSchema = z.object({
   discount: centsField.default(0),
   items: z.array(createEstimateItemSchema).min(1).max(100),
 });
-export type CreateEstimateInput = z.infer<typeof createEstimateSchema>;
+export type CreateEstimateInput = z.input<typeof createEstimateSchema>;
 
 export interface CreatedEstimate {
   id: string;
