@@ -1,6 +1,14 @@
 import type { AssistantDb } from "./brain.js";
 import { assemblePrompt } from "./assemble.js";
-import { appendMessage, createConversation, getConversation } from "./engine.js";
+import {
+  appendMessage,
+  confirmPendingAction,
+  createConversation,
+  createPendingAction,
+  declinePendingAction,
+  getConversation,
+  getPendingAction,
+} from "./engine.js";
 import {
   ASSISTANT_PROTOCOL_VERSION,
   encodeSse,
@@ -55,6 +63,8 @@ export interface AssistantChatDeps {
   }) => Promise<void> | void;
   maxSteps?: number;
   maxTokens?: number;
+  /** How long a proposed write stays confirmable. Default 15 minutes. */
+  pendingActionTtlMs?: number;
 }
 
 function json(data: unknown, status: number): Response {
@@ -172,6 +182,23 @@ export function createAssistantChatHandler(
             maxSteps,
             maxTokens,
             signal: abort.signal,
+            onPropose: async ({ toolName, params, summary }) => {
+              // A write the model wants to make: persist it as a pending action
+              // for the confirm endpoint. It expires so a stale proposal can't be
+              // fired hours later; it's stamped with the proposer so only they can
+              // confirm it.
+              const action = await createPendingAction(deps.db, {
+                tenantId: principal.tenantId,
+                conversationId,
+                toolName,
+                params,
+                summary,
+                idempotencyKey: crypto.randomUUID(),
+                expiresAt: new Date(Date.now() + (deps.pendingActionTtlMs ?? 15 * 60 * 1000)),
+                createdBy: principal.userId,
+              });
+              return action.id;
+            },
             emit,
           });
 
@@ -257,5 +284,67 @@ export function createAssistantChatHandler(
         "x-assistant-protocol": String(ASSISTANT_PROTOCOL_VERSION),
       },
     });
+  };
+}
+
+export interface AssistantConfirmDeps {
+  db: AssistantDb;
+  registry: ToolRegistry;
+  /** Resolve the caller from the request. null → 401. */
+  resolvePrincipal: (request: Request) => Promise<ChatPrincipal | null> | ChatPrincipal | null;
+}
+
+/**
+ * The confirm/decline endpoint for a proposed write.
+ *
+ * A write tool NEVER runs during the chat turn — it lands here, where the same
+ * person who proposed it says yes, and only then does the tool execute. The
+ * guard is the point: right tenant, right proposer, still pending, not expired,
+ * and the flip to "confirmed" happens BEFORE the run so a double-confirm can't
+ * fire the write twice. Fifteen lines of wiring in the app; the rule lives here.
+ */
+export function createAssistantConfirmHandler(
+  deps: AssistantConfirmDeps,
+): (request: Request) => Promise<Response> {
+  return async (request: Request): Promise<Response> => {
+    let body: { actionId?: unknown; decision?: unknown };
+    try {
+      body = (await request.json()) as typeof body;
+    } catch {
+      return json({ error: "bad request" }, 400);
+    }
+    const actionId = typeof body.actionId === "string" ? body.actionId : "";
+    const decision = body.decision === "decline" ? "decline" : "confirm";
+    if (!actionId) return json({ error: "actionId is required" }, 400);
+
+    const principal = await deps.resolvePrincipal(request);
+    if (!principal) return json({ error: "unauthorized" }, 401);
+
+    const action = await getPendingAction(deps.db, actionId);
+    // Scope to the tenant AND the proposer: one staff user must not confirm a
+    // write another proposed by guessing its id. 404 (not 403) so the id can't
+    // be probed for existence.
+    if (!action || action.tenantId !== principal.tenantId || action.createdBy !== principal.userId) {
+      return json({ error: "not found" }, 404);
+    }
+
+    if (decision === "decline") {
+      await declinePendingAction(deps.db, actionId);
+      return json({ declined: true }, 200);
+    }
+
+    // Flip pending → confirmed atomically FIRST (this also enforces expiry), so a
+    // second confirm returns not_pending instead of running the write again.
+    const confirmed = await confirmPendingAction(deps.db, actionId);
+    if (!confirmed.confirmed) return json({ ok: false, reason: confirmed.reason }, 409);
+
+    const ctx: ToolContext = {
+      tenantId: principal.tenantId,
+      userId: principal.userId,
+      conversationId: action.conversationId,
+      can: principal.can,
+    };
+    const outcome = await deps.registry.runConfirmed(action.toolName, action.params as unknown, ctx);
+    return json({ executed: !outcome.isError, result: outcome.result }, 200);
   };
 }

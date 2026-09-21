@@ -22,9 +22,33 @@ export function AssistantChat({ config }: { config: AssistantConfig }) {
   const [liveText, setLiveText] = useState("");
   const [activity, setActivity] = useState<string[] | null>(null);
   const [pending, setPending] = useState<Array<{ actionId: string; summary: string }>>([]);
+  const [resolved, setResolved] = useState<Record<string, { status: "confirmed" | "declined" | "error"; note?: string }>>({});
   const [error, setError] = useState<string | null>(null);
   const conversationId = useRef<string | null>(null);
   const threadRef = useRef<HTMLDivElement>(null);
+
+  /** Confirm or decline a proposed write against the confirm endpoint. */
+  const act = async (actionId: string, decision: "confirm" | "decline") => {
+    if (!config.confirmUrl || resolved[actionId]) return;
+    try {
+      const res = await fetch(config.confirmUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ actionId, decision }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { executed?: boolean; reason?: string; declined?: boolean };
+      if (decision === "decline") {
+        setResolved((r) => ({ ...r, [actionId]: { status: "declined" } }));
+      } else {
+        setResolved((r) => ({
+          ...r,
+          [actionId]: res.ok && data.executed ? { status: "confirmed" } : { status: "error", note: data.reason },
+        }));
+      }
+    } catch {
+      setResolved((r) => ({ ...r, [actionId]: { status: "error" } }));
+    }
+  };
 
   useEffect(() => injectStyles(), []);
   useEffect(() => {
@@ -129,12 +153,33 @@ export function AssistantChat({ config }: { config: AssistantConfig }) {
         {messages.map((m, i) => (
           <div key={i} className={`aia-msg ${m.role === "user" ? "aia-user" : "aia-assistant"} ${m.status === "truncated" ? "aia-truncated" : ""}`}>
             {m.text || (m.status === "truncated" ? "(answer cut off)" : "")}
-            {m.actions?.map((a) => (
-              <div key={a.actionId} className="aia-action" style={{ marginTop: 8 }}>
-                <div className="aia-action-label">Needs your confirmation</div>
-                {a.summary}
-              </div>
-            ))}
+            {m.actions?.map((a) => {
+              const r = resolved[a.actionId];
+              const label =
+                r?.status === "confirmed"
+                  ? "Confirmed"
+                  : r?.status === "declined"
+                    ? "Declined"
+                    : r?.status === "error"
+                      ? `Couldn't complete${r.note ? ` (${r.note})` : ""}`
+                      : "Needs your confirmation";
+              return (
+                <div key={a.actionId} className="aia-action" style={{ marginTop: 8 }}>
+                  <div className="aia-action-label">{label}</div>
+                  {a.summary}
+                  {!r && config.confirmUrl ? (
+                    <div className="aia-action-buttons">
+                      <button type="button" className="aia-confirm" onClick={() => void act(a.actionId, "confirm")}>
+                        Confirm
+                      </button>
+                      <button type="button" className="aia-decline" onClick={() => void act(a.actionId, "decline")}>
+                        Decline
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
         ))}
         {streaming && liveText ? <div className="aia-msg aia-assistant">{liveText}</div> : null}

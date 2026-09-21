@@ -71,4 +71,48 @@ describe("createToolRegistry", () => {
     expect((out.result as { truncated: boolean }).truncated).toBe(true);
     expect((out.result as { note: string }).note).toMatch(/truncated/i);
   });
+
+  it("a write tool PROPOSES instead of running — run() is never called inline", async () => {
+    let ran = false;
+    const reg = createToolRegistry([
+      tool({
+        name: "set_status",
+        write: true,
+        summarize: (i) => `Set status to ${(i as { status?: string }).status}`,
+        run: async () => {
+          ran = true;
+          return { ok: true };
+        },
+      }),
+    ]);
+    const run = reg.resolve({ toolCallId: "1", name: "set_status", input: { status: "resolved" } }, ctx(() => true));
+    const out = await run!.execute();
+    expect(ran).toBe(false);
+    expect(out.propose).toEqual({
+      toolName: "set_status",
+      params: { status: "resolved" },
+      summary: "Set status to resolved",
+    });
+  });
+
+  it("runConfirmed executes a write with the stored params, re-checking the permission", async () => {
+    let ranWith: unknown = null;
+    const reg = createToolRegistry([
+      tool({
+        name: "set_status",
+        write: true,
+        requiresPermission: "p.write",
+        run: async (i) => {
+          ranWith = i;
+          return { ok: true };
+        },
+      }),
+    ]);
+    const denied = await reg.runConfirmed("set_status", { status: "resolved" }, ctx(() => false));
+    expect(denied.isError).toBe(true);
+    expect(ranWith).toBeNull();
+    const ok = await reg.runConfirmed("set_status", { status: "resolved" }, ctx((p) => p === "p.write"));
+    expect(ok.isError).toBe(false);
+    expect(ranWith).toEqual({ status: "resolved" });
+  });
 });

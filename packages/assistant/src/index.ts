@@ -17,6 +17,7 @@ export type {
 export {
   runAssistantLoop,
   type LoopResult,
+  type ProposedWrite,
   type RunLoopOptions,
   type ToolRun,
 } from "./loop.js";
@@ -95,7 +96,9 @@ export {
 } from "./registry.js";
 export {
   createAssistantChatHandler,
+  createAssistantConfirmHandler,
   type AssistantChatDeps,
+  type AssistantConfirmDeps,
   type BudgetVerdict,
   type ChatPrincipal,
 } from "./handler.js";

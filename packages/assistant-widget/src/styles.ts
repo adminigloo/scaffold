@@ -44,6 +44,11 @@ const CSS_TEXT = `
 .aia-action { align-self: flex-start; max-width: 85%; border: 1px solid var(--aia-accent); background: var(--aia-accent-soft);
   border-radius: 12px; padding: 10px 13px; font-size: 13px; }
 .aia-action-label { font-weight: 700; text-transform: uppercase; letter-spacing: .04em; font-size: 10px; color: var(--aia-accent); }
+.aia-action-buttons { display: flex; gap: 8px; margin-top: 8px; }
+.aia-confirm { border: 0; border-radius: 8px; padding: 5px 12px; font-size: 13px; font-weight: 600; cursor: pointer;
+  background: var(--aia-accent); color: var(--aia-on-accent); }
+.aia-decline { border: 1px solid var(--aia-line-strong); border-radius: 8px; padding: 5px 12px; font-size: 13px; cursor: pointer;
+  background: var(--aia-surface); color: var(--aia-ink-muted); }
 .aia-error { align-self: center; color: var(--aia-danger); font-size: 13px; text-align: center; }
 .aia-compose { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--aia-line); }
 .aia-input { flex: 1; resize: none; min-height: 40px; max-height: 140px; border: 1px solid var(--aia-line-strong);

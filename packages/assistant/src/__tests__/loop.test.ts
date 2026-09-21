@@ -223,4 +223,71 @@ describe("runAssistantLoop", () => {
     expect(result.usage.cacheWriteTokens).toBe(400);
     expect(result.usage.cacheReadTokens).toBe(100);
   });
+
+  it("a proposed write emits an action event and never runs inline, when onPropose is wired", async () => {
+    const { events, emit } = collect();
+    const provider = fakeProvider([
+      [
+        { type: "tool-call", toolCallId: "w1", name: "set_status", input: { status: "resolved" } },
+        { type: "step-end", stopReason: "tool_use", usage: usage() },
+      ],
+      [
+        { type: "text-delta", delta: "Confirm to proceed." },
+        { type: "step-end", stopReason: "end_turn", usage: usage() },
+      ],
+    ]);
+    const proposed: unknown[] = [];
+    const result = await runAssistantLoop({
+      ...base,
+      provider,
+      emit,
+      onPropose: async (p) => {
+        proposed.push(p);
+        return "action-1";
+      },
+      resolveTool: (c) => ({
+        toolCallId: c.toolCallId,
+        name: c.name,
+        input: c.input,
+        label: c.name,
+        execute: async () => ({
+          result: { proposed: true },
+          propose: { toolName: c.name, params: { status: "resolved" }, summary: "Set status to resolved" },
+        }),
+      }),
+    });
+    expect(proposed).toHaveLength(1);
+    expect(events.find((e) => e.type === "action")).toMatchObject({
+      type: "action",
+      actionId: "action-1",
+      summary: "Set status to resolved",
+    });
+    // The model is told it's awaiting confirmation, not that it's done.
+    const tr = result.blocks.find((b) => b.kind === "tool-result");
+    expect(tr).toMatchObject({ result: { proposed: true, actionId: "action-1" } });
+  });
+
+  it("refuses a proposed write when onPropose is NOT wired — never silently runs it", async () => {
+    const { emit } = collect();
+    const provider = fakeProvider([
+      [
+        { type: "tool-call", toolCallId: "w1", name: "set_status", input: {} },
+        { type: "step-end", stopReason: "tool_use", usage: usage() },
+      ],
+      [{ type: "step-end", stopReason: "end_turn", usage: usage() }],
+    ]);
+    const result = await runAssistantLoop({
+      ...base,
+      provider,
+      emit,
+      resolveTool: (c) => ({
+        toolCallId: c.toolCallId,
+        name: c.name,
+        input: c.input,
+        label: c.name,
+        execute: async () => ({ result: {}, propose: { toolName: c.name, params: {}, summary: "x" } }),
+      }),
+    });
+    expect(result.blocks.find((b) => b.kind === "tool-result")).toMatchObject({ isError: true });
+  });
 });

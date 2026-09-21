@@ -4,6 +4,12 @@ export const SUPPORTED_PROTOCOL = 1;
 export interface AssistantConfig {
   /** The chat endpoint, e.g. "/api/assistant/chat". */
   chatUrl: string;
+  /**
+   * The confirm endpoint, e.g. "/api/assistant/confirm". When set, a proposed
+   * write shows Confirm/Decline buttons; without it, the proposal is shown but
+   * can't be acted on from the widget.
+   */
+  confirmUrl?: string;
   title?: string;
   subtitle?: string;
   /** Sent as the opening message when the panel first opens, if set. */

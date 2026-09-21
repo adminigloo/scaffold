@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/assistant-widget",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "The assistant's chat surface: a controlled React component that speaks the versioned SSE protocol, streams answers with step-restart, shows tool activity, and renders pending-action cards — self-contained styles, both themes.",
   "license": "UNLICENSED",
   "type": "module",
@@ -19,7 +19,9 @@
       "require": "./dist/index.cjs"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
     "access": "public"
