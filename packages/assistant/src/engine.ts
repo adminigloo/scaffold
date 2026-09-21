@@ -212,7 +212,13 @@ export async function retrievePageDocs(
   const limit = Math.min(Math.max(input.limit ?? 3, 1), 10);
   const maxBodyChars = input.maxBodyChars ?? 1_500;
   const document = sql`to_tsvector('english', ${assistantPageDocs.title} || ' ' || ${assistantPageDocs.body})`;
-  const tsquery = sql`plainto_tsquery('english', ${query})`;
+  // OR the query's terms, not AND. plainto_tsquery ANDs every word, so a natural
+  // question ("how do invoices and payments work?") matches nothing unless the
+  // doc happens to contain EVERY content word — retrieval that almost never
+  // fires. Rewriting the '&'s to '|'s means a doc matching ANY term is eligible,
+  // and ts_rank floats the one matching the MOST terms to the top. An
+  // all-stopword query yields an empty tsquery, which matches nothing.
+  const tsquery = sql`to_tsquery('english', replace(plainto_tsquery('english', ${query})::text, '&', '|'))`;
   const rows = (await db
     .select({
       pageKey: assistantPageDocs.pageKey,

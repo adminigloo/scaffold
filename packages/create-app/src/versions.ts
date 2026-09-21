@@ -106,7 +106,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // errors, a metered/persisted errored turn, and a seeded system prompt. The
   // emitted router imports createSection/publishSection/assemblePrompt; the app's
   // AI route imports assemblePrompt — none exist below 0.1.0.
-  assistant: "0.3.0",
+  assistant: "0.3.1",
   // 0.6.0 for the onEvent producer hook (optional, so the emitted route
   // needs no change); 0.5.0 was the column editor and unread marks. The emitted router imports
   // `createStatus`, `deleteStatus`, `markTicketRead` and friends; none exist
