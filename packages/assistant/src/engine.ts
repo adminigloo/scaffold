@@ -187,6 +187,58 @@ export async function listPageDocs(db: AssistantDb, tenantId: string): Promise<P
     .orderBy(asc(assistantPageDocs.pageKey))) as PageDocRow[];
 }
 
+export interface RetrievedDoc {
+  pageKey: string;
+  title: string;
+  body: string;
+  /** Postgres ts_rank; higher is more relevant. */
+  rank: number;
+}
+
+/**
+ * The page docs most relevant to a turn, by Postgres full-text search.
+ *
+ * KEYWORD RETRIEVAL, not embeddings — that is 0.3. It is explainable (a business
+ * can see WHY a doc was pulled), costs no model call, and grounds an answer in
+ * the tenant's own docs. Only ACTIVE, APPROVED docs are eligible: a machine
+ * ingestion draft never reaches an answer until a human approves it.
+ */
+export async function retrievePageDocs(
+  db: AssistantDb,
+  input: { tenantId: string; queryText: string; limit?: number; maxBodyChars?: number },
+): Promise<RetrievedDoc[]> {
+  const query = input.queryText.trim();
+  if (!query) return [];
+  const limit = Math.min(Math.max(input.limit ?? 3, 1), 10);
+  const maxBodyChars = input.maxBodyChars ?? 1_500;
+  const document = sql`to_tsvector('english', ${assistantPageDocs.title} || ' ' || ${assistantPageDocs.body})`;
+  const tsquery = sql`plainto_tsquery('english', ${query})`;
+  const rows = (await db
+    .select({
+      pageKey: assistantPageDocs.pageKey,
+      title: assistantPageDocs.title,
+      body: assistantPageDocs.body,
+      rank: sql<number>`ts_rank(${document}, ${tsquery})`,
+    })
+    .from(assistantPageDocs)
+    .where(
+      and(
+        eq(assistantPageDocs.tenantId, input.tenantId),
+        eq(assistantPageDocs.isActive, true),
+        eq(assistantPageDocs.isApproved, true),
+        sql`${document} @@ ${tsquery}`,
+      ),
+    )
+    .orderBy(desc(sql`ts_rank(${document}, ${tsquery})`))
+    .limit(limit)) as Array<{ pageKey: string; title: string; body: string; rank: number }>;
+  // Cap each body so one long doc can't blow the turn's token budget; the answer
+  // carries the pageKey, so the model can still point the user at the full page.
+  return rows.map((r) => ({
+    ...r,
+    body: r.body.length > maxBodyChars ? `${r.body.slice(0, maxBodyChars)}…` : r.body,
+  }));
+}
+
 // --- Pending actions -------------------------------------------------------
 
 export async function createPendingAction(

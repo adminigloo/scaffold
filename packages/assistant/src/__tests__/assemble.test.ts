@@ -10,12 +10,14 @@ function fakeDb(state: {
   sections?: Array<Record<string, unknown>>;
   tenantRules?: Array<Record<string, unknown>>;
   glossary?: Array<Record<string, unknown>>;
+  pageDocs?: Array<Record<string, unknown>>;
 }) {
   const db = {
     select: (fields: Record<string, unknown>) => ({
       from: () => {
         // listSections selects content+key+sortOrder+isActive; tenant rules
-        // select sectionKey+instruction; glossary selects preferred+aliases.
+        // select sectionKey+instruction; glossary selects preferred+aliases;
+        // retrievePageDocs selects pageKey+title+body+rank.
         if ("content" in fields && "isCore" in fields) {
           return {
             where: () => ({ orderBy: async () => state.sections ?? [] }),
@@ -23,6 +25,12 @@ function fakeDb(state: {
         }
         if ("instruction" in fields) {
           return { where: () => ({ orderBy: async () => state.tenantRules ?? [] }) };
+        }
+        if ("rank" in fields) {
+          // retrievePageDocs: where().orderBy().limit()
+          return {
+            where: () => ({ orderBy: () => ({ limit: async () => state.pageDocs ?? [] }) }),
+          };
         }
         // glossary: where().then (awaited directly, no orderBy)
         return {
@@ -92,6 +100,23 @@ describe("assemblePrompt", () => {
     const block = out.contextBlocks.find((b) => b.includes("<glossary>"));
     expect(block).toContain("widget: our core product");
     expect(block).not.toContain("invoice");
+  });
+
+  it("injects retrieved page docs as a knowledge block, carried in the user message not the fingerprint", async () => {
+    const db = fakeDb({
+      sections: [coreSection],
+      pageDocs: [{ pageKey: "/admin/invoices", title: "Invoices", body: "Create one from an estimate.", rank: 0.1 }],
+    });
+    const withDocs = await assemblePrompt(db, { tenantId: "t1", turnText: "how do invoices work?" });
+    const block = withDocs.contextBlocks.find((b) => b.includes("<knowledge>"));
+    expect(block).toContain('pageKey="/admin/invoices"');
+    expect(block).toContain("Create one from an estimate.");
+    // Retrieval is turn-dependent, so it must not move the config fingerprint.
+    const noDocs = await assemblePrompt(fakeDb({ sections: [coreSection] }), {
+      tenantId: "t1",
+      turnText: "how do invoices work?",
+    });
+    expect(withDocs.meta.fingerprint).toBe(noDocs.meta.fingerprint);
   });
 
   it("changes the fingerprint when a section's content changes, but not when the turn does", async () => {

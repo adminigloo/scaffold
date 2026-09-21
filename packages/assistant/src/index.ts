@@ -62,6 +62,7 @@ export {
   upsertPageDoc,
   getPageDoc,
   listPageDocs,
+  retrievePageDocs,
   createPendingAction,
   getPendingAction,
   confirmPendingAction,
@@ -75,6 +76,7 @@ export {
   type MessageRow,
   type PageDocRow,
   type PendingActionRow,
+  type RetrievedDoc,
 } from "./engine.js";
 export {
   assistantConversations,
