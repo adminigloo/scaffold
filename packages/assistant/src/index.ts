@@ -81,3 +81,17 @@ export {
   assistantPageDocVersions,
   assistantPendingActions,
 } from "./schema.js";
+
+export {
+  createToolRegistry,
+  type AssistantTool,
+  type ProviderToolSpec,
+  type ToolContext,
+  type ToolRegistry,
+} from "./registry.js";
+export {
+  createAssistantChatHandler,
+  type AssistantChatDeps,
+  type BudgetVerdict,
+  type ChatPrincipal,
+} from "./handler.js";
