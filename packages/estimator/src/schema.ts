@@ -6,6 +6,8 @@ import {
   jsonb,
   pgTable,
   text,
+  timestamp,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { createdAt, idColumn, updatedAt } from "@adminigloo/db";
 
@@ -172,6 +174,32 @@ export const estimatorEstimates = pgTable(
   (t) => [
     index("estimator_estimates_tenant_idx").on(t.tenantId, t.status),
     index("estimator_estimates_number_idx").on(t.tenantId, t.estimateNumber),
+  ],
+);
+
+/**
+ * One row per issued embed key. The row IS the licence: issuing a key lets a
+ * customer's own website run the estimate widget for this tenant; revoking it
+ * (revokedAt) turns the widget dark on the next request. Only the SHA-256 hash
+ * is stored — the plaintext exists once, in the issuance response. `keyPrefix`
+ * is the first few visible characters, kept plain so a row is recognizable in
+ * the admin without ever revealing the secret.
+ */
+export const estimatorClientKeys = pgTable(
+  "estimator_client_keys",
+  {
+    id: idColumn(),
+    tenantId: text("tenant_id").notNull(),
+    label: text("label").notNull(),
+    keyPrefix: text("key_prefix").notNull(),
+    keyHash: text("key_hash").notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("estimator_client_keys_hash_idx").on(t.keyHash),
+    index("estimator_client_keys_tenant_idx").on(t.tenantId),
   ],
 );
 

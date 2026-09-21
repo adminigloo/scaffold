@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { PgDatabase } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import {
@@ -10,6 +10,7 @@ import {
   type Measurement,
 } from "./pricing.js";
 import {
+  estimatorClientKeys,
   estimatorComponents,
   estimatorEstimateItems,
   estimatorEstimates,
@@ -22,7 +23,9 @@ import {
 
 export * from "./pricing.js";
 export * from "./takeoff.js";
+export * from "./platform.js";
 export {
+  estimatorClientKeys,
   estimatorComponents,
   estimatorEstimateItems,
   estimatorEstimates,
@@ -617,4 +620,119 @@ export async function setEstimateStatus(
     .where(eq(estimatorEstimates.id, parsed.id))
     .returning({ id: estimatorEstimates.id });
   return row !== undefined;
+}
+
+// --- Embed keys: the widget licence ---------------------------------------
+
+/** `esk_…` — an estimator embed key. The prefix triages a leaked string at a glance. */
+export const ESTIMATOR_KEY_PREFIX = "esk_";
+/** The header the widget sends its key in — shared with the other adminigloo widgets. */
+export const ESTIMATOR_KEY_HEADER = "x-adminigloo-key";
+
+function randomHexToken(prefix: string): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(20));
+  return prefix + Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** 20 random bytes as hex behind the prefix; the plaintext exists only in the issuance response. */
+export function generateClientKey(): string {
+  return randomHexToken(ESTIMATOR_KEY_PREFIX);
+}
+
+export async function hashClientKey(key: string): Promise<string> {
+  return sha256Hex(key);
+}
+
+export interface IssuedClientKey {
+  id: string;
+  tenantId: string;
+  label: string;
+  /** The one and only time the plaintext is available. */
+  key: string;
+}
+
+export async function issueClientKey(
+  db: EstimatorDb,
+  input: { tenantId: string; label: string },
+): Promise<IssuedClientKey> {
+  const key = generateClientKey();
+  const keyHash = await hashClientKey(key);
+  const [row] = await db
+    .insert(estimatorClientKeys)
+    .values({
+      tenantId: input.tenantId,
+      label: input.label,
+      keyPrefix: key.slice(0, 12),
+      keyHash,
+    })
+    .returning({ id: estimatorClientKeys.id });
+  if (!row) throw new Error("key insert returned no row");
+  return { id: (row as { id: string }).id, tenantId: input.tenantId, label: input.label, key };
+}
+
+export async function revokeClientKey(db: EstimatorDb, keyId: string): Promise<void> {
+  await db
+    .update(estimatorClientKeys)
+    .set({ revokedAt: new Date() })
+    .where(eq(estimatorClientKeys.id, keyId));
+}
+
+export interface ClientKeyRow {
+  id: string;
+  label: string;
+  keyPrefix: string;
+  revokedAt: Date | null;
+  lastUsedAt: Date | null;
+  createdAt: Date;
+}
+
+/** The keys for a tenant — never the hash, never the plaintext. */
+export async function listClientKeys(db: EstimatorDb, tenantId: string): Promise<ClientKeyRow[]> {
+  return (await db
+    .select({
+      id: estimatorClientKeys.id,
+      label: estimatorClientKeys.label,
+      keyPrefix: estimatorClientKeys.keyPrefix,
+      revokedAt: estimatorClientKeys.revokedAt,
+      lastUsedAt: estimatorClientKeys.lastUsedAt,
+      createdAt: estimatorClientKeys.createdAt,
+    })
+    .from(estimatorClientKeys)
+    .where(eq(estimatorClientKeys.tenantId, tenantId))
+    .orderBy(desc(estimatorClientKeys.createdAt))) as ClientKeyRow[];
+}
+
+export interface VerifiedClientKey {
+  keyId: string;
+  tenantId: string;
+}
+
+/**
+ * Resolve a key to its tenant, or null — which the caller turns into a 401,
+ * never a guessed tenant. Touches lastUsedAt so a dead key is visible in the
+ * admin. The prefix check short-circuits a token meant for another widget.
+ */
+export async function verifyClientKey(
+  db: EstimatorDb,
+  key: string,
+): Promise<VerifiedClientKey | null> {
+  if (!key.startsWith(ESTIMATOR_KEY_PREFIX)) return null;
+  const keyHash = await hashClientKey(key);
+  const [row] = await db
+    .select({ id: estimatorClientKeys.id, tenantId: estimatorClientKeys.tenantId })
+    .from(estimatorClientKeys)
+    .where(and(eq(estimatorClientKeys.keyHash, keyHash), isNull(estimatorClientKeys.revokedAt)))
+    .limit(1);
+  if (!row) return null;
+  const verified = row as { id: string; tenantId: string };
+  await db
+    .update(estimatorClientKeys)
+    .set({ lastUsedAt: new Date() })
+    .where(eq(estimatorClientKeys.id, verified.id));
+  return { keyId: verified.id, tenantId: verified.tenantId };
 }
