@@ -1,0 +1,48 @@
+{
+  "name": "@adminigloo/comms",
+  "version": "0.1.0",
+  "description": "Communications automation: message templates with {{variable}} rendering, a delivery log, a scheduled-message queue, and provider-agnostic email/SMS senders that log a clean skip instead of throwing when no provider is configured.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adminigloo/scaffold.git",
+    "directory": "packages/comms"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./schema": {
+      "types": "./dist/schema.d.ts",
+      "import": "./dist/schema.js",
+      "require": "./dist/schema.cjs"
+    }
+  },
+  "files": ["dist"],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "public"
+  },
+  "dependencies": {
+    "@adminigloo/db": "workspace:^"
+  },
+  "peerDependencies": {
+    "drizzle-orm": "catalog:peers",
+    "zod": "catalog:peers"
+  },
+  "devDependencies": {
+    "drizzle-orm": "catalog:",
+    "zod": "catalog:"
+  },
+  "scripts": {
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  }
+}
