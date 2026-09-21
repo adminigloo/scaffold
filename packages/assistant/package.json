@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/assistant",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "The trustworthy AI assistant platform: a DB-editable personality, a whitelisted permission-checked tool loop the model cannot misuse, retrieval it cannot leak across tenants, and every token metered — installed into your own app.",
   "license": "UNLICENSED",
   "type": "module",

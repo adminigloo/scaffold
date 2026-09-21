@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import type { AssistantDb } from "./brain.js";
 import type { ContentBlock } from "./provider.js";
 import {
@@ -324,4 +324,70 @@ export async function declinePendingAction(db: AssistantDb, id: string): Promise
     .where(and(eq(assistantPendingActions.id, id), eq(assistantPendingActions.status, "pending")))
     .returning({ id: assistantPendingActions.id });
   return row !== undefined;
+}
+
+// --- Retention & erasure ---------------------------------------------------
+
+/** Delete a set of conversations and everything hanging off them, in FK order. */
+async function deleteConversations(db: AssistantDb, ids: string[]): Promise<number> {
+  if (ids.length === 0) return 0;
+  const messages = await db
+    .delete(assistantMessages)
+    .where(inArray(assistantMessages.conversationId, ids))
+    .returning({ id: assistantMessages.id });
+  await db.delete(assistantPendingActions).where(inArray(assistantPendingActions.conversationId, ids));
+  await db.delete(assistantConversations).where(inArray(assistantConversations.id, ids));
+  return (messages as { id: string }[]).length;
+}
+
+/**
+ * Retention sweep: delete conversations idle since `olderThan`, and their
+ * messages and pending actions. There are no cross-package FKs, so the cascade
+ * is explicit and ordered (children first). A cron calls this; kept here so the
+ * order can't drift between callers.
+ */
+export async function sweepConversations(
+  db: AssistantDb,
+  input: { olderThan: Date; tenantId?: string },
+): Promise<{ conversations: number; messages: number }> {
+  const where = input.tenantId
+    ? and(lt(assistantConversations.lastMessageAt, input.olderThan), eq(assistantConversations.tenantId, input.tenantId))
+    : lt(assistantConversations.lastMessageAt, input.olderThan);
+  const stale = (await db
+    .select({ id: assistantConversations.id })
+    .from(assistantConversations)
+    .where(where)) as { id: string }[];
+  const ids = stale.map((s) => s.id);
+  const messages = await deleteConversations(db, ids);
+  return { conversations: ids.length, messages };
+}
+
+/** Expire any pending write still unconfirmed past its deadline, so the sweep also tidies the action queue. */
+export async function sweepExpiredPendingActions(db: AssistantDb, now: Date = new Date()): Promise<number> {
+  const rows = await db
+    .update(assistantPendingActions)
+    .set({ status: "expired" })
+    .where(and(eq(assistantPendingActions.status, "pending"), lt(assistantPendingActions.expiresAt, now)))
+    .returning({ id: assistantPendingActions.id });
+  return (rows as { id: string }[]).length;
+}
+
+/**
+ * Right-to-erasure: delete every conversation (and its messages and pending
+ * actions) belonging to one user in one tenant. The knowledge base and the
+ * personality are the tenant's, not the user's, so they are untouched.
+ */
+export async function deleteUserData(
+  db: AssistantDb,
+  input: { tenantId: string; userId: string },
+): Promise<{ conversations: number; messages: number }> {
+  const convs = (await db
+    .select({ id: assistantConversations.id })
+    .from(assistantConversations)
+    .where(and(eq(assistantConversations.tenantId, input.tenantId), eq(assistantConversations.userId, input.userId)))) as {
+    id: string;
+  }[];
+  const ids = convs.map((c) => c.id);
+  const messages = await deleteConversations(db, ids);
+  return { conversations: ids.length, messages };
 }
