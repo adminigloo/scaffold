@@ -293,6 +293,19 @@ importers:
         specifier: ^19.2.4
         version: 19.2.4(react@19.2.4)
 
+  packages/invoicing:
+    dependencies:
+      '@adminigloo/db':
+        specifier: workspace:^
+        version: link:../db
+    devDependencies:
+      drizzle-orm:
+        specifier: 'catalog:'
+        version: 0.45.2(@neondatabase/serverless@1.1.0)
+      zod:
+        specifier: 'catalog:'
+        version: 4.5.1
+
   packages/notifications:
     dependencies:
       '@adminigloo/db':
