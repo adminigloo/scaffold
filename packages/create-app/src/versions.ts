@@ -90,7 +90,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // `planGrantDiff` to take a `PlanTier`, and a caret over 0.1.x would resolve
   // to the signatures nothing here calls.
   billing: "0.2.0",
-  ai: "0.1.3",
+  ai: "0.1.4",
   email: "0.2.1",
   // First releases, all three proven on adminigloo.com before they were
   // offered here — the same publish → dogfood → template rhythm feedback

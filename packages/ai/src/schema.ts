@@ -61,6 +61,13 @@ export const aiUsage = pgTable(
      */
     cachedInputTokens: integer("cached_input_tokens").notNull().default(0),
     /**
+     * Cache WRITES, separate again because they are priced ABOVE fresh input,
+     * not below it. A ledger that folds them into input (or drops them) reports
+     * a cheaper turn than the invoice will, and the gap is exactly the premium
+     * the write was supposed to buy back on later reads.
+     */
+    cachedWriteTokens: integer("cached_write_tokens").notNull().default(0),
+    /**
      * Cost in micros — millionths of a major unit — as an integer.
      *
      * NOT a float, and not `numeric`. A float cost column reconciles against an

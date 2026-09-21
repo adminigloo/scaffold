@@ -357,13 +357,20 @@ export async function calculateEstimate(
 
   let optionModifiers: number[] = [];
   if (parsed.optionValueIds.length > 0) {
+    // Scope the chosen values to THIS product's own options. The ids arrive from
+    // the caller (a public embed passes them straight through), so without the
+    // join a request could fold another product's — or another tenant's — option
+    // modifier into this estimate. The join makes an off-product id match nothing.
     const values = await db
       .select({ priceModifier: estimatorOptionValues.priceModifier })
       .from(estimatorOptionValues)
+      .innerJoin(estimatorOptions, eq(estimatorOptions.id, estimatorOptionValues.optionId))
       .where(
         and(
           inArray(estimatorOptionValues.id, parsed.optionValueIds),
           eq(estimatorOptionValues.isActive, true),
+          eq(estimatorOptions.productId, p.id),
+          eq(estimatorOptions.isActive, true),
         ),
       );
     optionModifiers = (values as { priceModifier: number }[]).map((v) => v.priceModifier);

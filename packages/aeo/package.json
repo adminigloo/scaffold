@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/aeo",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Answer-engine citation tracking: for the questions your customers actually ask, does an AI assistant mention you? Tracks queries, records whether your brand is cited, and trends it over time.",
   "license": "UNLICENSED",
   "type": "module",
@@ -24,7 +24,9 @@
       "require": "./dist/schema.cjs"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
     "access": "public"

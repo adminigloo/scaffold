@@ -25,12 +25,21 @@ export interface TokenRate {
    * genuinely are free; `??` honours it.
    */
   readonly cachedInputMicrosPerMTok?: number;
+  /**
+   * Cache WRITES, which every provider prices ABOVE fresh input (Anthropic's
+   * 5-minute cache write is 1.25x input). Optional, and the fallback is the full
+   * input rate — a floor, not the true price, so an app that omits it still
+   * pays SOMETHING for a write rather than counting it free. Pass the real
+   * (higher) rate for accuracy; pass `0` only if writes genuinely are free.
+   */
+  readonly cachedWriteMicrosPerMTok?: number;
 }
 
 export interface CostInput {
   readonly inputTokens: number;
   readonly outputTokens: number;
   readonly cachedInputTokens?: number;
+  readonly cachedWriteTokens?: number;
   readonly rate: TokenRate;
 }
 
@@ -87,6 +96,10 @@ export function estimateCostMicros(input: CostInput): bigint {
     "cachedInputTokens",
     input.cachedInputTokens ?? 0,
   );
+  const cachedWriteTokens = wholeNonNegative(
+    "cachedWriteTokens",
+    input.cachedWriteTokens ?? 0,
+  );
 
   const inputRate = wholeNonNegative(
     "rate.inputMicrosPerMTok",
@@ -105,11 +118,19 @@ export function estimateCostMicros(input: CostInput): bigint {
           "rate.cachedInputMicrosPerMTok",
           input.rate.cachedInputMicrosPerMTok,
         );
+  const cachedWriteRate =
+    input.rate.cachedWriteMicrosPerMTok === undefined
+      ? inputRate
+      : wholeNonNegative(
+          "rate.cachedWriteMicrosPerMTok",
+          input.rate.cachedWriteMicrosPerMTok,
+        );
 
   const scaled =
     inputTokens * inputRate +
     outputTokens * outputRate +
-    cachedInputTokens * cachedRate;
+    cachedInputTokens * cachedRate +
+    cachedWriteTokens * cachedWriteRate;
 
   return divideRoundHalfUp(scaled, TOKENS_PER_MTOK);
 }

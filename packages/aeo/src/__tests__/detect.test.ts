@@ -28,4 +28,24 @@ describe("detectCitation", () => {
     expect(r.cited).toBe(false);
     expect(r.matchedOn).toBeNull();
   });
+
+  it("does not match a short brand or alias glued inside a larger word", () => {
+    // "SG" inside "message", "Ace" inside "space" — the substring false positives.
+    expect(detectCitation("Send me a message about it.", { brand: "SG" }).cited).toBe(false);
+    expect(
+      detectCitation("We need more space here.", { brand: "Brandy", aliases: ["Ace"] }).cited,
+    ).toBe(false);
+  });
+
+  it("still matches a short brand standing as its own word", () => {
+    const r = detectCitation("I'd go with SG for the glass.", { brand: "SG" });
+    expect(r.cited).toBe(true);
+    expect(r.matchedOn).toBe("brand");
+  });
+
+  it("matches a domain as a substring even when hyphen-joined in a URL path", () => {
+    const r = detectCitation("see https://sgglass.com/quote", { brand: "SG Glass", domain: "sgglass.com" });
+    expect(r.cited).toBe(true);
+    expect(r.matchedOn).toBe("domain");
+  });
 });

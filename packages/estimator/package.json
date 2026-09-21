@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/estimator",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "The instant-estimate platform: a priceable catalog and a pure, tested pricing engine (per sq ft / linear ft / unit / flat, with waste, markup and minimums) that turns a measurement — or a photo — into a quoted range before anyone drives out.",
   "license": "UNLICENSED",
   "type": "module",

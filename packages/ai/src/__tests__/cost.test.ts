@@ -136,6 +136,37 @@ describe("estimateCostMicros - cached input", () => {
   });
 });
 
+describe("estimateCostMicros - cached write", () => {
+  it("prices cache writes at their own (higher) rate when one is given", () => {
+    const rate = {
+      inputMicrosPerMTok: 1_000_000,
+      outputMicrosPerMTok: 0,
+      cachedWriteMicrosPerMTok: 1_250_000,
+    } as const;
+    expect(
+      estimateCostMicros({ inputTokens: 0, outputTokens: 0, cachedWriteTokens: 1_000_000, rate }),
+    ).toBe(1_250_000n);
+  });
+
+  it("falls back to the FULL input rate for writes when none is configured — never zero", () => {
+    const rate = { inputMicrosPerMTok: 1_000_000, outputMicrosPerMTok: 0 } as const;
+    expect(
+      estimateCostMicros({ inputTokens: 0, outputTokens: 0, cachedWriteTokens: 1_000_000, rate }),
+    ).toBe(1_000_000n);
+  });
+
+  it("honours an explicit zero write rate", () => {
+    const rate = {
+      inputMicrosPerMTok: 1_000_000,
+      outputMicrosPerMTok: 0,
+      cachedWriteMicrosPerMTok: 0,
+    } as const;
+    expect(
+      estimateCostMicros({ inputTokens: 0, outputTokens: 0, cachedWriteTokens: 1_000_000, rate }),
+    ).toBe(0n);
+  });
+});
+
 describe("estimateCostMicros - rejected inputs", () => {
   it("refuses a per-token rate mistaken for a per-MTok rate", () => {
     // A rate of 3.5 means $0.0000035 per million tokens, six orders of
