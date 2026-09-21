@@ -51,3 +51,33 @@ export {
 export { assemblePrompt, type AssembledPrompt, type PromptMeta } from "./assemble.js";
 
 export { DEFAULT_SECTIONS, seedDefaultSections } from "./seed.js";
+
+export {
+  createConversation,
+  appendMessage,
+  listConversations,
+  getConversation,
+  upsertPageDoc,
+  getPageDoc,
+  listPageDocs,
+  createPendingAction,
+  getPendingAction,
+  confirmPendingAction,
+  declinePendingAction,
+  nextSeq,
+  isActionExpired,
+  type AppendMessageInput,
+  type ConfirmResult,
+  type ConversationDetail,
+  type ConversationRow,
+  type MessageRow,
+  type PageDocRow,
+  type PendingActionRow,
+} from "./engine.js";
+export {
+  assistantConversations,
+  assistantMessages,
+  assistantPageDocs,
+  assistantPageDocVersions,
+  assistantPendingActions,
+} from "./schema.js";

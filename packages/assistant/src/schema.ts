@@ -9,7 +9,8 @@ import {
   timestamp,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
-import { createdAt, idColumn, logIdColumn } from "@adminigloo/db";
+import { createdAt, idColumn, logIdColumn, updatedAt } from "@adminigloo/db";
+import type { ContentBlock } from "./provider.js";
 
 /**
  * The assistant's editable brain (0.1.0).
@@ -217,3 +218,114 @@ export const assistantConfigVersion = pgTable("assistant_config_version", {
   version: integer("version").notNull().default(1),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// ---------------------------------------------------------------------------
+// 0.2.0 — the answering engine
+//
+// Conversations and their messages, the page docs assembly grounds answers in,
+// and the pending-action rows that gate every write behind a human confirm.
+// Message content is the SAME neutral block format the provider loop speaks
+// (provider.ts), so history rehydrates byte-equivalent — the property that
+// makes conversations continuable and evals reproducible.
+// ---------------------------------------------------------------------------
+
+/** One chat thread. Server-authoritative — the client never supplies history. */
+export const assistantConversations = pgTable(
+  "assistant_conversations",
+  {
+    id: idColumn(),
+    tenantId: text("tenant_id").notNull(),
+    /** The principal who owns it — indexed so erasure can find every thread. */
+    userId: text("user_id").notNull(),
+    title: text("title"),
+    /** active | archived */
+    status: text("status").notNull().default("active"),
+    lastMessageAt: timestamp("last_message_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("assistant_conversations_tenant_idx").on(t.tenantId, t.lastMessageAt),
+    index("assistant_conversations_user_idx").on(t.userId),
+  ],
+);
+
+/** A turn in a conversation. `seq` is monotonic per conversation and unique. */
+export const assistantMessages = pgTable(
+  "assistant_messages",
+  {
+    id: idColumn(),
+    conversationId: text("conversation_id").notNull(),
+    seq: integer("seq").notNull(),
+    /** user | assistant */
+    role: text("role").notNull(),
+    /** complete | truncated | errored — persisted via an awaited write. */
+    status: text("status").notNull().default("complete"),
+    /** The neutral ContentBlock[] the model saw; what we hold is what it saw. */
+    blocks: jsonb("blocks").$type<ContentBlock[]>().notNull().default([]),
+    /** Compact assembly record: fingerprint, block names, tier outcomes, shed events. */
+    promptMeta: jsonb("prompt_meta").$type<Record<string, unknown>>(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("assistant_messages_seq_idx").on(t.conversationId, t.seq),
+    index("assistant_messages_conversation_idx").on(t.conversationId),
+  ],
+);
+
+/** What the assistant knows about a page the user might be standing on. */
+export const assistantPageDocs = pgTable(
+  "assistant_page_docs",
+  {
+    id: idColumn(),
+    tenantId: text("tenant_id").notNull(),
+    /** Stable route key, e.g. "/admin/invoices". Immutable identity. */
+    pageKey: text("page_key").notNull(),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    /** A machine draft (from ingestion) a human hasn't approved yet. */
+    isApproved: boolean("is_approved").notNull().default(true),
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("assistant_page_docs_key_idx").on(t.tenantId, t.pageKey)],
+);
+
+export const assistantPageDocVersions = pgTable(
+  "assistant_page_doc_versions",
+  {
+    id: logIdColumn(),
+    pageDocId: text("page_doc_id").notNull(),
+    versionNumber: integer("version_number").notNull(),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    changeSummary: text("change_summary"),
+    createdBy: text("created_by"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("assistant_page_doc_versions_doc_idx").on(t.pageDocId)],
+);
+
+/** A proposed write, held until a human confirms. No tool commits directly. */
+export const assistantPendingActions = pgTable(
+  "assistant_pending_actions",
+  {
+    id: idColumn(),
+    tenantId: text("tenant_id").notNull(),
+    conversationId: text("conversation_id").notNull(),
+    toolName: text("tool_name").notNull(),
+    params: jsonb("params").$type<Record<string, unknown>>().notNull().default({}),
+    summary: text("summary").notNull(),
+    /** pending | confirmed | declined | expired */
+    status: text("status").notNull().default("pending"),
+    /** Dedupes a double-propose; unique so confirm is exactly-once. */
+    idempotencyKey: text("idempotency_key").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdBy: text("created_by"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("assistant_pending_actions_idem_idx").on(t.idempotencyKey),
+    index("assistant_pending_actions_conversation_idx").on(t.conversationId),
+  ],
+);
