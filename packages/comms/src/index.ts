@@ -105,18 +105,26 @@ export const DEFAULT_TEMPLATES: ReadonlyArray<{ key: string; channel: "email" | 
 ];
 
 export async function seedDefaultTemplates(db: CommsDb, tenantId: string): Promise<number> {
-  const existing = await listTemplates(db, tenantId);
-  if (existing.length > 0) return 0;
-  await db.insert(commsTemplates).values(
-    DEFAULT_TEMPLATES.map((t) => ({
-      tenantId,
-      key: t.key,
-      channel: t.channel,
-      subject: t.subject ?? null,
-      body: t.body,
-    })),
-  );
-  return DEFAULT_TEMPLATES.length;
+  // Insert-if-absent per (tenant, key) rather than a batch gated on "is the
+  // table empty". Two concurrent first-requests on a cold start both saw an
+  // empty table and the loser's batch insert threw on the unique key — which,
+  // because requestBooking awaits this AFTER creating the booking, rejected the
+  // mutation and dropped the customer's confirmation. onConflictDoNothing makes
+  // the race a no-op and also backfills a single missing template.
+  const inserted = await db
+    .insert(commsTemplates)
+    .values(
+      DEFAULT_TEMPLATES.map((t) => ({
+        tenantId,
+        key: t.key,
+        channel: t.channel,
+        subject: t.subject ?? null,
+        body: t.body,
+      })),
+    )
+    .onConflictDoNothing({ target: [commsTemplates.tenantId, commsTemplates.key] })
+    .returning({ id: commsTemplates.id });
+  return (inserted as { id: string }[]).length;
 }
 
 // --- Sending ---------------------------------------------------------------
@@ -268,8 +276,28 @@ export async function runDueMessages(
 
   let processed = 0;
   for (const row of due) {
-    await sendNow(db, { tenantId: row.tenantId, to: row.toAddress, templateKey: row.templateKey, vars: row.vars }, senders);
-    await db.update(commsScheduled).set({ status: "sent" }).where(eq(commsScheduled.id, row.id));
+    // Claim the row atomically: only the worker that flips pending→sending owns
+    // it, so an overlapping cron tick or the admin "Send due now" button can't
+    // both grab the same reminder and send it twice.
+    const claimed = await db
+      .update(commsScheduled)
+      .set({ status: "sending" })
+      .where(and(eq(commsScheduled.id, row.id), eq(commsScheduled.status, "pending")))
+      .returning({ id: commsScheduled.id });
+    if ((claimed as { id: string }[]).length === 0) continue;
+
+    const sent = await sendNow(
+      db,
+      { tenantId: row.tenantId, to: row.toAddress, templateKey: row.templateKey, vars: row.vars },
+      senders,
+    );
+    // Reflect the REAL outcome instead of always claiming "sent": a provider
+    // failure returns to "pending" so the next tick retries it (a reminder must
+    // not be silently lost); "sent"/"skipped" are terminal.
+    await db
+      .update(commsScheduled)
+      .set({ status: sent.status === "failed" ? "pending" : "sent" })
+      .where(eq(commsScheduled.id, row.id));
     processed += 1;
   }
   return { processed };

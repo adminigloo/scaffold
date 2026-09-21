@@ -8,6 +8,7 @@ import {
   type LoopUsage,
 } from "./events.js";
 import { runAssistantLoop } from "./loop.js";
+import { replayMessages } from "./provider.js";
 import type { ContentBlock, NeutralMessage, ProviderAdapter } from "./provider.js";
 import type { ToolContext, ToolRegistry } from "./registry.js";
 
@@ -97,14 +98,22 @@ export function createAssistantChatHandler(
     let history: NeutralMessage[] = [];
     if (conversationIdIn) {
       const conv = await getConversation(deps.db, conversationIdIn);
-      if (!conv || conv.conversation.tenantId !== principal.tenantId) {
+      // Scope to BOTH tenant and the caller: one staff user must not be able to
+      // read or continue another's thread by guessing its id. A 404 (not 403)
+      // so an outsider can't probe which ids exist.
+      if (
+        !conv ||
+        conv.conversation.tenantId !== principal.tenantId ||
+        conv.conversation.userId !== principal.userId
+      ) {
         return json({ error: "conversation not found" }, 404);
       }
       conversationId = conv.conversation.id;
-      history = conv.messages.map((m) => ({
-        role: m.role === "assistant" ? "assistant" : "user",
-        blocks: m.blocks,
-      }));
+      // Rehydrate history splitting each stored row on its tool-result
+      // boundaries, so a tool-using thread replays as a valid transcript.
+      history = conv.messages.flatMap((m) =>
+        replayMessages(m.role === "assistant" ? "assistant" : "user", m.blocks),
+      );
     } else {
       const conv = await createConversation(deps.db, {
         tenantId: principal.tenantId,
@@ -175,6 +184,8 @@ export function createAssistantChatHandler(
             promptMeta: { fingerprint: assembled.meta.fingerprint, steps: result.steps },
           });
 
+          // Meter EVERY settled turn — complete, truncated, or errored — so an
+          // abandoned or failed turn's tokens still reach the ledger.
           if (deps.recordUsage) {
             try {
               await deps.recordUsage({
@@ -189,18 +200,44 @@ export function createAssistantChatHandler(
             }
           }
 
-          emit({
-            v: 1,
-            type: "done",
-            meta: {
-              conversationId,
-              messageId: saved.id,
-              status: result.status,
-              steps: result.steps,
-              usage: result.usage,
-            },
-          });
+          if (result.status === "errored") {
+            // The loop salvaged the partial turn and told us how it failed; the
+            // widget maps the class to copy.
+            emit({
+              v: 1,
+              type: "error",
+              errorClass: result.error?.errorClass ?? "internal",
+              message: result.error?.message ?? "the assistant hit an error",
+            });
+          } else {
+            emit({
+              v: 1,
+              type: "done",
+              meta: {
+                conversationId,
+                messageId: saved.id,
+                status: result.status,
+                steps: result.steps,
+                usage: result.usage,
+              },
+            });
+          }
         } catch (cause) {
+          // The loop returns provider failures as status "errored"; reaching
+          // here means a genuinely unexpected throw (a bug, a DB write failure).
+          // Still record an errored turn best-effort so the transcript and
+          // ledger aren't silently blind to it.
+          try {
+            await appendMessage(deps.db, {
+              conversationId,
+              role: "assistant",
+              blocks: [],
+              status: "errored",
+              promptMeta: { fingerprint: assembled.meta.fingerprint },
+            });
+          } catch {
+            // Nothing more we can do; the error event below is the user's signal.
+          }
           emit({
             v: 1,
             type: "error",

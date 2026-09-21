@@ -196,6 +196,24 @@ describe("runAssistantLoop", () => {
     expect(result.steps).toBe(2);
   });
 
+  it("returns status errored (never throws) on a provider-error, keeping partial text and the step's usage", async () => {
+    const { events, emit } = collect();
+    const provider = fakeProvider([
+      [
+        { type: "text-delta", delta: "Let me" },
+        { type: "provider-error", errorClass: "provider_overloaded", message: "overloaded" },
+        { type: "step-end", stopReason: "end_turn", usage: usage() },
+      ],
+    ]);
+    const result = await runAssistantLoop({ ...base, provider, emit });
+    expect(result.status).toBe("errored");
+    expect(result.error).toEqual({ errorClass: "provider_overloaded", message: "overloaded" });
+    // Partial text is salvaged so a refetch shows something…
+    expect(result.blocks).toEqual([{ kind: "text", text: "Let me" }]);
+    // …and the tokens the failed step already spent still reach the ledger.
+    expect(result.usage.inputTokens).toBe(10);
+  });
+
   it("counts cache write tokens so the ledger can see the premium", async () => {
     const { emit } = collect();
     const provider = fakeProvider([

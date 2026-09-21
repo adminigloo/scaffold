@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/comms",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Communications automation: message templates with {{variable}} rendering, a delivery log, a scheduled-message queue, and provider-agnostic email/SMS senders that log a clean skip instead of throwing when no provider is configured.",
   "license": "UNLICENSED",
   "type": "module",
@@ -24,7 +24,9 @@
       "require": "./dist/schema.cjs"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
     "access": "public"

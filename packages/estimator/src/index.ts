@@ -399,7 +399,10 @@ export async function calculateEstimate(
 export async function nextEstimateNumber(db: EstimatorDb, tenantId: string): Promise<string> {
   const year = new Date().getUTCFullYear();
   const [row] = await db
-    .select({ n: sql<number>`count(*)` })
+    // ::int — the serverless driver returns count() (int8) as a STRING, so an
+    // uncast `n` makes `n + 1` string-concatenate ("5"+1 = "51"), corrupting the
+    // sequence (EST-2026-0051 for the 6th estimate).
+    .select({ n: sql<number>`count(*)::int` })
     .from(estimatorEstimates)
     .where(
       and(
@@ -475,10 +478,13 @@ export async function createEstimate(
   for (const item of parsed.items) {
     let unitPrice = item.unitPrice ?? null;
     if (unitPrice === null && item.productId) {
+      // Price ONE unit: calculateEstimate already folds quantity into its range,
+      // so asking it for `item.quantity` and then multiplying by quantity again
+      // (below) would square it — a qty-3 line billed at 3× the quoted price.
       const result = await calculateEstimate(db, {
         productId: item.productId,
         measurement: item.measurement ?? {},
-        quantity: item.quantity,
+        quantity: 1,
         optionValueIds: item.optionValueIds,
       });
       unitPrice = result ? midpointOf(result.estimateLow, result.estimateHigh) : 0;

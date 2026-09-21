@@ -277,6 +277,14 @@ export async function findAvailableSlots(
   });
   if (resources.length === 0) return [];
 
+  // A resource's weekly availability is identical for every day in the range,
+  // so fetch it ONCE per resource here instead of re-querying inside the day
+  // loop (14 days × N resources = 14N round-trips on the public slots path).
+  const availabilityByResource = new Map<string, Awaited<ReturnType<typeof listAvailability>>>();
+  for (const resource of resources) {
+    availabilityByResource.set(resource.id, await listAvailability(db, resource.id));
+  }
+
   const scored: ScoredSlot[] = [];
 
   for (
@@ -286,7 +294,7 @@ export async function findAvailableSlots(
   ) {
     const iso = day.toISOString().slice(0, 10);
     for (const resource of resources) {
-      const rows = await listAvailability(db, resource.id);
+      const rows = availabilityByResource.get(resource.id) ?? [];
       const window = resolveDayWindow(rows, resource, day);
       if (!window) continue;
 
@@ -302,11 +310,22 @@ export async function findAvailableSlots(
           ),
         )) as BookingRow[];
 
-      const windows: BookingWindow[] = dayBookings
-        .filter((b) => !ACTIVE_STATUSES_EXCLUDED.includes(b.status))
-        .map((b) => ({ start: b.startTime, end: b.endTime, lat: b.lat, lng: b.lng, address: b.address ?? "" }));
+      const active = dayBookings.filter((b) => !ACTIVE_STATUSES_EXCLUDED.includes(b.status));
 
-      const free = findFreeSlots(window.start, window.end, windows, options.durationMinutes);
+      // Don't offer a crew more jobs than its per-day cap. What's already booked
+      // counts against it, so a full day yields no slots.
+      const remaining = Math.max(0, resource.maxJobsPerDay - active.length);
+      if (remaining === 0) continue;
+
+      const windows: BookingWindow[] = active.map((b) => ({
+        start: b.startTime,
+        end: b.endTime,
+        lat: b.lat,
+        lng: b.lng,
+        address: b.address ?? "",
+      }));
+
+      const free = findFreeSlots(window.start, window.end, windows, options.durationMinutes).slice(0, remaining);
 
       for (const slot of free) {
         let driveMinutes: number | null = null;
@@ -359,15 +378,15 @@ export const createBookingSchema = z.object({
   durationMinutes: z.number().int().min(1).max(1440).default(120),
   estimateId: z.string().nullish(),
   notes: z.string().max(2000).nullish(),
+  // Staff bookings land confirmed; a public self-service request can ask for
+  // "pending" so a human reviews it. Callers choose — the DB no longer forces it.
+  status: z.enum(["pending", "confirmed"]).default("confirmed"),
 });
 export type CreateBookingInput = z.input<typeof createBookingSchema>;
 
 export async function createBooking(db: SchedulingDb, input: CreateBookingInput): Promise<BookingRow> {
   const values = createBookingSchema.parse(input);
-  const [row] = await db
-    .insert(schedulingBookings)
-    .values({ ...values, status: "confirmed" })
-    .returning();
+  const [row] = await db.insert(schedulingBookings).values(values).returning();
   return row as BookingRow;
 }
 

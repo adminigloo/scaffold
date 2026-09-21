@@ -100,10 +100,13 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   "seo-reports": "0.1.0",
   notifications: "0.1.0",
   storage: "0.1.0",
-  // First release: the editable brain. The emitted router imports
-  // createSection/publishSection/assemblePrompt and friends; the app's AI
-  // route imports assemblePrompt — none exist below 0.1.0.
-  assistant: "0.1.0",
+  // 0.2.0 was the answering engine (loop, registry, chat handler, conversations
+  // + page-doc + pending-action tables); 0.2.1–0.2.2 hardened it — valid history
+  // replay for tool-using turns, type-based abort detection, neutral provider
+  // errors, a metered/persisted errored turn, and a seeded system prompt. The
+  // emitted router imports createSection/publishSection/assemblePrompt; the app's
+  // AI route imports assemblePrompt — none exist below 0.1.0.
+  assistant: "0.2.2",
   // 0.6.0 for the onEvent producer hook (optional, so the emitted route
   // needs no change); 0.5.0 was the column editor and unread marks. The emitted router imports
   // `createStatus`, `deleteStatus`, `markTicketRead` and friends; none exist
@@ -112,8 +115,9 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // /v1/reply endpoints the 0.2.x widget calls.)
   // 0.7.0 is the serious board: DB-row categories, terminal/WIP/aging on
   // statuses, soft archive, bulk move. The emitted router imports
-  // `listCategories`, `archiveTicket` and friends; none exist in 0.6.x.
-  feedback: "0.7.0",
+  // `listCategories`, `archiveTicket` and friends; none exist in 0.6.x. 0.7.2 is
+  // the workspace-protocol publish fix (0.7.1 shipped an unresolved workspace:^).
+  feedback: "0.7.2",
   // 0.2.1 — 0.2.0 brought the "My reports" view the thread endpoints exist
   // to serve; the patch is the glacier re-skin with the widget's own dark
   // theme, which a caret would cover anyway. Pinned at the workspace version

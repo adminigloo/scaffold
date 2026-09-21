@@ -23,7 +23,9 @@ function randomToken(): string {
 export async function nextInvoiceNumber(db: InvoicingDb, tenantId: string): Promise<string> {
   const year = new Date().getUTCFullYear();
   const [row] = await db
-    .select({ n: sql<number>`count(*)` })
+    // ::int — the serverless driver returns count() (int8) as a STRING; without
+    // the cast `n + 1` concatenates ("5"+1 = "51") and invoice numbers corrupt.
+    .select({ n: sql<number>`count(*)::int` })
     .from(invoices)
     .where(
       and(
@@ -177,6 +179,9 @@ export async function recordPayment(
   const [invoice] = await db.select().from(invoices).where(eq(invoices.id, parsed.invoiceId)).limit(1);
   if (!invoice) return null;
   const inv = invoice as InvoiceRow;
+  // A voided invoice is closed. Recording a payment would flip it back to
+  // partial/paid and resurrect a cancelled bill — refuse it.
+  if (inv.status === "void") return null;
 
   await db.insert(invoicePayments).values({
     invoiceId: inv.id,

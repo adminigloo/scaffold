@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/scheduling",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Drive-time-aware booking: generate open slots across staff availability and score them by travel time from the previous job, so a day of visits clusters instead of crisscrossing — with a Haversine fallback when no maps key is set.",
   "license": "UNLICENSED",
   "type": "module",

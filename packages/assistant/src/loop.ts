@@ -3,6 +3,7 @@ import type {
   ContentBlock,
   NeutralMessage,
   ProviderAdapter,
+  ProviderErrorClass,
   StepUsage,
 } from "./provider.js";
 
@@ -61,6 +62,8 @@ export interface LoopResult {
   status: "complete" | "truncated" | "errored";
   steps: number;
   usage: LoopUsage;
+  /** Set when status is "errored": the neutral class + message to surface. */
+  error?: { errorClass: ProviderErrorClass; message: string };
 }
 
 const zeroUsage = (): LoopUsage => ({
@@ -104,6 +107,7 @@ export async function runAssistantLoop(options: RunLoopOptions): Promise<LoopRes
     });
 
     let textInStep = "";
+    let errorInfo: { errorClass: ProviderErrorClass; message: string } | null = null;
     for await (const event of stream) {
       if (event.type === "text-delta") {
         textInStep += event.delta;
@@ -114,6 +118,10 @@ export async function runAssistantLoop(options: RunLoopOptions): Promise<LoopRes
           name: event.name,
           input: event.input,
         });
+      } else if (event.type === "provider-error") {
+        // The adapter salvaged what it could and told us how it failed. Record
+        // it; the trailing step-end still flushes whatever usage was reported.
+        errorInfo = { errorClass: event.errorClass, message: event.message };
       } else {
         stopReason = event.stopReason;
         addUsage(usage, event.usage);
@@ -128,6 +136,20 @@ export async function runAssistantLoop(options: RunLoopOptions): Promise<LoopRes
         name: call.name,
         input: call.input,
       });
+    }
+
+    if (errorInfo) {
+      // The step failed. Keep any partial text so a refetch shows something,
+      // and RETURN rather than throw — the caller must still persist the turn
+      // and record the tokens this step already burned.
+      assistantBlocks.push(...stepBlocks);
+      return {
+        blocks: assistantBlocks,
+        status: "errored",
+        steps: step + 1,
+        usage,
+        error: errorInfo,
+      };
     }
 
     if (stopReason === "aborted") {

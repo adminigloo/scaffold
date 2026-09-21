@@ -4,10 +4,12 @@ export {
   type AssistantStreamEvent,
   type LoopUsage,
 } from "./events.js";
+export { replayMessages } from "./provider.js";
 export type {
   ContentBlock,
   NeutralMessage,
   ProviderAdapter,
+  ProviderErrorClass,
   ProviderEvent,
   ProviderRequest,
   StepUsage,
