@@ -329,3 +329,62 @@ export const assistantPendingActions = pgTable(
     index("assistant_pending_actions_conversation_idx").on(t.conversationId),
   ],
 );
+
+// --- 0.4: the safety / eval loop -------------------------------------------
+
+/**
+ * A golden: a question with what a good answer must (and must not) contain. The
+ * check is deterministic — substring presence, not a judge model — so an eval
+ * run costs one model call per golden (the answer), never two, and a pass/fail
+ * a person can read without trusting a grader.
+ */
+export const assistantGoldens = pgTable(
+  "assistant_goldens",
+  {
+    id: idColumn(),
+    tenantId: text("tenant_id").notNull(),
+    question: text("question").notNull(),
+    /** Substrings the answer MUST contain (case-insensitive), all required. */
+    mustInclude: jsonb("must_include").$type<string[]>().notNull().default([]),
+    /** Substrings the answer must NOT contain — a safety boundary. */
+    mustNotInclude: jsonb("must_not_include").$type<string[]>().notNull().default([]),
+    category: text("category"),
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index("assistant_goldens_tenant_idx").on(t.tenantId, t.isActive)],
+);
+
+/** One evaluation run: N goldens scored against the assistant at a moment. */
+export const assistantEvalRuns = pgTable(
+  "assistant_eval_runs",
+  {
+    id: idColumn(),
+    tenantId: text("tenant_id").notNull(),
+    total: integer("total").notNull().default(0),
+    passed: integer("passed").notNull().default(0),
+    /** The config fingerprint this run scored, so a regression ties to a change. */
+    fingerprint: text("fingerprint"),
+    trigger: text("trigger").notNull().default("manual"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("assistant_eval_runs_tenant_idx").on(t.tenantId, t.createdAt)],
+);
+
+export const assistantEvalResults = pgTable(
+  "assistant_eval_results",
+  {
+    id: logIdColumn(),
+    runId: text("run_id").notNull(),
+    goldenId: text("golden_id").notNull(),
+    question: text("question").notNull(),
+    answer: text("answer").notNull(),
+    passed: boolean("passed").notNull(),
+    /** Which required substrings were missing / which forbidden ones appeared. */
+    missing: jsonb("missing").$type<string[]>().notNull().default([]),
+    forbidden: jsonb("forbidden").$type<string[]>().notNull().default([]),
+    createdAt: createdAt(),
+  },
+  (t) => [index("assistant_eval_results_run_idx").on(t.runId)],
+);

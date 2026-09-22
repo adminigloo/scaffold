@@ -88,7 +88,25 @@ export {
   assistantPageDocs,
   assistantPageDocVersions,
   assistantPendingActions,
+  assistantGoldens,
+  assistantEvalRuns,
+  assistantEvalResults,
 } from "./schema.js";
+
+export {
+  scoreAnswer,
+  createGolden,
+  listGoldens,
+  deactivateGolden,
+  recordEvalRun,
+  listEvalRuns,
+  getEvalRunResults,
+  type AnswerScore,
+  type EvalResultInput,
+  type EvalRunRow,
+  type EvalResultRow,
+  type GoldenRow,
+} from "./evals.js";
 
 export {
   createToolRegistry,
