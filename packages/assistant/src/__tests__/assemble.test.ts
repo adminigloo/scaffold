@@ -27,10 +27,14 @@ function fakeDb(state: {
           return { where: () => ({ orderBy: async () => state.tenantRules ?? [] }) };
         }
         if ("rank" in fields) {
-          // retrievePageDocs: where().orderBy().limit()
+          // retrievePageDocs keyword phase: where().orderBy().limit()
           return {
             where: () => ({ orderBy: () => ({ limit: async () => state.pageDocs ?? [] }) }),
           };
+        }
+        if ("body" in fields && "pageKey" in fields) {
+          // retrievePageDocs fetch phase: where(inArray(...)) awaited directly.
+          return { where: () => Promise.resolve(state.pageDocs ?? []) };
         }
         // glossary: where().then (awaited directly, no orderBy)
         return {
@@ -105,7 +109,7 @@ describe("assemblePrompt", () => {
   it("injects retrieved page docs as a knowledge block, carried in the user message not the fingerprint", async () => {
     const db = fakeDb({
       sections: [coreSection],
-      pageDocs: [{ pageKey: "/admin/invoices", title: "Invoices", body: "Create one from an estimate.", rank: 0.1 }],
+      pageDocs: [{ id: "d1", pageKey: "/admin/invoices", title: "Invoices", body: "Create one from an estimate.", rank: 0.1 }],
     });
     const withDocs = await assemblePrompt(db, { tenantId: "t1", turnText: "how do invoices work?" });
     const block = withDocs.contextBlocks.find((b) => b.includes("<knowledge>"));

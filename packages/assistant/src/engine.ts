@@ -191,58 +191,139 @@ export interface RetrievedDoc {
   pageKey: string;
   title: string;
   body: string;
-  /** Postgres ts_rank; higher is more relevant. */
+  /** Relevance: ts_rank for keyword-only, the fused RRF score when embeddings ran. */
   rank: number;
 }
 
 /**
- * The page docs most relevant to a turn, by Postgres full-text search.
+ * Turns text into vectors. Injected (0.3) so the core package never depends on an
+ * embeddings vendor — no embedder means retrieval stays keyword-only, a real
+ * working mode (Ask Lou's own approach), not a broken one.
+ */
+export interface Embedder {
+  dimensions: number;
+  embed: (texts: string[]) => Promise<number[][]>;
+}
+
+/**
+ * Reciprocal-rank fusion of several ranked id lists. A doc ranked high by EITHER
+ * keyword or vector search floats up; one ranked high by BOTH floats highest.
+ * Rank-based, so it needs no score calibration between the two very different
+ * scales (ts_rank vs cosine distance) — the reason RRF is the standard fuse.
+ */
+export function rrfFuse(rankings: string[][], k = 60): Array<{ id: string; score: number }> {
+  const scores = new Map<string, number>();
+  for (const ranking of rankings) {
+    ranking.forEach((id, i) => scores.set(id, (scores.get(id) ?? 0) + 1 / (k + i + 1)));
+  }
+  return [...scores.entries()].map(([id, score]) => ({ id, score })).sort((a, b) => b.score - a.score);
+}
+
+function vectorLiteral(vec: number[]): string {
+  return `[${vec.join(",")}]`;
+}
+
+/**
+ * The page docs most relevant to a turn.
  *
- * KEYWORD RETRIEVAL, not embeddings — that is 0.3. It is explainable (a business
- * can see WHY a doc was pulled), costs no model call, and grounds an answer in
- * the tenant's own docs. Only ACTIVE, APPROVED docs are eligible: a machine
- * ingestion draft never reaches an answer until a human approves it.
+ * KEYWORD by default (Postgres full-text; the '&'→'|' rewrite ORs the terms so a
+ * natural question matches without containing every word). When an embedder is
+ * supplied it ALSO runs a vector search and fuses the two with RRF (0.3) —
+ * catching a doc that means the same thing in different words. Either way only
+ * ACTIVE, APPROVED docs are eligible: a machine draft never reaches an answer
+ * until a human approves it.
  */
 export async function retrievePageDocs(
   db: AssistantDb,
-  input: { tenantId: string; queryText: string; limit?: number; maxBodyChars?: number },
+  input: { tenantId: string; queryText: string; limit?: number; maxBodyChars?: number; embedder?: Embedder },
 ): Promise<RetrievedDoc[]> {
   const query = input.queryText.trim();
   if (!query) return [];
   const limit = Math.min(Math.max(input.limit ?? 3, 1), 10);
   const maxBodyChars = input.maxBodyChars ?? 1_500;
+  const eligible = and(
+    eq(assistantPageDocs.tenantId, input.tenantId),
+    eq(assistantPageDocs.isActive, true),
+    eq(assistantPageDocs.isApproved, true),
+  );
   const document = sql`to_tsvector('english', ${assistantPageDocs.title} || ' ' || ${assistantPageDocs.body})`;
-  // OR the query's terms, not AND. plainto_tsquery ANDs every word, so a natural
-  // question ("how do invoices and payments work?") matches nothing unless the
-  // doc happens to contain EVERY content word — retrieval that almost never
-  // fires. Rewriting the '&'s to '|'s means a doc matching ANY term is eligible,
-  // and ts_rank floats the one matching the MOST terms to the top. An
-  // all-stopword query yields an empty tsquery, which matches nothing.
   const tsquery = sql`to_tsquery('english', replace(plainto_tsquery('english', ${query})::text, '&', '|'))`;
+
+  // Keyword ranking; over-fetch so RRF has depth to fuse.
+  const pool = limit * 3;
+  const keywordRows = (await db
+    .select({ id: assistantPageDocs.id, rank: sql<number>`ts_rank(${document}, ${tsquery})` })
+    .from(assistantPageDocs)
+    .where(and(eligible, sql`${document} @@ ${tsquery}`))
+    .orderBy(desc(sql`ts_rank(${document}, ${tsquery})`))
+    .limit(pool)) as Array<{ id: string; rank: number }>;
+  const keywordIds = keywordRows.map((r) => r.id);
+
+  let orderedIds: string[];
+  const scoreById = new Map<string, number>();
+  if (input.embedder) {
+    const [qvec] = await input.embedder.embed([query]);
+    const lit = vectorLiteral(qvec ?? []);
+    const vectorRows = (await db
+      .select({ id: assistantPageDocs.id })
+      .from(assistantPageDocs)
+      .where(and(eligible, sql`${assistantPageDocs.embedding} is not null`))
+      .orderBy(sql`${assistantPageDocs.embedding} <=> ${lit}::vector`)
+      .limit(pool)) as Array<{ id: string }>;
+    const fused = rrfFuse([keywordIds, vectorRows.map((r) => r.id)]);
+    for (const f of fused) scoreById.set(f.id, f.score);
+    orderedIds = fused.slice(0, limit).map((f) => f.id);
+  } else {
+    for (const r of keywordRows) scoreById.set(r.id, r.rank);
+    orderedIds = keywordIds.slice(0, limit);
+  }
+  if (orderedIds.length === 0) return [];
+
   const rows = (await db
     .select({
+      id: assistantPageDocs.id,
       pageKey: assistantPageDocs.pageKey,
       title: assistantPageDocs.title,
       body: assistantPageDocs.body,
-      rank: sql<number>`ts_rank(${document}, ${tsquery})`,
     })
     .from(assistantPageDocs)
-    .where(
-      and(
-        eq(assistantPageDocs.tenantId, input.tenantId),
-        eq(assistantPageDocs.isActive, true),
-        eq(assistantPageDocs.isApproved, true),
-        sql`${document} @@ ${tsquery}`,
-      ),
-    )
-    .orderBy(desc(sql`ts_rank(${document}, ${tsquery})`))
-    .limit(limit)) as Array<{ pageKey: string; title: string; body: string; rank: number }>;
-  // Cap each body so one long doc can't blow the turn's token budget; the answer
-  // carries the pageKey, so the model can still point the user at the full page.
-  return rows.map((r) => ({
-    ...r,
-    body: r.body.length > maxBodyChars ? `${r.body.slice(0, maxBodyChars)}…` : r.body,
-  }));
+    .where(inArray(assistantPageDocs.id, orderedIds))) as Array<{
+    id: string;
+    pageKey: string;
+    title: string;
+    body: string;
+  }>;
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  // Preserve the fused order; cap each body so one long doc can't blow the budget.
+  return orderedIds
+    .map((id) => byId.get(id))
+    .filter((r): r is (typeof rows)[number] => r !== undefined)
+    .map((r) => ({
+      pageKey: r.pageKey,
+      title: r.title,
+      body: r.body.length > maxBodyChars ? `${r.body.slice(0, maxBodyChars)}…` : r.body,
+      rank: scoreById.get(r.id) ?? 0,
+    }));
+}
+
+/**
+ * Embed one page doc and store its vector, so it becomes eligible for vector
+ * search. Called after a save when an embedder is configured; returns false if
+ * the doc is gone.
+ */
+export async function reindexPageDoc(
+  db: AssistantDb,
+  embedder: Embedder,
+  input: { tenantId: string; pageKey: string },
+): Promise<boolean> {
+  const doc = await getPageDoc(db, input.tenantId, input.pageKey);
+  if (!doc) return false;
+  const [vec] = await embedder.embed([`${doc.title}\n\n${doc.body}`]);
+  await db
+    .update(assistantPageDocs)
+    .set({ embedding: vec ?? null, updatedAt: new Date() })
+    .where(eq(assistantPageDocs.id, doc.id));
+  return true;
 }
 
 // --- Pending actions -------------------------------------------------------

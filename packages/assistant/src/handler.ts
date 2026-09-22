@@ -15,6 +15,7 @@ import {
   type AssistantStreamEvent,
   type LoopUsage,
 } from "./events.js";
+import type { Embedder } from "./engine.js";
 import { runAssistantLoop } from "./loop.js";
 import { replayMessages } from "./provider.js";
 import type { ContentBlock, NeutralMessage, ProviderAdapter } from "./provider.js";
@@ -65,6 +66,8 @@ export interface AssistantChatDeps {
   maxTokens?: number;
   /** How long a proposed write stays confirmable. Default 15 minutes. */
   pendingActionTtlMs?: number;
+  /** When set, retrieval fuses vector search with keyword (0.3); omit for keyword-only. */
+  embedder?: Embedder;
 }
 
 function json(data: unknown, status: number): Response {
@@ -136,6 +139,7 @@ export function createAssistantChatHandler(
     const assembled = await assemblePrompt(deps.db, {
       tenantId: principal.tenantId,
       turnText: message,
+      embedder: deps.embedder,
     });
 
     // The user turn: per-turn context (tenant overlays, glossary) rides in the

@@ -8,6 +8,7 @@ import {
   text,
   timestamp,
   uniqueIndex,
+  vector,
 } from "drizzle-orm/pg-core";
 import { createdAt, idColumn, logIdColumn, updatedAt } from "@adminigloo/db";
 import type { ContentBlock } from "./provider.js";
@@ -285,6 +286,13 @@ export const assistantPageDocs = pgTable(
     /** A machine draft (from ingestion) a human hasn't approved yet. */
     isApproved: boolean("is_approved").notNull().default(true),
     isActive: boolean("is_active").notNull().default(true),
+    /**
+     * 0.3: the doc's embedding (OpenAI text-embedding-3-small, 1536 dims), or
+     * NULL when no embedder is configured — then retrieval stays keyword-only.
+     * Doc-level, not chunked: the docs are short and it keeps retrieval a single
+     * ranked list to fuse with keyword search.
+     */
+    embedding: vector("embedding", { dimensions: 1536 }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

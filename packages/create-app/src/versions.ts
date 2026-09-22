@@ -101,12 +101,12 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   notifications: "0.1.0",
   storage: "0.1.0",
   // 0.2.0 was the answering engine (loop, registry, chat handler, conversations
-  // + page-doc + pending-action tables); 0.2.1-0.2.2 hardened it; 0.3.x knowledge retrieval; 0.4.0 write-action confirm flow; 0.5.0 retention + erasure; 0.6.0 eval loop — valid history
+  // + page-doc + pending-action tables); 0.2.1-0.2.2 hardened it; 0.3.x knowledge retrieval; 0.4.0 write-action confirm flow; 0.5.0 retention + erasure; 0.6.0 eval loop; 0.7.0 embeddings+RRF — valid history
   // replay for tool-using turns, type-based abort detection, neutral provider
   // errors, a metered/persisted errored turn, and a seeded system prompt. The
   // emitted router imports createSection/publishSection/assemblePrompt; the app's
   // AI route imports assemblePrompt — none exist below 0.1.0.
-  assistant: "0.6.0",
+  assistant: "0.7.0",
   // 0.6.0 for the onEvent producer hook (optional, so the emitted route
   // needs no change); 0.5.0 was the column editor and unread marks. The emitted router imports
   // `createStatus`, `deleteStatus`, `markTicketRead` and friends; none exist
