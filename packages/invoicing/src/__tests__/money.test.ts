@@ -16,13 +16,14 @@ describe("calculateInvoiceTotals", () => {
 });
 
 describe("applyPayment", () => {
-  it("tracks partial then paid, clamping overpayment", () => {
+  it("tracks partial then paid, and reports overpayment instead of swallowing it", () => {
     const partial = applyPayment(0, 100_000, 40_000);
-    expect(partial).toEqual({ amountPaid: 40_000, balanceDue: 60_000, status: "partial" });
+    expect(partial).toEqual({ amountPaid: 40_000, balanceDue: 60_000, overpayment: 0, status: "partial" });
     const paid = applyPayment(40_000, 100_000, 60_000);
-    expect(paid).toEqual({ amountPaid: 100_000, balanceDue: 0, status: "paid" });
+    expect(paid).toEqual({ amountPaid: 100_000, balanceDue: 0, overpayment: 0, status: "paid" });
     const over = applyPayment(0, 100_000, 120_000);
     expect(over.balanceDue).toBe(0);
+    expect(over.overpayment).toBe(20_000);
     expect(over.status).toBe("paid");
   });
 });

@@ -42,12 +42,30 @@ export type InvoiceStatus =
 export interface PaymentResult {
   amountPaid: number;
   balanceDue: number;
+  /**
+   * Money taken beyond the bill (amountPaid − total), 0 when none. Reported,
+   * not swallowed: clamping the balance at zero made a $1,200 payment on a
+   * $1,000 invoice look identical to an exact one, and the $200 the business
+   * owes back was visible nowhere.
+   */
+  overpayment: number;
   status: Extract<InvoiceStatus, "partial" | "paid">;
 }
 
+/** What's still owed and what was over-collected, from the two stored figures. */
+export function balanceOf(
+  total: number,
+  amountPaid: number,
+): { balanceDue: number; overpayment: number } {
+  return {
+    balanceDue: Math.max(0, total - amountPaid),
+    overpayment: Math.max(0, amountPaid - total),
+  };
+}
+
 /**
- * The invoice's state after a payment. Balance is clamped at zero (an
- * overpayment doesn't go negative); it's paid when nothing is left.
+ * The invoice's state after a payment. Balance due is floored at zero and any
+ * excess is reported as `overpayment`; it's paid when nothing is left.
  */
 export function applyPayment(
   currentAmountPaid: number,
@@ -55,8 +73,8 @@ export function applyPayment(
   payment: number,
 ): PaymentResult {
   const amountPaid = currentAmountPaid + payment;
-  const balanceDue = Math.max(0, total - amountPaid);
-  return { amountPaid, balanceDue, status: balanceDue <= 0 ? "paid" : "partial" };
+  const { balanceDue, overpayment } = balanceOf(total, amountPaid);
+  return { amountPaid, balanceDue, overpayment, status: balanceDue <= 0 ? "paid" : "partial" };
 }
 
 /**
