@@ -8,7 +8,13 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { captureScreenshot, isUsableScreenshot } from "./screenshot.js";
+import {
+  captureOverlays,
+  captureScreenshot,
+  isUsableScreenshot,
+  stitchOverlays,
+  type OverlayShot,
+} from "./screenshot.js";
 import { parseBrowserInfo, parseOSInfo } from "./recorder.js";
 import { useSessionRecorder } from "./useSessionRecorder.js";
 import {
@@ -149,12 +155,28 @@ export function FeedbackProvider({
     setAnnotatedDataUrl(null);
     setSubmitError(null);
     setTicketNumber(null);
-    setIsOpen(true);
 
-    // Give the modal a frame to mount so the capture filter can exclude it.
+    // STEP 1 — capture the reporter's open overlays BEFORE our own UI opens.
+    // A `position: fixed` modal or AI panel does not survive a full-page
+    // capture (domToCanvas drops fixed positioning), and opening our modal can
+    // steal focus and close theirs — so if we waited, the one thing they were
+    // looking at would be gone from the shot. We capture them individually now,
+    // while they are still on screen, and stitch them back on in step 3.
+    let overlays: OverlayShot[] = [];
+    try {
+      overlays = await captureOverlays(config.overlaySelectors);
+    } catch {
+      /* an overlay we could not capture is not a reason to fail the report */
+    }
+
+    // STEP 2 — now open our modal (with its spinner) and photograph the page.
+    // The filter excludes `[data-aif-modal]`, so our own UI never lands in it.
+    setIsOpen(true);
     await new Promise((resolve) => setTimeout(resolve, 100));
     try {
-      const shot = await captureScreenshot();
+      const page = await captureScreenshot();
+      // STEP 3 — composite the overlays back on at their viewport rects.
+      const shot = await stitchOverlays(page, overlays);
       if (isUsableScreenshot(shot.dataUrl)) {
         setScreenshot(shot);
         setStep("annotate");
@@ -167,7 +189,7 @@ export function FeedbackProvider({
     } finally {
       capturingRef.current = false;
     }
-  }, [isOpen, loadCategories]);
+  }, [isOpen, loadCategories, config.overlaySelectors]);
 
   const closeFeedback = useCallback(() => {
     setIsOpen(false);

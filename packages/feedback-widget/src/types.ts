@@ -111,4 +111,16 @@ export interface FeedbackConfig {
   reporter?: FeedbackReporter;
   /** Register Ctrl+Shift+B (default true). */
   enableShortcut?: boolean;
+  /**
+   * Which on-screen overlays to capture and stitch onto the screenshot.
+   *
+   * `position: fixed` overlays (modals, dialogs, an open AI panel) are dropped
+   * by the full-page capture, so the widget shoots them separately and composites
+   * them back — otherwise a report about a modal shows only the page behind it.
+   * Accessible dialogs (`[role="dialog"]`, `[role="alertdialog"]`) and anything
+   * tagged `[data-feedback-overlay]` are caught by default; set this to add your
+   * own (e.g. a bespoke chat panel: `["[data-chat-panel]"]`) or to replace the
+   * defaults entirely.
+   */
+  overlaySelectors?: string[];
 }

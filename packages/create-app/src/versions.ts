@@ -128,7 +128,12 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // theme, which a caret would cover anyway. Pinned at the workspace version
   // because the drift test rightly refuses a pin pointing at a release that
   // is neither current nor pending.
-  "feedback-widget": "0.2.1",
+  // 0.3.0 captures open position:fixed overlays (modals, dialogs, an AI panel)
+  // separately and stitches them onto the screenshot — a full-page capture drops
+  // fixed positioning, so a report about a modal used to show only the page
+  // behind it. The emitted FeedbackWidget only mounts the provider, so a caret
+  // over the old line would resolve a widget that photographs the wrong thing.
+  "feedback-widget": "0.3.0",
   // A devDependency of every generated project rather than a dependency, and
   // it belongs here all the same. `renderPackageJson` spelled `^0.1.1` out
   // inline, which put a fourteenth version in a place no drift test looked at —
