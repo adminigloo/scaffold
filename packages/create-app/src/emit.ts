@@ -208,6 +208,8 @@ export async function planEmit(
   // — see `renderNextConfig` — and a static file could only carry that as an
   // `if`.
   files.set("next.config.ts", renderNextConfig(answers));
+  // Generated for its crons — see `renderVercelJson`.
+  files.set("vercel.json", renderVercelJson(answers));
   // Generated for the feedback mount, and only for it — see `renderRootLayout`
   // for why the one file that wraps every page cannot stay a template file
   // once any answer changes what wraps the pages.
@@ -595,6 +597,30 @@ export function renderPackageJson(answers: Answers): string {
   };
 
   return `${JSON.stringify(manifest, null, 2)}\n`;
+}
+
+/**
+ * `vercel.json` for this project.
+ *
+ * GENERATED RATHER THAN COPIED FROM `template/`, for its `crons`. A project
+ * with comms queues reminders that only a scheduled drain sends; the static
+ * template shipped `"crons": []`, an overlay may not rewrite a base file, and so
+ * every generated comms project queued reminders that nothing ever sent (the
+ * 2026-09-23 sweep against gs-glass, which registered its drain). Daily, because
+ * that is the one schedule Vercel's Hobby plan accepts — DEPLOYMENT.md says how
+ * to tighten it on Pro. Byte-identical to the old template file when there is
+ * nothing to schedule.
+ */
+export function renderVercelJson(answers: Answers): string {
+  const crons: Array<{ path: string; schedule: string }> = [];
+  if (answers.includeComms) crons.push({ path: "/api/cron/comms", schedule: "0 14 * * *" });
+  const config = {
+    $schema: "https://openapi.vercel.sh/vercel.json",
+    framework: "nextjs",
+    git: { deploymentEnabled: { main: false, staging: false } },
+    crons,
+  };
+  return `${JSON.stringify(config, null, 2)}\n`;
 }
 
 /**

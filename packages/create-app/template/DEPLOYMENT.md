@@ -166,6 +166,16 @@ database, so a preview whose migration has not yet reached `staging` will fail
 on the first query that touches the new column. Push to `staging` before asking
 anyone to look.
 
+### `vercel.json` crons
+
+The list is written by the generator from what you installed. With comms it
+holds the queue drain, `/api/cron/comms`, once a day — the only schedule
+Vercel's Hobby plan accepts. On Pro, tighten it (every 15 minutes, `*/15 * * * *`,
+is a good resolution for appointment reminders), or point any external
+scheduler at the URL with the secret. Either way set `CRON_SECRET` in the
+Vercel project: the route refuses every call without it. Immediate messages
+(a booking confirmation) are sent in the request and never wait for this.
+
 ## 3. Day to day
 
 ```

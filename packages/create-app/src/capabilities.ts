@@ -447,10 +447,13 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
     capability: "comms.messaging",
     why:
       "The cron route that drains the queue through the injected senders — the " +
-      "mechanism that actually delivers, whether or not a shell lists it. The " +
+      "mechanism that actually delivers, whether or not a shell lists it — AND " +
+      "the vercel.json schedule that calls it: a drain nothing calls delivered " +
+      "nothing, which is how every comms project shipped until 2026-09-23. The " +
       "console page is the other key.",
     provenBy: (plan) =>
-      mentions(plan, ["app", "api", "cron", "comms", "route.ts"], "runDueMessages("),
+      mentions(plan, ["app", "api", "cron", "comms", "route.ts"], "runDueMessages(") &&
+      mentions(plan, ["vercel.json"], '"/api/cron/comms"'),
   },
   {
     capability: "comms.console",

@@ -143,14 +143,25 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // test reads. The emitted routers/handlers import from each unconditionally
   // for the config that selects it, so a caret over anything older can resolve
   // wrong; these move IN STEP with the workspace.
-  estimator: "0.1.5",
+  // 0.2.0 (the gs-glass port sweep): the emitted public submit calls
+  // createPublicEstimate/publicSubmitSchema (a browser can no longer set its own
+  // price), and the routers pass tenantId to getEstimate/getProductDetail/
+  // updateProduct/deactivateProduct/setEstimateStatus — none exist in 0.1.x.
+  estimator: "0.2.0",
   // 0.2.0: createBooking now validates the slot (availability window + overlap +
   // drive buffer) before writing, and exports BookingNotBookableError — the
   // emitted scheduling router's requestBooking relies on that guard, so a caret
   // over 0.1.x would resolve a build that writes out-of-hours bookings.
   scheduling: "0.2.0",
-  invoicing: "0.1.1",
-  comms: "0.1.1",
+  // 0.2.0 (sweep): line items after creation, atomic idempotent payments,
+  // reversals, a status transition table and tenant-scoped reads — the emitted
+  // admin page and router call addInvoiceItem/reversePayment/markInvoiceViewed
+  // and the {tenantId} signatures, none of which exist in 0.1.x.
+  invoicing: "0.2.0",
+  // 0.2.0 (sweep): SMS compliance is required with an SMS sender, the queue is
+  // bounded and cancellable, and the emitted router calls setTemplateActive and
+  // requireEmailSubject — none exist in 0.1.x.
+  comms: "0.2.0",
   aeo: "0.1.1",
 };
 

@@ -32,10 +32,19 @@ import { createTRPCRouter, publicProcedure, requireStaff } from "../trpc";
  * flow; staff procedures run the calendar, resources and availability.
  *
  * BOOKING CONFIRMATIONS ARE YOURS TO WIRE. On the dogfood site a confirmed
- * booking queues a confirmation and a day-before reminder through __SCOPE__/comms.
- * That coupling is deliberately left out here so scheduling stands alone: add
- * `--comms`, then in `requestBooking` call `enqueueMessage(db, {...})` after the
- * write — the same shape notifications' producers follow.
+ * booking sends a confirmation and queues a day-before reminder through
+ * __SCOPE__/comms. That coupling is deliberately left out here so scheduling
+ * stands alone: add `--comms`, then in `requestBooking`, after the write:
+ *
+ *   - SEND the confirmation in the request — `sendNow(db, {...}, commsSenders)`.
+ *     Queued with sendAt = now it waits for the next cron drain (a day, on a
+ *     Hobby-plan schedule), which a customer reads as "it didn't work".
+ *   - QUEUE the reminder with `enqueueMessage(db, { ..., sendAt, refType:
+ *     "booking", refId: booking.id })` — tagged so cancelling or moving the
+ *     booking can `cancelScheduled(db, { tenantId, refType: "booking", refId })`
+ *     first. A reminder whose moment has passed (a booking for tomorrow) is
+ *     skipped rather than sent late. Otherwise a cancelled visit still gets its
+ *     "see you tomorrow".
  */
 const maps = createHaversineMapsProvider();
 
