@@ -37,7 +37,8 @@
     "access": "public"
   },
   "dependencies": {
-    "@adminigloo/db": "workspace:^"
+    "@adminigloo/db": "workspace:^",
+    "@adminigloo/license": "workspace:^"
   },
   "peerDependencies": {
     "drizzle-orm": "catalog:peers",

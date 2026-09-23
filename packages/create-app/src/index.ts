@@ -1,9 +1,17 @@
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { argv, cwd, exit, stderr, stdout } from "node:process";
 import { collectAnswers, HELP, nextSteps, parseArgs, targetDirFor } from "./cli.js";
 import { createPrompter } from "./prompt.js";
 import { assertTargetUsable, planEmit, writePlan } from "./emit.js";
+import {
+  ADDABLE_FEATURES,
+  addNextSteps,
+  applyAdd,
+  planAdd,
+  UnknownFeatureError,
+  type FeatureName,
+} from "./add.js";
 
 export {
   parseArgs,
@@ -92,6 +100,70 @@ export {
 export type { Answers, AdminShell, BusinessModel, TenantNoun } from "./answers.js";
 export { createPrompter, defaultsOnlyPrompter, interactivePrompter } from "./prompt.js";
 export type { Prompter, Choice } from "./prompt.js";
+export {
+  ADDABLE_FEATURES,
+  planAdd,
+  applyAdd,
+  addNextSteps,
+  readProjectManifest,
+  UnknownFeatureError,
+  ManifestUnreadableError,
+  FeatureAlreadyPresentError,
+} from "./add.js";
+export type { AddPlan, FeatureName } from "./add.js";
+
+const ADD_HELP = `
+create-adminigloo-app add <feature> — turn a feature on in an existing project.
+
+  pnpm dlx @adminigloo/create-app add <feature> [--dir <path>]
+
+  Run from a generated project's root, or point --dir at one. Reads the
+  project's adminigloo.json, wires the feature in exactly as generating with it
+  would have — its router, its schema, its admin page, its env — and never
+  overwrites a file you have edited (those land as <file>.new to merge).
+
+  <feature>     ${ADDABLE_FEATURES.join(" | ")}
+  --dir <path>  The project to add to. Defaults to the current directory.
+  --help, -h    Show this.
+`.trimStart();
+
+/** `add` reads only a feature name and --dir; it shares none of generate's flags. */
+async function addMain(rawArgs: readonly string[]): Promise<number> {
+  let feature: string | undefined;
+  let dir: string | undefined;
+  for (let i = 0; i < rawArgs.length; i += 1) {
+    const arg = rawArgs[i];
+    if (arg === undefined) continue;
+    if (arg === "--help" || arg === "-h") {
+      stdout.write(ADD_HELP);
+      return 0;
+    }
+    if (arg === "--dir" || arg.startsWith("--dir=")) {
+      dir = arg === "--dir" ? rawArgs[i + 1] : arg.slice("--dir=".length);
+      if (arg === "--dir") i += 1;
+    } else if (arg === "--yes" || arg === "-y") {
+      // Accepted for symmetry with generate; `add` never prompts.
+    } else if (!arg.startsWith("-")) {
+      feature ??= arg;
+    }
+  }
+
+  if (feature === undefined) {
+    stderr.write(`\n${new UnknownFeatureError("(none given)").message}\n`);
+    return 1;
+  }
+
+  try {
+    const projectDir = resolve(cwd(), dir ?? ".");
+    const plan = await planAdd(templateDir(), projectDir, feature as FeatureName);
+    await applyAdd(plan);
+    stdout.write(addNextSteps(plan));
+    return 0;
+  } catch (error) {
+    stderr.write(`\n${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
 
 /** `template/` sits beside `dist/` in the published tarball. */
 function templateDir(): string {
@@ -99,6 +171,13 @@ function templateDir(): string {
 }
 
 export async function main(rawArgs: readonly string[] = argv.slice(2)): Promise<number> {
+  // `add` is a subcommand, not a project name. Dispatched before parseArgs so
+  // its own small flag surface (a feature and --dir) never collides with
+  // generate's.
+  if (rawArgs[0] === "add") {
+    return addMain(rawArgs.slice(1));
+  }
+
   const flags = parseArgs(rawArgs);
 
   if (flags.help) {

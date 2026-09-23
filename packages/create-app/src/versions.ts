@@ -106,7 +106,10 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // errors, a metered/persisted errored turn, and a seeded system prompt. The
   // emitted router imports createSection/publishSection/assemblePrompt; the app's
   // AI route imports assemblePrompt — none exist below 0.1.0.
-  assistant: "0.7.0",
+  // 0.8.0 adds the optional AdminIgloo license gate (deps @adminigloo/license);
+  // it is a no-op unless the app passes license config with mode "enforce", so
+  // the emitted route needs no change to keep working.
+  assistant: "0.8.0",
   // 0.6.0 for the onEvent producer hook (optional, so the emitted route
   // needs no change); 0.5.0 was the column editor and unread marks. The emitted router imports
   // `createStatus`, `deleteStatus`, `markTicketRead` and friends; none exist
@@ -117,7 +120,9 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // statuses, soft archive, bulk move. The emitted router imports
   // `listCategories`, `archiveTicket` and friends; none exist in 0.6.x. 0.7.2 is
   // the workspace-protocol publish fix (0.7.1 shipped an unresolved workspace:^).
-  feedback: "0.7.2",
+  // 0.8.0 adds the optional AdminIgloo license gate (deps @adminigloo/license),
+  // a no-op unless the app passes license config with mode "enforce".
+  feedback: "0.8.0",
   // 0.2.1 — 0.2.0 brought the "My reports" view the thread endpoints exist
   // to serve; the patch is the glacier re-skin with the widget's own dark
   // theme, which a caret would cover anyway. Pinned at the workspace version

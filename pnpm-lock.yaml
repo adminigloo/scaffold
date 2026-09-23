@@ -91,6 +91,9 @@ importers:
       '@adminigloo/db':
         specifier: workspace:^
         version: link:../db
+      '@adminigloo/license':
+        specifier: workspace:^
+        version: link:../license
     devDependencies:
       drizzle-orm:
         specifier: 'catalog:'
@@ -299,6 +302,9 @@ importers:
       '@adminigloo/db':
         specifier: workspace:^
         version: link:../db
+      '@adminigloo/license':
+        specifier: workspace:^
+        version: link:../license
     devDependencies:
       '@types/react':
         specifier: ^19.2.7
@@ -341,6 +347,12 @@ importers:
       drizzle-orm:
         specifier: 'catalog:'
         version: 0.45.2(@neondatabase/serverless@1.1.0)
+      zod:
+        specifier: 'catalog:'
+        version: 4.5.1
+
+  packages/license:
+    devDependencies:
       zod:
         specifier: 'catalog:'
         version: 4.5.1

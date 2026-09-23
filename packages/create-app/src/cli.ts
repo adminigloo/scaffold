@@ -185,6 +185,13 @@ export const HELP = `
   --help, -h           Show this.
 
   Any flag given is used verbatim; only the rest are prompted for.
+
+  To turn a feature on in a project you already generated:
+
+    pnpm dlx @adminigloo/create-app add <feature> [--dir <path>]
+
+  See \`add --help\`. It wires the feature in the way generating with it would
+  have, and never overwrites a file you have edited.
 `.trimStart();
 
 /**

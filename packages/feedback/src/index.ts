@@ -1,6 +1,7 @@
 ﻿import { and, asc, desc, eq, inArray, isNull, max } from "drizzle-orm";
 import type { PgDatabase } from "drizzle-orm/pg-core";
 import { z } from "zod";
+import { verifyLicense, type LicenseMode } from "@adminigloo/license";
 import {
   feedbackCategories,
   feedbackClientKeys,
@@ -294,6 +295,27 @@ export interface CreateFeedbackHandlersOptions {
    * "staff" are, the same way it refuses to know a storage vendor.
    */
   onEvent?: (event: FeedbackEvent) => void | Promise<void>;
+  /**
+   * The AdminIgloo LICENSE gate — proves the BUYER paid AdminIgloo for the
+   * feedback feature. Distinct from the `x-adminigloo-key` (aik_) client key
+   * above, which authenticates the buyer's own visitors against the buyer's
+   * database; this asks whether the buyer holds a license from AdminIgloo.
+   *
+   * OPTIONAL, AND A NO-OP UNLESS CONFIGURED. Omit it — as every install before
+   * this did — and the intake behaves exactly as before. Pass the resolved
+   * license env and, with `mode: "enforce"`, an authenticated request without a
+   * valid license answers 402 instead of doing the work. `mode: "off"` (the
+   * default a consuming app should read from ADMINIGLOO_LICENSE_MODE) allows
+   * everything, so wiring this in changes nothing until the day you sell.
+   *
+   * The app resolves these from its validated env and passes them here, keeping
+   * this package's "never read process.env" rule intact.
+   */
+  license?: {
+    readonly key?: string | undefined;
+    readonly publicKey?: string | undefined;
+    readonly mode?: LicenseMode | undefined;
+  };
 }
 
 export interface FeedbackHandlers {
@@ -319,6 +341,14 @@ export function createFeedbackHandlers(options: CreateFeedbackHandlersOptions): 
   }
 
   async function authenticate(req: Request): Promise<VerifiedClientKey | Response> {
+    // The AdminIgloo license gate comes first: a 402 for an unlicensed buyer is
+    // a different fact from a 401 for an unknown visitor key, and it should not
+    // depend on the visitor key being present to be reported. A no-op unless a
+    // license is configured with mode "enforce" — see the option's doc.
+    if (options.license) {
+      const decision = verifyLicense({ feature: "feedback", ...options.license });
+      if (!decision.ok) return json({ error: decision.reason }, 402);
+    }
     const key = req.headers.get(CLIENT_KEY_HEADER);
     if (!key) return json({ error: `missing ${CLIENT_KEY_HEADER} header` }, 401);
     const verified = await verifyClientKey(db, key);

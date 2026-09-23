@@ -1,3 +1,4 @@
+import { verifyLicense, type LicenseMode } from "@adminigloo/license";
 import type { AssistantDb } from "./brain.js";
 import { assemblePrompt } from "./assemble.js";
 import {
@@ -68,6 +69,19 @@ export interface AssistantChatDeps {
   pendingActionTtlMs?: number;
   /** When set, retrieval fuses vector search with keyword (0.3); omit for keyword-only. */
   embedder?: Embedder;
+  /**
+   * The AdminIgloo LICENSE gate for the assistant feature. Optional and a no-op
+   * unless configured with `mode: "enforce"` — omit it and the handler behaves
+   * exactly as before. The app resolves these from its validated env (keeping
+   * this package off `process.env`) and passes them; a request without a valid
+   * license then answers 402 before the stream opens, rather than spending a
+   * token. See @adminigloo/license.
+   */
+  license?: {
+    readonly key?: string | undefined;
+    readonly publicKey?: string | undefined;
+    readonly mode?: LicenseMode | undefined;
+  };
 }
 
 function json(data: unknown, status: number): Response {
@@ -98,6 +112,17 @@ export function createAssistantChatHandler(
 
     const principal = await deps.resolvePrincipal(request);
     if (!principal) return json({ error: "unauthorized" }, 401);
+
+    // The license gate opens before the stream and before any token is spent —
+    // a 402 for an unlicensed deployment, distinct from the 401 above (who is
+    // asking) and the 429 below (how much they may spend). A no-op unless a
+    // license is configured with mode "enforce".
+    if (deps.license) {
+      const decision = verifyLicense({ feature: "assistant", ...deps.license });
+      if (!decision.ok) {
+        return json({ error: decision.reason, errorClass: "unlicensed" }, 402);
+      }
+    }
 
     if (deps.checkBudget) {
       const verdict = await deps.checkBudget(principal);
