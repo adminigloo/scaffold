@@ -1,0 +1,7 @@
+# Standalone workspace root. Without this, `pnpm install` run in e2e/ walks UP,
+# finds the scaffold monorepo's pnpm-workspace.yaml, and installs THAT (all 30
+# packages) while installing nothing here — the same "pnpm found the parent
+# workspace" trap the generator-matrix CI note describes. This marker stops the
+# walk so e2e installs its own Playwright toolchain into e2e/node_modules and
+# never drags a browser driver into the monorepo.
+packages: []
