@@ -48,9 +48,14 @@ export {
  *
  * TENANT SCOPING (0.2.0). Every read or write that names a row by id also takes
  * the tenant and filters by it — `getEstimate`, `getProductDetail`,
- * `updateProduct`, `deactivateProduct`, `setEstimateStatus`. Before, a caller
- * holding any id could read or change another workspace's row, and the only
- * guard was each consumer remembering to compare `tenantId` afterwards.
+ * `updateProduct`, `deactivateProduct`, `setEstimateStatus`,
+ * `markEstimateConverted`, and the catalog writes: `createOption` and
+ * `attachComponent` (through the product; attach also checks the material's
+ * tenant), `createOptionValue` and `setDefaultOptionValue` (option → product),
+ * `detachComponent` (assignment → product), `deactivateComponent` and
+ * `revokeClientKey` (directly). Before, a caller holding any id could read or
+ * change another workspace's row — its public prices, or its embed key — and
+ * the only guard was each consumer remembering to compare `tenantId` afterwards.
  */
 export type EstimatorDb = PgDatabase<any, any, any>;
 
@@ -65,7 +70,11 @@ export type EstimatorRefusal =
   | "invalid_measurement"
   | "invalid_options"
   | "invalid_price_range"
-  | "discount_exceeds_subtotal";
+  | "discount_exceeds_subtotal"
+  /** A catalog write named an option that is not this tenant's. */
+  | "option_unavailable"
+  /** A catalog write named a material (component) that is not this tenant's. */
+  | "component_unavailable";
 
 export class EstimatorInputError extends Error {
   readonly name = "EstimatorInputError";
@@ -101,8 +110,22 @@ const measurementSchema = z.object({
   heightIn: z.number().min(0).max(MEASUREMENT_LIMITS.heightIn).optional(),
   sqFt: z.number().min(0).max(MEASUREMENT_LIMITS.sqFt).optional(),
   linearFt: z.number().min(0).max(MEASUREMENT_LIMITS.linearFt).optional(),
-  units: z.number().min(0).max(MEASUREMENT_LIMITS.units).optional(),
+  /**
+   * Sub-units in ONE of the product (the hinges on a door): a whole number ≥ 1.
+   * It was any number ≥ 0, so `units: 0` dropped every `per_unit` part and
+   * `units: 0.0001` passed the unit-mode check and billed a sliver of them.
+   */
+  units: z.number().int().min(1).max(MEASUREMENT_LIMITS.units).optional(),
 });
+
+/**
+ * A measurement from the PUBLIC: no `units`. The key is stripped, not refused
+ * (zod drops unknown keys), so the estimator-widget 0.1.0 embeds already on
+ * customers' sites, which send `units: quantity`, keep working and are priced
+ * as if they had not sent it. `priceLine` drops it again for the public audience,
+ * so a caller that skips this schema gains nothing either.
+ */
+const publicMeasurementSchema = measurementSchema.omit({ units: true });
 
 // --- Catalog: products -----------------------------------------------------
 
@@ -457,12 +480,34 @@ export async function listComponents(db: EstimatorDb, tenantId: string): Promise
     .orderBy(asc(estimatorComponents.name))) as ComponentRow[];
 }
 
-export async function deactivateComponent(db: EstimatorDb, id: string): Promise<boolean> {
+/**
+ * Retire one of this tenant's materials; false when it is not theirs. It used
+ * to take any id, so one workspace could pull a material out of another's
+ * prices.
+ */
+export async function deactivateComponent(
+  db: EstimatorDb,
+  tenantId: string,
+  id: string,
+): Promise<boolean> {
   const [row] = await db
     .update(estimatorComponents)
     .set({ isActive: false })
-    .where(eq(estimatorComponents.id, id))
+    .where(and(eq(estimatorComponents.id, id), eq(estimatorComponents.tenantId, tenantId)))
     .returning({ id: estimatorComponents.id });
+  return row !== undefined;
+}
+
+/**
+ * Is this product the tenant's? Any state — a catalog write may target an
+ * inactive or hidden product (staff build one before showing it).
+ */
+async function ownsProduct(db: EstimatorDb, tenantId: string, productId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ id: estimatorProducts.id })
+    .from(estimatorProducts)
+    .where(and(eq(estimatorProducts.id, productId), eq(estimatorProducts.tenantId, tenantId)))
+    .limit(1);
   return row !== undefined;
 }
 
@@ -473,11 +518,34 @@ export const attachComponentSchema = z.object({
 });
 export type AttachComponentInput = z.input<typeof attachComponentSchema>;
 
+/**
+ * Put one of the tenant's materials on one of the tenant's products. Both are
+ * checked: it used to insert any pair, so a workspace could add a cost to
+ * another's public prices. Refuses `product_unavailable` /
+ * `component_unavailable` (EstimatorInputError).
+ */
 export async function attachComponent(
   db: EstimatorDb,
+  tenantId: string,
   input: AttachComponentInput,
 ): Promise<string> {
   const values = attachComponentSchema.parse(input);
+  if (!(await ownsProduct(db, tenantId, values.productId))) {
+    throw new EstimatorInputError("product_unavailable", `product ${values.productId} is not available`);
+  }
+  const [component] = await db
+    .select({ id: estimatorComponents.id })
+    .from(estimatorComponents)
+    .where(
+      and(eq(estimatorComponents.id, values.componentId), eq(estimatorComponents.tenantId, tenantId)),
+    )
+    .limit(1);
+  if (!component) {
+    throw new EstimatorInputError(
+      "component_unavailable",
+      `material ${values.componentId} is not available`,
+    );
+  }
   const [row] = await db
     .insert(estimatorProductComponents)
     .values(values)
@@ -485,7 +553,29 @@ export async function attachComponent(
   return (row as { id: string }).id;
 }
 
-export async function detachComponent(db: EstimatorDb, assignmentId: string): Promise<boolean> {
+/**
+ * Take a material off one of this tenant's products; false when the assignment
+ * is not on a product of theirs. Scoped through the product, so a stray link to
+ * another workspace's material (a pre-0.2.0 attach) can still be removed.
+ *
+ * Read, then write: the tenant check is a join the UPDATE cannot carry, and it
+ * is safe unlocked because nothing moves an assignment to another product or a
+ * product to another tenant (`updateProductSchema` has no tenantId).
+ */
+export async function detachComponent(
+  db: EstimatorDb,
+  tenantId: string,
+  assignmentId: string,
+): Promise<boolean> {
+  const [owned] = await db
+    .select({ id: estimatorProductComponents.id })
+    .from(estimatorProductComponents)
+    .innerJoin(estimatorProducts, eq(estimatorProducts.id, estimatorProductComponents.productId))
+    .where(
+      and(eq(estimatorProductComponents.id, assignmentId), eq(estimatorProducts.tenantId, tenantId)),
+    )
+    .limit(1);
+  if (!owned) return false;
   const [row] = await db
     .update(estimatorProductComponents)
     .set({ isActive: false })
@@ -504,8 +594,20 @@ export const createOptionSchema = z.object({
 });
 export type CreateOptionInput = z.input<typeof createOptionSchema>;
 
-export async function createOption(db: EstimatorDb, input: CreateOptionInput): Promise<OptionRow> {
+/**
+ * Add an option to one of this tenant's products. It used to take any
+ * productId, so a workspace could hang a priced option on another's product.
+ * Refuses `product_unavailable` (EstimatorInputError).
+ */
+export async function createOption(
+  db: EstimatorDb,
+  tenantId: string,
+  input: CreateOptionInput,
+): Promise<OptionRow> {
   const values = createOptionSchema.parse(input);
+  if (!(await ownsProduct(db, tenantId, values.productId))) {
+    throw new EstimatorInputError("product_unavailable", `product ${values.productId} is not available`);
+  }
   const [row] = await db.insert(estimatorOptions).values(values).returning();
   return row as OptionRow;
 }
@@ -520,44 +622,55 @@ export const createOptionValueSchema = z.object({
 export type CreateOptionValueInput = z.input<typeof createOptionValueSchema>;
 
 /**
- * Serialize default-setters on one option: the option row is locked for the
- * transaction, so two concurrent "make this the default" calls queue instead
- * of each clearing the others and both landing as the default.
+ * Lock one of this tenant's options for the transaction; false (nothing
+ * locked) when it is not theirs. The lock serializes default-setters on one
+ * option, so two concurrent "make this the default" calls queue instead of each
+ * clearing the others and both landing as the default. The tenant is checked
+ * through option → product (it used to lock any id); `of` keeps the lock on the
+ * option row, not the joined product.
  */
-async function lockOption(tx: EstimatorDb, optionId: string): Promise<void> {
-  await tx
+async function lockOption(tx: EstimatorDb, tenantId: string, optionId: string): Promise<boolean> {
+  const [row] = await tx
     .select({ id: estimatorOptions.id })
     .from(estimatorOptions)
-    .where(eq(estimatorOptions.id, optionId))
-    .for("update");
+    .innerJoin(estimatorProducts, eq(estimatorProducts.id, estimatorOptions.productId))
+    .where(and(eq(estimatorOptions.id, optionId), eq(estimatorProducts.tenantId, tenantId)))
+    .for("update", { of: estimatorOptions });
+  return row !== undefined;
 }
 
 /**
- * Add a value to an option. A value created as the default takes the default
- * over — the option's other defaults are cleared in the same transaction —
- * because the tool pre-selects "the" default, and with two it picked whichever
- * sorted first, which is not what the operator just said.
+ * Add a value to one of this tenant's options. It used to take any optionId,
+ * so a workspace could add a priced value to another's product — and, as the
+ * default, clear that workspace's own default. Refuses `option_unavailable`
+ * (EstimatorInputError).
+ *
+ * A value created as the default takes the default over — the option's other
+ * defaults are cleared in the same transaction — because the tool pre-selects
+ * "the" default, and with two it picked whichever sorted first, which is not
+ * what the operator just said.
  */
 export async function createOptionValue(
   db: EstimatorDb,
+  tenantId: string,
   input: CreateOptionValueInput,
 ): Promise<OptionValueRow> {
   const values = createOptionValueSchema.parse(input);
-  if (!values.isDefault) {
-    const [row] = await db.insert(estimatorOptionValues).values(values).returning();
-    return row as OptionValueRow;
-  }
   return db.transaction(async (tx) => {
-    await lockOption(tx, values.optionId);
-    await tx
-      .update(estimatorOptionValues)
-      .set({ isDefault: false })
-      .where(
-        and(
-          eq(estimatorOptionValues.optionId, values.optionId),
-          eq(estimatorOptionValues.isDefault, true),
-        ),
-      );
+    if (!(await lockOption(tx, tenantId, values.optionId))) {
+      throw new EstimatorInputError("option_unavailable", `option ${values.optionId} is not available`);
+    }
+    if (values.isDefault) {
+      await tx
+        .update(estimatorOptionValues)
+        .set({ isDefault: false })
+        .where(
+          and(
+            eq(estimatorOptionValues.optionId, values.optionId),
+            eq(estimatorOptionValues.isDefault, true),
+          ),
+        );
+    }
     const [row] = await tx.insert(estimatorOptionValues).values(values).returning();
     return row as OptionValueRow;
   });
@@ -589,7 +702,7 @@ export async function setDefaultOptionValue(
       .limit(1);
     if (!target) return false;
     const { optionId } = target as { id: string; optionId: string };
-    await lockOption(tx, optionId);
+    await lockOption(tx, tenantId, optionId);
     await tx
       .update(estimatorOptionValues)
       .set({ isDefault: false })
@@ -619,6 +732,17 @@ export const calculateEstimateSchema = z.object({
 export type CalculateEstimateInput = z.input<typeof calculateEstimateSchema>;
 
 /**
+ * The public live-range input: `measurement.units` is dropped (see
+ * `publicMeasurementSchema`). `calculateEstimate` applies it itself for
+ * `audience: "public"`; a host validating a public route's body up front (a
+ * tRPC `.input`) uses this one, or it would refuse the `units` the package
+ * ignores anyway.
+ */
+export const publicCalculateEstimateSchema = calculateEstimateSchema.extend({
+  measurement: publicMeasurementSchema,
+});
+
+/**
  * Who a price is for. "public" — the instant-estimate tool and the embed: the
  * product must be shown in the estimator, and staff-only options are ignored
  * (a value the customer was never shown adds nothing). "staff" (the default) —
@@ -635,16 +759,44 @@ export interface EstimatorPricingScope {
   audience?: PricingAudience;
 }
 
-type LineRefusal = Exclude<EstimatorRefusal, "invalid_price_range" | "discount_exceeds_subtotal">;
+type LineRefusal = Extract<
+  EstimatorRefusal,
+  "product_unavailable" | "product_not_estimatable" | "invalid_measurement" | "invalid_options"
+>;
 
 type PricedLine =
   | {
       ok: true;
       product: ProductRow;
+      /** The measurement actually priced — for the public, after `publicMeasurement`. */
+      measurement: Measurement;
       result: EstimatePriceResult;
       selections: EstimateItemOptionSnapshot[];
     }
   | { ok: false; reason: LineRefusal; product: ProductRow | null };
+
+/**
+ * The measurement a PUBLIC line is priced from: only what the tool asks for, so
+ * the customer can state the size of the job but not how the engine reads it.
+ *
+ * `units` is dropped (priced as 1): the public count is `quantity`, and a
+ * caller-set `units` only ever moved the per-unit materials — 0 dropped them
+ * from the quote, 0.0001 billed a ten-thousandth of them.
+ *
+ * An area product is width × height, both > 0, and nothing else. A bare `sqFt`
+ * — or one sent beside width × height, which wins in `resolveMeasurement` —
+ * prices the area with a perimeter of 0, so every per-linear-ft rate and part
+ * (a frame, a seal) fell out of the quote. Null: no width × height to price.
+ */
+function publicMeasurement(mode: string, m: Measurement): Measurement | null {
+  if (mode === "area") {
+    const { widthIn, heightIn } = m;
+    if (widthIn == null || heightIn == null || widthIn <= 0 || heightIn <= 0) return null;
+    return { widthIn, heightIn };
+  }
+  const { units: _ignored, ...rest } = m;
+  return rest;
+}
 
 /**
  * The product a line may be priced against, or null. Not found, inactive,
@@ -727,7 +879,11 @@ async function priceLine(
   const product = await loadPriceableProduct(db, input.productId, scope);
   if (!product) return { ok: false, reason: "product_unavailable", product: null };
   if (!product.isEstimatable) return { ok: false, reason: "product_not_estimatable", product };
-  if (!measurementFitsMode(product.measurementMode, input.measurement as Measurement)) {
+  const measurement =
+    audience === "public"
+      ? publicMeasurement(product.measurementMode, input.measurement as Measurement)
+      : (input.measurement as Measurement);
+  if (!measurement || !measurementFitsMode(product.measurementMode, measurement)) {
     return { ok: false, reason: "invalid_measurement", product };
   }
 
@@ -761,7 +917,7 @@ async function priceLine(
     pricePerSqFt: product.pricePerSqFt,
     pricePerLinearFt: product.pricePerLinearFt,
     laborCost: product.laborCost,
-    measurement: input.measurement as Measurement,
+    measurement,
     quantity: input.quantity,
     optionModifiers: selections.map((s) => s.priceModifier),
     components: (components as Array<{ unitCost: number; unitType: string; quantityMilli: number }>).map(
@@ -783,7 +939,7 @@ async function priceLine(
   if (!Number.isSafeInteger(result.estimateHigh)) {
     return { ok: false, reason: "invalid_measurement", product };
   }
-  return { ok: true, product, result, selections };
+  return { ok: true, product, measurement, result, selections };
 }
 
 /**
@@ -795,16 +951,21 @@ async function priceLine(
  * Returns null — the UI shows "request a quote" or "enter a measurement" — for
  * a product that is unknown, inactive, another tenant's (with `scope.tenantId`),
  * hidden from a public caller, or not estimatable; for a measurement the
- * product's mode cannot price (an area product needs width×height or sqFt > 0,
- * a linear one linearFt > 0, a unit one units > 0); and for two values of one
- * option.
+ * product's mode cannot price (an area product needs width×height or sqFt > 0 —
+ * width×height alone for the public —, a linear one linearFt > 0; a unit one
+ * always has units ≥ 1); and for two values of one option.
+ *
+ * For `audience: "public"` a `measurement.units` is ignored (priced as 1) — see
+ * `publicMeasurement`. A staff `units` must be a whole number ≥ 1 (else a throw).
  */
 export async function calculateEstimate(
   db: EstimatorDb,
   input: CalculateEstimateInput,
   scope: EstimatorPricingScope = {},
 ): Promise<EstimatePriceResult | null> {
-  const parsed = calculateEstimateSchema.parse(input);
+  const parsed = (
+    scope.audience === "public" ? publicCalculateEstimateSchema : calculateEstimateSchema
+  ).parse(input);
   const priced = await priceLine(db, parsed, scope);
   return priced.ok ? priced.result : null;
 }
@@ -1129,7 +1290,8 @@ export const publicSubmitItemSchema = z.object({
   productId: z.string().min(1).max(200),
   /** Defaults to the product's name. */
   description: z.string().trim().min(1).max(500).nullish(),
-  measurement: measurementSchema.nullish(),
+  /** No `units`: a public count is `quantity` (see `publicMeasurementSchema`). */
+  measurement: publicMeasurementSchema.nullish(),
   quantity: z.number().int().min(1).max(1000).default(1),
   optionValueIds: z.array(z.string().min(1).max(200)).max(50).default([]),
 });
@@ -1176,7 +1338,9 @@ export type PublicEstimateConfig = z.input<typeof publicEstimateConfigSchema>;
  * the estimator; staff-only options are ignored), and the saved total is the
  * midpoint of that range — the number the customer was shown. Labor is inside
  * the engine's price, the discount is 0, and the tax rate is the tenant's
- * (`config.taxRateBp`). None of those can be set from the body.
+ * (`config.taxRateBp`). None of those can be set from the body — nor can the
+ * way a measurement is read: `units` is ignored, and an area product must be
+ * given width × height (`publicMeasurement`).
  *
  * A quote-only product (`isEstimatable: false`) is the tool's "request a quote"
  * path, so its line is kept — at $0 with `QUOTE_REQUEST_NOTE`, so the queue
@@ -1214,6 +1378,9 @@ export async function createPublicEstimate(
       const { unitPrice, lineTotal } = lineFromPrice(priced, item.quantity);
       items.push({
         ...base,
+        // What was priced (width × height for an area product), not the extras
+        // the body carried alongside it — the saved line reads as the quote.
+        measurement: priced.measurement as EstimateItemMeasurement,
         description: item.description ?? priced.product.name,
         unitPrice,
         total: lineTotal,
@@ -1330,6 +1497,10 @@ export type EstimateStatus = (typeof ESTIMATE_STATUSES)[number];
  * and revised. `converted` is TERMINAL: it means an invoice exists, so an
  * estimate that could leave it could be invoiced twice. Before this table any
  * status could be set from any other — converted back to approved included.
+ *
+ * approved → converted is made ONLY by `markEstimateConverted`, the invoicing
+ * claim; `setEstimateStatus` refuses it. A UI offering staff the next moves
+ * leaves `converted` out.
  */
 export const ESTIMATE_STATUS_TRANSITIONS: Readonly<
   Record<EstimateStatus, readonly EstimateStatus[]>
@@ -1365,7 +1536,7 @@ export const setEstimateStatusSchema = z.object({
  * current status must be one that may move to the target), so it is atomic —
  * no read-then-write window for two staff clicks to race through. False when
  * the estimate is not the tenant's or the move is not allowed from its current
- * status (a same-status "move" included).
+ * status (a same-status "move" included) — and always for `converted`.
  */
 export async function setEstimateStatus(
   db: EstimatorDb,
@@ -1373,6 +1544,11 @@ export async function setEstimateStatus(
   input: z.input<typeof setEstimateStatusSchema>,
 ): Promise<boolean> {
   const parsed = setEstimateStatusSchema.parse(input);
+  // `converted` says an invoice exists, so only the invoicing claim
+  // (`markEstimateConverted`, in the invoice's transaction) may set it. Set by
+  // hand, an approved estimate became converted with NO invoice — and the
+  // bridge refuses a converted estimate, so it could never be invoiced at all.
+  if (parsed.status === "converted") return false;
   const from = ESTIMATE_STATUSES.filter((s) =>
     ESTIMATE_STATUS_TRANSITIONS[s].includes(parsed.status),
   );
@@ -1392,14 +1568,17 @@ export async function setEstimateStatus(
 }
 
 /**
- * Claim an estimate for invoicing — the invoicing bridge's once-only step.
+ * Claim an APPROVED estimate for invoicing — the invoicing bridge's once-only
+ * step, and the only way an estimate becomes `converted`.
  *
- * One conditional UPDATE (`… WHERE status <> 'converted' RETURNING *`), so of
+ * One conditional UPDATE (`… WHERE status = 'approved' RETURNING *`), so of
  * two concurrent "create invoice from this estimate" calls exactly one gets the
  * row back and the other gets null. Read-check-then-write let both through and
- * the estimate was invoiced twice. Call it inside the transaction that creates
- * the invoice, and treat null as "already converted (or not this tenant's)":
- * do not invoice.
+ * the estimate was invoiced twice. Only an approved estimate is claimed: it
+ * used to take any non-converted one, so a draft, rejected or expired quote —
+ * one the customer never accepted — could be billed. Call it inside the
+ * transaction that creates the invoice, and treat null as "not approved, or
+ * already converted (or not this tenant's)": do not invoice.
  */
 export async function markEstimateConverted(
   db: EstimatorDb,
@@ -1413,7 +1592,7 @@ export async function markEstimateConverted(
       and(
         eq(estimatorEstimates.id, id),
         eq(estimatorEstimates.tenantId, tenantId),
-        ne(estimatorEstimates.status, "converted"),
+        eq(estimatorEstimates.status, "approved"),
       ),
     )
     .returning();
@@ -1473,11 +1652,21 @@ export async function issueClientKey(
   return { id: (row as { id: string }).id, tenantId: input.tenantId, label: input.label, key };
 }
 
-export async function revokeClientKey(db: EstimatorDb, keyId: string): Promise<void> {
-  await db
+/**
+ * Revoke one of this tenant's embed keys; false when it is not theirs. It used
+ * to take any key id, so one workspace could switch off another's widget.
+ */
+export async function revokeClientKey(
+  db: EstimatorDb,
+  tenantId: string,
+  keyId: string,
+): Promise<boolean> {
+  const [row] = await db
     .update(estimatorClientKeys)
     .set({ revokedAt: new Date() })
-    .where(eq(estimatorClientKeys.id, keyId));
+    .where(and(eq(estimatorClientKeys.id, keyId), eq(estimatorClientKeys.tenantId, tenantId)))
+    .returning({ id: estimatorClientKeys.id });
+  return row !== undefined;
 }
 
 export interface ClientKeyRow {

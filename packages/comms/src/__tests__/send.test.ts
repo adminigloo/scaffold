@@ -51,6 +51,31 @@ describe("sendNow — SMS compliance", () => {
     expect(row).toMatchObject({ status: "sent", body: sent, toAddress: "+18015551234", providerId: "SM_1" });
   });
 
+  it("keeps the STOP line when the customer's own text mentions unsubscribing", async () => {
+    // The check runs on the rendered text: a notes field reading "please
+    // unsubscribe me from the newsletter" used to count as opt-out language,
+    // and the text went out with no way to stop them.
+    const fake = withTemplates([{ key: "reminder", channel: "sms", subject: null, body: "See you at 9. Notes: {{notes}}" }]);
+    const r = recorder();
+    await sendNow(
+      fake.db,
+      { tenantId: T, to: "8015551234", templateKey: "reminder", vars: { notes: "please unsubscribe me from the newsletter" } },
+      { sms: r.sms, smsCompliance: { senderName: "Acme" } },
+    );
+    expect(r.texts[0]?.body).toBe("Acme: See you at 9. Notes: please unsubscribe me from the newsletter Reply STOP to opt out.");
+  });
+
+  it("passes a caller's idempotency key through to the sender", async () => {
+    const fake = withTemplates([{ key: "reminder", channel: "sms", subject: null, body: "Hi" }]);
+    const r = recorder();
+    await sendNow(
+      fake.db,
+      { tenantId: T, to: "8015551234", templateKey: "reminder", idempotencyKey: "booking:b1:confirmation" },
+      { sms: r.sms, smsCompliance: { senderName: "Acme" } },
+    );
+    expect(r.texts[0]?.idempotencyKey).toBe("booking:b1:confirmation");
+  });
+
   it("refuses to text at all when compliance is missing at runtime (a cast or plain JS)", async () => {
     const fake = withTemplates([{ key: "reminder", channel: "sms", subject: null, body: "Hi" }]);
     const r = recorder();

@@ -35,6 +35,23 @@ describe("createInvoice — one estimate, one invoice", () => {
     expect(fake.rows(invoiceItems)).toHaveLength(1);
   });
 
+  it("stores a blank estimateId as no estimate, not as a link every blank invoice shares", async () => {
+    // A form's empty "estimate" field arrives as "". Stored, it was a real
+    // link: the partial unique index let ONE invoice per tenant have it, and
+    // the second failed with a raw 23505 — a 500, not a typed refusal.
+    const fake = createFakeDb();
+    await createInvoice(fake.db, { ...base, estimateId: "" });
+    await createInvoice(fake.db, { ...base, estimateId: "" });
+    await createInvoice(fake.db, { ...base, estimateId: "   " });
+    expect(fake.rows(invoices).map((r) => r.estimateId)).toEqual([null, null, null]);
+    // A real id is kept, trimmed, so " est-1" and "est-1" are one estimate.
+    await createInvoice(fake.db, { ...base, estimateId: " est-1 " });
+    expect(fake.rows(invoices)[3]?.estimateId).toBe("est-1");
+    await expect(createInvoice(fake.db, { ...base, estimateId: "est-1" })).rejects.toBeInstanceOf(
+      InvoiceAlreadyExistsForEstimateError,
+    );
+  });
+
   it("scopes the rule per tenant and ignores invoices with no estimate", async () => {
     const fake = createFakeDb();
     await createInvoice(fake.db, { ...base, estimateId: "est-1" });
@@ -123,6 +140,10 @@ describe("invoice numbers", () => {
       { tenantId: "t1", invoiceNumber: "INV-2027-0001", viewToken: "b", createdAt: new Date("2027-01-01T00:10:00Z") },
     ]);
     expect(await nextInvoiceNumber(fake.db, "t1")).toBe("INV-2027-0002");
+    // The database server's clock runs a minute behind this process's — still
+    // Dec 31 there. Left to defaultNow(), the row numbered INV-2027-0002 would
+    // be created_at 2026, and next year's count would start from it.
+    fake.dbClock = () => new Date("2026-12-31T23:59:30Z");
     const created = await createInvoice(fake.db, base);
     expect(created.invoiceNumber).toBe("INV-2027-0002");
     // created_at is stamped from the same clock that chose the year.

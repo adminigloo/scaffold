@@ -64,6 +64,23 @@ export function balanceOf(
 }
 
 /**
+ * What the customer still owes on this invoice, as a person should read it:
+ * the balance, except on a void invoice, where it is nothing. A void bill keeps
+ * its stored total (the record of what was cancelled), and showing that total
+ * as "Balance due" under a VOID badge invited the customer to pay a cancelled
+ * bill. Use this wherever a balance is DISPLAYED; `balanceOf` is the raw
+ * arithmetic.
+ */
+export function outstandingBalance(invoice: {
+  status: string;
+  total: number;
+  amountPaid: number;
+}): number {
+  if (invoice.status === "void") return 0;
+  return balanceOf(invoice.total, invoice.amountPaid).balanceDue;
+}
+
+/**
  * The invoice's state after a payment. Balance due is floored at zero and any
  * excess is reported as `overpayment`; it's paid when nothing is left.
  */

@@ -16,11 +16,40 @@ Money and tenancy fixes from a sweep of the estimator against its SG Glass sourc
   `/v1/submit` and the generated app's `estimator.submit` both use it. Before,
   `unitPrice: 1` in the request body saved a $0.01 line. `createEstimate` is now
   documented as the staff-only path; its old comment claimed the opposite.
+- **The public can't lower a price through the measurement.** On the public
+  path (`createPublicEstimate`, `calculateEstimate` with `audience: "public"`,
+  and the embed's `/v1/calculate` and `/v1/submit`), `measurement.units` is
+  ignored and the line is priced with units = 1. Before, `units: 0` dropped
+  every `per_unit` material from the quote, and `units: 0.0001` passed the
+  unit-mode check and billed a sliver of them. The key is stripped, not
+  refused. So estimator-widget 0.1.0 embeds already on customers' sites, which
+  send `units: quantity`, keep working and are no longer billed per-unit
+  materials quantity² times. A public area product needs `widthIn` and
+  `heightIn` > 0. A bare `sqFt` is refused (`invalid_measurement`), and a
+  `sqFt` or `linearFt` sent beside width × height is ignored: a bare area
+  priced the perimeter at 0, so every per-linear-ft rate and material (a
+  frame, a seal) fell out of the quote. The saved public line records the
+  measurement that was priced. New: `publicCalculateEstimateSchema`, the public
+  live-range input (it drops `units`), for a host that validates the body
+  itself.
 - **Every by-id call is tenant-scoped.** Affected: `getEstimate`,
-  `getProductDetail`, `updateProduct`, `deactivateProduct` and
-  `setEstimateStatus`. `calculateEstimate` takes an optional
-  `{ tenantId, audience }` scope. A material from another workspace is never
-  priced.
+  `getProductDetail`, `updateProduct`, `deactivateProduct`,
+  `setEstimateStatus` and `markEstimateConverted`. The catalog writes are
+  scoped too. They used to take any id, so one workspace could change
+  another's public prices or revoke its embed key:
+  - `createOption` and `attachComponent` check the product. `attachComponent`
+    also checks that the material is the tenant's.
+  - `createOptionValue` (and its option lock) and `setDefaultOptionValue` check
+    through option → product.
+  - `detachComponent` checks through the assignment's product.
+  - `deactivateComponent` and `revokeClientKey` check the row directly.
+
+  An id that isn't the tenant's changes nothing. The creates throw
+  `EstimatorInputError` (`product_unavailable`, `option_unavailable` or
+  `component_unavailable`). `detachComponent`, `deactivateComponent` and
+  `revokeClientKey` return `false`; `revokeClientKey` used to return `void`.
+  `calculateEstimate` takes an optional `{ tenantId, audience }` scope. A
+  material from another workspace is never priced.
 
 **Correctness**
 
@@ -34,10 +63,12 @@ Money and tenancy fixes from a sweep of the estimator against its SG Glass sourc
   Previously they scaled by quantity and then by quantity again (qty²).
   `resolveMeasurement` no longer drops width×height when `units` is also given.
 - **Measurements are checked against the product's mode.** Area needs
-  width×height or `sqFt` > 0, linear needs `linearFt` > 0, and unit needs
-  `units` > 0 (default 1). There are upper bounds too (`MEASUREMENT_LIMITS`). A
-  failing measurement gets `null` from `calculateEstimate`, and the create
-  functions refuse it.
+  width×height or `sqFt` > 0 (only width×height from the public). Linear needs
+  `linearFt` > 0. `units` must be a whole number ≥ 1 (default 1) wherever it is
+  read, so a unit product always has one. There are upper bounds too
+  (`MEASUREMENT_LIMITS`). A measurement that doesn't fit the mode gets `null`
+  from `calculateEstimate`, and the create functions refuse it. A staff
+  `units` that isn't a whole number ≥ 1 fails the schema.
 - **Unavailable products are refused, not saved at $0.** That covers inactive
   products, another tenant's products, products the public can't see, and
   quote-only products on a staff line with no `unitPrice`. The public tool's
@@ -65,9 +96,17 @@ Money and tenancy fixes from a sweep of the estimator against its SG Glass sourc
 - **Status transitions are enforced** (`ESTIMATE_STATUS_TRANSITIONS`,
   `allowedNextStatuses`): draft → sent → viewed → approved/rejected/expired,
   approved → converted, and rejected/expired → draft. `converted` is terminal.
-  The check runs inside the UPDATE, so it is atomic. New:
+  The check runs inside the UPDATE, so it is atomic.
+- **Only invoicing converts an estimate.** New:
   `markEstimateConverted(db, tenantId, id)` claims an estimate for invoicing
-  exactly once (null if it is already converted).
+  exactly once. It is the only way to reach `converted`, and it claims only an
+  `approved` estimate. It returns null when the estimate is not approved (a
+  draft, rejected or expired quote the customer never accepted), is already
+  converted, or is not the tenant's. `setEstimateStatus` returns `false` for
+  `converted`. Before, the admin offered "converted" as a manual move from
+  approved. That marked the estimate invoiced with no invoice, and because the
+  invoicing bridge refuses a converted estimate, it could never be billed. The
+  generated admin no longer offers the move.
 - **Options can be staff-only** (`showInEstimator`, default true). They are left
   out of `listPublicOptions` and `/v1/options`, and public pricing ignores them.
   A staff-only product is not priced for the public.
@@ -78,13 +117,23 @@ Refusals throw `EstimatorInputError` with a `code`. The embed answers
 **Upgrading**
 
 - Add `tenantId` as the second argument to `getEstimate`, `getProductDetail`,
-  `updateProduct`, `deactivateProduct` and `setEstimateStatus`.
+  `updateProduct`, `deactivateProduct`, `setEstimateStatus`, `createOption`,
+  `createOptionValue`, `attachComponent`, `detachComponent`,
+  `deactivateComponent` and `revokeClientKey`. The generated app's estimator
+  router and demo seed already pass it.
 - Public submits go through `createPublicEstimate`, and public option reads go
-  through `listPublicOptions`. Pass your tax rate to `createEstimatorHandlers({ taxRateBp })`
+  through `listPublicOptions`. If you validate a public live-range body
+  yourself, use `publicCalculateEstimateSchema`, not `calculateEstimateSchema`.
+  Pass your tax rate to `createEstimatorHandlers({ taxRateBp })`
   (a number, or a `(tenantId) => rate` lookup). If you leave it out,
   `DEFAULT_TAX_RATE_BP` (8.25%) applies.
-- In unit mode, send the count as `quantity`, not also as `measurement.units`.
-- Wrap `createEstimate` / `createPublicEstimate` so an `EstimatorInputError`
+- In unit mode, send the count as `quantity`. The public path ignores
+  `measurement.units`, and a staff `units` must be a whole number ≥ 1.
+- When you offer staff their next status moves, leave `converted` out of
+  `allowedNextStatuses(status)`. Convert only through `markEstimateConverted`,
+  and treat its null as "do not invoice".
+- Wrap `createEstimate`, `createPublicEstimate`, `createOption`,
+  `createOptionValue` and `attachComponent` so an `EstimatorInputError`
   becomes a 400.
 
 **Schema — run your `db:generate` + `db:migrate`**

@@ -85,8 +85,22 @@ function comparable(v: unknown): unknown {
   return v instanceof Date ? v.getTime() : v;
 }
 
+/**
+ * The database server's clock: real wall time, read through `performance`,
+ * which `vi.useFakeTimers({ toFake: ["Date"] })` does not touch. SQL's now()
+ * and every `defaultNow()` column come from HERE, never from the process's
+ * `Date` — when both came from one faked `Date`, a row the code forgot to
+ * stamp still looked stamped by the code, and the test that proves it does
+ * passed with the stamp deleted.
+ */
+const serverClock = (): Date => new Date(performance.timeOrigin + performance.now());
+
 /** Compile a drizzle condition to a row predicate over property-keyed rows. */
-function compile(condition: unknown, keyOf: (dbName: string) => string): Pred {
+function compile(
+  condition: unknown,
+  keyOf: (dbName: string) => string,
+  dbNow: () => Date,
+): Pred {
   const toks: Tok[] = [];
   flatten(condition, toks);
   let i = 0;
@@ -108,7 +122,7 @@ function compile(condition: unknown, keyOf: (dbName: string) => string): Pred {
       return (row) => row[key];
     }
     if (t.k === "val") return () => t.v;
-    if (t.k === "word" && t.v === "now()") return () => new Date();
+    if (t.k === "word" && t.v === "now()") return () => dbNow();
     if (t.k === "word" && (t.v === "true" || t.v === "false")) return () => t.v === "true";
     if (t.k === "word" && t.v === "null") return () => null;
     throw new Error(`fake-db: unsupported operand ${JSON.stringify(t)}`);
@@ -244,6 +258,18 @@ export interface FakeDb {
   seed: (table: Table, rows: Row[]) => void;
   /** Runs before each insert is applied; throw to simulate a failure, or seed a racer. */
   beforeInsert: ((table: Table, row: Row) => void) | null;
+  /**
+   * Awaited before each select runs. A FOR UPDATE select is where a real call
+   * WAITS for another transaction's lock, so a racer landed here is a
+   * concurrent edit committing while this call is blocked on the row.
+   */
+  beforeSelect: ((table: Table, info: { forUpdate: boolean }) => void | Promise<void>) | null;
+  /**
+   * The database's clock, for now() and `defaultNow()` columns — independent
+   * of the (possibly faked) process clock unless a test says otherwise. Pin it
+   * to make the server and the app disagree on purpose.
+   */
+  dbClock: () => Date;
   /** Every executed statement, for asserting what ran (e.g. the lock). */
   log: Array<{ op: "select" | "insert" | "update"; table: string; forUpdate?: boolean }>;
 }
@@ -288,7 +314,7 @@ export function createFakeDb(aggregates: Aggregates = DEFAULT_AGGREGATES): FakeD
     const keyOf = keyResolver(table);
     for (const idx of getTableConfig(table as PgTable).indexes) {
       if (!idx.config.unique) continue;
-      const where = idx.config.where ? compile(idx.config.where, keyOf) : () => true;
+      const where = idx.config.where ? compile(idx.config.where, keyOf, () => fake.dbClock()) : () => true;
       if (!where(candidate)) continue;
       const keys = idx.config.columns.map((c) => keyOf((c as { name: string }).name));
       // SQL: a NULL in any key column never collides.
@@ -310,7 +336,8 @@ export function createFakeDb(aggregates: Aggregates = DEFAULT_AGGREGATES): FakeD
       }
       const c = col as unknown as { defaultFn?: () => unknown; default?: unknown };
       if (c.defaultFn) row[key] = c.defaultFn();
-      else if (is(c.default, SQL)) row[key] = new Date();
+      // defaultNow(): the SERVER fills it, from the server's clock.
+      else if (is(c.default, SQL)) row[key] = fake.dbClock();
       else row[key] = c.default ?? null;
     }
     return row;
@@ -329,10 +356,12 @@ export function createFakeDb(aggregates: Aggregates = DEFAULT_AGGREGATES): FakeD
       }
     },
     beforeInsert: null,
+    beforeSelect: null,
+    dbClock: serverClock,
     log: [],
   };
 
-  const thenable = <T>(run: () => T) => ({
+  const thenable = <T>(run: () => T | Promise<T>) => ({
     then<R1 = T, R2 = never>(
       resolve?: ((v: T) => R1 | PromiseLike<R1>) | null,
       reject?: ((e: unknown) => R2 | PromiseLike<R2>) | null,
@@ -353,7 +382,7 @@ export function createFakeDb(aggregates: Aggregates = DEFAULT_AGGREGATES): FakeD
         const run = (): Row[] => {
           fake.log.push({ op: "select", table: tableName(table), forUpdate: q.forUpdate });
           const keyOf = keyResolver(table);
-          const pred = compile(q.where, keyOf);
+          const pred = compile(q.where, keyOf, () => fake.dbClock());
           let rows = tableRows(table).filter((r) => Boolean(pred(r)));
           const aggregate = fields && Object.values(fields).some((f) => is(f, SQL));
           if (aggregate) {
@@ -387,7 +416,10 @@ export function createFakeDb(aggregates: Aggregates = DEFAULT_AGGREGATES): FakeD
           orderBy: (...o: unknown[]) => ((q.order = o), chain),
           limit: (n: number) => ((q.limit = n), chain),
           for: () => ((q.forUpdate = true), chain),
-          ...thenable(run),
+          ...thenable(async () => {
+            await fake.beforeSelect?.(table, { forUpdate: q.forUpdate });
+            return run();
+          }),
         };
         return chain;
       },
@@ -428,7 +460,7 @@ export function createFakeDb(aggregates: Aggregates = DEFAULT_AGGREGATES): FakeD
         let returning: Record<string, unknown> | undefined | null = null;
         const run = (): Row[] => {
           fake.log.push({ op: "update", table: tableName(table) });
-          const pred = compile(where, keyResolver(table));
+          const pred = compile(where, keyResolver(table), () => fake.dbClock());
           const all = tableRows(table);
           const hits = all.filter((r) => Boolean(pred(r)));
           for (const row of hits) {

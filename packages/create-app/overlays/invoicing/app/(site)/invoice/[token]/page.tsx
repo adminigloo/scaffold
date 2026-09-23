@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { useParams } from "next/navigation";
+import { isInvoicePreview } from "@/invoice-link";
 import { api } from "@/trpc/client";
 import {
   Badge,
@@ -35,10 +36,14 @@ export default function CustomerInvoicePage() {
 
   // Report the open once, from the browser: sent → viewed. A mutation rather
   // than a side effect of the query, so a mail scanner fetching the link
-  // doesn't count as the customer reading it.
+  // doesn't count as the customer reading it — and never for the ledger's
+  // preview link, or staff checking the link would mark it viewed themselves.
+  // Read from window.location inside the effect (client-only) rather than
+  // useSearchParams, which would need a Suspense boundary around the page.
   useEffect(() => {
     if (!detail.data || reported.current) return;
     reported.current = true;
+    if (isInvoicePreview(window.location.search)) return;
     markViewed.mutate({ token });
   }, [detail.data, markViewed, token]);
 

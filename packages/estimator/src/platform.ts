@@ -165,7 +165,8 @@ export function createEstimatorHandlers(options: EstimatorHandlersOptions): Esti
           const body = (await request.json()) as CalculateEstimateInput;
           // Scoped to the key's tenant and the public audience: another
           // workspace's product, a hidden one, or a staff-only option prices
-          // as nothing.
+          // as nothing; `measurement.units` is ignored (estimator-widget 0.1.0
+          // sends `units: quantity`), and an area needs width × height.
           return jsonResponse({
             result: await calculateEstimate(db, body, {
               tenantId: auth.tenantId,

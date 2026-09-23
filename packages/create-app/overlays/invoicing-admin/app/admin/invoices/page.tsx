@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { invoiceLinkPath, invoicePreviewPath } from "@/invoice-link";
 import { api } from "@/trpc/client";
 import {
   Badge,
@@ -302,12 +303,18 @@ function InvoiceDetail({ id, onChanged }: { id: string; onChanged: () => void })
 
   if (detail.isLoading) return <Card><CardBody>Loading…</CardBody></Card>;
   if (!detail.data) return <Card><CardBody>Invoice not found.</CardBody></Card>;
-  const { invoice, items, payments, editable, nextStatuses } = detail.data;
-  const balance = Math.max(0, invoice.total - invoice.amountPaid);
+  // balanceDue comes from the server (0 on a void invoice — a cancelled bill
+  // is not owed); overpaid is still shown there, as money to refund.
+  const { invoice, items, payments, editable, nextStatuses, balanceDue } = detail.data;
   const overpaid = Math.max(0, invoice.amountPaid - invoice.total);
   const reversed = new Set(payments.map((p) => p.reversesPaymentId).filter(Boolean));
   const takesPayments = invoice.status !== "paid" && invoice.status !== "void" && invoice.status !== "draft";
-  const tokenUrl = typeof window !== "undefined" ? `${window.location.origin}/invoice/${invoice.viewToken}` : `/invoice/${invoice.viewToken}`;
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  // The link to SEND is shown as text to copy; the one to CLICK is the
+  // preview, which the customer page never reports as viewed. Linking the
+  // customer URL itself meant staff checking it marked the invoice "viewed".
+  const customerUrl = `${origin}${invoiceLinkPath(invoice.viewToken)}`;
+  const previewUrl = `${origin}${invoicePreviewPath(invoice.viewToken)}`;
 
   const record = () => {
     const cents = toCents(amount);
@@ -429,7 +436,7 @@ function InvoiceDetail({ id, onChanged }: { id: string; onChanged: () => void })
           <p><span className="text-ink-faint">Tax ({invoice.taxRateBp / 100}%):</span> <span className="font-mono tabular-nums">{usd(invoice.taxAmount)}</span></p>
           <p><span className="text-ink-faint">Total:</span> <span className="font-mono tabular-nums">{usd(invoice.total)}</span></p>
           <p><span className="text-ink-faint">Paid:</span> <span className="font-mono tabular-nums">{usd(invoice.amountPaid)}</span></p>
-          <p className="text-base font-semibold"><span className="text-ink-faint">Balance:</span> <span className="font-mono tabular-nums">{usd(balance)}</span></p>
+          <p className="text-base font-semibold"><span className="text-ink-faint">Balance:</span> <span className="font-mono tabular-nums">{usd(balanceDue)}</span></p>
           {overpaid > 0 ? <p className="text-warn">Overpaid by {usd(overpaid)} — refund or credit it.</p> : null}
         </div>
 
@@ -497,10 +504,13 @@ function InvoiceDetail({ id, onChanged }: { id: string; onChanged: () => void })
 
         {invoice.status !== "draft" ? (
           <p className="text-xs text-ink-faint">
-            Customer link:{" "}
-            <a href={tokenUrl} target="_blank" rel="noreferrer" className="text-accent underline underline-offset-2">
-              {tokenUrl}
-            </a>
+            Customer link (copy to send):{" "}
+            <span className="select-all break-all font-mono text-ink-muted">{customerUrl}</span>
+            {" · "}
+            <a href={previewUrl} target="_blank" rel="noreferrer" className="text-accent underline underline-offset-2">
+              preview
+            </a>{" "}
+            (doesn&rsquo;t mark it viewed)
           </p>
         ) : (
           <p className="text-xs text-ink-faint">The customer link opens once the invoice is sent.</p>

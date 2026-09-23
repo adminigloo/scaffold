@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  addInvoiceItem,
   canTransitionInvoice,
   getInvoice,
   getInvoiceByToken,
@@ -10,6 +11,7 @@ import {
   issuedStatusOf,
   markInvoiceViewed,
   nextInvoiceStatuses,
+  removeInvoiceItem,
   setInvoiceStatus,
   settledStatus,
 } from "../index.js";
@@ -144,7 +146,6 @@ describe("getInvoiceByToken — the customer's link", () => {
       [
         "amountPaid",
         "balanceDue",
-        "billingAddress",
         "customerName",
         "discount",
         "dueDate",
@@ -162,7 +163,19 @@ describe("getInvoiceByToken — the customer's link", () => {
     expect(view!.payments).toHaveLength(1);
     expect(Object.keys(view!.payments[0]!).sort()).toEqual(["amount", "method", "paidAt"]);
     const serialized = JSON.stringify(view);
-    for (const secret of ["t1", "est-1", "staff-1", "chk 1001", "ada@example.com", "555-0100", "slow payer", "inv-1"]) {
+    // The billing address too: the page never shows it, and whoever holds a
+    // forwarded link is not necessarily the customer who lives there.
+    for (const secret of [
+      "t1",
+      "est-1",
+      "staff-1",
+      "chk 1001",
+      "ada@example.com",
+      "555-0100",
+      "1 Main St",
+      "slow payer",
+      "inv-1",
+    ]) {
       expect(serialized).not.toContain(secret);
     }
   });
@@ -170,6 +183,53 @@ describe("getInvoiceByToken — the customer's link", () => {
   it("derives overdue for an open invoice past its due date", async () => {
     const { fake } = withInvoice({ status: "sent", dueDate: new Date("2020-01-01T00:00:00Z") });
     expect((await getInvoiceByToken(fake.db, "tok-1"))?.invoice.status).toBe("overdue");
+  });
+
+  it("shows nothing due on a void invoice — a cancelled bill is not owed", async () => {
+    // Stored total $1,000, nothing paid, voided. The link said "Balance due:
+    // $1,000.00" under a VOID badge — an invitation to pay a cancelled bill.
+    const { fake } = withInvoice({ status: "void", sentAt: new Date("2026-02-01T00:00:00Z") });
+    expect((await getInvoiceByToken(fake.db, "tok-1"))?.invoice).toMatchObject({
+      status: "void",
+      total: 100_000,
+      amountPaid: 0,
+      balanceDue: 0,
+    });
+  });
+});
+
+describe("an invoice with no live lines", () => {
+  it("can't be sent — removal stays allowed so a line can be replaced", async () => {
+    const { fake, row } = withInvoice();
+    const live = fake.rows(invoiceItems).find((r) => r.removedAt === null)!;
+    // Removing the last line of a draft is fine: it may be about to be replaced.
+    expect(await removeInvoiceItem(fake.db, "t1", String(live.id))).toMatchObject({ total: 0 });
+    // Sending it is not: the customer's link would show a $0 bill for nothing.
+    await expect(setInvoiceStatus(fake.db, { tenantId: "t1", id: "inv-1", status: "sent" })).rejects.toMatchObject({
+      code: "invoice_has_no_lines",
+    });
+    expect(row()).toMatchObject({ status: "draft", sentAt: null });
+
+    await addInvoiceItem(fake.db, { tenantId: "t1", invoiceId: "inv-1", description: "Install", unitPrice: 90_000 });
+    expect(await setInvoiceStatus(fake.db, { tenantId: "t1", id: "inv-1", status: "sent" })).toBe(true);
+    expect(row().status).toBe("sent");
+  });
+
+  it("checks the lines under the invoice lock, so a removal can't slip in before the send", async () => {
+    const { fake, row } = withInvoice();
+    const live = fake.rows(invoiceItems).find((r) => r.removedAt === null)!;
+    let raced = false;
+    // The last line is removed while the send waits on the invoice row.
+    fake.beforeSelect = async (table, { forUpdate }) => {
+      if (table !== invoices || !forUpdate || raced) return;
+      raced = true;
+      await removeInvoiceItem(fake.db, "t1", String(live.id));
+    };
+    await expect(setInvoiceStatus(fake.db, { tenantId: "t1", id: "inv-1", status: "sent" })).rejects.toMatchObject({
+      code: "invoice_has_no_lines",
+    });
+    expect(raced).toBe(true);
+    expect(row().status).toBe("draft");
   });
 });
 

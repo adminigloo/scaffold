@@ -10,6 +10,7 @@ export type InvoicingErrorCode =
   | "estimate_not_convertible"
   | "discount_exceeds_subtotal"
   | "invoice_not_editable"
+  | "invoice_has_no_lines"
   | "invalid_status_transition"
   | "payment_refused"
   | "reversal_refused"
@@ -71,6 +72,23 @@ export class InvoiceNotEditableError extends InvoicingError {
     super(
       "invoice_not_editable",
       `A ${status} invoice's lines can't be changed — reverse its payments or void and reissue it.`,
+    );
+  }
+}
+
+/**
+ * Every line has been removed. Removing the last line stays allowed — it may
+ * be about to be replaced — but a line-less invoice is a $0 bill for nothing:
+ * sent, it showed the customer an empty page; paid, the money landed as an
+ * overpayment against no work at all.
+ */
+export class InvoiceHasNoLinesError extends InvoicingError {
+  constructor(readonly action: "send" | "pay") {
+    super(
+      "invoice_has_no_lines",
+      action === "send"
+        ? "This invoice has no lines — add one before sending it."
+        : "This invoice has no lines — add one before recording a payment against it.",
     );
   }
 }

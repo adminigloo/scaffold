@@ -25,6 +25,11 @@ function usd(cents: number): string {
 
 const STATUSES = ["draft", "sent", "viewed", "approved", "rejected", "expired", "converted"] as const;
 
+/** The moves staff may pick by hand: never `converted` (only the invoicing claim sets it). */
+function manualMoves(next: readonly string[]): string[] {
+  return next.filter((s) => s !== "converted");
+}
+
 function statusTone(status: string): BadgeTone {
   if (status === "approved" || status === "converted") return "accent";
   if (status === "rejected" || status === "expired") return "danger";
@@ -48,8 +53,11 @@ export default function EstimatesPage() {
   // add `createFromEstimate` to the invoicing router — read the estimate with
   // `getEstimate(db, tenantId, id)` and claim it with
   // `markEstimateConverted(db, tenantId, id)` inside the invoice's transaction
-  // (null means it was already invoiced: stop) — and call
-  // `api.invoicing.createFromEstimate` from a button here.
+  // — and call `api.invoicing.createFromEstimate` from a button here. The claim
+  // takes only an APPROVED estimate: null means it is not approved (a draft,
+  // rejected or expired quote the customer never accepted) or was already
+  // invoiced — stop, and bill nothing. It is also the only way an estimate
+  // becomes `converted`; the status picker below never offers it.
 
   return (
     <>
@@ -130,12 +138,17 @@ export default function EstimatesPage() {
                   <Badge tone={statusTone(detail.data.estimate.status)}>{detail.data.estimate.status}</Badge>
                   {/* Only the lifecycle's next moves are offered (the package
                       enforces them too): converted is terminal, so an invoiced
-                      estimate cannot be walked back and invoiced again. */}
+                      estimate cannot be walked back and invoiced again. Nor is
+                      converted a manual move — picked by hand it marked an
+                      approved estimate invoiced with no invoice, and invoicing
+                      refuses a converted estimate, so it could never be billed.
+                      The router leaves it out; this filter keeps it out even
+                      against an older router. */}
                   <label className="ml-auto flex items-center gap-2 text-xs text-ink-muted">
                     Status
                     <select
                       value={detail.data.estimate.status}
-                      disabled={detail.data.nextStatuses.length === 0 || setStatus.isPending}
+                      disabled={manualMoves(detail.data.nextStatuses).length === 0 || setStatus.isPending}
                       onChange={(event) =>
                         void setStatus
                           .mutateAsync({ id: detail.data!.estimate.id, status: event.target.value as (typeof STATUSES)[number] })
@@ -149,7 +162,7 @@ export default function EstimatesPage() {
                       }
                       className="rounded-control border border-line-strong bg-surface px-2 py-1.5 text-sm text-ink"
                     >
-                      {[detail.data.estimate.status, ...detail.data.nextStatuses].map((s) => (
+                      {[detail.data.estimate.status, ...manualMoves(detail.data.nextStatuses)].map((s) => (
                         <option key={s} value={s}>
                           {s}
                         </option>

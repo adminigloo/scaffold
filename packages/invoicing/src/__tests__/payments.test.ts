@@ -1,15 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  invoiceItems,
   invoicePayments,
   invoices,
   PaymentRefusedError,
   PaymentReversalError,
   recordPayment,
+  removeInvoiceItem,
   reversePayment,
 } from "../index.js";
 import { createFakeDb } from "./fake-db.js";
 
-/** A sent $1,000.00 invoice in tenant t1. */
+/** A sent $1,000.00 invoice in tenant t1, with its one $1,000.00 line. */
 function sentInvoice(over: Record<string, unknown> = {}) {
   const fake = createFakeDb();
   fake.seed(invoices, [
@@ -24,6 +26,9 @@ function sentInvoice(over: Record<string, unknown> = {}) {
       total: 100_000,
       ...over,
     },
+  ]);
+  fake.seed(invoiceItems, [
+    { id: "line-1", invoiceId: "inv-1", description: "Install", quantity: 1, unitPrice: 100_000, total: 100_000 },
   ]);
   const row = () => fake.rows(invoices)[0]!;
   return { fake, row };
@@ -63,6 +68,21 @@ describe("recordPayment — refusals", () => {
     expect(await recordPayment(fake.db, pay(5_000, { tenantId: "t2" }))).toBeNull();
     expect(fake.rows(invoicePayments)).toHaveLength(0);
     expect(row().amountPaid).toBe(0);
+  });
+
+  it("refuses money against an invoice whose every line was removed", async () => {
+    // Removing the last line of a sent invoice is allowed (to replace it), and
+    // leaves a $0 bill for nothing. A payment there went down as an
+    // overpayment against no work at all.
+    for (const status of ["sent", "draft"] as const) {
+      const { fake, row } = sentInvoice({ status });
+      await removeInvoiceItem(fake.db, "t1", "line-1");
+      await expect(recordPayment(fake.db, pay(5_000), "staff-1", { allowDraft: true })).rejects.toMatchObject({
+        code: "invoice_has_no_lines",
+      });
+      expect(fake.rows(invoicePayments)).toHaveLength(0);
+      expect(row()).toMatchObject({ status, amountPaid: 0 });
+    }
   });
 });
 

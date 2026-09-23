@@ -15,6 +15,7 @@ import {
   listInvoices,
   markInvoiceViewed,
   nextInvoiceStatuses,
+  outstandingBalance,
   recordPayment,
   recordPaymentSchema,
   removeInvoiceItem,
@@ -62,10 +63,12 @@ import { createTRPCRouter, publicProcedure, requireStaff } from "../trpc";
  *             { tenantId: INVOICING_TENANT, ...invoiceInputFromEstimate(detail.estimate, detail.items) },
  *             ctx.principal.userId,
  *           );
- *           // Claim the quote in the same transaction; null means it was
- *           // already converted, and throwing rolls the new invoice back.
+ *           // Claim the quote in the same transaction. It claims only an
+ *           // APPROVED estimate, so null means it was not approved (or stopped
+ *           // being approved since the read) or was already converted; throwing
+ *           // rolls the new invoice back.
  *           if (!(await markEstimateConverted(tx, ESTIMATOR_TENANT, detail.estimate.id))) {
- *             throw new TRPCError({ code: "CONFLICT", message: "This estimate was already converted." });
+ *             throw new TRPCError({ code: "CONFLICT", message: "This estimate is not approved, or was already converted." });
  *           }
  *           return invoice;
  *         })
@@ -91,7 +94,8 @@ function withDisplayStatus<T extends { status: string; dueDate: Date | null }>(i
 
 /**
  * The package's typed refusals (paid invoice, frozen lines, illegal status
- * move, discount over the subtotal, estimate already invoiced) as a 4xx that
+ * move, discount over the subtotal, estimate already invoiced, sending or
+ * paying an invoice with no lines) as a 4xx that
  * carries the message to the page. Uncaught, each is a 500 that tells staff
  * nothing about what to do instead.
  */
@@ -141,6 +145,9 @@ export const invoicingRouter = createTRPCRouter({
         // client never imports the package (or re-types its rules).
         editable: isInvoiceEditable(detail.invoice.status),
         nextStatuses: nextInvoiceStatuses(detail.invoice.status),
+        // Nothing is owed on a void invoice; the page's own total − paid
+        // showed its whole stored total as the balance.
+        balanceDue: outstandingBalance(detail.invoice),
       };
     }),
 
@@ -158,6 +165,11 @@ export const invoicingRouter = createTRPCRouter({
       addInvoiceItem(db, { ...input, tenantId: INVOICING_TENANT }).catch(refused),
     ),
 
+  /**
+   * On a sent/viewed invoice the edit REPLACES the line (the old row is kept,
+   * removed, as the record of what the customer was shown), so the returned
+   * `item.id` is new — key a client's row on the returned item, not the input.
+   */
   updateItem: requireStaff("staff.dashboard.view")
     .meta({ scope: "staff" })
     .input(updateInvoiceItemSchema.omit({ tenantId: true }))

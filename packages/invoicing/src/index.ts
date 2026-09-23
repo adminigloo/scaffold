@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   InvoiceAlreadyExistsForEstimateError,
   InvoiceDiscountError,
+  InvoiceHasNoLinesError,
   InvoiceNotEditableError,
   InvoiceNumberConflictError,
   InvoiceStatusTransitionError,
@@ -11,7 +12,13 @@ import {
   PaymentReversalError,
   uniqueViolationConstraint,
 } from "./errors.js";
-import { balanceOf, calculateInvoiceTotals, isOverdue, type InvoiceStatus } from "./money.js";
+import {
+  balanceOf,
+  calculateInvoiceTotals,
+  isOverdue,
+  outstandingBalance,
+  type InvoiceStatus,
+} from "./money.js";
 import {
   canTransitionInvoice,
   isInvoiceEditable,
@@ -74,6 +81,20 @@ async function lockInvoice(
     .limit(1)
     .for("update");
   return (row as InvoiceRow | undefined) ?? null;
+}
+
+/**
+ * Whether the invoice has at least one live (not removed) line. Called under
+ * the invoice lock, which every line change takes first — so the answer holds
+ * until the caller's transaction ends.
+ */
+async function hasLiveLines(tx: InvoicingDb, invoiceId: string): Promise<boolean> {
+  const [line] = await tx
+    .select({ id: invoiceItems.id })
+    .from(invoiceItems)
+    .where(and(eq(invoiceItems.invoiceId, invoiceId), isNull(invoiceItems.removedAt)))
+    .limit(1);
+  return line !== undefined;
 }
 
 /** amountPaid, recomputed from the append-only ledger — never incremented from a read. */
@@ -175,7 +196,18 @@ export const createInvoiceSchema = z.object({
   taxRateBp: z.number().int().min(0).max(1_000_000).default(0),
   discount: centsField.default(0),
   dueDate: z.coerce.date().nullish(),
-  estimateId: z.string().nullish(),
+  /**
+   * Blank means "no estimate". A form's empty field arrives as "", and stored
+   * as-is it was a real link: the (tenant, estimate) unique index let exactly
+   * one invoice per tenant carry it, and the next blank one failed with a raw
+   * 23505. Trimmed, so " est-1" and "est-1" are one estimate to the index.
+   */
+  estimateId: z
+    .string()
+    .trim()
+    .max(200)
+    .nullish()
+    .transform((id) => (id ? id : null)),
   notes: z.string().max(2000).nullish(),
   items: z.array(createInvoiceItemSchema).min(1).max(200),
 });
@@ -426,8 +458,9 @@ export async function getInvoice(
  * What a customer's link may show — a projection, not the row. The staff
  * detail carries payment references (check numbers, processor ids), who
  * recorded them, internal ids and the estimate link; a forwarded link must
- * leak none of it. Contact details are left off too: the bearer of the link is
- * not necessarily the customer.
+ * leak none of it. Contact details — email, phone AND billing address — are
+ * left off too: the bearer of the link is not necessarily the customer, and
+ * the page never showed the address anyway, so it only rode along to leak.
  */
 export interface PublicInvoice {
   invoice: {
@@ -435,13 +468,13 @@ export interface PublicInvoice {
     /** Stored status, or "overdue" when an open invoice is past due. */
     status: InvoiceStatus;
     customerName: string | null;
-    billingAddress: string | null;
     subtotal: number;
     discount: number;
     taxRateBp: number;
     taxAmount: number;
     total: number;
     amountPaid: number;
+    /** What is still owed — 0 on a void invoice (see `outstandingBalance`). */
     balanceDue: number;
     dueDate: Date | null;
     /** When it was sent (created, for a legacy row sent before the stamp existed). */
@@ -475,14 +508,13 @@ export async function getInvoiceByToken(
         ? "overdue"
         : (invoice.status as InvoiceStatus),
       customerName: invoice.customerName,
-      billingAddress: invoice.billingAddress,
       subtotal: invoice.subtotal,
       discount: invoice.discount,
       taxRateBp: invoice.taxRateBp,
       taxAmount: invoice.taxAmount,
       total: invoice.total,
       amountPaid: invoice.amountPaid,
-      balanceDue: balanceOf(invoice.total, invoice.amountPaid).balanceDue,
+      balanceDue: outstandingBalance(invoice),
       dueDate: invoice.dueDate,
       issuedAt: invoice.sentAt ?? invoice.createdAt,
     },
@@ -648,21 +680,42 @@ export async function addInvoiceItem(
   });
 }
 
-/** The live line with this id and the locked invoice it belongs to, in this tenant. */
+/**
+ * The live line with this id and the locked invoice it belongs to, in this
+ * tenant. The line is read AFTER the lock. Read before it, the row is whatever
+ * it was while this call waited: an edit that committed in between (another
+ * field of the same line) got written back over — 1 × $500 with A setting qty 3
+ * and B setting $0 came out 3 × $500 = $1,500.
+ */
 async function lockLine(
   tx: InvoicingDb,
   tenantId: string,
   itemId: string,
 ): Promise<{ line: InvoiceItemRow; inv: InvoiceRow } | null> {
+  // Only to learn which invoice to lock — a line never moves between invoices.
+  const [probe] = (await tx
+    .select({ invoiceId: invoiceItems.invoiceId })
+    .from(invoiceItems)
+    .where(and(eq(invoiceItems.id, itemId), isNull(invoiceItems.removedAt)))
+    .limit(1)) as Array<{ invoiceId: string }>;
+  if (!probe) return null;
+  // Tenant scope rides on the invoice: another tenant's line finds no invoice.
+  const inv = await lockInvoice(tx, tenantId, probe.invoiceId);
+  if (!inv) return null;
+  // Every line change takes this lock first, so this read is the line as it
+  // stands and stays until commit. Removed (or replaced) meanwhile → null.
   const [line] = await tx
     .select()
     .from(invoiceItems)
-    .where(and(eq(invoiceItems.id, itemId), isNull(invoiceItems.removedAt)))
+    .where(
+      and(
+        eq(invoiceItems.id, itemId),
+        eq(invoiceItems.invoiceId, inv.id),
+        isNull(invoiceItems.removedAt),
+      ),
+    )
     .limit(1);
   if (!line) return null;
-  // Tenant scope rides on the invoice: another tenant's line finds no invoice.
-  const inv = await lockInvoice(tx, tenantId, (line as InvoiceItemRow).invoiceId);
-  if (!inv) return null;
   return { line: line as InvoiceItemRow, inv };
 }
 
@@ -670,6 +723,13 @@ async function lockLine(
  * Change a line's description, quantity or unit price; its total and the
  * invoice's are recomputed. A price of 0 is a real change (the source's
  * `if (unitPrice || quantity)` skipped the recompute for it).
+ *
+ * A DRAFT's line is edited in place — no customer has seen it. On a sent or
+ * viewed invoice the customer's link has already shown the line, so the edit
+ * is a replacement: the old row is stamped removedAt and a new row takes its
+ * place (same position), both at one instant. `item` is then the NEW row, with
+ * a new id; the old id answers null from here on. Overwriting in place left no
+ * record of what the customer was first billed.
  */
 export async function updateInvoiceItem(
   db: InvoicingDb,
@@ -681,22 +741,48 @@ export async function updateInvoiceItem(
     if (!found) return null;
     const { line, inv } = found;
     if (!isInvoiceEditable(inv.status)) throw new InvoiceNotEditableError(inv.status);
+    const description = parsed.description ?? line.description;
     const quantity = parsed.quantity ?? line.quantity;
     const unitPrice = parsed.unitPrice ?? line.unitPrice;
-    const [item] = await tx
-      .update(invoiceItems)
-      .set({
-        description: parsed.description ?? line.description,
-        quantity,
-        unitPrice,
-        total: unitPrice * quantity,
-      })
-      // Re-checked under the invoice lock: removed by a concurrent edit → null.
-      .where(and(eq(invoiceItems.id, line.id), isNull(invoiceItems.removedAt)))
-      .returning();
-    if (!item) return null;
+    const next = { description, quantity, unitPrice, total: unitPrice * quantity };
+
+    let item: InvoiceItemRow;
+    if (inv.status === "draft") {
+      const [updated] = await tx
+        .update(invoiceItems)
+        .set(next)
+        .where(eq(invoiceItems.id, line.id))
+        .returning();
+      item = updated as InvoiceItemRow;
+    } else if (
+      description === line.description &&
+      quantity === line.quantity &&
+      unitPrice === line.unitPrice
+    ) {
+      // A re-submitted form that changes nothing must not add a copy of the
+      // line to the history.
+      item = line;
+    } else {
+      const now = new Date();
+      await tx
+        .update(invoiceItems)
+        .set({ removedAt: now })
+        .where(eq(invoiceItems.id, line.id));
+      const [inserted] = await tx
+        .insert(invoiceItems)
+        .values({
+          invoiceId: inv.id,
+          ...next,
+          sortOrder: line.sortOrder,
+          // The instant the old row stopped counting, so a point-in-time read
+          // of the lines sees exactly one of the two.
+          createdAt: now,
+        })
+        .returning();
+      item = inserted as InvoiceItemRow;
+    }
     const totals = await recalculateLocked(tx, inv);
-    return { item: item as InvoiceItemRow, totals };
+    return { item, totals };
   });
 }
 
@@ -774,7 +860,8 @@ export interface RecordedPayment extends PaymentOutcome {
  * recompute amountPaid from the ledger, derive the status — one transaction,
  * so two concurrent payments can't both read the old amountPaid and lose one.
  * Null when the invoice isn't in this tenant. Throws PaymentRefusedError for a
- * void or already-paid invoice, and for a draft unless `allowDraft`.
+ * void or already-paid invoice, and for a draft unless `allowDraft`;
+ * InvoiceHasNoLinesError when every line has been removed.
  */
 export async function recordPayment(
   db: InvoicingDb,
@@ -818,6 +905,9 @@ export async function recordPayment(
     if (inv.status === "void") throw new PaymentRefusedError("void");
     if (inv.status === "paid") throw new PaymentRefusedError("paid");
     if (inv.status === "draft" && !options.allowDraft) throw new PaymentRefusedError("draft");
+    // Every line removed (allowed, to replace one) leaves a $0 bill for
+    // nothing; money taken against it is an overpayment for no work.
+    if (!(await hasLiveLines(tx, inv.id))) throw new InvoiceHasNoLinesError("pay");
 
     const now = new Date();
     const [payment] = (await tx
@@ -954,7 +1044,8 @@ export type SetInvoiceStatusInput = z.infer<typeof setInvoiceStatusSchema>;
  * A staff move along INVOICE_STATUS_TRANSITIONS, stamping sentAt on the first
  * move to sent and viewedAt on the first to viewed. False when the invoice
  * isn't in this tenant; InvoiceStatusTransitionError for a move the table
- * forbids (anything out of partial/paid/void, anything back to draft).
+ * forbids (anything out of partial/paid/void, anything back to draft);
+ * InvoiceHasNoLinesError for sending an invoice whose every line was removed.
  * Re-asserting the current status is a no-op that returns true.
  */
 export async function setInvoiceStatus(
@@ -962,26 +1053,23 @@ export async function setInvoiceStatus(
   input: SetInvoiceStatusInput,
 ): Promise<boolean> {
   const parsed = setInvoiceStatusSchema.parse(input);
-  let seen = "";
-  // Optimistic, not locked: the UPDATE is conditioned on the status just
-  // judged, so a payment landing between the read and the write (sent →
-  // partial) makes it match nothing rather than voiding a bill that now has
-  // money on it. Re-read and re-judge; a real race settles in a round or two.
-  for (let round = 0; round < 3; round++) {
-    const [row] = await db
-      .select()
-      .from(invoices)
-      .where(and(eq(invoices.id, parsed.id), eq(invoices.tenantId, parsed.tenantId)))
-      .limit(1);
-    if (!row) return false;
-    const current = row as InvoiceRow;
-    seen = current.status;
+  // Locked, like every money and line change, so the move is judged on the
+  // row and the lines as they will stand at commit. A payment can't land
+  // between the judgement and the write (voiding a bill that now has money on
+  // it), and neither can the removal of the last line (sending a $0 bill for
+  // nothing) — the optimistic re-check this replaced covered only the first.
+  return db.transaction(async (tx) => {
+    const current = await lockInvoice(tx, parsed.tenantId, parsed.id);
+    if (!current) return false;
     if (current.status === parsed.status) return true;
     if (!canTransitionInvoice(current.status, parsed.status)) {
       throw new InvoiceStatusTransitionError(current.status, parsed.status);
     }
+    if (parsed.status === "sent" && !(await hasLiveLines(tx, current.id))) {
+      throw new InvoiceHasNoLinesError("send");
+    }
     const now = new Date();
-    const moved = await db
+    await tx
       .update(invoices)
       .set({
         status: parsed.status,
@@ -991,15 +1079,7 @@ export async function setInvoiceStatus(
           : {}),
         updatedAt: now,
       })
-      .where(
-        and(
-          eq(invoices.id, current.id),
-          eq(invoices.tenantId, parsed.tenantId),
-          eq(invoices.status, current.status),
-        ),
-      )
-      .returning({ id: invoices.id });
-    if (moved.length > 0) return true;
-  }
-  throw new InvoiceStatusTransitionError(seen, parsed.status);
+      .where(eq(invoices.id, current.id));
+    return true;
+  });
 }

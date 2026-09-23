@@ -75,6 +75,15 @@ export const commsMessages = pgTable(
      * "Hi ," — recorded, not enforced.
      */
     missingVars: jsonb("missing_vars").$type<string[]>(),
+    /**
+     * The comms_scheduled row this send was for — NULL for a sendNow. The
+     * queue reads it back before sending a row it has claimed: a `sent` entry
+     * here means the provider already took this message on an earlier claim
+     * whose outcome never reached the queue row, so the row is recorded sent
+     * instead of being sent again. No FK: the log is append-only evidence and
+     * must not be coupled to the queue's lifecycle.
+     */
+    scheduledId: text("scheduled_id"),
     createdAt: createdAt(),
   },
   (t) => [
@@ -82,6 +91,8 @@ export const commsMessages = pgTable(
     // The minIntervalMs lookup — "did this template reach this recipient
     // recently". Without it that check scans the tenant's whole log per send.
     index("comms_messages_recipient_idx").on(t.tenantId, t.toAddress, t.templateKey, t.createdAt),
+    // The already-sent check, run once per claimed queue row.
+    index("comms_messages_scheduled_idx").on(t.scheduledId),
   ],
 );
 
@@ -125,7 +136,11 @@ export const commsScheduled = pgTable(
     /** Claims so far. Counted AT claim time, so a worker that dies mid-send still uses one up. */
     attempts: integer("attempts").notNull().default(0),
     lastError: text("last_error"),
-    /** When a worker flipped it to `sending`. A stale claim is a dead worker, and is reclaimed. */
+    /**
+     * When a worker flipped it to `sending`. A stale claim is a dead worker, and
+     * is reclaimed. A `sending` row with NO claim time was claimed by 0.1.x,
+     * whose state is unknown — it is failed, never revived into a duplicate.
+     */
     claimedAt: timestamp("claimed_at", { withTimezone: true }),
     createdAt: createdAt(),
   },

@@ -4,7 +4,6 @@ import {
   attachComponent,
   attachComponentSchema,
   calculateEstimate,
-  calculateEstimateSchema,
   createComponent,
   createComponentSchema,
   createEstimate,
@@ -28,6 +27,7 @@ import {
   listEstimates,
   listProducts,
   listPublicOptions,
+  publicCalculateEstimateSchema,
   publicSubmitSchema,
   revokeClientKey,
   setEstimateStatus,
@@ -52,7 +52,9 @@ import { createTRPCRouter, publicProcedure, requireStaff, TRPCError } from "../t
  * price, labor, discount, tax or photo field at all: the browser names the job
  * and the package prices it, taxed at this deployment's rate
  * (`ESTIMATOR_TAX_RATE_BP`). Every by-id call passes the tenant, and the
- * package filters by it.
+ * package filters by it — reads, estimate moves, and the catalog writes
+ * (options, values, materials, attachments, embed keys) alike, so an id from
+ * another workspace is "not found", never an edit to its price book.
  *
  * Staff procedures are gated on `staff.dashboard.view`, like feedback/SEO/
  * assistant before it: editing a price book is operator work, not yet worth its
@@ -114,10 +116,13 @@ export const estimatorRouter = createTRPCRouter({
   /** The live "$X–$Y" the tool shows on every keystroke. */
   calculate: publicProcedure
     .meta({ scope: "public" })
-    .input(calculateEstimateSchema)
+    // The public schema drops `measurement.units` rather than refusing it: the
+    // package prices a public line with units = 1 whatever the body says.
+    .input(publicCalculateEstimateSchema)
     .query(({ input }) =>
       // Tenant-scoped and public: another workspace's product, a hidden one,
-      // or a staff-only option prices as nothing.
+      // or a staff-only option prices as nothing, and an area needs width ×
+      // height (a bare sqFt left the perimeter out of the price).
       calculateEstimate(db, input, { tenantId: ESTIMATOR_TENANT, audience: "public" }),
     ),
 
@@ -181,27 +186,33 @@ export const estimatorRouter = createTRPCRouter({
   deactivateComponent: requireStaff("staff.dashboard.view")
     .meta({ scope: "staff" })
     .input(z.object({ id: z.string().min(1) }))
-    .mutation(async ({ input }) => ({ ok: await deactivateComponent(db, input.id) })),
+    .mutation(async ({ input }) => ({ ok: await deactivateComponent(db, ESTIMATOR_TENANT, input.id) })),
 
   attachComponent: requireStaff("staff.dashboard.view")
     .meta({ scope: "staff" })
     .input(attachComponentSchema)
-    .mutation(async ({ input }) => ({ id: await attachComponent(db, input) })),
+    .mutation(({ input }) =>
+      refusalsAsBadRequest(async () => ({ id: await attachComponent(db, ESTIMATOR_TENANT, input) })),
+    ),
 
   detachComponent: requireStaff("staff.dashboard.view")
     .meta({ scope: "staff" })
     .input(z.object({ assignmentId: z.string().min(1) }))
-    .mutation(async ({ input }) => ({ ok: await detachComponent(db, input.assignmentId) })),
+    .mutation(async ({ input }) => ({
+      ok: await detachComponent(db, ESTIMATOR_TENANT, input.assignmentId),
+    })),
 
   createOption: requireStaff("staff.dashboard.view")
     .meta({ scope: "staff" })
     .input(createOptionSchema)
-    .mutation(({ input }) => createOption(db, input)),
+    .mutation(({ input }) => refusalsAsBadRequest(() => createOption(db, ESTIMATOR_TENANT, input))),
 
   createOptionValue: requireStaff("staff.dashboard.view")
     .meta({ scope: "staff" })
     .input(createOptionValueSchema)
-    .mutation(({ input }) => createOptionValue(db, input)),
+    .mutation(({ input }) =>
+      refusalsAsBadRequest(() => createOptionValue(db, ESTIMATOR_TENANT, input)),
+    ),
 
   // --- Staff: estimates ----------------------------------------------------
 
@@ -210,13 +221,24 @@ export const estimatorRouter = createTRPCRouter({
     .input(z.object({ limit: z.number().int().min(1).max(200).default(100) }).optional())
     .query(({ input }) => listEstimates(db, ESTIMATOR_TENANT, input?.limit ?? 100)),
 
-  /** One estimate, with the statuses it may move to next (the lifecycle lives in the package). */
+  /**
+   * One estimate, with the statuses staff may move it to next (the lifecycle
+   * lives in the package). `converted` is never offered: it means an invoice
+   * exists, so only the invoicing claim (`markEstimateConverted`) sets it —
+   * set by hand, the estimate could never be invoiced (the bridge refuses a
+   * converted one), and `setEstimateStatus` refuses it anyway.
+   */
   estimate: requireStaff("staff.dashboard.view")
     .meta({ scope: "staff" })
     .input(z.object({ id: z.string().min(1) }))
     .query(async ({ input }) => {
       const detail = await getEstimate(db, ESTIMATOR_TENANT, input.id);
-      return detail ? { ...detail, nextStatuses: [...allowedNextStatuses(detail.estimate.status)] } : null;
+      return detail
+        ? {
+            ...detail,
+            nextStatuses: allowedNextStatuses(detail.estimate.status).filter((s) => s !== "converted"),
+          }
+        : null;
     }),
 
   createEstimate: requireStaff("staff.dashboard.view")
@@ -228,7 +250,7 @@ export const estimatorRouter = createTRPCRouter({
       ),
     ),
 
-  /** `ok: false` when the move is not in the lifecycle (e.g. out of `converted`). */
+  /** `ok: false` when the move is not in the lifecycle (e.g. out of `converted`), or is to `converted`. */
   setEstimateStatus: requireStaff("staff.dashboard.view")
     .meta({ scope: "staff" })
     .input(setEstimateStatusSchema)
@@ -248,8 +270,6 @@ export const estimatorRouter = createTRPCRouter({
   revokeClientKey: requireStaff("staff.dashboard.view")
     .meta({ scope: "staff" })
     .input(z.object({ id: z.string().min(1) }))
-    .mutation(async ({ input }) => {
-      await revokeClientKey(db, input.id);
-      return { ok: true };
-    }),
+    // `ok: false` when the key is not this deployment's — never another's revoked.
+    .mutation(async ({ input }) => ({ ok: await revokeClientKey(db, ESTIMATOR_TENANT, input.id) })),
 });

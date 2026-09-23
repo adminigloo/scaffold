@@ -131,6 +131,60 @@ describe("line items after creation", () => {
     expect(fake.rows(invoiceItems)).toHaveLength(1);
     expect(fake.rows(invoiceItems)[0]).toMatchObject({ unitPrice: 50_000, removedAt: null });
   });
+
+  it("builds an edit from the line as it stands under the lock, not from a read taken before it", async () => {
+    // 1 × $500, no tax. Staff A sets the quantity to 3 while staff B prices
+    // the line at $0. A reads the line, then waits on the invoice lock B
+    // holds; B commits first. Built from A's pre-lock read, A wrote B's
+    // price back over it: 3 × $500 = $1,500 instead of 3 × $0.
+    const { fake, id } = await draft(undefined, { taxRateBp: 0 });
+    const itemId = String(fake.rows(invoiceItems)[0]!.id);
+    let raced = false;
+    fake.beforeSelect = async (table, { forUpdate }) => {
+      if (table !== invoices || !forUpdate || raced) return;
+      raced = true;
+      await updateInvoiceItem(fake.db, { tenantId: "t1", itemId, unitPrice: 0 });
+    };
+    const change = await updateInvoiceItem(fake.db, { tenantId: "t1", itemId, quantity: 3 });
+    expect(raced).toBe(true);
+    expect(change?.item).toMatchObject({ quantity: 3, unitPrice: 0, total: 0 });
+    expect(invoiceRow(fake, id)).toMatchObject({ subtotal: 0, total: 0 });
+  });
+
+  it("keeps what a sent invoice said: an edit replaces the line and the old row stays, removed", async () => {
+    const { fake, id } = await draft();
+    invoiceRow(fake, id).status = "sent";
+    const original = fake.rows(invoiceItems)[0]!;
+    const change = await updateInvoiceItem(fake.db, { tenantId: "t1", itemId: String(original.id), quantity: 2 });
+
+    // The customer's link already showed 1 × $500. Overwriting the row in
+    // place left no trace that it ever did.
+    expect(change?.item.id).not.toBe(original.id);
+    expect(change?.item).toMatchObject({ description: "Install", quantity: 2, unitPrice: 50_000, total: 100_000 });
+    // Same slot on the bill, and one instant: a point-in-time read of the
+    // lines sees exactly one of the two rows.
+    expect(change?.item.sortOrder).toBe(original.sortOrder);
+    expect(change?.item.createdAt).toEqual(original.removedAt);
+    expect(fake.rows(invoiceItems)).toHaveLength(2);
+    expect(original).toMatchObject({ quantity: 1, unitPrice: 50_000, total: 50_000 });
+    expect(original.removedAt).toBeInstanceOf(Date);
+
+    const detail = await getInvoice(fake.db, "t1", id);
+    expect(detail?.items.map((i) => [i.description, i.quantity])).toEqual([["Install", 2]]);
+    // 1000.00 + 8.25% = 1082.50
+    expect(invoiceRow(fake, id)).toMatchObject({ subtotal: 100_000, total: 108_250, status: "sent" });
+    // The superseded id is history now, not a line to edit.
+    expect(await updateInvoiceItem(fake.db, { tenantId: "t1", itemId: String(original.id), quantity: 5 })).toBeNull();
+  });
+
+  it("edits a draft's line in place — no customer has seen it yet", async () => {
+    const { fake } = await draft();
+    const original = fake.rows(invoiceItems)[0]!;
+    const change = await updateInvoiceItem(fake.db, { tenantId: "t1", itemId: String(original.id), quantity: 2 });
+    expect(change?.item.id).toBe(original.id);
+    expect(fake.rows(invoiceItems)).toHaveLength(1);
+    expect(original).toMatchObject({ quantity: 2, total: 100_000, removedAt: null });
+  });
 });
 
 describe("recalculateInvoiceTotals", () => {

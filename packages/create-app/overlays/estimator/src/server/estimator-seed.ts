@@ -63,14 +63,14 @@ async function seedCatalog(db: Parameters<typeof listProducts>[0]): Promise<void
     minimumCharge: 35_000,
     sortOrder: 10,
   });
-  const finish = await createOption(db, {
+  const finish = await createOption(db, ESTIMATOR_TENANT, {
     productId: runService.id,
     name: "Finish",
     optionType: "finish",
     sortOrder: 10,
   });
-  await createOptionValue(db, { optionId: finish.id, label: "Standard", isDefault: true, sortOrder: 10 });
-  await createOptionValue(db, { optionId: finish.id, label: "Premium", priceModifier: 6_000, sortOrder: 20 });
+  await createOptionValue(db, ESTIMATOR_TENANT, { optionId: finish.id, label: "Standard", isDefault: true, sortOrder: 10 });
+  await createOptionValue(db, ESTIMATOR_TENANT, { optionId: finish.id, label: "Premium", priceModifier: 6_000, sortOrder: 20 });
 
   // A flat-rate unit service.
   await createProduct(db, {

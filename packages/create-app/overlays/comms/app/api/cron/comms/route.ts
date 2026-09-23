@@ -23,7 +23,10 @@ const TIME_BUDGET_MS = 45_000;
  * `crons` — once a day, the only schedule Vercel's Hobby plan accepts. On Pro,
  * tighten it (every 15 minutes is a good reminder resolution), or point any
  * external scheduler at this URL with the secret. Set CRON_SECRET in the Vercel
- * project: until it is set, every call is refused and reminders wait.
+ * project: until it is set, every call is refused and reminders wait — and a
+ * reminder that waits more than 48 hours past its sendAt ends "expired" rather
+ * than going out days late (pass `maxLatenessMs` below to change the bound; a
+ * row's own `expiresAt` overrides it).
  *
  * NOT FOR IMMEDIATE MESSAGES. A booking confirmation must go out in the
  * request that made the booking — call `sendNow(db, {...}, commsSenders)`

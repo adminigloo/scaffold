@@ -155,18 +155,30 @@ describe("runDueMessages — forward progress", () => {
   it("reclaims a claim abandoned by a dead worker, and leaves a live one alone", async () => {
     const { db, queue, senders, sent, scheduled } = setup();
     const dead = queue({ toAddress: "dead@example.com", status: "sending", claimedAt: ago(11 * MIN), attempts: 1 });
-    const legacy = queue({ toAddress: "legacy@example.com", status: "sending", claimedAt: null, attempts: 0 });
     const live = queue({ toAddress: "live@example.com", status: "sending", claimedAt: ago(2 * MIN), attempts: 1 });
     const exhausted = queue({ toAddress: "spent@example.com", status: "sending", claimedAt: ago(30 * MIN), attempts: 5 });
 
     const result = await runDueMessages(db, senders, NOW);
-    expect(result.reclaimed).toBe(2);
-    expect(sent.map((m) => m.to).sort()).toEqual(["dead@example.com", "legacy@example.com"]);
+    expect(result.reclaimed).toBe(1);
+    expect(sent.map((m) => m.to)).toEqual(["dead@example.com"]);
     const byId = (id: unknown) => scheduled().find((r) => r.id === id)!;
     expect(byId(dead.id)).toMatchObject({ status: "sent", attempts: 2 });
-    expect(byId(legacy.id)).toMatchObject({ status: "sent", attempts: 1 });
     expect(byId(live.id)).toMatchObject({ status: "sending" });
     expect(byId(exhausted.id).status).toBe("failed");
+  });
+
+  it("fails a 0.1.x `sending` row (no claim time) instead of reviving it into a duplicate", async () => {
+    // 0.1.x stranded a row in `sending` whenever anything after the claim
+    // threw — usually AFTER the provider accepted it. Reviving those on the
+    // first 0.2 drain re-sent months-old reminders that had already arrived.
+    const { db, queue, senders, sent, scheduled } = setup();
+    const legacy = queue({ toAddress: "legacy@example.com", status: "sending", claimedAt: null, attempts: 0 });
+    const result = await runDueMessages(db, senders, NOW);
+    expect(sent).toHaveLength(0);
+    expect(result).toMatchObject({ reclaimed: 0, failed: 1 });
+    const row = scheduled().find((r) => r.id === legacy.id)!;
+    expect(row.status).toBe("failed");
+    expect(row.lastError).toMatch(/state unknown from 0\.1\.x/);
   });
 
   it("stops claiming when the time budget is spent and leaves the rest pending", async () => {
@@ -198,6 +210,132 @@ describe("runDueMessages — forward progress", () => {
     queue({});
     queue({});
     expect((await runDueMessages(db, senders, NOW, 1)).processed).toBe(1);
+  });
+});
+
+describe("runDueMessages — never the same message twice", () => {
+  it("does not re-send a delivered row whose outcome write failed, when it is reclaimed", async () => {
+    // Before: the provider accepted it, the `sent` write to the queue row
+    // failed, the row sat in `sending`, the stale-claim reclaim put it back to
+    // pending — and the next tick texted the customer a second time.
+    let dbDown = true;
+    const { db, queue, senders, sent, scheduled } = setup({
+      onUpdate: (table, patch) => {
+        if (dbDown && table === "comms_scheduled" && patch.status === "sent") throw new Error("connection reset");
+      },
+    });
+    const row = queue({});
+    await runDueMessages(db, senders, NOW);
+    expect(sent).toHaveLength(1);
+    expect(scheduled()[0]!.status).toBe("sending");
+
+    dbDown = false;
+    const later = await runDueMessages(db, senders, new Date(NOW.getTime() + 11 * MIN));
+    expect(later.reclaimed).toBe(1);
+    expect(sent).toHaveLength(1);
+    const final = scheduled().find((r) => r.id === row.id)!;
+    expect(final.status).toBe("sent");
+    expect(final.lastError).toMatch(/already sent/);
+  });
+
+  it("retries the outcome write in-run, so one blip does not leave the row `sending`", async () => {
+    let failures = 1;
+    const { db, queue, senders, sent, scheduled } = setup({
+      onUpdate: (table, patch) => {
+        if (table === "comms_scheduled" && patch.status === "sent" && failures > 0) {
+          failures -= 1;
+          throw new Error("connection reset");
+        }
+      },
+    });
+    queue({});
+    await runDueMessages(db, senders, NOW);
+    expect(sent).toHaveLength(1);
+    expect(scheduled()[0]!.status).toBe("sent");
+  });
+
+  it("hands the sender the queue row's id as an idempotency key, and links the log to the row", async () => {
+    const { db, queue, senders, sent, rows } = setup();
+    const row = queue({});
+    await runDueMessages(db, senders, NOW);
+    expect(sent[0]!.idempotencyKey).toBe(row.id);
+    expect(rows("comms_messages")[0]).toMatchObject({ status: "sent", scheduledId: row.id });
+  });
+
+  it("a stalled worker's late outcome does not overwrite the newer owner's claim", async () => {
+    // Worker A claims the row and stalls in the provider call past
+    // staleClaimMs; worker B reclaims it, claims it (attempts 2) and is mid-
+    // send when A comes back with a transient failure. A's patch used to match
+    // `status = 'sending'` — B's claim — and put the row back to pending, so
+    // B's success was discarded and the row was due to send yet again.
+    const { db, queue, scheduled } = setup();
+    const row = queue({});
+    let bInSender!: () => void;
+    const bReachedSender = new Promise<void>((resolve) => (bInSender = resolve));
+    let releaseB!: () => void;
+    const bMayFinish = new Promise<void>((resolve) => (releaseB = resolve));
+    let runB: Promise<unknown> | undefined;
+    const delivered: string[] = [];
+    const senders: CommsSenders = {
+      email: async (m) => {
+        if (!runB) {
+          runB = runDueMessages(db, senders, new Date(NOW.getTime() + 11 * MIN));
+          await bReachedSender;
+          throw new Error("provider 503");
+        }
+        bInSender();
+        await bMayFinish;
+        delivered.push(m.to);
+        return { id: "em_b" };
+      },
+    };
+    await runDueMessages(db, senders, NOW);
+    releaseB();
+    await runB;
+    expect(delivered).toHaveLength(1);
+    expect(scheduled().find((r) => r.id === row.id)).toMatchObject({ status: "sent", attempts: 2 });
+  });
+});
+
+describe("runDueMessages — never months late", () => {
+  const DAY = 24 * 60 * MIN;
+
+  it("expires a row more than 48 hours (2 days) late instead of flushing it", async () => {
+    // Before: nothing bounded lateness — a cron that never ran (or an
+    // upgrade) sent every "see you tomorrow" from the last three months.
+    const { db, queue, senders, sent, scheduled } = setup();
+    const stale = queue({ toAddress: "stale@example.com", sendAt: ago(3 * DAY) });
+    queue({ toAddress: "late@example.com", sendAt: ago(47 * 60 * MIN) });
+    // An explicit expiresAt is the caller's own bound and wins.
+    queue({ toAddress: "bounded@example.com", sendAt: ago(3 * DAY), expiresAt: new Date(NOW.getTime() + DAY) });
+
+    const result = await runDueMessages(db, senders, NOW);
+    expect(sent.map((m) => m.to).sort()).toEqual(["bounded@example.com", "late@example.com"]);
+    expect(result.expired).toBe(1);
+    const row = scheduled().find((r) => r.id === stale.id)!;
+    expect(row.status).toBe("expired");
+    expect(row.lastError).toBe("more than 2 days late (due 2026-09-20T15:00:00.000Z) — not sent");
+  });
+
+  it("takes the bound from maxLatenessMs, and logs the expiry against the row", async () => {
+    const { db, queue, senders, sent, scheduled, rows } = setup();
+    const row = queue({ sendAt: ago(60 * MIN) });
+    await runDueMessages(db, senders, { now: NOW, maxLatenessMs: 30 * MIN });
+    expect(sent).toHaveLength(0);
+    expect(scheduled()[0]!.status).toBe("expired");
+    expect(rows("comms_messages")[0]).toMatchObject({ status: "expired", scheduledId: row.id });
+    expect(rows("comms_messages")[0]!.error).toMatch(/^more than 30 minutes late/);
+  });
+});
+
+describe("runDueMessages — beforeSend", () => {
+  it("treats a hook that returns null as 'send' instead of failing the row", async () => {
+    // Before: `"skip" in null` threw a TypeError, retried to `failed`.
+    const { db, queue, senders, sent, scheduled } = setup();
+    queue({});
+    await runDueMessages(db, senders, { now: NOW, beforeSend: () => null as never });
+    expect(sent).toHaveLength(1);
+    expect(scheduled()[0]!.status).toBe("sent");
   });
 });
 
@@ -353,6 +491,44 @@ describe("cancelScheduled", () => {
     await cancelScheduled(db, { tenantId: T, id: row.id as string });
     await runDueMessages(db, senders, NOW);
     expect(sent).toHaveLength(0);
+  });
+
+  it("a cancel that lands mid-send sticks — the row is not retried after it", async () => {
+    // Before: only `pending` rows were cancelled, so a booking cancelled while
+    // its reminder was in flight cancelled nothing; the transient failure put
+    // the row back to pending and the next tick reminded the customer of a
+    // visit that no longer existed.
+    const { db, queue, scheduled } = setup();
+    const row = queue({ refType: "booking", refId: "b1" });
+    let calls = 0;
+    const flakyOnce: CommsSenders = {
+      email: async () => {
+        calls += 1;
+        if (calls === 1) throw new Error("provider 503");
+        return { id: "x" };
+      },
+    };
+    let cancelledMidSend = -1;
+    await runDueMessages(db, flakyOnce, {
+      now: NOW,
+      beforeSend: async () => {
+        cancelledMidSend = await cancelScheduled(db, { tenantId: T, refType: "booking", refId: "b1" });
+        return "send" as const;
+      },
+    });
+    expect(cancelledMidSend).toBe(1);
+    expect(scheduled().find((r) => r.id === row.id)!.status).toBe("cancelled");
+    await runDueMessages(db, flakyOnce, new Date(NOW.getTime() + 60 * MIN));
+    expect(calls).toBe(1);
+  });
+
+  it("cancelling a row stranded in `sending` stops the reclaim from sending it", async () => {
+    const { db, queue, senders, sent, scheduled } = setup();
+    queue({ refType: "booking", refId: "b1", status: "sending", claimedAt: ago(11 * MIN), attempts: 1 });
+    expect(await cancelScheduled(db, { tenantId: T, refType: "booking", refId: "b1" })).toBe(1);
+    await runDueMessages(db, senders, NOW);
+    expect(sent).toHaveLength(0);
+    expect(scheduled()[0]!.status).toBe("cancelled");
   });
 
   it("refuses an ambiguous input rather than guessing which rows were meant", async () => {

@@ -8,10 +8,12 @@ import {
   type EstimatorHandlersOptions,
 } from "../index.js";
 import {
+  estimatorComponents,
   estimatorEstimateItems,
   estimatorEstimates,
   estimatorOptionValues,
   estimatorOptions,
+  estimatorProductComponents,
   estimatorProducts,
 } from "../schema.js";
 import { createFakeDb, type FakeDb } from "./fake-db.js";
@@ -127,6 +129,41 @@ describe("POST /v1/options and /v1/calculate", () => {
     const { post } = await setup();
     const res = await post("/v1/calculate", { productId: "b-ramp", measurement: { linearFt: 24 } });
     expect(await res.json()).toEqual({ result: null });
+  });
+});
+
+describe("the embed prices a measurement the way the tool asks for it", () => {
+  type Priced = { result: { subtotal: number } | null };
+
+  it("ignores measurement.units — estimator-widget 0.1.0 sends units: quantity", async () => {
+    const { fake, post } = await setup();
+    // $80 gate + one $20 latch per gate (per_unit).
+    fake.seed(estimatorProducts, [{ id: "gate", tenantId: A, name: "Gate", measurementMode: "unit", basePrice: 8_000 }]);
+    fake.seed(estimatorComponents, [{ id: "latch", tenantId: A, name: "Latch", unitType: "per_unit", unitCost: 2_000 }]);
+    fake.seed(estimatorProductComponents, [{ productId: "gate", componentId: "latch", quantityMilli: 1000 }]);
+    const calc = async (measurement: object) =>
+      ((await (await post("/v1/calculate", { productId: "gate", measurement, quantity: 2 })).json()) as Priced).result;
+
+    const bare = await calc({});
+    expect(bare!.subtotal).toBe(20_000);
+    for (const units of [1e-4, 0, 2]) expect(await calc({ units })).toEqual(bare);
+
+    const res = await post("/v1/submit", submitBody({ productId: "gate", measurement: { units: 1e-4 }, quantity: 2 }));
+    expect(res.status).toBe(200);
+    expect(fake.rows(estimatorEstimateItems)[0]!.total).toBe(20_500);
+  });
+
+  it("refuses a bare sqFt for an area product (it priced the perimeter at 0)", async () => {
+    const { fake, post } = await setup();
+    fake.seed(estimatorProducts, [
+      { id: "panel", tenantId: A, name: "Panel", measurementMode: "area", pricePerSqFt: 2_000, pricePerLinearFt: 1_500 },
+    ]);
+    const calc = await post("/v1/calculate", { productId: "panel", measurement: { sqFt: 18 } });
+    expect(await calc.json()).toEqual({ result: null });
+    const res = await post("/v1/submit", submitBody({ productId: "panel", measurement: { sqFt: 18 } }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid_measurement" });
+    expect(fake.rows(estimatorEstimates)).toHaveLength(0);
   });
 });
 

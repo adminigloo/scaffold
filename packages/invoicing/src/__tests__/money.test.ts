@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyPayment, calculateInvoiceTotals, isOverdue } from "../money.js";
+import { applyPayment, calculateInvoiceTotals, isOverdue, outstandingBalance } from "../money.js";
 
 describe("calculateInvoiceTotals", () => {
   it("sums items and applies tax", () => {
@@ -25,6 +25,16 @@ describe("applyPayment", () => {
     expect(over.balanceDue).toBe(0);
     expect(over.overpayment).toBe(20_000);
     expect(over.status).toBe("paid");
+  });
+});
+
+describe("outstandingBalance", () => {
+  it("is what's left to pay — and nothing on a void invoice", () => {
+    expect(outstandingBalance({ status: "sent", total: 100_000, amountPaid: 40_000 })).toBe(60_000);
+    expect(outstandingBalance({ status: "paid", total: 100_000, amountPaid: 120_000 })).toBe(0);
+    // A cancelled bill is not owed, whatever its stored total says.
+    expect(outstandingBalance({ status: "void", total: 100_000, amountPaid: 0 })).toBe(0);
+    expect(outstandingBalance({ status: "void", total: 100_000, amountPaid: 40_000 })).toBe(0);
   });
 });
 

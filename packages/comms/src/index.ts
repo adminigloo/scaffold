@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, isNull, lt, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, sql, type SQL } from "drizzle-orm";
 import type { PgDatabase } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import { plainTextToEmailHtml } from "./html.js";
@@ -27,11 +27,28 @@ export interface OutboundEmail {
   body: string;
   /** `body` as escaped HTML (see plainTextToEmailHtml) — send it as the `html` part. */
   html: string;
+  /**
+   * Stable for one message across every retry and reclaim: the queue row's id
+   * for a queued message, the caller's own key for a sendNow that passed one,
+   * absent otherwise. Hand it to a provider that deduplicates. Resend takes it
+   * as the `Idempotency-Key` header — `resend.emails.send(payload, {
+   * idempotencyKey })` — and answers a repeat within 24 hours with the
+   * original response instead of sending again. The queue already refuses to
+   * re-send a row it has logged as sent; the key covers the last gap, a send
+   * whose log write failed as well.
+   */
+  idempotencyKey?: string;
 }
 export interface OutboundSms {
   to: string;
   /** Already compliant: starts with the sender name and carries the opt-out line. */
   body: string;
+  /**
+   * As on OutboundEmail. Twilio's Messages API takes no idempotency key, so for
+   * SMS the queue's own already-sent check is the protection; use it for your
+   * own dedupe if your provider has one.
+   */
+  idempotencyKey?: string;
 }
 
 /**
@@ -277,6 +294,8 @@ async function logMessage(
     error: string | null;
     providerId: string | null;
     missingVars?: string[] | null;
+    /** The queue row this entry is about — how a reclaimed row learns it was already sent. */
+    scheduledId?: string | null;
   },
 ): Promise<MessageRow> {
   const [inserted] = await db
@@ -305,6 +324,12 @@ export interface SendInput {
   channel?: CommsChannel;
   /** Skip (logged) if this template reached this recipient within the window. */
   minIntervalMs?: number;
+  /**
+   * Handed to the sender as `idempotencyKey` (see OutboundEmail) — e.g.
+   * `booking:${id}:confirmation`, so a retried request is not a second email.
+   * At most 256 characters, Resend's limit.
+   */
+  idempotencyKey?: string;
 }
 
 /** 400 days — a longer "don't repeat" window than any business message needs. */
@@ -318,6 +343,7 @@ const sendInputSchema = z.object({
   templateKey: z.string().min(1).max(80),
   channel: channelSchema.optional(),
   minIntervalMs: z.number().int().min(0).max(MAX_INTERVAL_MS).optional(),
+  idempotencyKey: z.string().trim().min(1).max(256).optional(),
 });
 
 /**
@@ -382,7 +408,13 @@ function formatInterval(ms: number): string {
   return `${Math.round(hours / 24)} days`;
 }
 
-async function deliver(db: CommsDb, input: SendInput, senders: CommsSenders, now: Date): Promise<Delivery> {
+async function deliver(
+  db: CommsDb,
+  input: SendInput,
+  senders: CommsSenders,
+  now: Date,
+  scheduledId: string | null = null,
+): Promise<Delivery> {
   const parsed = sendInputSchema.parse(input);
   const vars = input.vars ?? {};
   const template = await getTemplate(db, parsed.tenantId, parsed.templateKey);
@@ -400,6 +432,7 @@ async function deliver(db: CommsDb, input: SendInput, senders: CommsSenders, now
       ...fields,
       status,
       error,
+      scheduledId,
     }),
     permanent,
   });
@@ -484,16 +517,18 @@ async function deliver(db: CommsDb, input: SendInput, senders: CommsSenders, now
     return settle("skipped", `no ${channel} provider configured`, true, rendered);
   }
 
+  const key = parsed.idempotencyKey ? { idempotencyKey: parsed.idempotencyKey } : {};
   let verdict: SenderVerdict;
   try {
     verdict = interpretSenderResult(
       channel === "sms"
-        ? await senders.sms!({ to, body })
+        ? await senders.sms!({ to, body, ...key })
         : await senders.email!({
             to,
             subject: subject ?? DEFAULT_EMAIL_SUBJECT,
             body,
             html: plainTextToEmailHtml(body),
+            ...key,
           }),
     );
   } catch (cause) {
@@ -665,12 +700,20 @@ export const cancelScheduledSchema = z.union([
 export type CancelScheduledInput = z.input<typeof cancelScheduledSchema>;
 
 /**
- * Cancel queued messages that have not started sending — one by id, or every
- * one about a thing: `{ tenantId, refType: "booking", refId }` when a booking
- * is cancelled or moved. Only `pending` rows change: a message mid-send or
- * already sent is history, not a plan. Tenant-scoped, so a guessed id from
+ * Cancel queued messages — one by id, or every one about a thing:
+ * `{ tenantId, refType: "booking", refId }` when a booking is cancelled or
+ * moved. `pending` AND `sending` rows change; a message already sent, failed
+ * or expired is history, not a plan. Tenant-scoped, so a guessed id from
  * another tenant cancels nothing. Returns how many were cancelled; the rows
  * stay, marked `cancelled`.
+ *
+ * Why `sending` too: a claimed row is not necessarily on its way out. A
+ * transient failure puts it back to pending and a dead worker's claim is
+ * reclaimed — so cancelling only `pending` rows missed exactly those, and the
+ * reminder for a cancelled booking went out on the next tick. The worker's
+ * outcome write and the reclaim both match only `sending`, so the cancel
+ * sticks. A send already in the provider's hands still completes; the delivery
+ * log then says so.
  */
 export async function cancelScheduled(db: CommsDb, input: CancelScheduledInput): Promise<number> {
   const parsed = cancelScheduledSchema.parse(input);
@@ -685,7 +728,13 @@ export async function cancelScheduled(db: CommsDb, input: CancelScheduledInput):
   const rows = (await db
     .update(commsScheduled)
     .set({ status: "cancelled" })
-    .where(and(eq(commsScheduled.tenantId, parsed.tenantId), target, eq(commsScheduled.status, "pending")))
+    .where(
+      and(
+        eq(commsScheduled.tenantId, parsed.tenantId),
+        target,
+        inArray(commsScheduled.status, ["pending", "sending"]),
+      ),
+    )
     .returning({ id: commsScheduled.id })) as { id: string }[];
   return rows.length;
 }
@@ -723,7 +772,20 @@ export interface RunDueOptions {
    * being killed mid-send.
    */
   timeBudgetMs?: number;
-  /** Re-check each claimed row against live data just before it sends. */
+  /**
+   * How late a row without an `expiresAt` may still go out, measured from its
+   * sendAt. Later than this it ends `expired`, with the reason on the row and
+   * in the log. Default 48 hours (DEFAULT_MAX_LATENESS_MS): long enough for a
+   * once-a-day cron (Vercel Hobby) to miss a run, short enough that a queue
+   * nobody drained for months — a cron never registered, an upgrade from 0.1.x
+   * — does not flush every stale "see you tomorrow" at once. A row's own
+   * `expiresAt` overrides it.
+   */
+  maxLatenessMs?: number;
+  /**
+   * Re-check each claimed row against live data just before it sends. A hook
+   * that returns nothing (null/undefined) means "send".
+   */
   beforeSend?: (row: ScheduledRow) => BeforeSendResult | Promise<BeforeSendResult>;
 }
 
@@ -732,7 +794,10 @@ export interface RunDueResult {
   processed: number;
   sent: number;
   skipped: number;
-  /** Terminal failures: permanent errors, or out of attempts. */
+  /**
+   * Terminal failures: permanent errors, out of attempts, or a `sending` row
+   * left by 0.1.x (state unknown, so failed rather than risk a duplicate).
+   */
   failed: number;
   /** Transient failures put back with a later sendAt. */
   retrying: number;
@@ -744,6 +809,9 @@ export interface RunDueResult {
   stoppedEarly: boolean;
 }
 
+/** See RunDueOptions.maxLatenessMs. */
+export const DEFAULT_MAX_LATENESS_MS = 48 * 60 * 60 * 1000;
+
 const runDueOptionsSchema = z.object({
   now: z.date().optional(),
   limit: z.number().int().min(1).max(10_000).default(200),
@@ -751,7 +819,16 @@ const runDueOptionsSchema = z.object({
   retryBaseMs: z.number().int().min(0).max(24 * 60 * 60 * 1000).default(5 * 60 * 1000),
   staleClaimMs: z.number().int().min(60 * 1000).default(10 * 60 * 1000),
   timeBudgetMs: z.number().int().min(0).optional(),
+  maxLatenessMs: z.number().int().min(60 * 1000).max(MAX_INTERVAL_MS).default(DEFAULT_MAX_LATENESS_MS),
 });
+
+/**
+ * Tries for a row's outcome write before it is left in `sending` for the
+ * stale-claim reclaim. The reclaim no longer re-sends a row whose send was
+ * logged, but a write that lands in-run spares the ten-minute wait and the
+ * extra claim.
+ */
+const OUTCOME_WRITE_TRIES = 3;
 
 type RowOutcome =
   | { status: "sent" | "skipped" | "failed" | "cancelled" | "expired"; lastError: string | null }
@@ -771,7 +848,12 @@ type RowOutcome =
  * - a permanent failure (no template, bad recipient, SMS compliance not
  *   configured, channel changed) ends `failed` at once;
  * - a `sending` row whose claim is older than `staleClaimMs` (its worker was
- *   killed) is reclaimed at the start of the next run.
+ *   killed) is reclaimed at the start of the next run — and before a claimed
+ *   row is sent, the delivery log is checked for a `sent` entry from an
+ *   earlier claim, so a row whose send landed but whose outcome write did not
+ *   is recorded sent, never sent twice;
+ * - a row more than `maxLatenessMs` past its sendAt (and no expiresAt of its
+ *   own) ends `expired` instead of going out days late.
  *
  * The original positional form `runDueMessages(db, senders, now?, limit?)`
  * still works.
@@ -807,13 +889,31 @@ export async function runDueMessages(
     stoppedEarly: false,
   };
 
-  // 1. Reclaim claims abandoned by a worker that died mid-send (a platform
+  // 1. Rows 0.1.x left in `sending` (claimedAt is NULL: the column did not
+  // exist). 0.1.x stranded a row there whenever anything after the claim
+  // threw — including the log write AFTER the provider had accepted the
+  // message — and its log has no link back to the row to check. Reviving them
+  // would re-send reminders, months old, that the customer may already have.
+  // Their state is unknown, so they end `failed` saying so, and a person
+  // decides.
+  const legacy = (await db
+    .update(commsScheduled)
+    .set({
+      status: "failed",
+      lastError:
+        "state unknown from 0.1.x: left in `sending` before claim times were recorded, possibly already delivered — not re-sent",
+    })
+    .where(and(eq(commsScheduled.status, "sending"), isNull(commsScheduled.claimedAt)))
+    .returning({ id: commsScheduled.id })) as { id: string }[];
+  result.failed += legacy.length;
+
+  // 2. Reclaim claims abandoned by a worker that died mid-send (a platform
   // timeout, a crash). Without this a row left in `sending` stays there
-  // forever and the message is silently never sent. A NULL claimedAt covers
-  // rows claimed before the column existed.
+  // forever and the message is silently never sent. A reclaimed row that had
+  // in fact been sent is caught by the already-sent check in handleClaimed.
   const abandoned = and(
     eq(commsScheduled.status, "sending"),
-    or(isNull(commsScheduled.claimedAt), lt(commsScheduled.claimedAt, new Date(now.getTime() - options.staleClaimMs))),
+    lt(commsScheduled.claimedAt, new Date(now.getTime() - options.staleClaimMs)),
   );
   const exhausted = (await db
     .update(commsScheduled)
@@ -832,7 +932,7 @@ export async function runDueMessages(
     .returning({ id: commsScheduled.id })) as { id: string }[];
   result.reclaimed = revived.length;
 
-  // 2. Claim and handle due rows until none are left, the limit is reached or
+  // 3. Claim and handle due rows until none are left, the limit is reached or
   // the time budget is spent. Handled rows leave the due set (terminal, or
   // rescheduled into the future), so each select sees new rows; `seen` is the
   // belt-and-braces guard against re-reading one within a run.
@@ -873,7 +973,13 @@ export async function runDueMessages(
       if (claimed.length === 0) continue;
       result.processed += 1;
 
-      const outcome = await handleClaimed(db, { ...row, status: "sending", attempts }, senders, beforeSend, clock);
+      const outcome = await handleClaimed(
+        db,
+        { ...row, status: "sending", attempts },
+        senders,
+        { beforeSend, maxLatenessMs: options.maxLatenessMs },
+        clock,
+      );
       let patch: Partial<ScheduledRow>;
       if (outcome.status === "retry") {
         if (attempts >= options.maxAttempts) {
@@ -892,21 +998,38 @@ export async function runDueMessages(
         patch = { status: outcome.status, lastError: outcome.lastError };
         result[outcome.status] += 1;
       }
-      try {
-        // Guarded on `sending`: if a slow run lost its claim to a reclaim, the
-        // newer owner's outcome stands.
-        await db
-          .update(commsScheduled)
-          .set(patch)
-          .where(and(eq(commsScheduled.id, row.id), eq(commsScheduled.status, "sending")));
-      } catch {
-        // The row stays `sending` and the stale-claim reclaim picks it up. One
-        // failed write must not abort the rows behind it.
-      }
+      // Guarded on `sending` AND on the attempt count this run claimed with.
+      // `sending` alone was not ownership: a run that stalled past
+      // staleClaimMs came back to a row another worker had reclaimed, claimed
+      // again (attempts + 1) and was mid-send on — and overwrote it, putting
+      // it back to pending to be sent yet again. A cancel is left standing too.
+      await writeOutcome(
+        db,
+        patch,
+        and(eq(commsScheduled.id, row.id), eq(commsScheduled.status, "sending"), eq(commsScheduled.attempts, attempts)),
+      );
     }
   }
   if (result.processed >= options.limit) result.stoppedEarly = true;
   return result;
+}
+
+/**
+ * Write a row's outcome, retrying a failed write a couple of times in-run. A
+ * write that never lands leaves the row `sending` for the stale-claim reclaim —
+ * safe now (the already-sent check) but slow. Never throws: one failed write
+ * must not abort the rows behind it.
+ */
+async function writeOutcome(db: CommsDb, patch: Partial<ScheduledRow>, owned: SQL | undefined): Promise<void> {
+  for (let tries = 1; ; tries++) {
+    try {
+      await db.update(commsScheduled).set(patch).where(owned);
+      return;
+    } catch {
+      if (tries >= OUTCOME_WRITE_TRIES) return;
+      await new Promise((resolve) => setTimeout(resolve, 50 * tries));
+    }
+  }
 }
 
 /** Everything that happens to one claimed row. Never throws. */
@@ -914,7 +1037,7 @@ async function handleClaimed(
   db: CommsDb,
   row: ScheduledRow,
   senders: CommsSenders,
-  beforeSend: RunDueOptions["beforeSend"],
+  options: { beforeSend: RunDueOptions["beforeSend"]; maxLatenessMs: number },
   clock: () => Date,
 ): Promise<RowOutcome> {
   const note = (status: string, error: string) =>
@@ -928,18 +1051,43 @@ async function handleClaimed(
       status,
       error,
       providerId: null,
+      scheduledId: row.id,
     });
   try {
-    if (row.expiresAt && row.expiresAt.getTime() <= clock().getTime()) {
+    // An earlier claim may have sent this row and then failed to record it —
+    // the outcome write threw, the row sat in `sending`, the reclaim put it
+    // back. The delivery log is the evidence; sending again is a duplicate.
+    const [already] = (await db
+      .select({ id: commsMessages.id })
+      .from(commsMessages)
+      .where(and(eq(commsMessages.scheduledId, row.id), eq(commsMessages.status, "sent")))
+      .limit(1)) as { id: string }[];
+    if (already) {
+      return {
+        status: "sent",
+        lastError: `already sent (delivery log ${already.id}) on an earlier claim whose outcome was not recorded — not sent again`,
+      };
+    }
+
+    const at = clock().getTime();
+    if (row.expiresAt && row.expiresAt.getTime() <= at) {
       const reason = `expired at ${row.expiresAt.toISOString()} before it could send`;
+      await note("expired", reason);
+      return { status: "expired", lastError: reason };
+    }
+    if (!row.expiresAt && row.sendAt.getTime() < at - options.maxLatenessMs) {
+      const reason = `more than ${formatInterval(options.maxLatenessMs)} late (due ${row.sendAt.toISOString()}) — not sent`;
       await note("expired", reason);
       return { status: "expired", lastError: reason };
     }
 
     let to = row.toAddress;
     let vars: TemplateVars = row.vars ?? {};
-    if (beforeSend) {
-      const decision = await beforeSend(row);
+    if (options.beforeSend) {
+      // `?? "send"`: a hook returning null (plain JS, a cast, a forgotten
+      // return) made `"skip" in decision` throw a TypeError — retried to
+      // `failed` for a row the hook meant to send.
+      const decision: BeforeSendResult = (await options.beforeSend(row)) ?? "send";
       if (decision === "skip" || (typeof decision === "object" && "skip" in decision && decision.skip)) {
         const reason =
           typeof decision === "object" && "skip" in decision && decision.reason
@@ -963,9 +1111,13 @@ async function handleClaimed(
         vars,
         channel: row.channel as CommsChannel,
         ...(row.minIntervalMs ? { minIntervalMs: row.minIntervalMs } : {}),
+        // The same key on every retry and reclaim of this row, so a provider
+        // that deduplicates (Resend) drops a repeat the queue could not see.
+        idempotencyKey: row.id,
       },
       senders,
       clock(),
+      row.id,
     );
     if (message.status === "sent") return { status: "sent", lastError: null };
     if (message.status === "skipped") return { status: "skipped", lastError: message.error };

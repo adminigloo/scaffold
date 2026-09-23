@@ -2,26 +2,34 @@ import { getTableConfig } from "drizzle-orm/pg-core";
 import { describe, expect, it } from "vitest";
 import {
   allowedNextStatuses,
+  attachComponent,
   calculateEstimate,
   createEstimate,
+  createOption,
   createOptionValue,
   createProduct,
   createPublicEstimate,
+  deactivateComponent,
   deactivateProduct,
+  detachComponent,
   EstimatorInputError,
   getEstimate,
   getProductDetail,
+  issueClientKey,
   listPublicOptions,
   markEstimateConverted,
   midpointOf,
   nextEstimateNumber,
   QUOTE_REQUEST_NOTE,
+  revokeClientKey,
   setDefaultOptionValue,
   setEstimateStatus,
   updateProduct,
+  verifyClientKey,
   type PublicSubmitInput,
 } from "../index.js";
 import {
+  estimatorClientKeys,
   estimatorComponents,
   estimatorEstimateItems,
   estimatorEstimates,
@@ -111,6 +119,17 @@ async function staffEstimate(fake: FakeDb, tenantId = A): Promise<string> {
   });
   return created.id;
 }
+
+/** A staff estimate walked draft → sent → `to`, the way staff would. */
+async function estimateAt(fake: FakeDb, to: "approved" | "rejected"): Promise<string> {
+  const id = await staffEstimate(fake);
+  expect(await setEstimateStatus(fake.db, A, { id, status: "sent" })).toBe(true);
+  expect(await setEstimateStatus(fake.db, A, { id, status: to })).toBe(true);
+  return id;
+}
+
+const statusOf = (fake: FakeDb, id: string) =>
+  fake.rows(estimatorEstimates).find((e) => e.id === id)!.status;
 
 // --- 1. The public submit prices on the server -------------------------------
 
@@ -365,7 +384,8 @@ describe("unavailable products and bad measurements", () => {
     expect(await calc("door", { widthIn: 72 })).toBeNull();
     expect(await calc("door", { widthIn: 0, heightIn: 36 })).toBeNull();
     expect(await calc("ramp", { linearFt: 0 })).toBeNull();
-    expect(await calc("posts", { units: 0 })).toBeNull();
+    // units: 0 is no longer a measurement at all — see "measurement.units is a
+    // whole number ≥ 1" below.
     expect(await calc("door", { sqFt: 18 })).not.toBeNull();
     expect(await calc("ramp", { linearFt: 24 })).not.toBeNull();
   });
@@ -527,10 +547,10 @@ describe("a single default value per option", () => {
 
   it("a value created as the default takes it over, in one transaction", async () => {
     const fake = catalog();
-    await createOptionValue(fake.db, { optionId: "finish", label: "Matte", isDefault: true });
+    await createOptionValue(fake.db, A, { optionId: "finish", label: "Matte", isDefault: true });
     expect(defaults(fake)).toEqual(["Matte"]);
     expect(fake.log).toContain("tx:begin");
-    await createOptionValue(fake.db, { optionId: "finish", label: "Gloss" });
+    await createOptionValue(fake.db, A, { optionId: "finish", label: "Gloss" });
     expect(defaults(fake)).toEqual(["Matte"]);
   });
 
@@ -556,7 +576,8 @@ describe("estimate status transitions", () => {
     expect(await move("sent")).toBe(false); // not a move
     expect(await move("viewed")).toBe(true);
     expect(await move("approved")).toBe(true);
-    expect(await move("converted")).toBe(true);
+    expect(await move("converted")).toBe(false); // only the invoicing claim converts
+    expect(await markEstimateConverted(fake.db, A, id)).not.toBeNull();
     expect(await move("approved")).toBe(false); // converted is terminal
     expect(await move("draft")).toBe(false);
     expect(fake.rows(estimatorEstimates)[0]!.status).toBe("converted");
@@ -571,7 +592,7 @@ describe("estimate status transitions", () => {
 
   it("markEstimateConverted claims an estimate exactly once", async () => {
     const fake = catalog();
-    const id = await staffEstimate(fake);
+    const id = await estimateAt(fake, "approved");
     expect(await markEstimateConverted(fake.db, B, id)).toBeNull();
     const first = await markEstimateConverted(fake.db, A, id);
     expect(first?.status).toBe("converted");
@@ -608,5 +629,189 @@ describe("showInEstimator on options", () => {
       await calculateEstimate(fake.db, { productId: "backroom", measurement: {} }, { tenantId: A, audience: "public" }),
     ).toBeNull();
     expect(await calculateEstimate(fake.db, { productId: "backroom", measurement: {} }, { tenantId: A })).not.toBeNull();
+  });
+});
+
+// --- 13. The public cannot price through the measurement (EST-1) -------------
+
+describe("a public line is priced from the measurement the tool asks for", () => {
+  /**
+   * gate  — unit, $80 + one $20 latch (per_unit): a fifth of it is a per-unit part
+   * frame — area, $20/sq ft + $15/linear ft of perimeter (the frame itself)
+   */
+  function withMeasuredProducts(): FakeDb {
+    const fake = catalog();
+    fake.seed(estimatorProducts, [
+      { id: "gate", tenantId: A, name: "Gate", measurementMode: "unit", basePrice: 8_000 },
+      { id: "frame", tenantId: A, name: "Framed panel", measurementMode: "area", pricePerSqFt: 2_000, pricePerLinearFt: 1_500 },
+    ]);
+    fake.seed(estimatorComponents, [
+      { id: "latch", tenantId: A, name: "Latch", unitType: "per_unit", unitCost: 2_000 },
+    ]);
+    fake.seed(estimatorProductComponents, [
+      { id: "gate-latch", productId: "gate", componentId: "latch", quantityMilli: 1000 },
+    ]);
+    return fake;
+  }
+  const PUBLIC = { tenantId: A, audience: "public" } as const;
+
+  it("units:0 and units:1e-4 cannot change a public quote", async () => {
+    const fake = withMeasuredProducts();
+    const gate = await calculateEstimate(fake.db, { productId: "gate", measurement: {}, quantity: 2 }, PUBLIC);
+    expect(gate!.subtotal).toBe(20_000); // ($80 + $20 latch) × 2
+    // 0 dropped the latch; 1e-4 passed the unit-mode check and billed a
+    // ten-thousandth of it; 2 is what estimator-widget 0.1.0 sends (units: qty).
+    for (const units of [1e-4, 0, 2]) {
+      expect(
+        await calculateEstimate(fake.db, { productId: "gate", measurement: { units }, quantity: 2 }, PUBLIC),
+      ).toEqual(gate);
+    }
+    const door = await calculateEstimate(fake.db, { productId: "door", measurement: DOOR }, PUBLIC);
+    for (const units of [1e-4, 0]) {
+      expect(
+        await calculateEstimate(fake.db, { productId: "door", measurement: { ...DOOR, units } }, PUBLIC),
+      ).toEqual(door);
+    }
+  });
+
+  it("units:0 and units:1e-4 cannot change a saved public estimate", async () => {
+    for (const units of [0, 1e-4, 2]) {
+      const fake = withMeasuredProducts();
+      const created = await createPublicEstimate(
+        fake.db,
+        // `as never`: the public type has no `units` — this is a hostile (or 0.1.0 widget) body.
+        lead([{ productId: "gate", measurement: { units } as never, quantity: 2 }]),
+        { tenantId: A, taxRateBp: 0 },
+      );
+      expect(created.subtotal).toBe(20_500); // midpoint of $180–$230, as shown
+    }
+  });
+
+  it("an area product needs width × height from the public — a bare sqFt is refused", async () => {
+    const fake = withMeasuredProducts();
+    // 72 × 36 in: 18 sq ft and 18 ft of perimeter → 18·$20 + 18·$15 = $630.
+    const shown = await calculateEstimate(fake.db, { productId: "frame", measurement: DOOR }, PUBLIC);
+    expect(shown!.subtotal).toBe(63_000);
+    // A bare sqFt priced the area with a perimeter of 0: the frame fell out.
+    expect(await calculateEstimate(fake.db, { productId: "frame", measurement: { sqFt: 18 } }, PUBLIC)).toBeNull();
+    // A sqFt beside width × height won in resolveMeasurement, to the same effect.
+    expect(
+      await calculateEstimate(fake.db, { productId: "frame", measurement: { ...DOOR, sqFt: 18 } }, PUBLIC),
+    ).toEqual(shown);
+    expect(
+      await refusal(createPublicEstimate(fake.db, lead([{ productId: "frame", measurement: { sqFt: 18 } }]), { tenantId: A })),
+    ).toBe("invalid_measurement");
+    expect(fake.rows(estimatorEstimates)).toHaveLength(0);
+
+    // The saved line records the measurement that was priced, not the extras.
+    await createPublicEstimate(
+      fake.db,
+      lead([{ productId: "frame", measurement: { ...DOOR, sqFt: 1, units: 0 } as never }]),
+      { tenantId: A, taxRateBp: 0 },
+    );
+    expect(fake.rows(estimatorEstimateItems)[0]!.measurement).toEqual(DOOR);
+
+    // Staff may still quote an area directly.
+    expect(await calculateEstimate(fake.db, { productId: "frame", measurement: { sqFt: 18 } }, { tenantId: A })).not.toBeNull();
+  });
+
+  it("measurement.units is a whole number ≥ 1 wherever it is read", async () => {
+    const fake = withMeasuredProducts();
+    for (const units of [0, 0.5, 1e-4]) {
+      await expect(
+        calculateEstimate(fake.db, { productId: "gate", measurement: { units } }, { tenantId: A }),
+      ).rejects.toThrow();
+      await expect(
+        createEstimate(fake.db, { tenantId: A, items: [{ productId: "gate", description: "Gate", measurement: { units } }] }),
+      ).rejects.toThrow();
+    }
+    expect(fake.rows(estimatorEstimates)).toHaveLength(0);
+    // Staff: two latches on the one gate is a real sub-unit count.
+    const two = await calculateEstimate(fake.db, { productId: "gate", measurement: { units: 2 } }, { tenantId: A });
+    expect(two!.subtotal).toBe(12_000);
+  });
+});
+
+// --- 14. converted is the invoice's to set (EST-2, EST-4) --------------------
+
+describe("only the invoicing claim converts an estimate", () => {
+  it("setEstimateStatus refuses converted — an approved estimate stays invoiceable", async () => {
+    const fake = catalog();
+    const id = await estimateAt(fake, "approved");
+    expect(await setEstimateStatus(fake.db, A, { id, status: "converted" })).toBe(false);
+    expect(statusOf(fake, id)).toBe("approved");
+    expect((await markEstimateConverted(fake.db, A, id))?.status).toBe("converted");
+  });
+
+  it("markEstimateConverted claims only an approved estimate", async () => {
+    const fake = catalog();
+    const draft = await staffEstimate(fake);
+    const rejected = await estimateAt(fake, "rejected");
+    expect(await markEstimateConverted(fake.db, A, draft)).toBeNull();
+    expect(await markEstimateConverted(fake.db, A, rejected)).toBeNull();
+    expect(statusOf(fake, draft)).toBe("draft");
+    expect(statusOf(fake, rejected)).toBe("rejected");
+  });
+});
+
+// --- 15. Catalog writes are tenant-scoped (EST-3) ----------------------------
+
+describe("catalog writes cannot reach another tenant's price book", () => {
+  it("createOption adds an option only to the tenant's own product", async () => {
+    const fake = catalog();
+    expect(await refusal(createOption(fake.db, B, { productId: "door", name: "Hijack" }))).toBe("product_unavailable");
+    expect(fake.rows(estimatorOptions).some((o) => o.name === "Hijack")).toBe(false);
+    expect((await createOption(fake.db, A, { productId: "door", name: "Handle" })).productId).toBe("door");
+  });
+
+  it("createOptionValue adds a value only to the tenant's own option, default or not", async () => {
+    const fake = catalog();
+    for (const isDefault of [false, true]) {
+      expect(
+        await refusal(createOptionValue(fake.db, B, { optionId: "finish", label: "Hijack", priceModifier: 0, isDefault })),
+      ).toBe("option_unavailable");
+    }
+    const finish = fake.rows(estimatorOptionValues).filter((v) => v.optionId === "finish");
+    expect(finish.map((v) => v.label)).toEqual(["Standard", "Premium"]);
+    expect(finish.find((v) => v.isDefault)?.label).toBe("Standard"); // B's "default" did not clear A's
+    expect((await createOptionValue(fake.db, A, { optionId: "finish", label: "Matte" })).optionId).toBe("finish");
+  });
+
+  it("attachComponent links only the tenant's product to the tenant's material", async () => {
+    const fake = catalog();
+    fake.seed(estimatorComponents, [{ id: "b-part", tenantId: B, name: "B part", unitType: "flat", unitCost: 1 }]);
+    const before = fake.rows(estimatorProductComponents).length;
+    expect(await refusal(attachComponent(fake.db, B, { productId: "door", componentId: "b-part" }))).toBe(
+      "product_unavailable",
+    );
+    expect(await refusal(attachComponent(fake.db, A, { productId: "door", componentId: "b-part" }))).toBe(
+      "component_unavailable",
+    );
+    expect(fake.rows(estimatorProductComponents)).toHaveLength(before);
+    expect(typeof (await attachComponent(fake.db, A, { productId: "door", componentId: "hinge" }))).toBe("string");
+  });
+
+  it("detachComponent and deactivateComponent cannot touch another tenant's rows", async () => {
+    const fake = catalog();
+    expect(await detachComponent(fake.db, B, "door-hinge")).toBe(false);
+    expect(await deactivateComponent(fake.db, B, "hinge")).toBe(false);
+    expect(fake.rows(estimatorProductComponents).find((r) => r.id === "door-hinge")!.isActive).toBe(true);
+    expect(fake.rows(estimatorComponents).find((r) => r.id === "hinge")!.isActive).toBe(true);
+
+    expect(await detachComponent(fake.db, A, "door-hinge")).toBe(true);
+    expect(await deactivateComponent(fake.db, A, "hinge")).toBe(true);
+    expect(fake.rows(estimatorProductComponents).find((r) => r.id === "door-hinge")!.isActive).toBe(false);
+    expect(fake.rows(estimatorComponents).find((r) => r.id === "hinge")!.isActive).toBe(false);
+  });
+
+  it("revokeClientKey cannot revoke another tenant's embed key", async () => {
+    const fake = catalog();
+    const issued = await issueClientKey(fake.db, { tenantId: A, label: "A site" });
+    expect(await revokeClientKey(fake.db, B, issued.id)).toBe(false);
+    expect(fake.rows(estimatorClientKeys)[0]!.revokedAt).toBeNull();
+    expect(await verifyClientKey(fake.db, issued.key)).not.toBeNull();
+
+    expect(await revokeClientKey(fake.db, A, issued.id)).toBe(true);
+    expect(await verifyClientKey(fake.db, issued.key)).toBeNull();
   });
 });

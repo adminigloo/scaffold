@@ -41,7 +41,9 @@ export const DEFAULT_TAX_RATE_BP = 825;
  * one door, the posts in one run of fence — and is what a `per_unit` component
  * scales by. It defaults to 1. It is not the line quantity: a unit-mode "how
  * many" is `quantity`, and sending the same count as `units` too would bill a
- * per-unit material quantity² times.
+ * per-unit material quantity² times. It is staff-only: the package's input
+ * schemas take a whole number ≥ 1, and a public line is priced with 1 whatever
+ * the caller sent (see `publicMeasurement` in index.ts).
  */
 export interface Measurement {
   widthIn?: number | null;

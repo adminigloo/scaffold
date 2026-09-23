@@ -29,21 +29,30 @@ describe("enforceCompliance (ported)", () => {
     expect((result.match(/Reply STOP to opt out\./g) ?? []).length).toBe(1);
   });
 
-  it("recognizes 'Reply STOP' (case-insensitive)", () => {
+  // The source's next three cases asserted that ANY of "reply stop", "opt
+  // out" or "unsubscribe" anywhere in the text suppressed the opt-out line.
+  // The check runs on the RENDERED message, so a customer's own words ("please
+  // unsubscribe me from the newsletter" in a notes field) silently dropped the
+  // STOP instruction. Inverted deliberately: only the configured line itself
+  // counts, and a duplicate is harmless where a missing one is not.
+  it("recognizes the opt-out line case-insensitively", () => {
+    const msg = `${PREFIX} Test. reply stop to opt out.`;
+    expect(enforceCompliance(msg, SENDER)).toBe(msg);
+  });
+
+  it("still appends the line when the text merely mentions 'reply stop'", () => {
     const msg = `${PREFIX} Test. reply stop to unsubscribe`;
-    const result = enforceCompliance(msg, SENDER);
-    expect(result).not.toContain(OPT_OUT);
-    expect(result).toBe(msg);
+    expect(enforceCompliance(msg, SENDER)).toBe(`${msg} ${OPT_OUT}`);
   });
 
-  it("recognizes 'opt out' variant", () => {
+  it("still appends the line for the 'opt out' variant", () => {
     const msg = `${PREFIX} Test. Text opt out to stop.`;
-    expect(enforceCompliance(msg, SENDER)).toBe(msg);
+    expect(enforceCompliance(msg, SENDER)).toBe(`${msg} ${OPT_OUT}`);
   });
 
-  it("recognizes 'unsubscribe' variant", () => {
+  it("still appends the line for the 'unsubscribe' variant", () => {
     const msg = `${PREFIX} Test. Text UNSUBSCRIBE to stop.`;
-    expect(enforceCompliance(msg, SENDER)).toBe(msg);
+    expect(enforceCompliance(msg, SENDER)).toBe(`${msg} ${OPT_OUT}`);
   });
 
   it("preserves original message content", () => {
@@ -67,6 +76,18 @@ describe("enforceCompliance (package additions)", () => {
 
   it("does not double the colon when the name already ends in one", () => {
     expect(enforceCompliance("Hi", "Acme:")).toBe(`Acme: Hi ${SMS_OPT_OUT_TEXT}`);
+  });
+
+  it("appends the configured line even when the default one is already in the text", () => {
+    // The CONFIGURED line is the promise the campaign was registered with.
+    expect(enforceCompliance(`Hi. ${SMS_OPT_OUT_TEXT}`, "Acme", "Text STOP to end.")).toBe(
+      `Acme: Hi. ${SMS_OPT_OUT_TEXT} Text STOP to end.`,
+    );
+  });
+
+  it("does not let a customer's own words suppress the opt-out line", () => {
+    const rendered = "Hi Sam, see you at 9. Notes: please unsubscribe me from the newsletter, don't opt out my texts";
+    expect(enforceCompliance(rendered, "Acme").endsWith(` ${SMS_OPT_OUT_TEXT}`)).toBe(true);
   });
 });
 
@@ -121,5 +142,26 @@ describe("normalizePhone", () => {
 
   it("refuses a +1 number that is not ten digits after the country code", () => {
     expect(normalizePhone("+1801555123")).toBeNull();
+  });
+
+  it("refuses ten digits that cannot be a NANP number instead of forcing +1 onto them", () => {
+    // Area codes and exchanges never start with 0 or 1. Ten such digits are a
+    // foreign number typed without its country code (a UK 020… number, a
+    // mobile starting 07…); prefixing +1 texted a stranger in the US or
+    // failed at the provider long after the customer left the form.
+    expect(normalizePhone("0207946095")).toBeNull();
+    expect(normalizePhone("0712345678")).toBeNull();
+    expect(normalizePhone("1234567890")).toBeNull();
+    expect(normalizePhone("8011234567")).toBeNull();
+    expect(normalizePhone("1 801 155 1234")).toBeNull();
+    expect(normalizePhone("+1 012 555 1234")).toBeNull();
+    expect(normalizePhone("+1 801 055 1234")).toBeNull();
+  });
+
+  it("strips a (0) trunk marker from an international number", () => {
+    // "+44 (0)20 …" is how UK numbers are commonly written; the 0 is dialled
+    // only inside the country and is not part of the E.164 number.
+    expect(normalizePhone("+44 (0)20 7946 0958")).toBe("+442079460958");
+    expect(normalizePhone("+49 (0) 30 123456")).toBe("+4930123456");
   });
 });
