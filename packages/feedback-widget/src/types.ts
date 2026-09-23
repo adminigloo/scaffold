@@ -9,7 +9,8 @@ export interface SessionEvent {
 
 export interface CapturedError {
   id: string;
-  type: "error" | "unhandledRejection" | "consoleError";
+  /** `failedRequest`: a fetch/XHR that answered >= 400 or never arrived. */
+  type: "error" | "unhandledRejection" | "consoleError" | "failedRequest";
   message: string;
   stack?: string;
   timestamp: number;

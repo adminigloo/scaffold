@@ -37,6 +37,13 @@ covers textareas and `autocomplete` secrets, and `[data-sensitive]` content is
 blacked out in every capture. The click trail no longer quotes
 `[data-sensitive]` / `data-feedback-ignore` content or the widget's own clicks.
 
+**Failed requests ride along.** fetch and XMLHttpRequest calls that answer
+>= 400 or never arrive are recorded as `failedRequest` entries in the report's
+`recentErrors` (method, path, status — never a body or query string; aborts and
+the widget's own platform calls are left out). A "the button did nothing" report
+now arrives with the 500 behind it. No platform change: `recentErrors` already
+accepts any error type.
+
 **The widget works over a host's open modal** (shadcn/Radix, Headless UI,
 native `<dialog>`, MUI click-away):
 

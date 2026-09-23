@@ -248,3 +248,55 @@ test("the click trail submitted with a report never quotes sensitive or ignored 
   expect(trail).toContain("(sensitive)");
   expect(trail).toContain("Plain host button");
 });
+
+test("failed requests (fetch and XHR) ride along with the report — path and status only, never the query string", async ({ page }) => {
+  let submitted: { recentErrors?: Array<{ type: string; message: string; url?: string }> } | null = null;
+  const cors = { "access-control-allow-origin": "*" };
+  await page.route("https://feedback.test/api/**", async (route) => {
+    const url = route.request().url();
+    if (url.endsWith("/v1/submit")) {
+      submitted = route.request().postDataJSON();
+      return route.fulfill({ json: { ticketNumber: "FB-00002", ticketToken: "tok" }, headers: cors });
+    }
+    // The widget's OWN failing call: must not be recorded.
+    if (url.endsWith("/v1/upload")) return route.fulfill({ status: 503, json: { error: "down" }, headers: cors });
+    return route.fulfill({ json: { categories: [] }, headers: cors });
+  });
+  await page.route("https://app.test/**", async (route) => {
+    const url = route.request().url();
+    if (url.includes("/api/orders")) return route.fulfill({ status: 500, body: "boom", headers: cors });
+    if (url.includes("/api/xhr-missing")) return route.fulfill({ status: 404, body: "nope", headers: cors });
+    if (url.includes("/api/slow")) return new Promise(() => {}); // aborted below
+    return route.fulfill({ status: 200, body: "ok", headers: cors });
+  });
+  await boot(page);
+  await page.evaluate(async () => {
+    await fetch("https://app.test/api/orders?token=SECRET-QUERY-TOKEN", { method: "POST" }).catch(() => {});
+    await new Promise<void>((resolve) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("GET", "https://app.test/api/xhr-missing?id=7");
+      xhr.onloadend = () => resolve();
+      xhr.send();
+    });
+    const ctrl = new AbortController();
+    const pending = fetch("https://app.test/api/slow", { signal: ctrl.signal }).catch(() => {});
+    ctrl.abort();
+    await pending;
+    await fetch("https://app.test/api/fine");
+  });
+  await pressFeedbackButton(page);
+  await expect.poll(() => step(page), { timeout: 10_000 }).toBe("annotate");
+  await page.getByRole("button", { name: "Skip annotation" }).click({ timeout: 3000 });
+  await page.locator("#aif-description").fill("The save button did nothing.");
+  await page.locator(".aif-modal .aif-btn-primary").last().click({ timeout: 3000 });
+  await expect.poll(() => submitted !== null, { timeout: 10_000 }).toBe(true);
+  const failed = (submitted!.recentErrors ?? []).filter((e) => e.type === "failedRequest");
+  const text = JSON.stringify(failed);
+  expect(text).toContain("POST https://app.test/api/orders → 500");
+  expect(text).toContain("GET https://app.test/api/xhr-missing → 404");
+  expect(text).not.toContain("SECRET-QUERY-TOKEN");
+  expect(text).not.toContain("id=7");
+  expect(text).not.toContain("/api/slow"); // aborted on purpose
+  expect(text).not.toContain("/api/fine");
+  expect(text).not.toContain("feedback.test"); // the widget's own calls
+});

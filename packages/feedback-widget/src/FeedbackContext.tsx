@@ -114,7 +114,7 @@ export function FeedbackProvider({
     () => new FeedbackTransport(config.baseUrl, config.clientKey),
     [config.baseUrl, config.clientKey],
   );
-  const recorder = useSessionRecorder();
+  const recorder = useSessionRecorder({ ignoreUrlPrefix: config.baseUrl });
 
   const [isOpen, setIsOpen] = useState(false);
   const [step, setStep] = useState<FeedbackStep>("capture");
