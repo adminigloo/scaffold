@@ -72,8 +72,16 @@ const CSS_TEXT = `
 
 /* Floating trigger — the one piece of the brand a buyer's customers see all
    day, so it wears the accent rather than hiding in a grey pill. */
+/* pointer-events: auto on the trigger and the modal: a host's open modal (Radix,
+   i.e. every shadcn Dialog) sets pointer-events: none on <body>, and both would
+   inherit it — unclickable at the one moment someone needs to report a modal.
+   The z-index stays BELOW the feedback board's ticket panel (2147483002/3):
+   raised to the maximum, the trigger sat exactly on the panel's reply "Send"
+   button (both anchor bottom-right) and a click meant to send a reply started a
+   screenshot instead. Over that panel, Ctrl+Shift+B reports it. */
 .aif-fab {
   position: fixed; right: 20px; bottom: 20px; z-index: 2147483000;
+  pointer-events: auto;
   display: inline-flex; align-items: center; gap: 8px;
   padding: 10px 16px; border: 0; border-radius: 999px; cursor: pointer;
   background: var(--aif-accent); color: var(--aif-on-accent);
@@ -84,12 +92,24 @@ const CSS_TEXT = `
 .aif-fab:hover { transform: translateY(-1px); background: var(--aif-accent-strong); }
 .aif-fab svg { width: 15px; height: 15px; }
 
-/* Overlay + modal shell */
-.aif-overlay {
+.aif-fab[aria-busy] { cursor: progress; opacity: .85; }
+
+/* Overlay + modal shell. The overlay is a native <dialog> in the top layer
+   (FeedbackModal.tsx), so the user-agent dialog box model is reset: no
+   fit-content sizing, no max-size inset, no border, and its ::backdrop stays
+   clear because the overlay paints the scrim itself. The class is doubled
+   (0,2,0) so a host rule for its OWN dialogs — dialog:modal { max-width: … },
+   dialog[open] { padding: … } at (0,1,1) — cannot reshape this one. */
+.aif-overlay.aif-overlay {
   position: fixed; inset: 0; z-index: 2147483001;
-  background: var(--aif-scrim);
+  width: auto; height: auto; max-width: none; max-height: none;
+  margin: 0; border: 0; outline: none; animation: none;
+  pointer-events: auto;
+  background: var(--aif-scrim); color: var(--aif-ink);
   display: flex; align-items: center; justify-content: center; padding: 24px;
 }
+.aif-overlay.aif-overlay:not([open]) { display: none; }
+.aif-overlay.aif-overlay::backdrop { background: transparent; }
 .aif-modal {
   background: var(--aif-surface); border-radius: 14px; width: 100%; max-width: 860px;
   max-height: calc(100vh - 48px); display: flex; flex-direction: column;

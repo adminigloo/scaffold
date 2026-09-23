@@ -98,14 +98,18 @@ async function run(page: import("@playwright/test").Page, scenario: keyof typeof
 
     const cap = (window as unknown as {
       FeedbackCapture: {
-        captureScreenshot: () => Promise<{ dataUrl: string; width: number; height: number }>;
-        captureOverlays: () => Promise<Array<{ isModal: boolean }>>;
+        captureScreenshot: (o?: { excludeElements?: Set<Element> }) => Promise<{ dataUrl: string; width: number; height: number }>;
+        captureOverlays: () => Promise<Array<{ isModal: boolean; isBackdrop: boolean }>>;
         stitchOverlays: (m: unknown, o: unknown) => Promise<{ dataUrl: string; width: number; height: number }>;
       };
     }).FeedbackCapture;
 
     const overlays = await cap.captureOverlays();
-    const pageShot = await cap.captureScreenshot();
+    // Production composition: the captured layers are left out of the page
+    // capture, so the overlay path alone must supply them.
+    const pageShot = await cap.captureScreenshot({
+      excludeElements: new Set(overlays.map((o) => (o as unknown as { element: Element }).element)),
+    });
     const stitched = await cap.stitchOverlays(pageShot, overlays);
 
     // Read pixels out of the stitched result.
@@ -126,10 +130,14 @@ async function run(page: import("@playwright/test").Page, scenario: keyof typeof
       return { r: d[0], g: d[1], b: d[2] };
     };
 
+    // A backdrop is its own layer (painted in its real colour); count panels
+    // and backdrops separately.
+    const panels = overlays.filter((o) => !o.isBackdrop);
     return {
       dataUrl: stitched.dataUrl,
-      overlayCount: overlays.length,
-      isModal: overlays[0]?.isModal ?? null,
+      overlayCount: panels.length,
+      backdropCount: overlays.length - panels.length,
+      isModal: panels[0]?.isModal ?? null,
       marker: at(markerPt.x, markerPt.y),
       bg: at(bgPt.x, bgPt.y),
     };
@@ -150,18 +158,21 @@ test("a fixed modal is captured and the page behind it is dimmed", async ({ page
   savePng("modal", r.dataUrl);
   // The overlay was captured as exactly one modal.
   expect(r.overlayCount).toBe(1);
+  expect(r.backdropCount).toBe(1);
   expect(r.isModal).toBe(true);
   // The modal's magenta marker survived to its viewport position (it was drawn
   // on top, after the tint, so it stays bright).
   expect(near(r.marker, MODAL_MARK), `modal marker was ${JSON.stringify(r.marker)}`).toBe(true);
-  // The page behind it is dimmed — noticeably darker than the 230 background.
-  expect(r.bg.r, `bg should be dimmed, was ${JSON.stringify(r.bg)}`).toBeLessThan(190);
+  // The page behind it is dimmed ONCE by the real 0.5 backdrop: 230 -> 115.
+  // Twice (a backdrop drawn by both passes) would be ~57.
+  expect(Math.abs(r.bg.r - 115), `bg should be dimmed once (~115), was ${JSON.stringify(r.bg)}`).toBeLessThan(20);
 });
 
 test("a fixed chat panel is captured but the page is NOT dimmed", async ({ page }) => {
   const r = await run(page, "chat");
   savePng("chat", r.dataUrl);
   expect(r.overlayCount).toBe(1);
+  expect(r.backdropCount).toBe(0);
   expect(r.isModal).toBe(false); // a side panel is not a modal
   expect(near(r.marker, CHAT_MARK), `chat marker was ${JSON.stringify(r.marker)}`).toBe(true);
   // No modal => no backdrop tint => the page stays bright.

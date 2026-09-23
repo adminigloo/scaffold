@@ -112,15 +112,17 @@ export interface FeedbackConfig {
   /** Register Ctrl+Shift+B (default true). */
   enableShortcut?: boolean;
   /**
-   * Which on-screen overlays to capture and stitch onto the screenshot.
+   * Extra markers for on-screen overlays to capture and stitch onto the
+   * screenshot.
    *
-   * `position: fixed` overlays (modals, dialogs, an open AI panel) are dropped
-   * by the full-page capture, so the widget shoots them separately and composites
-   * them back — otherwise a report about a modal shows only the page behind it.
-   * Accessible dialogs (`[role="dialog"]`, `[role="alertdialog"]`) and anything
-   * tagged `[data-feedback-overlay]` are caught by default; set this to add your
-   * own (e.g. a bespoke chat panel: `["[data-chat-panel]"]`) or to replace the
-   * defaults entirely.
+   * `position: fixed` layers (modals and their backdrops, an open AI panel,
+   * toasts, a fixed header) are dropped by the full-page capture, so the widget
+   * finds every one of them by computed style — whatever library drew it —
+   * shoots each separately and composites them back in paint order. Nothing
+   * needs configuring for that. These markers are the opt-in path on top
+   * (default: dialog roles, `[data-feedback-overlay]`, `[data-chat-panel]`); a
+   * marked element must still sit inside a fixed layer. To keep an element out
+   * of every screenshot, tag it `data-feedback-ignore`.
    */
   overlaySelectors?: string[];
 }

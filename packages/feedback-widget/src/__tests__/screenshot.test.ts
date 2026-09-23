@@ -11,8 +11,9 @@ import type { ScreenshotData } from "../types.js";
 /**
  * These run in the node test environment — no DOM, no canvas — so they pin the
  * contracts that hold WITHOUT a browser: the SSR guards and the no-op paths.
- * The canvas compositing itself is a faithful port of Ask Lou's proven capture
- * and is exercised in the browser, not here.
+ * The capture and compositing themselves are proven with pixels in a real
+ * browser: scaffold/e2e (feedback-capture, feedback-centered-modal,
+ * feedback-layers, feedback-over-radix specs).
  */
 
 const main: ScreenshotData = {
@@ -45,9 +46,24 @@ describe("screenshot capture contracts", () => {
     // In node there is no document to build a canvas with; the function must
     // degrade to the page screenshot rather than crash on `new Image()`.
     const shot = await stitchOverlays(main, [
-      { dataUrl: main.dataUrl, width: 10, height: 10, rect: { left: 0, top: 0, width: 10, height: 10 }, isModal: true },
+      {
+        dataUrl: main.dataUrl,
+        width: 10,
+        height: 10,
+        rect: { left: 0, top: 0, width: 10, height: 10 },
+        fill: null,
+        backdropColor: null,
+        isBackdrop: false,
+        isModal: true,
+        alpha: 1,
+        element: {} as Element,
+      },
     ]);
     expect(shot).toBe(main);
+  });
+
+  it("the Ask Lou chat marker is still an opt-in overlay", () => {
+    expect(DEFAULT_OVERLAY_SELECTORS).toContain("[data-chat-panel]");
   });
 
   it("isUsableScreenshot rejects empty, short, and non-image payloads", () => {

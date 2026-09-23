@@ -162,7 +162,11 @@ export function AnnotationStage({
               }
               onKeyDown={(event) => {
                 if (event.key === "Enter") annotation.submitText();
-                if (event.key === "Escape") annotation.setTextInput(null);
+                if (event.key === "Escape") {
+                  // Escape cancels this text box, not the whole report.
+                  event.stopPropagation();
+                  annotation.setTextInput(null);
+                }
               }}
               onBlur={annotation.submitText}
             />

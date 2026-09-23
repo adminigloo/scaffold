@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useFeedback } from "./FeedbackContext.js";
 import { AnnotationStage } from "./AnnotationStage.js";
+import { useWidgetContainer } from "./hostLayers.js";
 import { IconCheck, IconSend, IconX } from "./icons.js";
 import type { FeedbackPriority } from "./types.js";
 
@@ -64,8 +66,8 @@ export function FeedbackModal() {
     feedback.reports.length > 0;
 
   return (
-    <div className="aif-root aif-overlay" data-aif-modal role="presentation">
-      <div className="aif-modal" role="dialog" aria-modal="true" aria-label={modalTitle}>
+    <ModalSurface label={modalTitle} onClose={feedback.closeFeedback} focusKey={feedback.step}>
+      <div className="aif-modal">
         <div className="aif-modal-header">
           <div>
             <div className="aif-modal-title">{modalTitle}</div>
@@ -118,9 +120,197 @@ export function FeedbackModal() {
           {feedback.step === "thread" ? <ThreadStep /> : null}
         </div>
       </div>
-    </div>
+    </ModalSurface>
   );
 }
+
+/**
+ * Events that never leave the feedback modal. Host UI libraries listen for
+ * these on `document` to decide a press or focus happened "outside" their open
+ * layer (and dismiss it), or to cancel scrolling outside it (scroll locks). They
+ * stop at the modal's own container — the widget's handlers still run, because
+ * React listens on that same container (see `useWidgetContainer`).
+ *
+ * Stopping them there, rather than cancelling the host's dismiss event, matters:
+ * Radix defers an outside press to the `click`, and by then a press that changed
+ * the step has already removed the pressed button from the DOM — a dismiss event
+ * dispatched on a detached node never passes through the modal to be cancelled.
+ * `click`/`touchend` (and the up events) are here for click-away listeners — MUI's
+ * ClickAwayListener dismisses on a document `click` by default.
+ */
+const CONTAINED_EVENTS = [
+  "pointerdown",
+  "pointerup",
+  "mousedown",
+  "mouseup",
+  "click",
+  "touchstart",
+  "touchend",
+  "focusin",
+  "wheel",
+  "touchmove",
+] as const;
+
+/** An Escape that belongs to an IME (closing a candidate list), not the page. */
+function isComposingEscape(event: KeyboardEvent): boolean {
+  return event.isComposing || event.keyCode === 229;
+}
+
+/**
+ * The modal shell: a native `<dialog>` opened with `showModal()`, in a
+ * widget-owned container at the top of `<body>`. Built to be used WHILE a host
+ * modal is open, because that is when a report about a modal gets written:
+ *
+ * - Top layer: above every z-index, and above a host `<dialog>` opened before it
+ *   — the feedback form can never sit behind the thing being reported.
+ * - Everything outside it goes inert, so a host modal's focus trap cannot pull
+ *   focus back out of the form mid-sentence.
+ * - A fresh `<body>` child, so a host modal's `aria-hidden` on the app root
+ *   (applied when IT opened) never hides this one from screen readers.
+ * - Presses, focus and scrolling inside it stay inside it (CONTAINED_EVENTS), so
+ *   they never dismiss the host's layer or hit its scroll lock.
+ * - Escape is the reporter's: it closes the feedback modal — from inside it, or
+ *   when focus has fallen to `<body>` (a step change unmounts the focused
+ *   button). It is marked handled on the way in (window, capture phase) so
+ *   libraries that skip a defaultPrevented Escape — Radix, Headless UI, Zag —
+ *   leave their modal open, and it stops at the container on the way out so
+ *   bubble-phase listeners (focus-trap) never see it. Anything inside that
+ *   handles Escape itself (the annotation text box) stops it, and the modal
+ *   stays. An IME's Escape is left alone.
+ * - Showing it hides any host `popover="auto"` (the platform does that for every
+ *   modal dialog); the popover was already captured, and is gone when the
+ *   reporter returns — a documented cost of the top layer.
+ */
+function ModalSurface({
+  label,
+  onClose,
+  focusKey,
+  children,
+}: {
+  label: string;
+  onClose: () => void;
+  /** Changes when the step changes — focus is pulled back into the dialog. */
+  focusKey: string;
+  children: ReactNode;
+}) {
+  const container = useWidgetContainer(CONTAINED_EVENTS);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  useEffect(() => {
+    if (!container) return undefined;
+    const claimEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || isComposingEscape(event)) return;
+      event.preventDefault();
+      // Focus outside the dialog (usually <body>, after a step change): nothing
+      // inside will see this Escape, so close from here.
+      if (!(event.target instanceof Node) || !container.contains(event.target)) onCloseRef.current();
+    };
+    const keepEscapeHere = (event: KeyboardEvent) => {
+      if (event.key === "Escape") event.stopPropagation();
+    };
+    window.addEventListener("keydown", claimEscape, true);
+    container.addEventListener("keydown", keepEscapeHere);
+    return () => {
+      window.removeEventListener("keydown", claimEscape, true);
+      container.removeEventListener("keydown", keepEscapeHere);
+    };
+  }, [container]);
+
+  if (!container) return null;
+  return createPortal(
+    <TopLayerDialog label={label} onClose={onClose} focusKey={focusKey}>
+      {children}
+    </TopLayerDialog>,
+    container,
+  );
+}
+
+/** The `<dialog>` itself; mounted only once its container is in the document. */
+function TopLayerDialog({
+  label,
+  onClose,
+  focusKey,
+  children,
+}: {
+  label: string;
+  onClose: () => void;
+  focusKey: string;
+  children: ReactNode;
+}) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  useLayoutEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return undefined;
+    // Where the reporter was — inside the host modal, usually. Handed back
+    // explicitly on close: by the time this cleanup runs the container may
+    // already be detached, and a detached dialog's close() restores nothing.
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (!dialog.open) {
+      try {
+        dialog.showModal();
+      } catch {
+        dialog.setAttribute("open", "");
+      }
+    }
+    return () => {
+      if (dialog.open) {
+        try {
+          dialog.close();
+        } catch {
+          /* already detached */
+        }
+      }
+      if (previous?.isConnected && previous !== document.body) {
+        try {
+          previous.focus({ preventScroll: true });
+        } catch {
+          /* not focusable any more */
+        }
+      }
+    };
+  }, []);
+
+  // A step change unmounts whatever had focus; pull it back into the dialog so
+  // keyboard users keep their place and Escape keeps working.
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const active = document.activeElement;
+    if (!active || active === document.body || !dialog.contains(active)) {
+      dialog.focus({ preventScroll: true });
+    }
+  }, [focusKey]);
+
+  return (
+    <dialog
+      ref={dialogRef}
+      className="aif-root aif-overlay"
+      data-aif-modal
+      aria-label={label}
+      tabIndex={-1}
+      // The platform may close the dialog itself — a mobile back gesture is a
+      // close request, and after one refused request the next cannot be
+      // refused. Treat it as the reporter closing the form; otherwise React
+      // still believes it is open, the button does nothing, and the Escape
+      // claim stays installed for the rest of the session.
+      onCancel={(event) => {
+        event.preventDefault();
+        onCloseRef.current();
+      }}
+      onClose={() => onCloseRef.current()}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && !isComposingEscape(event.nativeEvent)) onClose();
+      }}
+    >
+      {children}
+    </dialog>
+  );
+}
+
 
 function DescribeStep() {
   const feedback = useFeedback();

@@ -55,9 +55,20 @@ and chat-context reads → dropped (platform-side concerns).
 - `"use client"` banner via tsup config (first client-shipping package; the
   one sanctioned deviation from CLI-only tsup, precedent: create-app).
 
-Deferred from Ask Lou's version, deliberately: overlay/chat-panel compositing,
-Capacitor native screenshot detection, file attachments, epic picker. All are
-additive later.
+- **Overlays (0.3.0)**: the full-page capture drops `position: fixed` content,
+  so an open modal / AI chat / toast was missing from the shot — the deferral
+  below turned out to be the headline defect, not an extra. `captureOverlays`
+  now finds every fixed layer on screen by computed style (not Ask Lou's
+  opt-in markers — a buyer's markers are unknowable), captures each as a
+  transparent PNG with the transform family neutralised (centred dialogs came
+  out corner-only otherwise), paints backdrops in their real colour, and
+  `stitchOverlays` composites them in paint order. The feedback modal is a
+  native `<dialog>` (top layer) and contains its own presses/focus/wheel, so it
+  works while a host (Radix) modal is open. Proven with pixels in real Chromium:
+  `scaffold/e2e` (`cd e2e && pnpm install && pnpm test`).
+
+Deferred from Ask Lou's version, deliberately: Capacitor native screenshot
+detection, file attachments, epic picker. All are additive later.
 
 ## Package 2: `@adminigloo/feedback` (platform, ours)
 

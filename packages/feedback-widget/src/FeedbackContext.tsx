@@ -64,6 +64,12 @@ export interface FeedbackContextValue {
   category: string;
   categories: FeedbackCategoryOption[];
   isSubmitting: boolean;
+  /**
+   * The screenshot is being taken. The open layers are captured BEFORE the
+   * modal opens (so the reporter's modal is still there), which can take a
+   * moment; the button shows this so the click never looks dead.
+   */
+  isCapturing: boolean;
   submitError: string | null;
   ticketNumber: string | null;
   /** Reports this browser has sent, newest first — the "My reports" list. */
@@ -119,6 +125,7 @@ export function FeedbackProvider({
   const [category, setCategory] = useState("bug");
   const [categories, setCategories] = useState<FeedbackCategoryOption[]>(FALLBACK_CATEGORIES);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCapturing, setIsCapturing] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [ticketNumber, setTicketNumber] = useState<string | null>(null);
   const [reports, setReports] = useState<StoredReport[]>([]);
@@ -148,6 +155,7 @@ export function FeedbackProvider({
   const openFeedback = useCallback(async () => {
     if (capturingRef.current || isOpen) return;
     capturingRef.current = true;
+    setIsCapturing(true);
     void loadCategories();
 
     setStep("capture");
@@ -157,11 +165,11 @@ export function FeedbackProvider({
     setTicketNumber(null);
 
     // STEP 1 — capture the reporter's open overlays BEFORE our own UI opens.
-    // A `position: fixed` modal or AI panel does not survive a full-page
-    // capture (domToCanvas drops fixed positioning), and opening our modal can
-    // steal focus and close theirs — so if we waited, the one thing they were
-    // looking at would be gone from the shot. We capture them individually now,
-    // while they are still on screen, and stitch them back on in step 3.
+    // A `position: fixed` modal, AI panel or toast does not survive a full-page
+    // capture (domToCanvas drops fixed positioning), and once our modal is up
+    // theirs is covered — so if we waited, the one thing they were looking at
+    // would be gone from the shot. We capture them individually now, while
+    // they are still on screen, and stitch them back on in step 3.
     let overlays: OverlayShot[] = [];
     try {
       overlays = await captureOverlays(config.overlaySelectors);
@@ -170,11 +178,14 @@ export function FeedbackProvider({
     }
 
     // STEP 2 — now open our modal (with its spinner) and photograph the page.
-    // The filter excludes `[data-aif-modal]`, so our own UI never lands in it.
+    // The filter excludes `[data-aif-modal]`, so our own UI never lands in it,
+    // and the layers step 1 captured, so none is drawn twice.
     setIsOpen(true);
     await new Promise((resolve) => setTimeout(resolve, 100));
     try {
-      const page = await captureScreenshot();
+      const page = await captureScreenshot({
+        excludeElements: new Set(overlays.map((overlay) => overlay.element)),
+      });
       // STEP 3 — composite the overlays back on at their viewport rects.
       const shot = await stitchOverlays(page, overlays);
       if (isUsableScreenshot(shot.dataUrl)) {
@@ -188,6 +199,7 @@ export function FeedbackProvider({
       setStep("describe");
     } finally {
       capturingRef.current = false;
+      setIsCapturing(false);
     }
   }, [isOpen, loadCategories, config.overlaySelectors]);
 
@@ -385,6 +397,7 @@ export function FeedbackProvider({
     category,
     categories,
     isSubmitting,
+    isCapturing,
     submitError,
     ticketNumber,
     reports,

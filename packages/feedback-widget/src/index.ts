@@ -1,6 +1,7 @@
 export { FeedbackProvider, useFeedback } from "./FeedbackContext.js";
 export { FeedbackModal } from "./FeedbackModal.js";
 export { FeedbackButton } from "./FeedbackButton.js";
+export { isFeedbackWidgetTarget } from "./hostLayers.js";
 export type { FeedbackContextValue, FeedbackStep, ThreadData } from "./FeedbackContext.js";
 export type { StoredReport } from "./reports.js";
 export type {

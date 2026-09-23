@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import { describeElement, generateId, RingBuffer } from "./recorder.js";
+import { isSensitive } from "./redaction.js";
 import type { CapturedError, SessionEvent } from "./types.js";
 
 export interface UseSessionRecorderReturn {
@@ -41,10 +42,19 @@ export function useSessionRecorder(): UseSessionRecorderReturn {
   // Clicks
   useEffect(() => {
     const handleClick = (event: MouseEvent) => {
-      const target = event.target as Element | null;
-      if (!target) return;
-      // Clicks inside the widget are the reporting flow, not the story being reported.
-      if (target.closest("[data-aif-modal],[data-aif-button]")) return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      // Clicks inside the widget are the reporting flow, not the story being
+      // reported; a host's `data-feedback-ignore` keeps an element out of the
+      // report entirely — screenshot AND trail.
+      if (target.closest("[data-aif-modal],[data-aif-button],[data-feedback-ui],[data-feedback-ignore]")) return;
+      // Secret content is redacted in the screenshot; the trail must not undo
+      // that by quoting it (a user clicks a revealed API key to copy it, then
+      // reports). Record that a sensitive thing was clicked, not what it said.
+      if (isSensitive(target)) {
+        addEvent({ type: "click", target: `${target.tagName.toLowerCase()} (sensitive)` });
+        return;
+      }
       addEvent({ type: "click", target: describeElement(target).slice(0, 200) });
     };
     document.addEventListener("click", handleClick, { passive: true });
