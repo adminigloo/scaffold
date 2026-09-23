@@ -78,6 +78,16 @@ export const EVERY_CONFIGURATION: readonly Configuration[] = TENANT_NOUNS.flatMa
                     includeSuite ? "--notifications" : "--no-notifications",
                     includeSuite ? "--storage" : "--no-storage",
                     includeSuite ? "--assistant" : "--no-assistant",
+                    // The five field-service features ride the same axis, for the
+                    // reason the suite trio does: each is independent of the
+                    // others, coupled only to the admin shell, so toggling them
+                    // together still exercises every shell pairing without an
+                    // axis apiece (which would multiply this product by 32).
+                    includeSuite ? "--estimator" : "--no-estimator",
+                    includeSuite ? "--scheduling" : "--no-scheduling",
+                    includeSuite ? "--invoicing" : "--no-invoicing",
+                    includeSuite ? "--comms" : "--no-comms",
+                    includeSuite ? "--aeo" : "--no-aeo",
                     includeMarketing ? "--marketing" : "--no-marketing",
                   ];
                   return {
@@ -96,6 +106,11 @@ export const EVERY_CONFIGURATION: readonly Configuration[] = TENANT_NOUNS.flatMa
                       includeNotifications: includeSuite,
                       includeStorage: includeSuite,
                       includeAssistant: includeSuite,
+                      includeEstimator: includeSuite,
+                      includeScheduling: includeSuite,
+                      includeInvoicing: includeSuite,
+                      includeComms: includeSuite,
+                      includeAeo: includeSuite,
                       includeMarketing,
                     },
                   };

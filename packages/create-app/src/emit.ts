@@ -1191,6 +1191,20 @@ export function renderEnvModule(answers: Answers): string {
     );
   }
 
+  if (answers.includeComms) {
+    // The shared secret the comms cron route checks. Declared here rather than
+    // in an env fragment of @__SCOPE_NAME__/comms because it is not a credential
+    // the package consumes — it is a statement about THIS deployment, and the
+    // /api/cron/comms route is the only reader. Optional: unset, the route
+    // refuses every caller (401), so an unconfigured deployment cannot have its
+    // queue drained by a stranger.
+    serverSpreads.push("CRON_SECRET: z.string().min(1).optional()");
+    runtime.push("CRON_SECRET: process.env.CRON_SECRET");
+    features.push(
+      `{ name: "Scheduled messages", vars: ["CRON_SECRET"], disables: "The comms cron: /api/cron/comms answers 401 until the secret is set and the scheduler sends it. Templates and the log are unaffected; nothing drains the queue automatically." }`,
+    );
+  }
+
   // Last on /setup, and last here so it stays that way. Everything above
   // switches a product feature off; these two change only how well the running
   // app can be operated, and a reader working down the page should meet the
@@ -1916,6 +1930,21 @@ export function renderAppRouter(answers: Answers): string {
   if (answers.includeAssistant) {
     imports.splice(1, 0, 'import { assistantRouter } from "./assistant";');
   }
+  if (answers.includeEstimator) {
+    imports.splice(1, 0, 'import { estimatorRouter } from "./estimator";');
+  }
+  if (answers.includeScheduling) {
+    imports.splice(1, 0, 'import { schedulingRouter } from "./scheduling";');
+  }
+  if (answers.includeInvoicing) {
+    imports.splice(1, 0, 'import { invoicingRouter } from "./invoicing";');
+  }
+  if (answers.includeComms) {
+    imports.splice(1, 0, 'import { commsRouter } from "./comms";');
+  }
+  if (answers.includeAeo) {
+    imports.splice(1, 0, 'import { aeoRouter } from "./aeo";');
+  }
   if (takesMoney) {
     imports.splice(1, 0, 'import { accountRouter } from "./account";');
     imports.splice(2, 0, 'import { billingRouter } from "./billing";');
@@ -1987,6 +2016,53 @@ export function renderAppRouter(answers: Answers): string {
 `
     : "";
 
+  // Field service. The estimator, scheduling and invoicing routers each carry
+  // PUBLIC procedures (the estimate, the booking request, the pay-by-token
+  // read) beside their staff ones — a quote the customer never signs in to get.
+  // What keeps those safe is the same rule the shop follows: amount, tenant and
+  // eligibility are read server-side, never from the request.
+  const estimator = answers.includeEstimator
+    ? `
+  // Pricing an estimate from the catalog, the staff product/estimate builder,
+  // and the client keys the embed widget authenticates with. The cross-origin
+  // intake itself is the /api/estimator/embed route handler, not tRPC.
+  estimator: estimatorRouter,
+`
+    : "";
+
+  const scheduling = answers.includeScheduling
+    ? `
+  // Drive-time-aware booking. Public slots and request-a-booking power the
+  // estimate -> book flow; the rest is the staff calendar, resources and
+  // availability.
+  scheduling: schedulingRouter,
+`
+    : "";
+
+  const invoicing = answers.includeInvoicing
+    ? `
+  // Invoices and payments, plus the public by-token read a customer opens from
+  // an emailed link without an account.
+  invoicing: invoicingRouter,
+`
+    : "";
+
+  const comms = answers.includeComms
+    ? `
+  // Templated messages: the staff console edits templates and reads the log;
+  // the cron route drains what is due through the injected senders.
+  comms: commsRouter,
+`
+    : "";
+
+  const aeo = answers.includeAeo
+    ? `
+  // Answer-engine citation tracking. Staff track the questions customers ask an
+  // assistant and check whether the answer mentions them.
+  aeo: aeoRouter,
+`
+    : "";
+
   const shop = takesMoney
     ? `
   // The product builder. Staff-scoped, and mounted unconditionally alongside
@@ -2052,7 +2128,7 @@ export const appRouter = createTRPCRouter({
   // writes actually live. Mounted even in a project generated without the admin
   // shell, so the panel can be added later without re-deriving its boundary.
   admin: adminRouter,
-${ai}${feedback}${seo}${notifications}${storage}${assistant}${shop}});
+${ai}${feedback}${seo}${notifications}${storage}${assistant}${estimator}${scheduling}${invoicing}${comms}${aeo}${shop}});
 
 export type AppRouter = typeof appRouter;
 `;
@@ -2084,6 +2160,13 @@ export function renderSchemaModule(answers: Answers): string {
   if (answers.includeNotifications) owners.push("notifications");
   if (answers.includeStorage) owners.push("storage");
   if (answers.includeAssistant) owners.push("assistant");
+  // Field service. Each owns its own tables; the -widget package (estimator)
+  // owns none, so only the server package is listed.
+  if (answers.includeEstimator) owners.push("estimator");
+  if (answers.includeScheduling) owners.push("scheduling");
+  if (answers.includeInvoicing) owners.push("invoicing");
+  if (answers.includeComms) owners.push("comms");
+  if (answers.includeAeo) owners.push("aeo");
 
   /**
    * `@scope/auth/schema` -> `authSchema`; `seo-reports` -> `seoReportsSchema`.
@@ -2746,6 +2829,82 @@ export function renderAdminNav(answers: Answers): string {
   }
   if (operations.length > 0) {
     groups.push({ heading: "Operations", items: operations });
+  }
+
+  // Field service — the quote → book → bill work, plus the two around it. One
+  // group for however many were asked for; each entry is present only when its
+  // overlay was copied, and all sit on the shell's own key the way the other
+  // feature pages do (mint a narrower key when an action should not be every
+  // staff member's).
+  const fieldService: GeneratedNavItem[] = [];
+  if (answers.includeEstimator) {
+    fieldService.push(
+      {
+        href: "/admin/estimator",
+        label: "Price book",
+        permission: "staff.dashboard.view",
+        why:
+          "The catalog builder from the estimator package: price parts and " +
+          "products, and issue the client keys the embed widget authenticates " +
+          "with. From estimator-admin, so a project without the answer has " +
+          "neither the page nor this entry.",
+      },
+      {
+        href: "/admin/estimates",
+        label: "Estimates",
+        permission: "staff.dashboard.view",
+        why:
+          "The estimates the public tool and the embed filed as leads, newest " +
+          "first, with status. The read side of the same estimator package.",
+      },
+    );
+  }
+  if (answers.includeScheduling) {
+    fieldService.push({
+      href: "/admin/schedule",
+      label: "Schedule",
+      permission: "staff.dashboard.view",
+      why:
+        "The staff calendar, resources and availability from the scheduling " +
+        "package. The public request-a-booking flow feeds it; this is where the " +
+        "crew's day is read and edited.",
+    });
+  }
+  if (answers.includeInvoicing) {
+    fieldService.push({
+      href: "/admin/invoices",
+      label: "Invoices",
+      permission: "staff.dashboard.view",
+      why:
+        "The invoice ledger from the invoicing package: raise an invoice, record " +
+        "a payment, and share the by-token link a customer pays without an " +
+        "account.",
+    });
+  }
+  if (answers.includeComms) {
+    fieldService.push({
+      href: "/admin/comms",
+      label: "Messages",
+      permission: "staff.dashboard.view",
+      why:
+        "The templates and delivery log from the comms package. The cron route " +
+        "drains what is due; this console is where the templates are edited and " +
+        "the log is read.",
+    });
+  }
+  if (answers.includeAeo) {
+    fieldService.push({
+      href: "/admin/aeo",
+      label: "AI citations",
+      permission: "staff.dashboard.view",
+      why:
+        "Citation tracking from the aeo package: the questions customers ask an " +
+        "assistant, and whether the answer mentions you. From aeo-admin, so a " +
+        "project without the answer has neither the page nor this entry.",
+    });
+  }
+  if (fieldService.length > 0) {
+    groups.push({ heading: "Field service", items: fieldService });
   }
 
   const accounts: GeneratedNavItem[] = [

@@ -133,6 +133,24 @@ export interface Answers {
    * opt-in.
    */
   readonly includeMarketing: boolean;
+  /**
+   * FIELD-SERVICE FEATURES — the quote → book → bill spine plus the two around
+   * it, each a standalone, composable overlay. They are the testbed's
+   * @__SCOPE_NAME__/{estimator,scheduling,invoicing,comms,aeo} packages, wired
+   * the same way the other suite features are: a server half (router + any
+   * app-owned glue) on the answer alone, an admin page half gated on the shell.
+   *
+   * Each stands alone. Where the testbed cross-wires them (a booking queuing a
+   * confirmation through comms; a citation check asking the app's model), the
+   * overlay ships that glue as a degrading stub the project wires — a static
+   * overlay cannot conditionally depend on a sibling overlay, and "the producer
+   * is yours to wire" is the same rule notifications already follows.
+   */
+  readonly includeEstimator: boolean;
+  readonly includeScheduling: boolean;
+  readonly includeInvoicing: boolean;
+  readonly includeComms: boolean;
+  readonly includeAeo: boolean;
   /** Scope the packages are published under. */
   readonly scope: string;
 }
@@ -150,6 +168,11 @@ export const DEFAULT_ANSWERS: Answers = {
   includeStorage: false,
   includeAssistant: false,
   includeMarketing: false,
+  includeEstimator: false,
+  includeScheduling: false,
+  includeInvoicing: false,
+  includeComms: false,
+  includeAeo: false,
   scope: "@adminigloo",
 };
 
@@ -238,6 +261,18 @@ export function packagesFor(answers: Answers): readonly string[] {
   if (answers.includeNotifications) optional.push("notifications");
   if (answers.includeStorage) optional.push("storage");
   if (answers.includeAssistant) optional.push("assistant");
+
+  // Field service. Each installs only its own package; the cross-feature glue
+  // (a booking confirmation through comms, a citation check through a model) is
+  // shipped as a wired-yourself stub, so none of these pulls in another.
+  // The estimator server package only. The embed API it serves is what a quote
+  // widget on the customer's OWN site calls — the widget SDK is installed there,
+  // not here — so this project depends on the engine, not the widget.
+  if (answers.includeEstimator) optional.push("estimator");
+  if (answers.includeScheduling) optional.push("scheduling");
+  if (answers.includeInvoicing) optional.push("invoicing");
+  if (answers.includeComms) optional.push("comms");
+  if (answers.includeAeo) optional.push("aeo");
 
   return [...base, ...optional].map((p) => `${answers.scope}/${p}`);
 }
@@ -492,6 +527,29 @@ export function overlayNamesFor(answers: Answers): readonly string[] {
     names.push("assistant-admin");
   }
 
+  // FIELD SERVICE, each on the feedback shape: the server half (router + glue)
+  // on the answer alone, the `-admin` page half gated on a shell to hold it.
+  if (answers.includeEstimator) names.push("estimator");
+  if (answers.includeEstimator && answers.adminShell !== "none") {
+    names.push("estimator-admin");
+  }
+  if (answers.includeScheduling) names.push("scheduling");
+  if (answers.includeScheduling && answers.adminShell !== "none") {
+    names.push("scheduling-admin");
+  }
+  if (answers.includeInvoicing) names.push("invoicing");
+  if (answers.includeInvoicing && answers.adminShell !== "none") {
+    names.push("invoicing-admin");
+  }
+  if (answers.includeComms) names.push("comms");
+  if (answers.includeComms && answers.adminShell !== "none") {
+    names.push("comms-admin");
+  }
+  if (answers.includeAeo) names.push("aeo");
+  if (answers.includeAeo && answers.adminShell !== "none") {
+    names.push("aeo-admin");
+  }
+
   // THE PUBLIC FACE, in three overlays rather than one, because the three have
   // three different conditions and folding them together would make one of the
   // three wrong in every configuration.
@@ -642,6 +700,29 @@ export function capabilitiesFor(answers: Answers): readonly string[] {
   if (answers.includeAssistant) keys.push("assistant.brain");
   if (answers.includeAssistant && answers.adminShell !== "none") {
     keys.push("assistant.editor");
+  }
+
+  // Field service. Split the way the other suite features are: the server half
+  // (router/handlers/schema) on the answer, the staff screen on the shell.
+  if (answers.includeEstimator) keys.push("estimator.pricing", "estimator.embed");
+  if (answers.includeEstimator && answers.adminShell !== "none") {
+    keys.push("estimator.builder");
+  }
+  if (answers.includeScheduling) keys.push("scheduling.booking");
+  if (answers.includeScheduling && answers.adminShell !== "none") {
+    keys.push("scheduling.calendar");
+  }
+  if (answers.includeInvoicing) keys.push("invoicing.invoices");
+  if (answers.includeInvoicing && answers.adminShell !== "none") {
+    keys.push("invoicing.ledger");
+  }
+  if (answers.includeComms) keys.push("comms.messaging");
+  if (answers.includeComms && answers.adminShell !== "none") {
+    keys.push("comms.console");
+  }
+  if (answers.includeAeo) keys.push("aeo.citations");
+  if (answers.includeAeo && answers.adminShell !== "none") {
+    keys.push("aeo.dashboard");
   }
 
   // The public face. Three keys rather than one, because a consumer asking

@@ -134,6 +134,15 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // inline, which put a fourteenth version in a place no drift test looked at —
   // the exact arrangement the rest of this table exists to replace.
   testing: "0.1.4",
+  // Field service — first releases, pinned at the workspace versions the drift
+  // test reads. The emitted routers/handlers import from each unconditionally
+  // for the config that selects it, so a caret over anything older can resolve
+  // wrong; these move IN STEP with the workspace.
+  estimator: "0.1.5",
+  scheduling: "0.1.1",
+  invoicing: "0.1.1",
+  comms: "0.1.1",
+  aeo: "0.1.1",
 };
 
 export class UnknownPackageVersionError extends Error {

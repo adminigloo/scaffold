@@ -56,6 +56,11 @@ export const ADDABLE_FEATURES = [
   "storage",
   "assistant",
   "marketing",
+  "estimator",
+  "scheduling",
+  "invoicing",
+  "comms",
+  "aeo",
 ] as const;
 
 export type FeatureName = (typeof ADDABLE_FEATURES)[number];
@@ -70,6 +75,11 @@ const FEATURE_ANSWER: Record<FeatureName, keyof Answers> = {
   storage: "includeStorage",
   assistant: "includeAssistant",
   marketing: "includeMarketing",
+  estimator: "includeEstimator",
+  scheduling: "includeScheduling",
+  invoicing: "includeInvoicing",
+  comms: "includeComms",
+  aeo: "includeAeo",
 };
 
 export class UnknownFeatureError extends Error {

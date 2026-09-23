@@ -385,6 +385,92 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
         "createStreamRoute(",
       ),
   },
+
+  // FIELD SERVICE. Each server half proven by a load-bearing call in the file
+  // that does the work; each admin half by the staff page under the shell.
+  {
+    capability: "estimator.pricing",
+    why:
+      "The estimator router that prices an estimate from the catalog, over " +
+      "tRPC whether or not a shell renders a builder. The embed handler and the " +
+      "builder page are the other two keys.",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "server", "routers", "estimator.ts"], "calculate"),
+  },
+  {
+    capability: "estimator.embed",
+    why:
+      "The cross-origin embed handler — a client-key-authenticated route a " +
+      "quote widget on another site posts to. The intake half, mounted on the " +
+      "answer alone the way feedback's is.",
+    provenBy: (plan) =>
+      mentions(
+        plan,
+        ["app", "api", "estimator", "embed", "[...path]", "route.ts"],
+        "createEstimatorHandlers(",
+      ),
+  },
+  {
+    capability: "estimator.builder",
+    why: "The staff product/estimate builder under the shell, from estimator-admin.",
+    provenBy: (plan) => exists(plan, "app", "admin", "estimator", "page.tsx"),
+  },
+  {
+    capability: "scheduling.booking",
+    why:
+      "The scheduling router carrying the public request-a-booking flow — " +
+      "drive-time-validated server-side before it writes. The calendar page is " +
+      "the other key.",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "server", "routers", "scheduling.ts"], "requestBooking"),
+  },
+  {
+    capability: "scheduling.calendar",
+    why: "The staff calendar/resources page under the shell, from scheduling-admin.",
+    provenBy: (plan) => exists(plan, "app", "admin", "schedule", "page.tsx"),
+  },
+  {
+    capability: "invoicing.invoices",
+    why:
+      "The invoicing router plus the public pay-by-token page a customer views " +
+      "without an account. The staff ledger is the other key.",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "server", "routers", "invoicing.ts"], "createInvoice") &&
+      exists(plan, "app", "(site)", "invoice", "[token]", "page.tsx"),
+  },
+  {
+    capability: "invoicing.ledger",
+    why: "The staff invoice ledger page under the shell, from invoicing-admin.",
+    provenBy: (plan) => exists(plan, "app", "admin", "invoices", "page.tsx"),
+  },
+  {
+    capability: "comms.messaging",
+    why:
+      "The cron route that drains the queue through the injected senders — the " +
+      "mechanism that actually delivers, whether or not a shell lists it. The " +
+      "console page is the other key.",
+    provenBy: (plan) =>
+      mentions(plan, ["app", "api", "cron", "comms", "route.ts"], "runDueMessages("),
+  },
+  {
+    capability: "comms.console",
+    why: "The staff templates/messages console under the shell, from comms-admin.",
+    provenBy: (plan) => exists(plan, "app", "admin", "comms", "page.tsx"),
+  },
+  {
+    capability: "aeo.citations",
+    why:
+      "The router that runs citation checks against the injected asker, over " +
+      "tRPC whether or not a shell renders the dashboard. The dashboard is the " +
+      "other key.",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "server", "routers", "aeo.ts"], "runCitationChecks("),
+  },
+  {
+    capability: "aeo.dashboard",
+    why: "The staff citation-tracking dashboard under the shell, from aeo-admin.",
+    provenBy: (plan) => exists(plan, "app", "admin", "aeo", "page.tsx"),
+  },
 ];
 
 /**

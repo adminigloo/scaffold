@@ -36,6 +36,11 @@ export interface CliFlags {
   readonly storage?: boolean;
   readonly assistant?: boolean;
   readonly marketing?: boolean;
+  readonly estimator?: boolean;
+  readonly scheduling?: boolean;
+  readonly invoicing?: boolean;
+  readonly comms?: boolean;
+  readonly aeo?: boolean;
 }
 
 export class UnknownFlagValueError extends Error {
@@ -74,6 +79,11 @@ export function parseArgs(argv: readonly string[]): CliFlags {
   let storage: boolean | undefined;
   let assistant: boolean | undefined;
   let marketing: boolean | undefined;
+  let estimator: boolean | undefined;
+  let scheduling: boolean | undefined;
+  let invoicing: boolean | undefined;
+  let comms: boolean | undefined;
+  let aeo: boolean | undefined;
 
   /** Supports both `--flag value` and `--flag=value`. */
   const readValue = (arg: string, prefix: string, index: number): string | undefined =>
@@ -101,6 +111,16 @@ export function parseArgs(argv: readonly string[]): CliFlags {
     else if (arg === "--no-assistant") assistant = false;
     else if (arg === "--marketing") marketing = true;
     else if (arg === "--no-marketing") marketing = false;
+    else if (arg === "--estimator") estimator = true;
+    else if (arg === "--no-estimator") estimator = false;
+    else if (arg === "--scheduling") scheduling = true;
+    else if (arg === "--no-scheduling") scheduling = false;
+    else if (arg === "--invoicing") invoicing = true;
+    else if (arg === "--no-invoicing") invoicing = false;
+    else if (arg === "--comms") comms = true;
+    else if (arg === "--no-comms") comms = false;
+    else if (arg === "--aeo") aeo = true;
+    else if (arg === "--no-aeo") aeo = false;
     else if (arg === "--dir" || arg.startsWith("--dir=")) {
       dir = readValue(arg, "--dir", i);
     } else if (arg === "--tenant-noun" || arg.startsWith("--tenant-noun=")) {
@@ -140,6 +160,11 @@ export function parseArgs(argv: readonly string[]): CliFlags {
     storage,
     assistant,
     marketing,
+    estimator,
+    scheduling,
+    invoicing,
+    comms,
+    aeo,
   };
 }
 
@@ -182,6 +207,19 @@ export const HELP = `
                        only the client can make. Privacy and terms are generated
                        for any project that takes money either way, because
                        Stripe will not activate an account without them.
+  --estimator          Field service: a pricing/takeoff engine with a public
+    / --no-estimator   estimate page and a cross-origin embed widget (client-key
+                       authenticated), plus a staff product/estimate builder.
+  --scheduling         Field service: drive-time-aware booking — a public
+    / --no-scheduling  slots/request flow and a staff calendar, resources and
+                       availability. Keyless Haversine drive times by default.
+  --invoicing          Field service: invoices with a public pay-by-token page
+    / --no-invoicing   customers view without an account, and a staff ledger.
+  --comms              Field service: templated email/SMS with a scheduler and a
+    / --no-comms       cron drain. Senders are injected — no provider, clean skip.
+  --aeo                Field service: answer-engine citation tracking — do the AI
+    / --no-aeo         answers to your customers' questions mention you. Staff
+                       screen; the model asker is yours to wire.
   --help, -h           Show this.
 
   Any flag given is used verbatim; only the rest are prompted for.
@@ -289,6 +327,37 @@ export async function collectAnswers(
       DEFAULT_ANSWERS.includeMarketing,
     ));
 
+  const includeEstimator =
+    flags.estimator ??
+    (await prompter.confirm(
+      "Field service — estimator? Pricing/takeoff engine, public estimate page and embed widget.",
+      DEFAULT_ANSWERS.includeEstimator,
+    ));
+  const includeScheduling =
+    flags.scheduling ??
+    (await prompter.confirm(
+      "Field service — scheduling? Drive-time-aware booking with a public request flow and a staff calendar.",
+      DEFAULT_ANSWERS.includeScheduling,
+    ));
+  const includeInvoicing =
+    flags.invoicing ??
+    (await prompter.confirm(
+      "Field service — invoicing? Invoices with a public pay-by-token page and a staff ledger.",
+      DEFAULT_ANSWERS.includeInvoicing,
+    ));
+  const includeComms =
+    flags.comms ??
+    (await prompter.confirm(
+      "Field service — comms? Templated email/SMS with a scheduler and a cron drain.",
+      DEFAULT_ANSWERS.includeComms,
+    ));
+  const includeAeo =
+    flags.aeo ??
+    (await prompter.confirm(
+      "Field service — AI citation tracking? Do answer engines mention you for your customers' questions.",
+      DEFAULT_ANSWERS.includeAeo,
+    ));
+
   return {
     projectName,
     tenantNoun,
@@ -302,6 +371,11 @@ export async function collectAnswers(
     includeStorage,
     includeAssistant,
     includeMarketing,
+    includeEstimator,
+    includeScheduling,
+    includeInvoicing,
+    includeComms,
+    includeAeo,
     scope: DEFAULT_ANSWERS.scope,
   };
 }
