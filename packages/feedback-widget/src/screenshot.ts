@@ -42,6 +42,9 @@ export const DEFAULT_OVERLAY_SELECTORS = [
   '[role="dialog"]',
   '[role="alertdialog"]',
   "[data-feedback-overlay]",
+  // Ask Lou's own marker for the chat panel — kept so an AI window carrying it
+  // is captured out of the box, the same integration the source shipped.
+  "[data-chat-panel]",
 ];
 
 /** A captured overlay and where it sat in the viewport, for stitching. */
@@ -50,6 +53,13 @@ export interface OverlayShot {
   readonly width: number;
   readonly height: number;
   readonly rect: { left: number; top: number; width: number; height: number };
+  /**
+   * A true modal (has a backdrop) rather than a side panel (a chat, a command
+   * palette). Only a modal earns the dimmed backdrop in the stitch — dimming the
+   * page behind a chat panel that never dimmed it would misreport what was on
+   * screen.
+   */
+  readonly isModal: boolean;
 }
 
 /**
@@ -211,15 +221,43 @@ export async function captureElement(
 }
 
 /**
- * Find the open `position: fixed` overlays and capture each one, with its
- * viewport rect, so they can be stitched back onto the page screenshot.
+ * Is this element part of a layer the full-page capture DROPS? That is the whole
+ * test for whether it must be captured and stitched separately, and getting it
+ * wrong is the classic broken fix: capture an IN-FLOW dialog that the page shot
+ * already contains and you draw it twice and dim the page behind it. `domToCanvas`
+ * drops `position: fixed` subtrees and the browser top layer (a native
+ * `<dialog>` opened with `showModal()`); everything else is already in the page.
+ */
+function isInDroppedLayer(el: HTMLElement): boolean {
+  if (el.closest("dialog[open]")) return true;
+  let node: HTMLElement | null = el;
+  while (node && node !== document.body && node !== document.documentElement) {
+    if (getComputedStyle(node).position === "fixed") return true;
+    node = node.parentElement;
+  }
+  return false;
+}
+
+/** A modal dims the page (it has a backdrop); a side panel does not. Only the
+ * former earns the dimmed backdrop in the stitch. */
+function isModalOverlay(el: HTMLElement): boolean {
+  return el.matches('[aria-modal="true"], [data-modal], [role="alertdialog"]');
+}
+
+/**
+ * Find the open overlays the page capture cannot see and capture each one, with
+ * its viewport rect, so they can be stitched back on.
  *
  * MUST RUN BEFORE THE FEEDBACK UI OPENS — that is the whole point. Once the
  * widget's own modal is up it can steal focus and close the reporter's dialog,
- * and then there is nothing left to capture. Elements inside the widget's own
- * UI (`[data-aif-modal]`) are skipped, as are ones nested inside another overlay
- * already captured (so a dialog and its close button are not shot twice), and
- * anything too small to be a real panel.
+ * and then there is nothing left to capture.
+ *
+ * Only elements in a DROPPED layer (`position: fixed`, or a native modal
+ * `<dialog>`) qualify — an in-flow dialog is already in the page screenshot, and
+ * capturing it again would double-draw it and wrongly dim the page (the exact
+ * shape of a well-meant fix gone wrong). Also skips the widget's own surface
+ * (`[data-aif-modal]`), matches nested inside another match, and anything too
+ * small to be a real panel.
  */
 export async function captureOverlays(
   selectors: string[] = DEFAULT_OVERLAY_SELECTORS,
@@ -241,6 +279,8 @@ export async function captureOverlays(
     if (el.closest("[data-aif-modal]")) return false;
     // Real, visible panels only.
     if (el.offsetWidth < 20 || el.offsetHeight < 20) return false;
+    // Only things the page capture actually dropped — never in-flow content.
+    if (!isInDroppedLayer(el)) return false;
     // Skip a match nested inside another match — capture the outermost so the
     // stitched overlay is the whole panel, drawn once.
     for (const other of found) {
@@ -259,6 +299,7 @@ export async function captureOverlays(
         width: shot.width,
         height: shot.height,
         rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+        isModal: isModalOverlay(el),
       });
     }
   }
@@ -297,9 +338,13 @@ export async function stitchOverlays(
     if (!ctx) return main;
 
     ctx.drawImage(mainImg, 0, 0);
-    // The backdrop the fixed-overlay capture skipped.
-    ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // The backdrop the capture skipped — but ONLY for a real modal, which dims
+    // the page. A side panel (a chat, a command palette) leaves the page bright
+    // and interactive, so dimming behind one would misreport the screen.
+    if (overlays.some((o) => o.isModal)) {
+      ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
 
     for (const overlay of overlays) {
       const img = await loadImage(overlay.dataUrl);

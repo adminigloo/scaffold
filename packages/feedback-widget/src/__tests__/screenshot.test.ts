@@ -45,7 +45,7 @@ describe("screenshot capture contracts", () => {
     // In node there is no document to build a canvas with; the function must
     // degrade to the page screenshot rather than crash on `new Image()`.
     const shot = await stitchOverlays(main, [
-      { dataUrl: main.dataUrl, width: 10, height: 10, rect: { left: 0, top: 0, width: 10, height: 10 } },
+      { dataUrl: main.dataUrl, width: 10, height: 10, rect: { left: 0, top: 0, width: 10, height: 10 }, isModal: true },
     ]);
     expect(shot).toBe(main);
   });
