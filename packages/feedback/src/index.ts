@@ -316,6 +316,36 @@ export interface CreateFeedbackHandlersOptions {
     readonly publicKey?: string | undefined;
     readonly mode?: LicenseMode | undefined;
   };
+  /**
+   * Throttle the write endpoints (submit, upload, reply). OPTIONAL and a no-op
+   * when omitted — so existing installs are unchanged — but strongly recommended
+   * for anything sold: the client key authenticates a whole tenant's ANONYMOUS
+   * visitors, so without a limit one buggy render loop or one hostile visitor can
+   * mint unlimited tickets and, worse, unlimited blob uploads on the buyer's
+   * storage bill. Return `{ ok: false }` to answer 429.
+   *
+   * Injected, not built in, for the same reason `storeFile` is: a packaged
+   * serverless handler has no ambient rate-limit store, and the buyer's stack
+   * (edge middleware, @adminigloo/observability, Upstash) already has one. Wire
+   * it to a per-key/per-IP counter.
+   */
+  rateLimit?: (
+    info: FeedbackRateLimitInfo,
+  ) => Promise<FeedbackRateLimitDecision> | FeedbackRateLimitDecision;
+}
+
+export interface FeedbackRateLimitInfo {
+  readonly action: "submit" | "upload" | "reply";
+  readonly tenantId: string;
+  readonly keyId: string;
+  /** Best-effort client IP from forwarding headers; null if none present. */
+  readonly ip: string | null;
+}
+
+export interface FeedbackRateLimitDecision {
+  readonly ok: boolean;
+  /** Seconds until the caller may retry; sent as the Retry-After header. */
+  readonly retryAfterSeconds?: number;
 }
 
 export interface FeedbackHandlers {
@@ -355,6 +385,33 @@ export function createFeedbackHandlers(options: CreateFeedbackHandlersOptions): 
     return verified ?? json({ error: "unknown or revoked key" }, 401);
   }
 
+  /**
+   * Run the injected throttle for a write action. Returns a 429 Response when
+   * the caller is over the limit, or null to proceed. A no-op unless `rateLimit`
+   * is configured — see the option's doc for why every sold install should be.
+   */
+  async function enforceRateLimit(
+    action: FeedbackRateLimitInfo["action"],
+    auth: VerifiedClientKey,
+    req: Request,
+  ): Promise<Response | null> {
+    if (!options.rateLimit) return null;
+    const ip =
+      req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+      req.headers.get("x-real-ip") ??
+      null;
+    const decision = await options.rateLimit({ action, tenantId: auth.tenantId, keyId: auth.keyId, ip });
+    if (decision.ok) return null;
+    const headers: Record<string, string> = { "content-type": "application/json", ...CORS_HEADERS };
+    if (decision.retryAfterSeconds != null) {
+      headers["retry-after"] = String(Math.max(0, Math.ceil(decision.retryAfterSeconds)));
+    }
+    return new Response(
+      JSON.stringify({ error: "Too many requests. Please slow down and try again shortly." }),
+      { status: 429, headers },
+    );
+  }
+
   async function handleConfig(req: Request): Promise<Response> {
     const auth = await authenticate(req);
     if (auth instanceof Response) return auth;
@@ -368,6 +425,8 @@ export function createFeedbackHandlers(options: CreateFeedbackHandlersOptions): 
   async function handleUpload(req: Request): Promise<Response> {
     const auth = await authenticate(req);
     if (auth instanceof Response) return auth;
+    const throttled = await enforceRateLimit("upload", auth, req);
+    if (throttled) return throttled;
     if (!storeFile) return json({ error: "uploads not configured", skipped: true }, 503);
 
     let form: FormData;
@@ -411,6 +470,8 @@ export function createFeedbackHandlers(options: CreateFeedbackHandlersOptions): 
   async function handleSubmit(req: Request): Promise<Response> {
     const auth = await authenticate(req);
     if (auth instanceof Response) return auth;
+    const throttled = await enforceRateLimit("submit", auth, req);
+    if (throttled) return throttled;
 
     let body: unknown;
     try {
@@ -430,29 +491,52 @@ export function createFeedbackHandlers(options: CreateFeedbackHandlersOptions): 
     // same one-way promise the client keys make.
     const ticketToken = generateReporterToken();
     const reporterTokenHash = await hashReporterToken(ticketToken);
+    // The landing column, resolved from the board rather than hardcoded — a
+    // buyer may have renamed or removed "open", and a new ticket must reference
+    // a column that exists or it lands in no column at all.
+    const initialStatus = await resolveInitialStatus();
 
     // The unique index on ticket_number is the arbiter; two concurrent
     // submits can compute the same number, so the loser retries with a fresh one.
     for (let attempt = 0; ; attempt++) {
       const ticketNumber = await nextTicketNumber();
       try {
-        await db.insert(feedbackTickets).values({
-          tenantId: auth.tenantId,
-          ticketNumber,
-          title,
-          description: payload.description,
-          priority: payload.priority,
-          category: payload.category,
-          status: "open",
-          screenshotUrl: payload.screenshotUrl,
-          annotatedScreenshotUrl: payload.annotatedScreenshotUrl,
-          reporterName: payload.reporter?.name,
-          reporterEmail: payload.reporter?.email,
-          reporterTokenHash,
-          pagePathname: payload.clientMetadata.pathname,
-          clientMetadata: payload.clientMetadata,
-          recentErrors: payload.recentErrors ?? [],
-        });
+        const [inserted] = await db
+          .insert(feedbackTickets)
+          .values({
+            tenantId: auth.tenantId,
+            ticketNumber,
+            title,
+            description: payload.description,
+            priority: payload.priority,
+            category: payload.category,
+            status: initialStatus,
+            screenshotUrl: payload.screenshotUrl,
+            annotatedScreenshotUrl: payload.annotatedScreenshotUrl,
+            reporterName: payload.reporter?.name,
+            reporterEmail: payload.reporter?.email,
+            reporterTokenHash,
+            pagePathname: payload.clientMetadata.pathname,
+            clientMetadata: payload.clientMetadata,
+            recentErrors: payload.recentErrors ?? [],
+          })
+          .returning({ id: feedbackTickets.id });
+        // Seed the reporter's own words as the first message, so when they open
+        // "My reports → thread" they see their submission rather than an empty
+        // conversation and assume it never arrived. Best-effort: a ticket that
+        // was created must not fail because its opening message did not.
+        if (inserted?.id) {
+          try {
+            await addTicketMessage(db, {
+              ticketId: inserted.id,
+              senderType: "reporter",
+              senderName: payload.reporter?.name ?? payload.reporter?.email ?? "Reporter",
+              body: payload.description,
+            });
+          } catch {
+            /* the ticket stands even if seeding its first message did not */
+          }
+        }
         await emit({
           type: "ticket.created",
           ticketNumber,
@@ -467,6 +551,20 @@ export function createFeedbackHandlers(options: CreateFeedbackHandlersOptions): 
         throw error;
       }
     }
+  }
+
+  /**
+   * The column a new ticket lands in. The first non-terminal status by sort
+   * order — the leftmost real column — falling back to the first status, then to
+   * "open" when the board has not been seeded yet. Never a hardcoded key that a
+   * buyer may have renamed out from under it.
+   */
+  async function resolveInitialStatus(): Promise<string> {
+    const rows = await db
+      .select({ key: feedbackStatuses.key, isTerminal: feedbackStatuses.isTerminal })
+      .from(feedbackStatuses)
+      .orderBy(asc(feedbackStatuses.sortOrder));
+    return rows.find((r) => !r.isTerminal)?.key ?? rows[0]?.key ?? "open";
   }
 
   /**
@@ -574,6 +672,8 @@ export function createFeedbackHandlers(options: CreateFeedbackHandlersOptions): 
   async function handleReply(req: Request): Promise<Response> {
     const auth = await authenticate(req);
     if (auth instanceof Response) return auth;
+    const throttled = await enforceRateLimit("reply", auth, req);
+    if (throttled) return throttled;
 
     let body: unknown;
     try {
@@ -587,6 +687,22 @@ export function createFeedbackHandlers(options: CreateFeedbackHandlersOptions): 
     }
     const ticket = await authorizeReporter(auth, parsed.data);
     if (ticket instanceof Response) return ticket;
+
+    // A reply to a CLOSED ticket lands in a terminal column nobody watches, and
+    // the reporter walks away believing they re-raised the issue. Refuse it
+    // plainly instead — the ticket is finished, and a new report is the way back
+    // in. (Auto-reopening is a product decision left to the board owner.)
+    const [statusRow] = await db
+      .select({ isTerminal: feedbackStatuses.isTerminal })
+      .from(feedbackStatuses)
+      .where(eq(feedbackStatuses.key, ticket.status))
+      .limit(1);
+    if (statusRow?.isTerminal) {
+      return json(
+        { error: "This ticket is closed and no longer accepts replies. Submit a new report to raise it again." },
+        409,
+      );
+    }
 
     // The name is whatever the ticket already carries — the token proves
     // "the person who filed this", so the reply is attributed to exactly

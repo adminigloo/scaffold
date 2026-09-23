@@ -26,12 +26,15 @@ function fakeDb(state: {
   ticketRows?: Array<Record<string, unknown>>;
   statusRows?: Array<{ label: string }>;
   messageRows?: Array<Record<string, unknown>>;
+  /** Board statuses for resolveInitialStatus (orderBy) and the terminal check. */
+  statusDefs?: Array<{ key: string; isTerminal: boolean }>;
 }) {
   const inserted: Array<Record<string, unknown>> = [];
   const db = {
     select: (projection: Record<string, unknown> = {}) => {
       const rows = (): unknown[] => {
         if ("reporterTokenHash" in projection) return state.ticketRows ?? [];
+        if ("isTerminal" in projection) return state.statusDefs ?? [];
         if ("label" in projection) return state.statusRows ?? [];
         if ("senderType" in projection) return state.messageRows ?? [];
         return state.keyRows ?? [];
@@ -47,8 +50,12 @@ function fakeDb(state: {
               then: (resolve: (value: unknown) => void) => resolve(rows()),
             }),
           }),
-          // nextTicketNumber: no where, orderBy().limit().
-          orderBy: () => ({ limit: async () => lastTicketRows() }),
+          // nextTicketNumber awaits orderBy().limit(); resolveInitialStatus
+          // awaits orderBy() directly (its `then`).
+          orderBy: () => ({
+            limit: async () => lastTicketRows(),
+            then: (resolve: (value: unknown) => void) => resolve(rows()),
+          }),
         }),
       };
     },
@@ -398,6 +405,82 @@ describe("the reporter thread (0.4.0)", () => {
       );
       expect(res.status).toBe(400);
     }
+    expect(inserted).toEqual([]);
+  });
+
+  it("refuses a reply to a closed (terminal) ticket with 409, writing nothing", async () => {
+    const { db, inserted } = fakeDb({
+      keyRows: [{ id: "k1", tenantId: "t1" }],
+      ticketRows: [await ticketRow({ status: "closed" })],
+      statusDefs: [{ key: "closed", isTerminal: true }],
+    });
+    const { handle } = createFeedbackHandlers({ db });
+    const res = await handle(
+      post("/v1/reply", { ticketNumber: "FB-00007", ticketToken: TOKEN, body: "Any update?" }),
+    );
+    expect(res.status).toBe(409);
+    expect(inserted).toEqual([]);
+  });
+});
+
+describe("feedback write guards", () => {
+  const submitReq = (): Request =>
+    new Request(`${BASE}/v1/submit`, {
+      method: "POST",
+      headers: { [CLIENT_KEY_HEADER]: KEY, "content-type": "application/json" },
+      body: JSON.stringify(validPayload()),
+    });
+  const ticketOf = (inserted: Array<Record<string, unknown>>) =>
+    inserted.find((r) => "reporterTokenHash" in r);
+
+  it("seeds the reporter's submission as the first thread message", async () => {
+    const { db, inserted } = fakeDb({ keyRows: [{ id: "k1", tenantId: "t1" }] });
+    const { handle } = createFeedbackHandlers({ db });
+    expect((await handle(submitReq())).status).toBe(201);
+    const message = inserted.find((r) => r["senderType"] === "reporter");
+    expect(message?.["body"]).toBe(validPayload().description);
+  });
+
+  it("lands a new ticket in the configured first non-terminal column", async () => {
+    const { db, inserted } = fakeDb({
+      keyRows: [{ id: "k1", tenantId: "t1" }],
+      statusDefs: [
+        { key: "triage", isTerminal: false },
+        { key: "done", isTerminal: true },
+      ],
+    });
+    const { handle } = createFeedbackHandlers({ db });
+    await handle(submitReq());
+    expect(ticketOf(inserted)?.["status"]).toBe("triage");
+  });
+
+  it("falls back to 'open' when the board has no statuses yet", async () => {
+    const { db, inserted } = fakeDb({ keyRows: [{ id: "k1", tenantId: "t1" }] });
+    const { handle } = createFeedbackHandlers({ db });
+    await handle(submitReq());
+    expect(ticketOf(inserted)?.["status"]).toBe("open");
+  });
+
+  it("is a no-op on writes when no rateLimit is configured", async () => {
+    const { db } = fakeDb({ keyRows: [{ id: "k1", tenantId: "t1" }] });
+    const { handle } = createFeedbackHandlers({ db });
+    expect((await handle(submitReq())).status).toBe(201);
+  });
+
+  it("answers 429 with Retry-After when the injected limiter denies, writing nothing", async () => {
+    const { db, inserted } = fakeDb({ keyRows: [{ id: "k1", tenantId: "t1" }] });
+    const seen: string[] = [];
+    const { handle } = createFeedbackHandlers({
+      db,
+      rateLimit: (info) => {
+        seen.push(info.action);
+        return { ok: false, retryAfterSeconds: 30 };
+      },
+    });
+    const res = await handle(submitReq());
+    expect(res.status).toBe(429);
+    expect(res.headers.get("retry-after")).toBe("30");
+    expect(seen).toContain("submit");
     expect(inserted).toEqual([]);
   });
 });

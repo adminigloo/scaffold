@@ -126,3 +126,8 @@ export {
   type BudgetVerdict,
   type ChatPrincipal,
 } from "./handler.js";
+export {
+  budgetHistory,
+  estimateTurnTokens,
+  type HistoryBudget,
+} from "./history.js";

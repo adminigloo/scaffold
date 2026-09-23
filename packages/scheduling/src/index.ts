@@ -384,8 +384,52 @@ export const createBookingSchema = z.object({
 });
 export type CreateBookingInput = z.input<typeof createBookingSchema>;
 
-export async function createBooking(db: SchedulingDb, input: CreateBookingInput): Promise<BookingRow> {
+export class BookingNotBookableError extends Error {
+  readonly name = "BookingNotBookableError";
+  constructor(reason: string) {
+    super(reason);
+  }
+}
+
+export interface CreateBookingOptions {
+  /** Maps provider for the drive-buffer check; defaults to keyless Haversine. */
+  maps?: MapsProvider;
+  /**
+   * Skip the availability/overlap/drive validation. For trusted callers only —
+   * a seed, a migration, or a staff override that has already been checked.
+   * Defaults to false: an assigned booking is validated before it is written,
+   * so an out-of-hours or double-booked slot cannot be inserted on the direct
+   * path the way it could when this function was a bare insert.
+   */
+  skipValidation?: boolean;
+}
+
+export async function createBooking(
+  db: SchedulingDb,
+  input: CreateBookingInput,
+  options: CreateBookingOptions = {},
+): Promise<BookingRow> {
   const values = createBookingSchema.parse(input);
+  // Only an ASSIGNED booking can be validated — an unassigned request has no
+  // resource whose availability to check.
+  if (values.resourceId && !options.skipValidation) {
+    const check = await validateBookingSlot(
+      db,
+      {
+        tenantId: values.tenantId,
+        resourceId: values.resourceId,
+        date: values.scheduledDate,
+        startTime: values.startTime,
+        endTime: values.endTime,
+        lat: values.lat ?? null,
+        lng: values.lng ?? null,
+      },
+      options.maps,
+    );
+    if (!check.valid) {
+      throw new BookingNotBookableError(check.reason ?? "This slot is not bookable");
+    }
+  }
   const [row] = await db.insert(schedulingBookings).values(values).returning();
   return row as BookingRow;
 }
@@ -464,6 +508,40 @@ export async function validateBookingSlot(
   maps: MapsProvider = createHaversineMapsProvider(),
 ): Promise<ValidateBookingResult> {
   const warnings: string[] = [];
+
+  // AVAILABILITY FIRST. A slot outside the resource's working window — 3am, a
+  // day off, a resource with no hours that day — is not bookable no matter what
+  // else is free. `findAvailableSlots` never OFFERS such a slot, but this
+  // function is the guard on the DIRECT path (a public request form, a
+  // reschedule, a staff override) where the times are caller-supplied and must
+  // be checked. Dropping this guard is how an out-of-hours booking gets written.
+  const [resource] = (await db
+    .select()
+    .from(schedulingResources)
+    .where(
+      and(
+        eq(schedulingResources.id, input.resourceId),
+        eq(schedulingResources.tenantId, input.tenantId),
+      ),
+    )
+    .limit(1)) as ResourceRow[];
+  if (!resource) {
+    return { valid: false, reason: "Resource not found", warnings };
+  }
+  const availability = await listAvailability(db, input.resourceId);
+  const window = resolveDayWindow(availability, resource, input.date);
+  if (!window) {
+    return { valid: false, reason: "Resource is not available on this day", warnings };
+  }
+  // Times are zero-padded HH:MM, so lexical comparison is chronological.
+  if (input.startTime < window.start || input.endTime > window.end) {
+    return {
+      valid: false,
+      reason: `Time slot ${input.startTime}–${input.endTime} is outside availability (${window.start}–${window.end})`,
+      warnings,
+    };
+  }
+
   const { start, end } = dayBounds(input.date);
   const dayBookings = (await db
     .select()
@@ -488,10 +566,12 @@ export async function validateBookingSlot(
   if (job) {
     for (const b of active) {
       if (b.lat == null || b.lng == null) continue;
-      const dt = await maps.driveTime({ lat: b.lat, lng: b.lng }, job);
-      if (!dt) continue;
-      // Existing job ends before the new one starts: is there time to drive over?
+      const other = { lat: b.lat, lng: b.lng };
+      // Existing job ends before the new one starts: is there time to drive FROM
+      // it (other -> job) into the new slot?
       if (timeToMinutes(b.endTime) <= timeToMinutes(input.startTime)) {
+        const dt = await maps.driveTime(other, job);
+        if (!dt) continue;
         const buffer = timeToMinutes(input.startTime) - timeToMinutes(b.endTime);
         if (dt.durationMinutes > buffer) {
           return { valid: false, reason: `Not enough time to drive from the ${b.startTime} job (${dt.durationMinutes} min drive, ${buffer} min gap)`, warnings };
@@ -500,6 +580,12 @@ export async function validateBookingSlot(
           warnings.push(`Tight schedule: ${dt.durationMinutes} min drive into a ${buffer} min gap`);
         }
       } else if (timeToMinutes(b.startTime) >= timeToMinutes(input.endTime)) {
+        // Existing job starts after the new one ends: is there time to drive TO
+        // it (job -> other)? The direction is reversed, and with an asymmetric
+        // provider (real traffic, one-way streets) that is a different number —
+        // reusing the other-> job drive here silently checked the wrong trip.
+        const dt = await maps.driveTime(job, other);
+        if (!dt) continue;
         const buffer = timeToMinutes(b.startTime) - timeToMinutes(input.endTime);
         if (dt.durationMinutes > buffer) {
           return { valid: false, reason: `Not enough time to drive to the ${b.startTime} job afterward`, warnings };

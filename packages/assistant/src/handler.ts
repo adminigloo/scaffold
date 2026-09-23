@@ -1,6 +1,7 @@
 import { verifyLicense, type LicenseMode } from "@adminigloo/license";
 import type { AssistantDb } from "./brain.js";
 import { assemblePrompt } from "./assemble.js";
+import { budgetHistory } from "./history.js";
 import {
   appendMessage,
   confirmPendingAction,
@@ -147,9 +148,13 @@ export function createAssistantChatHandler(
         return json({ error: "conversation not found" }, 404);
       }
       conversationId = conv.conversation.id;
-      // Rehydrate history splitting each stored row on its tool-result
-      // boundaries, so a tool-using thread replays as a valid transcript.
-      history = conv.messages.flatMap((m) =>
+      // Budget the history to the most recent turns that fit the context window
+      // BEFORE replaying — a long thread that rehydrates its whole transcript
+      // eventually exceeds the window and bricks every further turn. Truncating
+      // whole stored turns (not the replayed transcript) keeps each tool_use
+      // with its tool_result. Then split each surviving row on its tool-result
+      // boundaries, so what the provider sees is a valid transcript.
+      history = budgetHistory(conv.messages).flatMap((m) =>
         replayMessages(m.role === "assistant" ? "assistant" : "user", m.blocks),
       );
     } else {
