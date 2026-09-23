@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/invoicing",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Invoices with line items and payments: server-owned totals in integer cents, part-payment tracking with automatic status, overdue detection, and a token so a customer can view and pay their invoice without an account.",
   "license": "UNLICENSED",
   "type": "module",

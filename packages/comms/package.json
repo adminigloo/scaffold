@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/comms",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Communications automation: message templates with {{variable}} rendering, a delivery log, a scheduled-message queue, and provider-agnostic email/SMS senders that log a clean skip instead of throwing when no provider is configured.",
   "license": "UNLICENSED",
   "type": "module",

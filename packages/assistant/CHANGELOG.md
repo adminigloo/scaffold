@@ -1,5 +1,24 @@
 # @adminigloo/assistant
 
+## 0.8.0
+
+### Minor Changes
+
+- 834bd84: Budget conversation history to the model's context window. A chat handler that
+  rehydrated the entire stored transcript every turn would, on a long thread,
+  eventually exceed the window and hard-fail every further turn — bricking the
+  conversation with no way to recover it. `budgetHistory` now keeps the most
+  recent stored turns that fit a token ceiling (whole turns, so a replay never
+  severs a tool_use from its tool_result) before the model call. Ported from the
+  source's message-truncation, which runs before every call for this reason.
+- 88a9fe0: Add an optional AdminIgloo license gate to the feedback intake and the assistant
+  chat handler. Both take a new optional `license` option ({ key, publicKey, mode })
+  and, only when it is passed with `mode: "enforce"`, answer 402 for a deployment
+  that does not hold a valid license for the feature — before the feedback intake
+  runs or the assistant stream opens. Omitted, or `mode: "off"` (the default a
+  consuming app reads from `ADMINIGLOO_LICENSE_MODE`), behaviour is unchanged, so
+  every existing install keeps working. Depends on the new `@adminigloo/license`.
+
 ## 0.1.1
 
 ### Patch Changes

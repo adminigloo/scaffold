@@ -1,5 +1,34 @@
 # @adminigloo/feedback
 
+## 0.8.0
+
+### Minor Changes
+
+- 834bd84: Three reporter-flow fixes ported back from the source, plus a rate-limit seam:
+  
+  - A reply to a CLOSED (terminal) ticket now answers 409 instead of landing
+    silently in a column no one watches — the reporter is told the ticket is
+    finished and to file a new report, rather than believing they re-raised it.
+  - A new ticket seeds the reporter's own submission as the first thread message,
+    so opening "My reports → thread" shows their words instead of an empty
+    conversation that reads as "never received".
+  - A new ticket lands in the board's first non-terminal column (resolved from the
+    configured statuses), not a hardcoded `"open"` a buyer may have renamed or
+    removed — which would leave the ticket in no column at all.
+  
+  And an optional injected `rateLimit` on the write endpoints (submit/upload/reply).
+  A no-op when omitted, so existing installs are unchanged; wired to a per-key/IP
+  counter it answers 429. The client key authenticates a whole tenant's anonymous
+  visitors, so without a limit one loop or one hostile visitor can flood tickets
+  and blob uploads on the buyer's bill.
+- 88a9fe0: Add an optional AdminIgloo license gate to the feedback intake and the assistant
+  chat handler. Both take a new optional `license` option ({ key, publicKey, mode })
+  and, only when it is passed with `mode: "enforce"`, answer 402 for a deployment
+  that does not hold a valid license for the feature — before the feedback intake
+  runs or the assistant stream opens. Omitted, or `mode: "off"` (the default a
+  consuming app reads from `ADMINIGLOO_LICENSE_MODE`), behaviour is unchanged, so
+  every existing install keeps working. Depends on the new `@adminigloo/license`.
+
 ## 0.7.0
 
 ### Minor Changes

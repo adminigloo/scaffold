@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/estimator-widget",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "The embeddable instant-estimate widget: a keyed React provider a customer drops into their own site so their visitors get a live estimate — measurement or photo — that files back as a lead.",
   "license": "UNLICENSED",
   "type": "module",

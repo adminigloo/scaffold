@@ -1,5 +1,53 @@
 # create-adminigloo-app
 
+## 0.18.0
+
+### Minor Changes
+
+- 88a9fe0: Add the `create-adminigloo-app add <feature>` subcommand: turn a feature on in a
+  project that was already generated. It reads the project's `adminigloo.json`,
+  plans the feature exactly as generating with it would have — mounting its router,
+  registering its schema, adding its env and admin nav — and never overwrites a
+  file you have edited (those land as `<file>.new` to merge). The invariant, which
+  the tests assert for every feature: `add` on an untouched project produces
+  byte-for-byte what generating fresh with that feature would have.
+  
+  Also bumps the `@adminigloo/feedback` (0.8.0) and `@adminigloo/assistant` (0.8.0)
+  pins to the license-aware releases. Both are no-ops for a generated project until
+  license enforcement is turned on.
+- f6f6f5f: Wire the gs-glass port-sweep releases into generated projects:
+  
+  - Pins move to estimator 0.2.0, invoicing 0.2.0 and comms 0.2.0 (the emitted
+    routers and pages call their new tenant-scoped and public-safe APIs).
+  - `vercel.json` is now generated: a project with `--comms` gets the queue drain
+    (`/api/cron/comms`) in `crons`, daily — the one schedule Vercel's Hobby plan
+    accepts; DEPLOYMENT.md says how to tighten it on Pro. Until now every comms
+    project queued reminders that nothing ever sent. The `comms.messaging`
+    capability now requires the schedule as evidence, not just the route.
+  - The scheduling overlay's guidance: SEND a booking confirmation in the request
+    (`sendNow`) and QUEUE only the reminder, tagged with `refType`/`refId` so a
+    cancelled or moved booking can `cancelScheduled` it.
+- 9a94dea: Add field-service overlays and flags: `--estimator`, `--scheduling`, `--invoicing`,
+  `--comms`, `--aeo` (each also promptable and `add`-able). A project generated with
+  them gets the quote → book → bill spine plus comms and answer-engine citation
+  tracking:
+  
+  - estimator: a pricing/takeoff engine, a public instant-estimate page, a
+    cross-origin embed handler (client-key authenticated) for a widget on the
+    customer's own site, and a staff price-book builder + estimates list.
+  - scheduling: a public drive-time-aware slots/request-a-booking flow and a staff
+    calendar, resources and availability.
+  - invoicing: invoices with a public pay-by-token page and a staff ledger.
+  - comms: templated messages with a CRON_SECRET-guarded cron drain and a staff
+    console; senders are injected.
+  - aeo: answer-engine citation tracking with a staff dashboard.
+  
+  Each overlay is standalone and composable. Where the testbed cross-wires them (a
+  booking confirmation through comms; a photo takeoff or citation check through a
+  model), the overlay ships that glue as a degrading, wire-it-yourself stub — a
+  static overlay cannot conditionally depend on a sibling overlay, and the
+  generated project builds credential-free and degrades to a notice, never a 500.
+
 ## 0.17.0
 
 ### Minor Changes
