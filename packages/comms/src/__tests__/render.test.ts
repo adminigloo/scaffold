@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { renderTemplate, templateVariables } from "../render.js";
+import { missingVariables, renderTemplate, templateVariables } from "../render.js";
 
 describe("renderTemplate", () => {
   it("substitutes variables, tolerating inner whitespace", () => {
@@ -18,5 +18,24 @@ describe("renderTemplate", () => {
 describe("templateVariables", () => {
   it("lists the distinct placeholders", () => {
     expect(templateVariables("{{a}} {{b}} {{a}}").sort()).toEqual(["a", "b"]);
+  });
+});
+
+describe("renderTemplate — own properties only", () => {
+  it("never renders an inherited Object property into a message", () => {
+    // `vars.constructor` walks the prototype chain to Object — the customer
+    // used to receive "function Object() { [native code] }".
+    expect(renderTemplate("Hi {{constructor}}{{toString}}!", {})).toBe("Hi !");
+  });
+});
+
+describe("missingVariables", () => {
+  it("lists the placeholders across subject and body that have no value", () => {
+    expect(
+      missingVariables(["Visit on {{date}}", "Hi {{name}}, {{time}} at {{address}}", null], {
+        name: "Sam",
+        time: null,
+      }).sort(),
+    ).toEqual(["address", "date", "time"]);
   });
 });

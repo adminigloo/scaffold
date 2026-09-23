@@ -12,9 +12,10 @@ function statusTone(status: string): BadgeTone {
 }
 
 /**
- * Communications automation, from __SCOPE__/comms: edit the templates, watch the
- * delivery log, and drain the queue. Sends go out for real once a sender is
- * wired in src/server/comms-senders.ts; without one they log a clean "skipped".
+ * Communications automation, from __SCOPE__/comms: edit the templates, switch
+ * one off, watch the delivery log, and drain the queue. Sends go out for real
+ * once a sender is wired in src/server/comms-senders.ts; without one they log a
+ * clean "skipped".
  */
 export default function CommsPage() {
   const templates = api.comms.templates.useQuery();
@@ -33,7 +34,15 @@ export default function CommsPage() {
             disabled={runDue.isPending}
             onClick={() =>
               void runDue.mutateAsync().then((r) => {
-                setRan(`Sent ${r.processed} due message${r.processed === 1 ? "" : "s"}.`);
+                // Every outcome, not just a count: "Sent 3" when two of the
+                // three failed is how a broken provider goes unnoticed.
+                const parts = [`Sent ${r.sent}`];
+                if (r.skipped) parts.push(`skipped ${r.skipped}`);
+                if (r.failed) parts.push(`failed ${r.failed}`);
+                if (r.retrying) parts.push(`${r.retrying} will retry`);
+                if (r.cancelled) parts.push(`cancelled ${r.cancelled}`);
+                if (r.expired) parts.push(`expired ${r.expired}`);
+                setRan(`${parts.join(" · ")}.${r.stoppedEarly ? " More are due — run again." : ""}`);
                 void messages.refetch();
               })
             }
@@ -73,7 +82,13 @@ export default function CommsPage() {
                   <span className="text-ink">{m.toAddress}</span>
                   <span className="text-xs text-ink-faint">{m.templateKey ?? m.channel}</span>
                   <Badge tone={statusTone(m.status)}>{m.status}</Badge>
-                  {m.error ? <span className="text-xs text-danger">{m.error}</span> : null}
+                  {/* A skip or cancel carries its reason here too — only a failure is an error. */}
+                  {m.error ? (
+                    <span className={m.status === "failed" ? "text-xs text-danger" : "text-xs text-ink-muted"}>{m.error}</span>
+                  ) : null}
+                  {m.missingVars && m.missingVars.length > 0 ? (
+                    <span className="text-xs text-ink-muted">blank: {m.missingVars.join(", ")}</span>
+                  ) : null}
                 </div>
               ))
             )}
@@ -88,13 +103,16 @@ function TemplateEditor({
   template,
   onSaved,
 }: {
-  template: { id: string; key: string; channel: string; subject: string | null; body: string };
+  template: { id: string; key: string; channel: string; subject: string | null; body: string; isActive: boolean };
   onSaved: () => void;
 }) {
   const save = api.comms.upsertTemplate.useMutation();
+  const toggle = api.comms.setTemplateActive.useMutation();
   const [subject, setSubject] = useState(template.subject ?? "");
   const [body, setBody] = useState(template.body);
   const dirty = subject !== (template.subject ?? "") || body !== template.body;
+  // Mirrors the server rule so the editor explains it instead of failing a save.
+  const needsSubject = template.channel === "email" && subject.trim() === "";
 
   useEffect(() => {
     setSubject(template.subject ?? "");
@@ -106,16 +124,30 @@ function TemplateEditor({
       <div className="mb-2 flex items-center gap-2">
         <code className="font-mono text-xs text-ink-muted">{template.key}</code>
         <Badge tone="neutral">{template.channel}</Badge>
+        {template.isActive ? null : <Badge tone="warn">off — nothing sends</Badge>}
+        <Button
+          className="ml-auto"
+          disabled={toggle.isPending}
+          onClick={() => void toggle.mutateAsync({ key: template.key, active: !template.isActive }).then(onSaved)}
+        >
+          {template.isActive ? "Switch off" : "Switch on"}
+        </Button>
       </div>
       {template.channel === "email" ? (
         <Input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject" className="mb-2 w-full" />
       ) : null}
       <Textarea value={body} onChange={(e) => setBody(e.target.value)} rows={4} className="w-full font-mono text-[13px]" />
-      <p className="mt-1 text-xs text-ink-faint">Use {`{{name}}`}, {`{{date}}`}, {`{{time}}`}, {`{{address}}`} — they fill in per message.</p>
+      <p className="mt-1 text-xs text-ink-faint">
+        Use {`{{name}}`}, {`{{date}}`}, {`{{time}}`}, {`{{address}}`} — they fill in per message.
+        {template.channel === "sms"
+          ? " Every text goes out with your business name in front, and “Reply STOP to opt out.” unless it already says how to opt out."
+          : ""}
+      </p>
+      {needsSubject ? <p className="mt-1 text-xs text-danger">An email needs a subject.</p> : null}
       <div className="mt-2">
         <Button
           variant="primary"
-          disabled={!dirty || save.isPending}
+          disabled={!dirty || needsSubject || save.isPending}
           onClick={() =>
             void save
               .mutateAsync({ key: template.key, channel: template.channel as "email" | "sms", subject: subject || null, body })
