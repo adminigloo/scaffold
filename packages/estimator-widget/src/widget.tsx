@@ -119,11 +119,14 @@ export function EstimatorModal() {
   }, [productId, product, transport]);
 
   const qty = Math.max(1, Number(quantity) || 1);
+  // In unit mode the count lives in `quantity` ONLY. Sending it as
+  // `measurement.units` too billed a per-unit component quantity² times (the
+  // engine scales per-unit parts by `units`, then the whole line by quantity).
   const measurement: EmbedMeasurement =
     mode === "linear"
       ? { linearFt: Number(linearFt) || 0 }
       : mode === "unit"
-        ? { units: qty }
+        ? {}
         : { widthIn: Number(widthIn) || 0, heightIn: Number(heightIn) || 0 };
   const valid =
     mode === "linear"
@@ -203,10 +206,16 @@ export function EstimatorModal() {
 
   const save = async () => {
     if (!product) return;
+    // The platform refuses a lead nobody can call back (estimator 0.2.0); say
+    // so here instead of failing with a generic error after the round trip.
+    if (!name.trim() || (!email.trim() && !phone.trim())) {
+      setTakeoffMsg("Add your name and an email or phone number so we can reach you.");
+      return;
+    }
     setSaving(true);
     try {
       const result = await transport.submit({
-        customerName: name.trim() || null,
+        customerName: name.trim(),
         customerEmail: email.trim() || null,
         customerPhone: phone.trim() || null,
         jobAddress: address.trim() || null,
