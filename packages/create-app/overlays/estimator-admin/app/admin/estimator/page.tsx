@@ -309,8 +309,9 @@ function ProductForm({ onSaved, onCancel }: { onSaved: (id: string) => void; onC
 
   const save = async () => {
     if (!f.name.trim()) return;
-    const product = await create.mutateAsync(fieldsToInput(f));
-    onSaved(product.id);
+    // A refusal (e.g. range low % above high %) shows as create.error below.
+    const product = await create.mutateAsync(fieldsToInput(f)).catch(() => null);
+    if (product) onSaved(product.id);
   };
 
   return (
@@ -323,6 +324,7 @@ function ProductForm({ onSaved, onCancel }: { onSaved: (id: string) => void; onC
             {create.isPending ? "Creating…" : "Create product"}
           </Button>
           <Button onClick={onCancel}>Cancel</Button>
+          {create.error ? <span className="self-center text-xs text-danger">{create.error.message}</span> : null}
         </div>
       </CardBody>
     </Card>
@@ -417,6 +419,7 @@ function ProductEditor({
   const [attachId, setAttachId] = useState("");
   const [attachQty, setAttachQty] = useState("1");
   const [optName, setOptName] = useState("");
+  const [optPublic, setOptPublic] = useState(true);
   const [valFor, setValFor] = useState<string>("");
   const [valLabel, setValLabel] = useState("");
   const [valPrice, setValPrice] = useState("");
@@ -426,7 +429,9 @@ function ProductEditor({
 
   const save = async () => {
     setSaved(false);
-    await update.mutateAsync({ id: productId, patch: fieldsToInput(f) });
+    // A refusal (e.g. range low % above high %) shows as update.error below.
+    const updated = await update.mutateAsync({ id: productId, patch: fieldsToInput(f) }).catch(() => null);
+    if (!updated) return;
     setSaved(true);
     onChanged();
     void detail.refetch();
@@ -448,6 +453,7 @@ function ProductEditor({
             {update.isPending ? "Saving…" : "Save changes"}
           </Button>
           {saved ? <span className="text-xs text-accent">Saved.</span> : null}
+          {update.error ? <span className="text-xs text-danger">{update.error.message}</span> : null}
         </div>
 
         {/* Materials on this product */}
@@ -493,7 +499,10 @@ function ProductEditor({
           <div className="mt-2 flex flex-col gap-2">
             {detail.data.options.map((o) => (
               <div key={o.option.id} className="rounded-control border border-line px-3 py-2">
-                <p className="text-sm font-medium text-ink">{o.option.name}</p>
+                <p className="flex items-center gap-2 text-sm font-medium text-ink">
+                  {o.option.name}
+                  {!o.option.showInEstimator ? <Badge tone="neutral">staff only</Badge> : null}
+                </p>
                 <div className="mt-1 flex flex-wrap gap-1.5">
                   {o.values.map((v) => (
                     <span key={v.id} className="rounded-pill border border-line px-2 py-0.5 text-xs text-ink-muted">
@@ -520,12 +529,18 @@ function ProductEditor({
           </div>
           <div className="mt-2 flex flex-wrap items-end gap-2">
             <Input placeholder="New option (e.g. Finish)" value={optName} onChange={(e) => setOptName(e.target.value)} className="w-48" />
+            {/* Unchecked = staff-only (a rush fee, a site surcharge): never shown in,
+                nor priced by, the public tool — only on estimates staff build. */}
+            <label className="flex items-center gap-2 text-sm text-ink">
+              <input type="checkbox" checked={optPublic} onChange={(e) => setOptPublic(e.target.checked)} />
+              In the public tool
+            </label>
             <Button
               disabled={!optName.trim() || createOption.isPending}
               onClick={() =>
                 void createOption
-                  .mutateAsync({ productId, name: optName.trim() })
-                  .then(() => { setOptName(""); void detail.refetch(); })
+                  .mutateAsync({ productId, name: optName.trim(), showInEstimator: optPublic })
+                  .then(() => { setOptName(""); setOptPublic(true); void detail.refetch(); })
               }
             >
               Add option

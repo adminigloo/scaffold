@@ -63,11 +63,14 @@ export function EstimateTool({ compact = false }: { readonly compact?: boolean }
   const mode = product?.measurementMode ?? "area";
   const qty = Math.max(1, Number(quantity) || 1);
 
+  // A measurement describes ONE of the product; "How many" is the quantity. A
+  // unit-mode product therefore sends no measurement — sending the count as
+  // `units` too would bill any per-unit material quantity² times.
   const measurement = useMemo(() => {
     if (mode === "linear") return { linearFt: Number(linearFt) || 0 };
-    if (mode === "unit") return { units: qty };
+    if (mode === "unit") return {};
     return { widthIn: Number(widthIn) || 0, heightIn: Number(heightIn) || 0 };
-  }, [mode, linearFt, widthIn, heightIn, qty]);
+  }, [mode, linearFt, widthIn, heightIn]);
 
   const optionValueIds = useMemo(() => Object.values(choices), [choices]);
 
@@ -175,9 +178,16 @@ export function EstimateTool({ compact = false }: { readonly compact?: boolean }
   const save = async () => {
     setError(null);
     if (!product) return;
+    // The server refuses a lead nobody can call back; say so before sending.
+    if (!name.trim() || (!email.trim() && !phone.trim())) {
+      setError("Please add your name and an email or phone number so we can reach you.");
+      return;
+    }
     try {
+      // Only WHAT you want goes up — the server prices it, the same way it
+      // priced the range above.
       const result = await submit.mutateAsync({
-        customerName: name.trim() || null,
+        customerName: name.trim(),
         customerEmail: email.trim() || null,
         customerPhone: phone.trim() || null,
         jobAddress: address.trim() || null,

@@ -3,6 +3,7 @@ import {
   createOption,
   createOptionValue,
   createProduct,
+  DEFAULT_TAX_RATE_BP,
   listProducts,
 } from "__SCOPE__/estimator";
 import { db as sharedDb } from "@/db";
@@ -18,6 +19,14 @@ import { db as sharedDb } from "@/db";
  * is safe to call before every catalog read.
  */
 export const ESTIMATOR_TENANT = "primary";
+
+/**
+ * The sales-tax rate a customer's saved estimate is taxed at, in basis points
+ * (825 = 8.25%). SET THIS FOR YOUR JURISDICTION. It is the server's word — the
+ * public tool and the embed never send a rate — so it lives here with the
+ * tenant, and both the same-origin submit and the embed handler read it.
+ */
+export const ESTIMATOR_TAX_RATE_BP: number = DEFAULT_TAX_RATE_BP;
 
 let seededThisProcess = false;
 

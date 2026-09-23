@@ -47,8 +47,10 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   await ensureDemoCatalog(db);
-  const detail = await getProductDetail(db, body.productId);
-  if (!detail || detail.product.tenantId !== ESTIMATOR_TENANT) {
+  // Tenant-scoped by the package; and, being public, only a live product the
+  // estimator shows — the same rule the embed's takeoff applies.
+  const detail = await getProductDetail(db, ESTIMATOR_TENANT, body.productId);
+  if (!detail || !detail.product.isActive || !detail.product.showInEstimator) {
     return NextResponse.json({ error: "unknown product" }, { status: 404 });
   }
 

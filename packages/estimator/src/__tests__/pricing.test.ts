@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   calculateEstimatePrice,
   calculateTotals,
+  DEFAULT_TAX_RATE_BP,
+  measurementFitsMode,
   midpointOf,
   resolveMeasurement,
 } from "../pricing.js";
@@ -26,6 +28,37 @@ describe("resolveMeasurement", () => {
       linearFt: 0,
       units: 1,
     });
+  });
+
+  it("keeps the derived area when units ride along with width×height", () => {
+    // `units` used to count as a "direct" value, so this priced at 0 sq ft.
+    expect(resolveMeasurement({ widthIn: 72, heightIn: 36, units: 2 })).toEqual({
+      sqFt: 18,
+      linearFt: 18,
+      units: 2,
+    });
+  });
+});
+
+describe("measurementFitsMode", () => {
+  it("needs a real area for an area product: width×height both > 0, or sqFt > 0", () => {
+    expect(measurementFitsMode("area", { widthIn: 72, heightIn: 36 })).toBe(true);
+    expect(measurementFitsMode("area", { sqFt: 12 })).toBe(true);
+    expect(measurementFitsMode("area", { widthIn: 72 })).toBe(false);
+    expect(measurementFitsMode("area", { widthIn: 72, heightIn: 0 })).toBe(false);
+    expect(measurementFitsMode("area", {})).toBe(false);
+  });
+
+  it("needs linear feet for a linear product and a positive count for a unit one", () => {
+    expect(measurementFitsMode("linear", { linearFt: 24 })).toBe(true);
+    expect(measurementFitsMode("linear", { linearFt: 0 })).toBe(false);
+    expect(measurementFitsMode("linear", { sqFt: 40 })).toBe(false);
+    expect(measurementFitsMode("unit", {})).toBe(true); // units defaults to 1
+    expect(measurementFitsMode("unit", { units: 0 })).toBe(false);
+  });
+
+  it("never prices an unknown mode", () => {
+    expect(measurementFitsMode("volume", { sqFt: 10, linearFt: 10, units: 3 })).toBe(false);
   });
 });
 
@@ -103,6 +136,29 @@ describe("calculateEstimatePrice — the knobs the original never applied", () =
     const three = calculateEstimatePrice({ basePrice: 10_000, measurement: { units: 1 }, quantity: 3 });
     expect(three.subtotal).toBe(one.subtotal * 3);
   });
+
+  it("scales a per_unit component by measurement.units, and quantity only once", () => {
+    // Two hinges ($15 each) per door. The original scaled per_unit by quantity
+    // AND multiplied the line by quantity: three doors billed 18 hinges.
+    const hinge = { unitCost: 1_500, unitType: "per_unit" as const, quantityMilli: 2000, isActive: true };
+    const threeDoors = calculateEstimatePrice({
+      basePrice: 10_000,
+      measurement: {},
+      quantity: 3,
+      components: [hinge],
+    });
+    expect(threeDoors.subtotal).toBe((10_000 + 1_500 * 2) * 3); // 39_000, not 10_000·3 + 1_500·2·9
+    expect(threeDoors.units).toBe(1);
+
+    // A door measured with 4 hinge positions (units) — per door, then × 3 doors.
+    const withUnits = calculateEstimatePrice({
+      basePrice: 10_000,
+      measurement: { units: 4 },
+      quantity: 3,
+      components: [hinge],
+    });
+    expect(withUnits.subtotal).toBe((10_000 + 1_500 * 2 * 4) * 3);
+  });
 });
 
 describe("calculateTotals", () => {
@@ -112,6 +168,19 @@ describe("calculateTotals", () => {
     expect(totals.taxAmount).toBe(9_108); // 110400 × 8.25%
     expect(totals.total).toBe(119_508);
     expect(totals.balanceDue).toBe(119_508);
+  });
+
+  it("defaults tax to DEFAULT_TAX_RATE_BP (8.25%)", () => {
+    expect(DEFAULT_TAX_RATE_BP).toBe(825);
+    expect(calculateTotals({ itemTotals: [100_000] }).taxAmount).toBe(8_250);
+  });
+
+  it("refuses a discount larger than the subtotal (or negative) instead of a negative total", () => {
+    // Used to return taxable −10_000, tax −825, total −10_825.
+    expect(() => calculateTotals({ itemTotals: [50_000], discount: 60_000 })).toThrow(RangeError);
+    expect(() => calculateTotals({ itemTotals: [50_000], discount: -1 })).toThrow(RangeError);
+    // Exactly the subtotal is a free job, not an error.
+    expect(calculateTotals({ itemTotals: [50_000], discount: 50_000 }).total).toBe(0);
   });
 
   it("applies a discount before tax and subtracts what's paid", () => {

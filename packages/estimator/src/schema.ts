@@ -25,6 +25,11 @@ import { createdAt, idColumn, updatedAt } from "@adminigloo/db";
  * cross-package rule every schema here follows, so a consumer is never forced
  * to also install @adminigloo/tenancy or /auth. Catalog rows deactivate rather
  * than delete, so an old estimate's line items never dangle.
+ *
+ * 0.2.0 adds `estimator_options.show_in_estimator`, `estimator_estimate_items
+ * .option_snapshot`, and makes (tenant_id, estimate_number) UNIQUE — run your
+ * db:generate + db:migrate (the changeset says how to find duplicate numbers
+ * first).
  */
 
 /** cents, non-null, defaults to 0. */
@@ -111,6 +116,13 @@ export const estimatorOptions = pgTable(
     name: text("name").notNull(),
     /** Free-form (glass_type, finish, style…) — no enum, so any trade fits. */
     optionType: text("option_type").notNull().default("custom"),
+    /**
+     * Offered in the public instant-estimate tool, or staff-only (a rush fee,
+     * a site-access surcharge). A hidden option is left out of every public
+     * option read AND ignored by public pricing, so a browser cannot price
+     * with a value it was never shown. (0.2.0)
+     */
+    showInEstimator: boolean("show_in_estimator").notNull().default(true),
     sortOrder: integer("sort_order").notNull().default(0),
     isActive: boolean("is_active").notNull().default(true),
     createdAt: createdAt(),
@@ -143,6 +155,20 @@ export interface EstimateItemMeasurement {
   units?: number;
 }
 
+/**
+ * The priced-at-submit record of one chosen option value, stored on the line.
+ * Labels and modifiers change in the price book; the estimate must keep saying
+ * what the customer picked and what it cost at the time.
+ */
+export interface EstimateItemOptionSnapshot {
+  optionId: string;
+  optionName: string;
+  valueId: string;
+  valueLabel: string;
+  /** Cents this value added to ONE of the product when priced. */
+  priceModifier: number;
+}
+
 /** A saved estimate. Money in cents; status is its lifecycle. */
 export const estimatorEstimates = pgTable(
   "estimator_estimates",
@@ -150,7 +176,10 @@ export const estimatorEstimates = pgTable(
     id: idColumn(),
     tenantId: text("tenant_id").notNull(),
     estimateNumber: text("estimate_number").notNull(),
-    /** draft | sent | viewed | approved | rejected | expired | converted */
+    /**
+     * draft | sent | viewed | approved | rejected | expired | converted —
+     * moved only along `ESTIMATE_STATUS_TRANSITIONS`; `converted` is terminal.
+     */
     status: text("status").notNull().default("draft"),
     customerName: text("customer_name"),
     customerEmail: text("customer_email"),
@@ -173,7 +202,12 @@ export const estimatorEstimates = pgTable(
   },
   (t) => [
     index("estimator_estimates_tenant_idx").on(t.tenantId, t.status),
-    index("estimator_estimates_number_idx").on(t.tenantId, t.estimateNumber),
+    // UNIQUE (0.2.0; was a plain index). Numbering reads the tenant's highest
+    // number and adds one, so two submits in the same instant computed the
+    // same EST-2026-0042 and both saved it — two customers, one reference.
+    // The index makes the loser fail with 23505 and `createEstimate` retries
+    // with a fresh number.
+    uniqueIndex("estimator_estimates_tenant_number_uniq").on(t.tenantId, t.estimateNumber),
   ],
 );
 
@@ -216,8 +250,14 @@ export const estimatorEstimateItems = pgTable(
     unitPrice: money("unit_price"),
     laborPrice: money("labor_price"),
     total: money("total"),
-    /** optionId → optionValueId chosen. */
+    /**
+     * optionId → optionValueId chosen, as RESOLVED by the server against the
+     * product's own options (never the caller's map, which named whatever it
+     * liked). Empty when nothing was chosen.
+     */
     selectedOptions: jsonb("selected_options").$type<Record<string, string>>(),
+    /** What each chosen value was called and cost when priced. (0.2.0) */
+    optionSnapshot: jsonb("option_snapshot").$type<EstimateItemOptionSnapshot[]>(),
     sortOrder: integer("sort_order").notNull().default(0),
     notes: text("notes"),
     createdAt: createdAt(),

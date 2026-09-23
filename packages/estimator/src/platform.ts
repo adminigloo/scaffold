@@ -1,16 +1,21 @@
+import { and, eq } from "drizzle-orm";
+import { ZodError } from "zod";
 import {
   calculateEstimate,
-  createEstimate,
+  createPublicEstimate,
+  DEFAULT_TAX_RATE_BP,
   ESTIMATOR_KEY_HEADER,
-  getProductDetail,
+  EstimatorInputError,
   listProducts,
+  listPublicOptions,
   verifyClientKey,
   type CalculateEstimateInput,
-  type CreateEstimateInput,
   type EstimatorDb,
   type ProductRow,
+  type PublicSubmitInput,
   type VerifiedClientKey,
 } from "./index.js";
+import { estimatorProducts } from "./schema.js";
 import type { TakeoffResult } from "./takeoff.js";
 
 /**
@@ -67,6 +72,19 @@ export type EstimatorTakeoffRunner = (
 export interface EstimatorHandlersOptions {
   db: EstimatorDb;
   runTakeoff?: EstimatorTakeoffRunner;
+  /**
+   * The sales-tax rate (bp) a submitted estimate is taxed at, per tenant — a
+   * number for every tenant, or a lookup. The widget's body is never asked:
+   * it used to carry `taxRateBp` (and `discount`, and a `unitPrice` per line)
+   * straight into the saved estimate. Absent, `DEFAULT_TAX_RATE_BP` (8.25%)
+   * applies — a documented default, not an error; set it for your jurisdiction.
+   */
+  taxRateBp?: number | ((tenantId: string) => number | Promise<number>);
+  /**
+   * Called after a lead is saved — the host wires its own notification. Awaited,
+   * but a throw is swallowed: a broken listener must not fail the customer's
+   * submit.
+   */
   onLead?: (lead: {
     tenantId: string;
     estimateId: string;
@@ -79,7 +97,7 @@ export interface EstimatorHandlers {
 }
 
 export function createEstimatorHandlers(options: EstimatorHandlersOptions): EstimatorHandlers {
-  const { db, runTakeoff, onLead } = options;
+  const { db, runTakeoff, onLead, taxRateBp } = options;
 
   async function authenticate(request: Request): Promise<VerifiedClientKey | Response> {
     const key = request.headers.get(ESTIMATOR_KEY_HEADER);
@@ -88,10 +106,26 @@ export function createEstimatorHandlers(options: EstimatorHandlersOptions): Esti
     return verified ?? jsonResponse({ error: "unknown or revoked key" }, 401);
   }
 
-  async function ownedProduct(productId: string, tenantId: string): Promise<ProductRow | null> {
-    const detail = await getProductDetail(db, productId);
-    if (!detail || detail.product.tenantId !== tenantId) return null;
-    return detail.product;
+  /** A product the PUBLIC may use: this key's tenant's, active, shown in the estimator. */
+  async function publicProduct(productId: string, tenantId: string): Promise<ProductRow | null> {
+    const [row] = await db
+      .select()
+      .from(estimatorProducts)
+      .where(
+        and(
+          eq(estimatorProducts.id, productId),
+          eq(estimatorProducts.tenantId, tenantId),
+          eq(estimatorProducts.isActive, true),
+          eq(estimatorProducts.showInEstimator, true),
+        ),
+      )
+      .limit(1);
+    return (row as ProductRow | undefined) ?? null;
+  }
+
+  async function tenantTaxRate(tenantId: string): Promise<number> {
+    if (taxRateBp === undefined) return DEFAULT_TAX_RATE_BP;
+    return typeof taxRateBp === "function" ? await taxRateBp(tenantId) : taxRateBp;
   }
 
   return {
@@ -121,45 +155,33 @@ export function createEstimatorHandlers(options: EstimatorHandlersOptions): Esti
         if (request.method === "POST" && pathname.endsWith("/v1/options")) {
           const body = (await request.json()) as { productId?: unknown };
           if (typeof body.productId !== "string") return jsonResponse({ options: [] });
-          const detail = await getProductDetail(db, body.productId);
-          if (!detail || detail.product.tenantId !== auth.tenantId) return jsonResponse({ options: [] });
+          // Staff-only options (showInEstimator: false) never leave the server.
           return jsonResponse({
-            options: detail.options.map((o) => ({
-              id: o.option.id,
-              name: o.option.name,
-              values: o.values.map((v) => ({
-                id: v.id,
-                label: v.label,
-                priceModifier: v.priceModifier,
-                isDefault: v.isDefault,
-              })),
-            })),
+            options: await listPublicOptions(db, auth.tenantId, body.productId),
           });
         }
 
         if (request.method === "POST" && pathname.endsWith("/v1/calculate")) {
           const body = (await request.json()) as CalculateEstimateInput;
-          const owned = await ownedProduct(body.productId, auth.tenantId);
-          if (!owned) return jsonResponse({ result: null });
-          return jsonResponse({ result: await calculateEstimate(db, body) });
+          // Scoped to the key's tenant and the public audience: another
+          // workspace's product, a hidden one, or a staff-only option prices
+          // as nothing.
+          return jsonResponse({
+            result: await calculateEstimate(db, body, {
+              tenantId: auth.tenantId,
+              audience: "public",
+            }),
+          });
         }
 
         if (request.method === "POST" && pathname.endsWith("/v1/submit")) {
-          const body = (await request.json()) as Omit<CreateEstimateInput, "tenantId" | "source"> & {
-            source?: "public_tool" | "photo";
-          };
-          // Every referenced product must belong to this key's tenant, so one
-          // key cannot price another workspace's catalog into a saved estimate.
-          const ownedIds = new Set((await listProducts(db, auth.tenantId)).map((p) => p.id));
-          for (const item of body.items ?? []) {
-            if (item.productId && !ownedIds.has(item.productId)) {
-              return jsonResponse({ error: "unknown product" }, 400);
-            }
-          }
-          const created = await createEstimate(db, {
-            ...body,
+          const body = (await request.json()) as PublicSubmitInput;
+          // The PUBLIC create: the body names products, measurements, quantities
+          // and options only. Prices, labor, discount, tax and photo are the
+          // server's; the tenant is the key's, and every product must be its.
+          const created = await createPublicEstimate(db, body, {
             tenantId: auth.tenantId,
-            source: body.source === "photo" ? "photo" : "public_tool",
+            taxRateBp: await tenantTaxRate(auth.tenantId),
           });
           if (onLead) {
             try {
@@ -189,7 +211,7 @@ export function createEstimatorHandlers(options: EstimatorHandlersOptions): Esti
           ) {
             return jsonResponse({ error: "bad request" }, 400);
           }
-          const owned = await ownedProduct(body.productId, auth.tenantId);
+          const owned = await publicProduct(body.productId, auth.tenantId);
           if (!owned) return jsonResponse({ error: "unknown product" }, 404);
           const ip =
             request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
@@ -207,7 +229,15 @@ export function createEstimatorHandlers(options: EstimatorHandlersOptions): Esti
         }
 
         return jsonResponse({ error: "not found" }, 404);
-      } catch {
+      } catch (error) {
+        // A refused submit says why (e.g. "product_unavailable"), so the widget
+        // can tell a stale catalog from a missing contact detail.
+        if (error instanceof EstimatorInputError) {
+          return jsonResponse({ error: error.code }, 400);
+        }
+        if (error instanceof ZodError) {
+          return jsonResponse({ error: "invalid request" }, 400);
+        }
         return jsonResponse({ error: "bad request" }, 400);
       }
     },

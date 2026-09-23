@@ -42,10 +42,14 @@ export default function EstimatesPage() {
   const [openId, setOpenId] = useState<string | null>(null);
   const detail = api.estimator.estimate.useQuery({ id: openId ?? "" }, { enabled: openId !== null });
   const setStatus = api.estimator.setEstimateStatus.useMutation();
+  const [statusNote, setStatusNote] = useState<string | null>(null);
   // Turning an approved estimate into an invoice is a cross-feature action, so
   // it lives with the project, not this overlay. Generate with `--invoicing`,
-  // add `createFromEstimate` to the invoicing router (reading `getEstimate`),
-  // and call `api.invoicing.createFromEstimate` from a button here.
+  // add `createFromEstimate` to the invoicing router — read the estimate with
+  // `getEstimate(db, tenantId, id)` and claim it with
+  // `markEstimateConverted(db, tenantId, id)` inside the invoice's transaction
+  // (null means it was already invoiced: stop) — and call
+  // `api.invoicing.createFromEstimate` from a button here.
 
   return (
     <>
@@ -89,7 +93,10 @@ export default function EstimatesPage() {
                     <TD className="align-top">
                       <button
                         type="button"
-                        onClick={() => setOpenId(openId === e.id ? null : e.id)}
+                        onClick={() => {
+                          setOpenId(openId === e.id ? null : e.id);
+                          setStatusNote(null);
+                        }}
                         className="font-mono text-xs text-accent underline underline-offset-2"
                       >
                         {e.estimateNumber}
@@ -121,21 +128,28 @@ export default function EstimatesPage() {
                 <div className="flex flex-wrap items-center gap-3">
                   <span className="font-mono text-sm text-ink">{detail.data.estimate.estimateNumber}</span>
                   <Badge tone={statusTone(detail.data.estimate.status)}>{detail.data.estimate.status}</Badge>
+                  {/* Only the lifecycle's next moves are offered (the package
+                      enforces them too): converted is terminal, so an invoiced
+                      estimate cannot be walked back and invoiced again. */}
                   <label className="ml-auto flex items-center gap-2 text-xs text-ink-muted">
                     Status
                     <select
                       value={detail.data.estimate.status}
+                      disabled={detail.data.nextStatuses.length === 0 || setStatus.isPending}
                       onChange={(event) =>
                         void setStatus
                           .mutateAsync({ id: detail.data!.estimate.id, status: event.target.value as (typeof STATUSES)[number] })
-                          .then(() => {
+                          .then((result) => {
+                            setStatusNote(
+                              result.ok ? null : "That status change isn't allowed from here — the estimate may have moved on. Refreshed.",
+                            );
                             void estimates.refetch();
                             void detail.refetch();
                           })
                       }
                       className="rounded-control border border-line-strong bg-surface px-2 py-1.5 text-sm text-ink"
                     >
-                      {STATUSES.map((s) => (
+                      {[detail.data.estimate.status, ...detail.data.nextStatuses].map((s) => (
                         <option key={s} value={s}>
                           {s}
                         </option>
@@ -143,6 +157,7 @@ export default function EstimatesPage() {
                     </select>
                   </label>
                 </div>
+                {statusNote ? <p className="text-xs text-danger">{statusNote}</p> : null}
 
                 <div className="grid grid-cols-1 gap-1 text-sm sm:grid-cols-2">
                   <p><span className="text-ink-faint">Customer:</span> {detail.data.estimate.customerName ?? "—"}</p>
@@ -177,7 +192,17 @@ export default function EstimatesPage() {
                     <TBody>
                       {detail.data.items.map((item) => (
                         <TR key={item.id}>
-                          <TD className="align-top text-sm text-ink">{item.description}</TD>
+                          <TD className="align-top text-sm text-ink">
+                            {item.description}
+                            {item.optionSnapshot && item.optionSnapshot.length > 0 ? (
+                              <span className="mt-0.5 block text-xs text-ink-muted">
+                                {item.optionSnapshot
+                                  .map((o) => `${o.optionName}: ${o.valueLabel}${o.priceModifier > 0 ? ` (+${usd(o.priceModifier)})` : ""}`)
+                                  .join(" · ")}
+                              </span>
+                            ) : null}
+                            {item.notes ? <span className="mt-0.5 block text-xs text-ink-faint">{item.notes}</span> : null}
+                          </TD>
                           <TD className="align-top text-xs text-ink-muted">{formatMeasure(item.measurement)}</TD>
                           <TD className="align-top text-sm tabular-nums">{item.quantity}</TD>
                           <TD className="align-top font-mono text-sm tabular-nums">{usd(item.unitPrice)}</TD>

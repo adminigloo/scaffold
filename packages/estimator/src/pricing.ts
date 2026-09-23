@@ -24,10 +24,24 @@ export type ComponentUnitType = "per_sqft" | "per_linear_ft" | "per_unit" | "fla
 const BP = 10_000;
 
 /**
- * What a job is measured in. Give width/height in inches for a rectangle and
- * area + perimeter are derived; or give sqFt / linearFt / units directly for a
- * trade that is not a rectangle (a ramp's run in linear feet, a count of
- * fixtures). Direct values win over derived ones.
+ * The tax rate a total falls back to when none is given: 825 bp = 8.25%, the
+ * SG Glass (Utah) rate the engine was ported with. It is a DEFAULT, not a
+ * policy — a public submit takes its rate from the tenant's configuration
+ * (`createPublicEstimate`'s `taxRateBp`), never from the request body.
+ */
+export const DEFAULT_TAX_RATE_BP = 825;
+
+/**
+ * What a job is measured in — ONE of the product (the line's `quantity` says
+ * how many). Give width/height in inches for a rectangle and area + perimeter
+ * are derived; or give sqFt / linearFt directly for a trade that is not a
+ * rectangle (a ramp's run in linear feet). Direct values win over derived ones.
+ *
+ * `units` is the count of sub-units INSIDE one of the product — the hinges on
+ * one door, the posts in one run of fence — and is what a `per_unit` component
+ * scales by. It defaults to 1. It is not the line quantity: a unit-mode "how
+ * many" is `quantity`, and sending the same count as `units` too would bill a
+ * per-unit material quantity² times.
  */
 export interface Measurement {
   widthIn?: number | null;
@@ -45,26 +59,55 @@ export interface ResolvedMeasurement {
 
 /**
  * Resolve a measurement to the three quantities the engine prices against.
- * Direct sqFt/linearFt/units are used as given; otherwise a width×height in
- * inches derives area (w·h) and perimeter (2·(w+h)), the glass-panel default.
+ * Direct sqFt/linearFt are used as given; otherwise a width×height in inches
+ * derives area (w·h) and perimeter (2·(w+h)), the glass-panel default. `units`
+ * is independent of both (default 1) — it used to count as a "direct" value,
+ * so `{ widthIn, heightIn, units }` silently priced a panel at 0 sq ft.
  */
 export function resolveMeasurement(m: Measurement): ResolvedMeasurement {
-  const hasDirect =
-    m.sqFt != null || m.linearFt != null || m.units != null;
+  const units = m.units ?? 1;
+  const hasDirect = m.sqFt != null || m.linearFt != null;
   if (!hasDirect && m.widthIn != null && m.heightIn != null) {
     const widthFt = m.widthIn / 12;
     const heightFt = m.heightIn / 12;
     return {
       sqFt: widthFt * heightFt,
       linearFt: 2 * (widthFt + heightFt),
-      units: 1,
+      units,
     };
   }
   return {
     sqFt: m.sqFt ?? 0,
     linearFt: m.linearFt ?? 0,
-    units: m.units ?? 1,
+    units,
   };
+}
+
+/**
+ * Does this measurement give the product's mode (`estimatorProducts
+ * .measurementMode`: "area" | "linear" | "unit") something real to price?
+ * Checked on the RESOLVED quantities, so an area product accepts either a
+ * width×height (both > 0) or a direct sqFt > 0, and a linear product a direct
+ * linearFt > 0 (or a perimeter from width×height). A unit product needs only
+ * `units` > 0, which it has by default.
+ *
+ * Without this a zero or missing measurement priced an area product at its
+ * base price alone — a "$150" quote for a shower door of no size, saved as the
+ * customer's estimate. An unknown mode (a row written outside the schema) is
+ * never priceable.
+ */
+export function measurementFitsMode(mode: string, m: Measurement): boolean {
+  const r = resolveMeasurement(m);
+  switch (mode) {
+    case "area":
+      return r.sqFt > 0;
+    case "linear":
+      return r.linearFt > 0;
+    case "unit":
+      return r.units > 0;
+    default:
+      return false;
+  }
 }
 
 export interface ComponentInput {
@@ -86,7 +129,7 @@ export interface EstimatePriceInput {
   /** Labor, in cents (added to cost, not marked up as material). */
   laborCost?: number | null;
   measurement: Measurement;
-  /** How many of this product. Multiplies the whole per-unit subtotal. */
+  /** How many of this product. Multiplies the whole per-unit subtotal, once. */
   quantity: number;
   /** Flat dollar (cent) modifiers from selected options. */
   optionModifiers?: number[];
@@ -129,8 +172,14 @@ function cents(value: number): number {
  * applied to the whole cost; the result is multiplied by quantity, floored at
  * the minimum, and finally banded into a low–high range.
  *
- * With wasteBp/markupBp/minimumCharge all zero the result equals the original
- * SG Glass engine: subtotal = (base + options + labor + components) × qty.
+ * Everything before the quantity multiply describes ONE of the product, so a
+ * `per_unit` component scales by `measurement.units` (default 1), not by
+ * `quantity`. The original scaled it by quantity and then multiplied the whole
+ * subtotal by quantity again — qty 3 billed nine of a per-unit material.
+ *
+ * With wasteBp/markupBp/minimumCharge all zero (and no per-unit component) the
+ * result equals the original SG Glass engine:
+ * subtotal = (base + options + labor + components) × qty.
  */
 export function calculateEstimatePrice(input: EstimatePriceInput): EstimatePriceResult {
   const dims = resolveMeasurement(input.measurement);
@@ -151,7 +200,7 @@ export function calculateEstimatePrice(input: EstimatePriceInput): EstimatePrice
           materialSubtotal += comp.unitCost * dims.linearFt * multiplier;
           break;
         case "per_unit":
-          materialSubtotal += comp.unitCost * input.quantity * multiplier;
+          materialSubtotal += comp.unitCost * dims.units * multiplier;
           break;
         case "flat":
           materialSubtotal += comp.unitCost * multiplier;
@@ -194,10 +243,11 @@ export function calculateEstimatePrice(input: EstimatePriceInput): EstimatePrice
 }
 
 /**
- * The public "instant estimate" line: unit price is the midpoint of the shown
- * range, and the line total is that times quantity. (Quantity is already inside
- * the range subtotal, so the midpoint IS the line — quantity is not applied
- * twice; this returns the per-submission figures a saved estimate item stores.)
+ * The saved value of a quoted range: its rounded midpoint. Price the line at
+ * its REAL quantity and the midpoint IS the line total — quantity is already
+ * inside the range, and the engine is not linear in it (a minimum charge, and
+ * per-unit materials), so "midpoint at qty 1, times qty" is a different number
+ * from the range the customer was shown.
  */
 export function midpointOf(estimateLow: number, estimateHigh: number): number {
   return Math.round((estimateLow + estimateHigh) / 2);
@@ -235,13 +285,23 @@ export interface TotalsResult {
  * Estimate / invoice totals, in cents.
  * subtotal = Σ items; taxable = subtotal − discount; tax = taxable × rate;
  * total = taxable + tax; balance = total − paid.
+ *
+ * A discount larger than the subtotal (or a negative one) is REFUSED with a
+ * RangeError rather than clamped: it made a negative taxable amount, so the
+ * "estimate" came out as negative tax and a total the business owes the
+ * customer. Clamping would hide what is always a data-entry mistake; callers
+ * that take a discount from a person validate it first (`createEstimate`
+ * answers `discount_exceeds_subtotal`) and this is the backstop.
  */
 export function calculateTotals(input: TotalsInput): TotalsResult {
   let subtotal = 0;
   for (const t of input.itemTotals) subtotal += t;
 
-  const taxRateBp = input.taxRateBp ?? 825;
+  const taxRateBp = input.taxRateBp ?? DEFAULT_TAX_RATE_BP;
   const discount = input.discount ?? 0;
+  if (discount < 0 || discount > subtotal) {
+    throw new RangeError(`discount ${discount} is outside 0..${subtotal} (the subtotal)`);
+  }
   const taxableAmount = subtotal - discount;
   const taxAmount = cents(taxableAmount * (taxRateBp / BP));
   const total = taxableAmount + taxAmount;
