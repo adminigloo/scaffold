@@ -301,7 +301,16 @@ function TopLayerDialog({
         event.preventDefault();
         onCloseRef.current();
       }}
-      onClose={() => onCloseRef.current()}
+      // Only a dialog that is actually closed closes the form. `close` is
+      // dispatched as a queued task, so a close() that was immediately
+      // followed by a showModal() — React StrictMode's mount → cleanup →
+      // mount in development does exactly that to the effect above — delivers
+      // its event to a dialog that is open again. Acting on it shut the widget
+      // the instant it opened, in every StrictMode app's dev server.
+      onClose={() => {
+        if (dialogRef.current?.open) return;
+        onCloseRef.current();
+      }}
       onKeyDown={(event) => {
         if (event.key === "Escape" && !isComposingEscape(event.nativeEvent)) onClose();
       }}

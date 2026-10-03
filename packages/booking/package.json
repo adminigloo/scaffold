@@ -1,0 +1,52 @@
+{
+  "name": "@adminigloo/booking",
+  "version": "0.1.0",
+  "description": "Book-a-call for an app's own site: hosts in their own time zones, weekly hours with dated exceptions, a pure slot engine, ten-minute holds, manage-by-token reschedule and cancel, .ics invites, a subscribable host feed, and conflicts read from a host's real calendar through its secret iCal address.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adminigloo/scaffold.git",
+    "directory": "packages/booking"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./schema": {
+      "types": "./dist/schema.d.ts",
+      "import": "./dist/schema.js",
+      "require": "./dist/schema.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "public"
+  },
+  "dependencies": {
+    "@adminigloo/db": "workspace:^",
+    "@adminigloo/license": "workspace:^"
+  },
+  "peerDependencies": {
+    "drizzle-orm": "catalog:peers",
+    "zod": "catalog:peers"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "drizzle-orm": "catalog:",
+    "zod": "catalog:"
+  },
+  "scripts": {
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  }
+}

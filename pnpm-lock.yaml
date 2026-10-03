@@ -59,7 +59,7 @@ importers:
     devDependencies:
       drizzle-orm:
         specifier: 'catalog:'
-        version: 0.45.2(@neondatabase/serverless@1.1.0)
+        version: 0.45.2(@electric-sql/pglite@0.5.8)(@neondatabase/serverless@1.1.0)
       zod:
         specifier: 'catalog:'
         version: 4.5.1
@@ -81,7 +81,29 @@ importers:
     devDependencies:
       drizzle-orm:
         specifier: 'catalog:'
-        version: 0.45.2(@neondatabase/serverless@1.1.0)
+        version: 0.45.2(@electric-sql/pglite@0.5.8)(@neondatabase/serverless@1.1.0)
+      zod:
+        specifier: 'catalog:'
+        version: 4.5.1
+
+  packages/analytics:
+    dependencies:
+      '@adminigloo/db':
+        specifier: workspace:^
+        version: link:../db
+      web-vitals:
+        specifier: ^6.2.2
+        version: 6.2.2
+    devDependencies:
+      '@types/react':
+        specifier: ^19.2.7
+        version: 19.2.18
+      drizzle-orm:
+        specifier: 'catalog:'
+        version: 0.45.2(@electric-sql/pglite@0.5.8)(@neondatabase/serverless@1.1.0)
+      react:
+        specifier: ^19.2.4
+        version: 19.2.4
       zod:
         specifier: 'catalog:'
         version: 4.5.1
@@ -97,7 +119,7 @@ importers:
     devDependencies:
       drizzle-orm:
         specifier: 'catalog:'
-        version: 0.45.2(@neondatabase/serverless@1.1.0)
+        version: 0.45.2(@electric-sql/pglite@0.5.8)(@neondatabase/serverless@1.1.0)
       zod:
         specifier: 'catalog:'
         version: 4.5.1
@@ -129,7 +151,7 @@ importers:
     devDependencies:
       drizzle-orm:
         specifier: 'catalog:'
-        version: 0.45.2(@neondatabase/serverless@1.1.0)
+        version: 0.45.2(@electric-sql/pglite@0.5.8)(@neondatabase/serverless@1.1.0)
       zod:
         specifier: 'catalog:'
         version: 4.5.1
@@ -145,7 +167,41 @@ importers:
     devDependencies:
       drizzle-orm:
         specifier: 'catalog:'
-        version: 0.45.2(@neondatabase/serverless@1.1.0)
+        version: 0.45.2(@electric-sql/pglite@0.5.8)(@neondatabase/serverless@1.1.0)
+
+  packages/booking:
+    dependencies:
+      '@adminigloo/db':
+        specifier: workspace:^
+        version: link:../db
+      '@adminigloo/license':
+        specifier: workspace:^
+        version: link:../license
+    devDependencies:
+      '@electric-sql/pglite':
+        specifier: ^0.5.8
+        version: 0.5.8
+      drizzle-orm:
+        specifier: 'catalog:'
+        version: 0.45.2(@electric-sql/pglite@0.5.8)(@neondatabase/serverless@1.1.0)
+      zod:
+        specifier: 'catalog:'
+        version: 4.5.1
+
+  packages/booking-widget:
+    devDependencies:
+      '@types/react':
+        specifier: ^19.2.7
+        version: 19.2.18
+      '@types/react-dom':
+        specifier: ^19.2.4
+        version: 19.2.5(@types/react@19.2.18)
+      react:
+        specifier: ^19.2.4
+        version: 19.2.4
+      react-dom:
+        specifier: ^19.2.4
+        version: 19.2.4(react@19.2.4)
 
   packages/catalog:
     dependencies:
@@ -158,7 +214,7 @@ importers:
     devDependencies:
       drizzle-orm:
         specifier: 'catalog:'
-        version: 0.45.2(@neondatabase/serverless@1.1.0)
+        version: 0.45.2(@electric-sql/pglite@0.5.8)(@neondatabase/serverless@1.1.0)
       stripe:
         specifier: 'catalog:'
         version: 22.6.0(@types/node@26.4.0)
@@ -183,7 +239,7 @@ importers:
         version: link:../tenancy
       drizzle-orm:
         specifier: 'catalog:'
-        version: 0.45.2(@neondatabase/serverless@1.1.0)
+        version: 0.45.2(@electric-sql/pglite@0.5.8)(@neondatabase/serverless@1.1.0)
       stripe:
         specifier: 'catalog:'
         version: 22.6.0(@types/node@26.4.0)
@@ -196,7 +252,7 @@ importers:
     devDependencies:
       drizzle-orm:
         specifier: 'catalog:'
-        version: 0.45.2(@neondatabase/serverless@1.1.0)
+        version: 0.45.2(@electric-sql/pglite@0.5.8)(@neondatabase/serverless@1.1.0)
       zod:
         specifier: 'catalog:'
         version: 4.5.1
@@ -223,7 +279,7 @@ importers:
         version: 8.18.1
       drizzle-orm:
         specifier: 'catalog:'
-        version: 0.45.2(@neondatabase/serverless@1.1.0)
+        version: 0.45.2(@electric-sql/pglite@0.5.8)(@neondatabase/serverless@1.1.0)
       zod:
         specifier: 'catalog:'
         version: 4.5.1
@@ -251,7 +307,7 @@ importers:
         version: 19.2.5(@types/react@19.2.18)
       drizzle-orm:
         specifier: 'catalog:'
-        version: 0.45.2(@neondatabase/serverless@1.1.0)
+        version: 0.45.2(@electric-sql/pglite@0.5.8)(@neondatabase/serverless@1.1.0)
       react:
         specifier: ^19.2.4
         version: 19.2.4
@@ -279,7 +335,7 @@ importers:
     devDependencies:
       drizzle-orm:
         specifier: 'catalog:'
-        version: 0.45.2(@neondatabase/serverless@1.1.0)
+        version: 0.45.2(@electric-sql/pglite@0.5.8)(@neondatabase/serverless@1.1.0)
       zod:
         specifier: 'catalog:'
         version: 4.5.1
@@ -311,7 +367,7 @@ importers:
         version: 19.2.18
       drizzle-orm:
         specifier: 'catalog:'
-        version: 0.45.2(@neondatabase/serverless@1.1.0)
+        version: 0.45.2(@electric-sql/pglite@0.5.8)(@neondatabase/serverless@1.1.0)
       react:
         specifier: ^19.2.4
         version: 19.2.4
@@ -346,7 +402,7 @@ importers:
     devDependencies:
       drizzle-orm:
         specifier: 'catalog:'
-        version: 0.45.2(@neondatabase/serverless@1.1.0)
+        version: 0.45.2(@electric-sql/pglite@0.5.8)(@neondatabase/serverless@1.1.0)
       zod:
         specifier: 'catalog:'
         version: 4.5.1
@@ -365,7 +421,7 @@ importers:
     devDependencies:
       drizzle-orm:
         specifier: 'catalog:'
-        version: 0.45.2(@neondatabase/serverless@1.1.0)
+        version: 0.45.2(@electric-sql/pglite@0.5.8)(@neondatabase/serverless@1.1.0)
       zod:
         specifier: 'catalog:'
         version: 4.5.1
@@ -381,7 +437,7 @@ importers:
     devDependencies:
       drizzle-orm:
         specifier: 'catalog:'
-        version: 0.45.2(@neondatabase/serverless@1.1.0)
+        version: 0.45.2(@electric-sql/pglite@0.5.8)(@neondatabase/serverless@1.1.0)
       pino:
         specifier: ^10.0.0
         version: 10.3.1
@@ -397,7 +453,7 @@ importers:
     devDependencies:
       drizzle-orm:
         specifier: 'catalog:'
-        version: 0.45.2(@neondatabase/serverless@1.1.0)
+        version: 0.45.2(@electric-sql/pglite@0.5.8)(@neondatabase/serverless@1.1.0)
 
   packages/scheduling:
     dependencies:
@@ -407,7 +463,7 @@ importers:
     devDependencies:
       drizzle-orm:
         specifier: 'catalog:'
-        version: 0.45.2(@neondatabase/serverless@1.1.0)
+        version: 0.45.2(@electric-sql/pglite@0.5.8)(@neondatabase/serverless@1.1.0)
       zod:
         specifier: 'catalog:'
         version: 4.5.1
@@ -420,7 +476,7 @@ importers:
     devDependencies:
       drizzle-orm:
         specifier: 'catalog:'
-        version: 0.45.2(@neondatabase/serverless@1.1.0)
+        version: 0.45.2(@electric-sql/pglite@0.5.8)(@neondatabase/serverless@1.1.0)
       zod:
         specifier: 'catalog:'
         version: 4.5.1
@@ -433,7 +489,7 @@ importers:
     devDependencies:
       drizzle-orm:
         specifier: 'catalog:'
-        version: 0.45.2(@neondatabase/serverless@1.1.0)
+        version: 0.45.2(@electric-sql/pglite@0.5.8)(@neondatabase/serverless@1.1.0)
       zod:
         specifier: 'catalog:'
         version: 4.5.1
@@ -452,7 +508,7 @@ importers:
     devDependencies:
       drizzle-orm:
         specifier: 'catalog:'
-        version: 0.45.2(@neondatabase/serverless@1.1.0)
+        version: 0.45.2(@electric-sql/pglite@0.5.8)(@neondatabase/serverless@1.1.0)
       stripe:
         specifier: 'catalog:'
         version: 22.6.0(@types/node@26.4.0)
@@ -474,7 +530,7 @@ importers:
     devDependencies:
       drizzle-orm:
         specifier: 'catalog:'
-        version: 0.45.2(@neondatabase/serverless@1.1.0)
+        version: 0.45.2(@electric-sql/pglite@0.5.8)(@neondatabase/serverless@1.1.0)
 
   packages/testing:
     dependencies:
@@ -593,6 +649,9 @@ packages:
   '@clack/prompts@1.7.0':
     resolution: {integrity: sha512-y7/yvZ2TPAnR9+jnc00klvNNLkJiXFFrQA/hlLCcxA9a2A4zQIOimyFQ9XfwYKiGD1fb5GY8vbKIIgO8d5Tb2A==}
     engines: {node: '>= 20.12.0'}
+
+  '@electric-sql/pglite@0.5.8':
+    resolution: {integrity: sha512-n9tsbUOhwx2epK1V0ZG9Ar4SHWUju04dhmzZXiSBXwBoleOvIfals33NAaWgagQVAL4Rbvx/Ptsu3P+pA09f6Q==}
 
   '@esbuild/aix-ppc64@0.27.7':
     resolution: {integrity: sha512-EKX3Qwmhz1eMdEJokhALr0YiD0lhQNwDqkPYyPhiSwKrh7/4KRjQc04sZ8db+5DVVnZ1LmbNDI1uAMPEUBnQPg==}
@@ -2166,6 +2225,9 @@ packages:
       jsdom:
         optional: true
 
+  web-vitals@6.2.2:
+    resolution: {integrity: sha512-oto5x6dLEgrRqfcWed+pZEUb2q6ikbFmqF54CRDhI/QGbn+qxC49b4C4OkbH+kb9C3a8shpFD3SgR9kRcs80ZQ==}
+
   why-is-node-running@2.3.0:
     resolution: {integrity: sha512-hUrmaWBdVDcxvYqnyh09zunKzROWjbZTiNy8dBEjkS7ehEDQibXJ7XvlmtbwuTclUiIyN+CyXQD4Vmko8fNm8w==}
     engines: {node: '>=8'}
@@ -2308,6 +2370,8 @@ snapshots:
       fast-string-width: 3.0.2
       fast-wrap-ansi: 0.2.2
       sisteransi: 1.0.5
+
+  '@electric-sql/pglite@0.5.8': {}
 
   '@esbuild/aix-ppc64@0.27.7':
     optional: true
@@ -2901,8 +2965,9 @@ snapshots:
       domelementtype: 2.3.0
       domhandler: 5.0.3
 
-  drizzle-orm@0.45.2(@neondatabase/serverless@1.1.0):
+  drizzle-orm@0.45.2(@electric-sql/pglite@0.5.8)(@neondatabase/serverless@1.1.0):
     optionalDependencies:
+      '@electric-sql/pglite': 0.5.8
       '@neondatabase/serverless': 1.1.0
 
   entities@4.5.0: {}
@@ -3422,6 +3487,8 @@ snapshots:
       '@types/node': 26.4.0
     transitivePeerDependencies:
       - msw
+
+  web-vitals@6.2.2: {}
 
   why-is-node-running@2.3.0:
     dependencies:

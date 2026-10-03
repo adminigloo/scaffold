@@ -9,7 +9,7 @@
  * e2e's single copy so the widget and Radix share one React. The platform URL is
  * a fake host the specs intercept with page.route.
  */
-import { useEffect, useRef, useState } from "react";
+import { StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Dialog as HDialog, DialogBackdrop, DialogPanel, DialogTitle } from "@headlessui/react";
@@ -235,11 +235,17 @@ function HostApp() {
   );
 }
 
+// StrictMode, as Next.js turns on by default. A no-op in the production
+// bundle every other spec uses; in host-app.dev.bundle.js (a development React
+// build) it runs every effect mount → cleanup → mount, which is what a buyer's
+// dev server does — and what shut the widget the instant it opened (0.3.1).
 createRoot(document.getElementById("root")!).render(
-  <FeedbackProvider config={{ baseUrl: PLATFORM, clientKey: "fbk_e2e" }}>
-    <HostApp />
-    <FeedbackButton />
-    <FeedbackModal />
-    <Spy />
-  </FeedbackProvider>,
+  <StrictMode>
+    <FeedbackProvider config={{ baseUrl: PLATFORM, clientKey: "fbk_e2e" }}>
+      <HostApp />
+      <FeedbackButton />
+      <FeedbackModal />
+      <Spy />
+    </FeedbackProvider>
+  </StrictMode>,
 );

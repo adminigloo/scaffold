@@ -31,6 +31,14 @@ const targets = [
     outfile: join(here, "fixtures", "host-app.bundle.js"),
     alias: singleReact,
   },
+  {
+    // The same host app on a DEVELOPMENT React build, where StrictMode really
+    // double-runs effects — the shape of every buyer's `next dev`.
+    entry: join(here, "fixtures", "host-app.tsx"),
+    outfile: join(here, "fixtures", "host-app.dev.bundle.js"),
+    alias: singleReact,
+    nodeEnv: "development",
+  },
 ];
 
 for (const t of targets) {
@@ -44,7 +52,7 @@ for (const t of targets) {
     target: "es2020",
     jsx: "automatic",
     alias: t.alias,
-    define: { "process.env.NODE_ENV": '"production"' },
+    define: { "process.env.NODE_ENV": JSON.stringify(t.nodeEnv ?? "production") },
     logLevel: "info",
   });
   console.log(`bundled ${t.globalName ?? t.entry} -> ${t.outfile}`);
