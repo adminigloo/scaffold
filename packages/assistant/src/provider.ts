@@ -111,6 +111,24 @@ export interface StepUsage {
   reported: boolean;
 }
 
+/**
+ * One model call. Two prefixes in it are stable, and an adapter for a provider
+ * with prompt caching should mark both. Leaving them unmarked bills every step
+ * for the same tokens at full price, and nothing errors to tell you so:
+ *
+ *   - `system` (with `tools` before it) is the global sections only, identical
+ *     for every request of every tenant. Tenant rules, glossary and retrieved
+ *     docs travel in the user message so that this never changes.
+ *   - `messages` only grows. Step N of a turn re-sends steps 1 to N-1 unchanged,
+ *     and the next turn's history is rehydrated byte-for-byte. A breakpoint on
+ *     the newest message lets each step read everything before it.
+ *
+ * On Anthropic that is `cache_control: { type: "ephemeral" }` on the system text
+ * block and on the last block of the last message: two of the four allowed.
+ * Measured on a tool-using two-turn chat, input dropped to a handful of fresh
+ * tokens per turn, and the conversation cost fell by a third cold and by more
+ * than half warm.
+ */
 export interface ProviderRequest {
   system: string;
   messages: NeutralMessage[];
