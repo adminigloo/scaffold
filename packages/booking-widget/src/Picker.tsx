@@ -12,6 +12,7 @@ import {
   stripStartDay,
   zonedParts,
   type LocalSlot,
+  type TimeZoneChoice,
 } from "./time.js";
 
 /**
@@ -32,6 +33,8 @@ export interface PickerProps {
   onZoneChange: (zone: string) => void;
   /** Offered first in the zone list: the viewer's own zone and the host's. */
   suggestedZones: readonly string[];
+  /** A curated zone list (the widget's `timeZones`): offered instead of every IANA zone. */
+  timeZones?: readonly TimeZoneChoice[];
   locale: string;
   selectedStart: string | null;
   pendingStart: string | null;
@@ -128,6 +131,7 @@ export function Picker(props: PickerProps) {
         at={at}
         suggested={props.suggestedZones}
         locale={locale}
+        choices={props.timeZones}
       />
       {props.notice}
 

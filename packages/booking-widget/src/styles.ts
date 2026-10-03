@@ -191,6 +191,11 @@ const CSS_TEXT = `
      scrollLeft 0 (not 2) and the strip reads as "at the start". */
   scroll-snap-type: x proximity; scroll-padding-inline: 2px; -webkit-overflow-scrolling: touch; scrollbar-width: thin;
 }
+/* With the ‹ › buttons showing, a native scrollbar under the tiles is a
+   second control for the same thing (Windows draws it thick): hide it. The
+   strip still scrolls by swipe, wheel and keyboard. */
+.aibk-days-wrap[data-overflow] .aibk-days { scrollbar-width: none; }
+.aibk-days-wrap[data-overflow] .aibk-days::-webkit-scrollbar { display: none; }
 .aibk-days > li { flex: 0 0 auto; scroll-snap-align: start; }
 /* position: relative so each tile is the containing block of its sr-only
    label. Without it those absolutely positioned labels belong to .aibk-root,

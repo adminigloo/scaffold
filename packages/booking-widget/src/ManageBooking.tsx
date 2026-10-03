@@ -20,7 +20,7 @@ import {
 import { Picker } from "./Picker.js";
 import { friendlyError, isSlotGone, LIMITS, reachHost, type BookingError, type EmailFacts } from "./requests.js";
 import { injectStyles } from "./styles.js";
-import { browserTimeZone, resolveInitialZone, sameInstant, type LocalSlot } from "./time.js";
+import { browserTimeZone, resolveChoiceZone, sameInstant, timeZoneChoices, type LocalSlot, type TimeZoneList } from "./time.js";
 import type { BookingConfig, PublicBooking, Slot } from "./types.js";
 
 /**
@@ -65,6 +65,8 @@ export interface ManageBookingProps {
   sandboxHref?: string;
   /** Default: the zone the booking was made in. */
   defaultTimezone?: string;
+  /** Offer only these zones, by these names: `"us"` or a `{ zone, label }[]`. See BookingWidget. */
+  timeZones?: TimeZoneList;
   locale?: string;
   theme?: "auto" | "light" | "dark";
   className?: string;
@@ -181,9 +183,10 @@ export function ManageBooking(props: ManageBookingProps) {
     wasReady.current = configReady;
   }, [configReady, mode]);
 
+  const timeZones = timeZoneChoices(props.timeZones);
   const zone =
     zoneChoice ??
-    resolveInitialZone(props.defaultTimezone ?? booking?.inviteeTimezone, browserZone, booking?.hostTimezone);
+    resolveChoiceZone([props.defaultTimezone ?? booking?.inviteeTimezone, browserZone, booking?.hostTimezone], timeZones);
   const suggestedZones = useMemo(
     () => [browserZone, ...(booking ? [booking.inviteeTimezone, booking.hostTimezone] : [])],
     [browserZone, booking],
@@ -446,7 +449,7 @@ export function ManageBooking(props: ManageBookingProps) {
                 {reach.kind === "reply" ? "You'll get an email when they do." : "This page shows it as soon as they do."}
               </Notice>
             ) : null}
-            <BookingFacts booking={current} zone={zone} locale={locale} />
+            <BookingFacts booking={current} zone={zone} locale={locale} zoneChoices={timeZones} />
             {active ? (
               <CalendarActions
                 booking={current}
@@ -574,6 +577,7 @@ export function ManageBooking(props: ManageBookingProps) {
                 zone={zone}
                 onZoneChange={setZoneChoice}
                 suggestedZones={suggestedZones}
+                timeZones={timeZones}
                 locale={locale}
                 selectedStart={picked?.start ?? null}
                 pendingStart={hold.pendingStart}

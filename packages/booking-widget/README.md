@@ -168,6 +168,7 @@ calendar.
 | `sandboxNotice`, `realBookingHref`, `realBookingLabel`, `realBookingSteps` | | Sandbox copy and the real-booking CTA (above). |
 | `confirmationNote` | | The line under "You're booked": a string replaces the default, `null` drops it. |
 | `defaultTimezone` | | IANA zone to open in. Default: the visitor's browser zone. |
+| `timeZones` | | Offer only these zones, by these names, instead of every IANA zone: `timeZones="us"` (or `{US_TIME_ZONES}`; use the string from a React Server Component) gives Eastern, Central, Mountain, Arizona, Pacific, Alaska and Hawaii Time, with no cities or offsets. The widget opens in the choice whose clock matches the visitor's (`America/Boise` reads as Mountain Time), else the host's, else the first. Any `{ zone, label }[]` works. |
 | `defaultCallingCode` | | Country calling code (`"1"`) for a phone number typed without `+`. `801 555 0143` is sent as `+18015550143`. Default: the server's `defaultCallingCode` from its config. With neither, the `+` and country code are required. See **Phone numbers** below. |
 | `source` | | Attribution. Default: `?src=`, else the UTM tags, from the page URL. |
 | `onBooked(result)` | | Called once per booking with `{ booking, manageToken, manageUrl }`. |
@@ -184,7 +185,7 @@ calendar.
 after a cancellation, and the real-booking CTA on a sandbox booking),
 `realBookingLabel`, `sandboxNotice`, `sandbox` (this page serves sandbox links —
 see above), `sandboxHref` (the sandbox's "Try the demo again"), `defaultTimezone`
-(default: the zone the booking was made in), `locale`, `theme`, `className`,
+(default: the zone the booking was made in), `timeZones` (as above), `locale`, `theme`, `className`,
 `style`, and `onChange(booking)` after a reschedule or cancel.
 
 It handles every state: confirmed, awaiting confirmation, cancelled, already

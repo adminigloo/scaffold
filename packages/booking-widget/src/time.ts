@@ -123,6 +123,91 @@ export function listTimeZones(include: readonly string[] = []): string[] {
   return [...out];
 }
 
+/** One zone a curated selector offers, under the name a person reads. */
+export interface TimeZoneChoice {
+  /** The IANA zone the times are computed in. */
+  zone: string;
+  /** What the selector and the confirmation say: "Mountain Time". */
+  label: string;
+}
+
+/**
+ * The United States' zones by the names people use: no cities, no offsets.
+ * Arizona keeps standard time all year, so half the year its clock matches
+ * Pacific rather than Mountain; it gets its own entry. Pass as `timeZones`.
+ */
+export const US_TIME_ZONES: readonly TimeZoneChoice[] = [
+  { zone: "America/New_York", label: "Eastern Time" },
+  { zone: "America/Chicago", label: "Central Time" },
+  { zone: "America/Denver", label: "Mountain Time" },
+  { zone: "America/Phoenix", label: "Arizona Time" },
+  { zone: "America/Los_Angeles", label: "Pacific Time" },
+  { zone: "America/Anchorage", label: "Alaska Time" },
+  { zone: "Pacific/Honolulu", label: "Hawaii Time" },
+];
+
+/**
+ * What a `timeZones` prop takes: a preset name, or a list. The name exists for
+ * React Server Components — a server page can pass the string `"us"`, while a
+ * value exported from this (client) bundle would reach it as a reference.
+ */
+export type TimeZoneList = "us" | readonly TimeZoneChoice[];
+
+/** A `timeZones` prop as a list; undefined (the full IANA list) when unset or empty. */
+export function timeZoneChoices(list: TimeZoneList | undefined): readonly TimeZoneChoice[] | undefined {
+  const choices = list === "us" ? US_TIME_ZONES : list;
+  return choices && choices.length > 0 ? choices : undefined;
+}
+
+/**
+ * The choice whose clock IS `zone`'s: the same id, else the same UTC offset in
+ * mid-January and mid-July. So "America/Boise" lands on Mountain Time,
+ * "America/Indiana/Indianapolis" on Eastern and "America/Phoenix" on Arizona,
+ * without an alias table. Null when nothing matches (a visitor in Europe).
+ */
+export function matchTimeZoneChoice(
+  zone: string | null | undefined,
+  choices: readonly TimeZoneChoice[],
+  at: Date = new Date(),
+): TimeZoneChoice | null {
+  if (!zone || !isValidTimeZone(zone)) return null;
+  const exact = choices.find((choice) => choice.zone === zone);
+  if (exact) return exact;
+  const year = at.getUTCFullYear();
+  const probes = [new Date(Date.UTC(year, 0, 15, 12)), new Date(Date.UTC(year, 6, 15, 12))];
+  const clock = (z: string) => probes.map((probe) => zoneOffsetMinutes(probe, z)).join(",");
+  const target = clock(zone);
+  return choices.find((choice) => isValidTimeZone(choice.zone) && clock(choice.zone) === target) ?? null;
+}
+
+/**
+ * The zone a curated selector opens in: the first candidate (an explicit prop,
+ * the viewer's browser, the host's) whose clock one of the choices shares,
+ * else the first choice. Without choices, `resolveInitialZone` as before.
+ */
+export function resolveChoiceZone(
+  candidates: ReadonlyArray<string | null | undefined>,
+  choices: readonly TimeZoneChoice[] | undefined,
+): string {
+  const [preferred, browser, host] = candidates;
+  if (!choices || choices.length === 0) return resolveInitialZone(preferred ?? undefined, browser ?? "UTC", host ?? undefined);
+  for (const candidate of candidates) {
+    const match = matchTimeZoneChoice(candidate, choices);
+    if (match) return match.zone;
+  }
+  return choices[0]!.zone;
+}
+
+/** A curated choice's label when `zone` is one, else `zoneDisplayName`. */
+export function zoneName(
+  zone: string,
+  at: Date,
+  locale = "en-US",
+  choices?: readonly TimeZoneChoice[],
+): string {
+  return choices?.find((choice) => choice.zone === zone)?.label ?? zoneDisplayName(zone, at, locale);
+}
+
 /** "America/Argentina/Buenos_Aires" → "Buenos Aires"; "UTC" → "UTC". */
 export function zoneCity(zone: string): string {
   const last = zone.split("/").pop() ?? zone;

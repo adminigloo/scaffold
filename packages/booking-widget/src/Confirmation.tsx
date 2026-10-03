@@ -10,6 +10,7 @@ import {
   ReachHostText,
 } from "./parts.js";
 import { emailsOn, reachHost, type EmailFacts } from "./requests.js";
+import type { TimeZoneChoice } from "./time.js";
 import type { BookResponse, PublicBooking } from "./types.js";
 
 /**
@@ -83,6 +84,7 @@ function CustomerConfirmation({
   sandbox,
   headingLevel,
   headingRef,
+  timeZones,
 }: {
   booking: PublicBooking;
   manageToken: string;
@@ -97,6 +99,7 @@ function CustomerConfirmation({
   sandbox: boolean;
   headingLevel: "h2" | "h3";
   headingRef?: Ref<HTMLHeadingElement>;
+  timeZones?: readonly TimeZoneChoice[];
 }) {
   const onIcsClick = useIcsClick(client, manageToken);
   const requested = booking.status === "requested";
@@ -121,7 +124,7 @@ function CustomerConfirmation({
           {note === null ? null : <p className="aibk-sub">{note}</p>}
         </div>
       </div>
-      <BookingFacts booking={booking} zone={zone} locale={locale} inviteePhone={inviteePhone} />
+      <BookingFacts booking={booking} zone={zone} locale={locale} inviteePhone={inviteePhone} zoneChoices={timeZones} />
       <CalendarActions booking={booking} icsHref={client.icsUrl(manageToken)} onIcsClick={onIcsClick} sandbox={sandbox} />
       {manageUrl && !withEmail ? (
         <CopyField
@@ -161,6 +164,8 @@ export interface ConfirmationProps {
   confirmationNote?: string | null;
   /** What the server's config says about email. Absent: email is assumed on (the old behaviour). */
   emails?: EmailFacts | null;
+  /** The widget's `timeZones`: the zone reads by the label the selector used. */
+  timeZones?: readonly TimeZoneChoice[];
   realBookingHref?: string;
   realBookingLabel: string;
   realBookingSteps?: readonly string[];
@@ -181,6 +186,7 @@ export function Confirmation(props: ConfirmationProps) {
     inviteePhone: props.inviteePhone,
     emails: props.emails,
     sandbox,
+    timeZones: props.timeZones,
   };
 
   if (!sandbox) {

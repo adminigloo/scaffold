@@ -44,7 +44,15 @@ import {
   type FieldErrors,
 } from "./requests.js";
 import { injectStyles } from "./styles.js";
-import { browserTimeZone, formatDuration, resolveInitialZone, sameInstant, type LocalSlot } from "./time.js";
+import {
+  browserTimeZone,
+  formatDuration,
+  resolveChoiceZone,
+  sameInstant,
+  timeZoneChoices,
+  type LocalSlot,
+  type TimeZoneList,
+} from "./time.js";
 import type { BookingConfig, BookResponse, Medium, Slot } from "./types.js";
 
 /**
@@ -95,6 +103,14 @@ export interface BookingWidgetProps {
   confirmationNote?: string | null;
   /** IANA zone to open in. Default: the viewer's browser zone. */
   defaultTimezone?: string;
+  /**
+   * Offer only these zones, by these names, instead of every IANA zone:
+   * `"us"` (Eastern, Central, Mountain, Arizona, Pacific, Alaska, Hawaii) or
+   * any `{ zone, label }[]`. The widget opens in the choice whose clock
+   * matches the visitor's (America/Boise reads as Mountain Time), else the
+   * host's, else the first. Default: the full list.
+   */
+  timeZones?: TimeZoneList;
   /** Attribution. Default: `?src=` or the UTM tags on the page URL. */
   source?: string;
   /** Called once a booking is made (sandbox bookings included). */
@@ -196,7 +212,8 @@ export function BookingWidget(props: BookingWidgetProps) {
   const sandbox = Boolean(props.sandbox || config?.sandbox);
   const host = config?.hostDisplayName ?? "";
   const callingCode = normalizeCallingCode(props.defaultCallingCode) ?? config?.defaultCallingCode ?? null;
-  const zone = zoneChoice ?? resolveInitialZone(props.defaultTimezone, browserZone, config?.hostTimezone);
+  const timeZones = timeZoneChoices(props.timeZones);
+  const zone = zoneChoice ?? resolveChoiceZone([props.defaultTimezone, browserZone, config?.hostTimezone], timeZones);
   const suggestedZones = useMemo(
     () => [browserZone, ...(config?.hostTimezone ? [config.hostTimezone] : [])],
     [browserZone, config?.hostTimezone],
@@ -388,6 +405,7 @@ export function BookingWidget(props: BookingWidgetProps) {
           <Confirmation
             result={result}
             zone={zone}
+            timeZones={timeZones}
             locale={locale}
             client={client}
             sandbox={sandbox || result.booking.sandbox}
@@ -449,6 +467,7 @@ export function BookingWidget(props: BookingWidgetProps) {
                 zone={zone}
                 onZoneChange={setZoneChoice}
                 suggestedZones={suggestedZones}
+                timeZones={timeZones}
                 locale={locale}
                 selectedStart={picked?.start ?? null}
                 pendingStart={hold.pendingStart}

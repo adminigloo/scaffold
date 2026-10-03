@@ -24,11 +24,12 @@ import {
   sameInstant,
   timeLabels,
   zoneAbbreviation,
-  zoneDisplayName,
+  zoneName,
   zoneOptionLabel,
   zoneRegion,
   type LocalSlot,
   type StripDay,
+  type TimeZoneChoice,
 } from "./time.js";
 import type { BookingStatus, PublicBooking } from "./types.js";
 
@@ -143,6 +144,7 @@ export function ZoneSelect({
   at,
   suggested,
   locale,
+  choices,
 }: {
   zone: string;
   onChange: (zone: string) => void;
@@ -151,6 +153,8 @@ export function ZoneSelect({
   /** Shown first: the viewer's own zone and the host's. */
   suggested: readonly string[];
   locale: string;
+  /** A curated list (`timeZones`): only these, by their labels, in this order. */
+  choices?: readonly TimeZoneChoice[];
 }) {
   // Day granularity: labels only change when the offset can.
   const dayKey = Math.floor(at.getTime() / 86_400_000);
@@ -177,10 +181,31 @@ export function ZoneSelect({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zone, suggestedKey, dayKey]);
 
+  if (choices && choices.length > 0) {
+    // The labels are already the names people use, so the select IS the
+    // sentence: "Times shown in [Mountain Time ▾]", not the zone said twice.
+    const offered = choices.filter((choice) => isValidTimeZone(choice.zone));
+    return (
+      <label className="aibk-zone">
+        <span>Times shown in</span>
+        <select className="aibk-select" value={zone} onChange={(event) => onChange(event.target.value)}>
+          {offered.some((choice) => choice.zone === zone) ? null : (
+            <option value={zone}>{zoneName(zone, at, locale)}</option>
+          )}
+          {offered.map((choice) => (
+            <option key={choice.zone} value={choice.zone}>
+              {choice.label}
+            </option>
+          ))}
+        </select>
+      </label>
+    );
+  }
+
   return (
     <div className="aibk-zone">
       <span>
-        Times shown in <span className="aibk-zone-now">{zoneDisplayName(zone, at, locale)}</span>
+        Times shown in <span className="aibk-zone-now">{zoneName(zone, at, locale)}</span>
       </span>
       <select
         className="aibk-select"
@@ -535,11 +560,14 @@ export function BookingFacts({
   zone,
   locale,
   inviteePhone,
+  zoneChoices,
 }: {
   booking: PublicBooking;
   zone: string;
   locale: string;
   inviteePhone?: string;
+  /** The widget's `timeZones`, so the zone reads by the same name as the selector. */
+  zoneChoices?: readonly TimeZoneChoice[];
 }) {
   const start = new Date(booking.start);
   return (
@@ -550,7 +578,7 @@ export function BookingFacts({
           <strong>{describeWhen(booking.start, zone, locale)}</strong>
           <br />
           <span className="aibk-hint">
-            {formatDuration(booking.durationMinutes)} · times in {zoneDisplayName(zone, start, locale)}
+            {formatDuration(booking.durationMinutes)} · times in {zoneName(zone, start, locale, zoneChoices)}
           </span>
         </dd>
       </div>

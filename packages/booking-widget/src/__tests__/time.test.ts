@@ -20,14 +20,19 @@ import {
   lastBookableDay,
   listTimeZones,
   localizeSlot,
+  matchTimeZoneChoice,
   mayHaveLaterSlots,
   partOfDay,
+  resolveChoiceZone,
   resolveInitialZone,
   sameInstant,
   slotWindow,
   startOfDateIn,
   stripStartDay,
   timeLabels,
+  timeZoneChoices,
+  US_TIME_ZONES,
+  zoneName,
   zoneAbbreviation,
   zoneCity,
   zoneDisplayName,
@@ -373,5 +378,72 @@ describe("the hold countdown", () => {
     expect(holdAnnouncement(120_000)).toMatch(/2 minutes/);
     expect(holdAnnouncement(30_000)).toMatch(/Less than a minute/);
     expect(holdAnnouncement(0)).toMatch(/run out/);
+  });
+});
+
+describe("curated time zones (US_TIME_ZONES)", () => {
+  const SUMMER = new Date("2026-07-01T12:00:00Z");
+
+  it("names each US zone once, with no city and no offset", () => {
+    expect(US_TIME_ZONES.map((choice) => choice.label)).toEqual([
+      "Eastern Time",
+      "Central Time",
+      "Mountain Time",
+      "Arizona Time",
+      "Pacific Time",
+      "Alaska Time",
+      "Hawaii Time",
+    ]);
+    for (const choice of US_TIME_ZONES) {
+      expect(isValidTimeZone(choice.zone)).toBe(true);
+      expect(choice.label).not.toMatch(/Denver|Phoenix|UTC|GMT|\(/);
+    }
+  });
+
+  it("matches a visitor's zone by its clock, not its spelling", () => {
+    const label = (zone: string) => matchTimeZoneChoice(zone, US_TIME_ZONES, SUMMER)?.label ?? null;
+    expect(label("America/Denver")).toBe("Mountain Time");
+    expect(label("America/Boise")).toBe("Mountain Time");
+    expect(label("America/Phoenix")).toBe("Arizona Time");
+    expect(label("America/Indiana/Indianapolis")).toBe("Eastern Time");
+    expect(label("America/Detroit")).toBe("Eastern Time");
+    expect(label("America/Los_Angeles")).toBe("Pacific Time");
+    expect(label("America/Juneau")).toBe("Alaska Time");
+    expect(label("Pacific/Honolulu")).toBe("Hawaii Time");
+    // Arizona is never mistaken for Mountain or Pacific: its clock matches each for only half the year.
+    expect(label("America/Phoenix")).not.toBe("Mountain Time");
+    expect(label("Europe/London")).toBeNull();
+    expect(label("Asia/Tokyo")).toBeNull();
+    expect(label("Not/A_Zone")).toBeNull();
+    expect(label("")).toBeNull();
+  });
+
+  it("opens in the visitor's matching zone, else the host's, else the first choice", () => {
+    expect(resolveChoiceZone([undefined, "America/Boise", "America/Denver"], US_TIME_ZONES)).toBe("America/Denver");
+    expect(resolveChoiceZone([undefined, "America/Indiana/Indianapolis", "America/Denver"], US_TIME_ZONES)).toBe(
+      "America/New_York",
+    );
+    expect(resolveChoiceZone([undefined, "Europe/London", "America/Denver"], US_TIME_ZONES)).toBe("America/Denver");
+    expect(resolveChoiceZone([undefined, "Europe/London", "Europe/Paris"], US_TIME_ZONES)).toBe("America/New_York");
+    // An explicit zone wins when it matches a choice.
+    expect(resolveChoiceZone(["America/Phoenix", "America/New_York", "America/Denver"], US_TIME_ZONES)).toBe(
+      "America/Phoenix",
+    );
+    // Without choices: the old rule, the browser's own zone.
+    expect(resolveChoiceZone([undefined, "Europe/London", "America/Denver"], undefined)).toBe("Europe/London");
+  });
+
+  it('"us" is the preset a server component can pass; empty or unset means the full list', () => {
+    expect(timeZoneChoices("us")).toBe(US_TIME_ZONES);
+    const custom = [{ zone: "Europe/London", label: "UK time" }];
+    expect(timeZoneChoices(custom)).toBe(custom);
+    expect(timeZoneChoices([])).toBeUndefined();
+    expect(timeZoneChoices(undefined)).toBeUndefined();
+  });
+
+  it("zoneName reads a choice by its label, anything else as before", () => {
+    expect(zoneName("America/Denver", SUMMER, "en-US", US_TIME_ZONES)).toBe("Mountain Time");
+    expect(zoneName("America/Phoenix", SUMMER, "en-US", US_TIME_ZONES)).toBe("Arizona Time");
+    expect(zoneName("America/Denver", SUMMER, "en-US")).toMatch(/Denver/);
   });
 });

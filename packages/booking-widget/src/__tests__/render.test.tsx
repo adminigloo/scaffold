@@ -6,6 +6,7 @@ import { BookingClient } from "../client.js";
 import { Confirmation } from "../Confirmation.js";
 import { ManageBooking } from "../ManageBooking.js";
 import {
+  BookingFacts,
   CalendarActions,
   DateStrip,
   defaultRealBookingLabel,
@@ -14,9 +15,10 @@ import {
   SandboxBanner,
   StatusTag,
   TimeGroups,
+  ZoneSelect,
 } from "../parts.js";
 import { bookingWidgetCss } from "../styles.js";
-import { localizeSlot } from "../time.js";
+import { localizeSlot, US_TIME_ZONES } from "../time.js";
 import type { BookResponse, PublicBooking } from "../types.js";
 
 /**
@@ -436,5 +438,38 @@ describe("the stylesheet", () => {
     );
     // Not declared on the root, so a host's `:root { --aibk-scroll-margin }` reaches it.
     expect(bookingWidgetCss()).not.toMatch(/--aibk-scroll-margin:/);
+  });
+});
+
+describe("curated time zones", () => {
+  const at = new Date("2026-10-14T18:00:00Z");
+
+  it("the selector offers only the choices, by name — no cities, no offsets, no optgroups", () => {
+    const out = html(
+      <ZoneSelect zone="America/Denver" onChange={() => {}} at={at} suggested={["America/Denver"]} locale="en-US" choices={US_TIME_ZONES} />,
+    );
+    // One sentence, said once: the select carries the name and is labelled by the words before it.
+    expect(out).toMatch(/^<label class="aibk-zone"><span>Times shown in<\/span><select/);
+    expect(out).toContain('<option value="America/Denver" selected="">Mountain Time</option>');
+    expect(out.match(/Mountain Time/g)).toHaveLength(1);
+    const options = [...out.matchAll(/<option[^>]*>([^<]*)<\/option>/g)].map((m) => m[1]);
+    expect(options).toEqual(["Eastern Time", "Central Time", "Mountain Time", "Arizona Time", "Pacific Time", "Alaska Time", "Hawaii Time"]);
+    // What a person reads (the option values stay IANA ids).
+    const visible = out.replace(/<[^>]*>/g, " ");
+    expect(visible).not.toContain("Denver");
+    expect(visible).not.toContain("UTC");
+    expect(out).not.toContain("<optgroup");
+  });
+
+  it("without choices, the full list as before (negative control)", () => {
+    const out = html(<ZoneSelect zone="America/Denver" onChange={() => {}} at={at} suggested={["America/Denver"]} locale="en-US" />);
+    expect(out).toContain("Denver (UTC−6)");
+    expect(out).toContain("<optgroup");
+  });
+
+  it("the confirmation names the zone the way the selector did", () => {
+    const out = html(<BookingFacts booking={booking} zone="America/Phoenix" locale="en-US" zoneChoices={US_TIME_ZONES} />);
+    expect(out).toContain("times in Arizona Time");
+    expect(out).not.toContain("Phoenix");
   });
 });

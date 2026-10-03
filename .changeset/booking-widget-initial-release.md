@@ -7,7 +7,8 @@ is its only peer. It needs no Tailwind and no CSS import, follows the visitor's
 light or dark preference, and every colour is a CSS token.
 
 - `<BookingWidget>`: pick a type, a day and a time in the visitor's own zone,
-  with a zone selector. Times are grouped Morning / Afternoon / Evening. The
+  with a zone selector. `timeZones={US_TIME_ZONES}` (or any `{ zone, label }`
+  list) narrows it to named zones: "Mountain Time", not "Denver (UTC−6)". Times are grouped Morning / Afternoon / Evening. The
   date strip runs exactly to the type's horizon when the server sends
   `horizonDays`. A picked time is held for ten minutes with a countdown, and
   picking another time hands the first hold back in the same request. Leaving
