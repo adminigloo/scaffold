@@ -122,7 +122,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // the workspace-protocol publish fix (0.7.1 shipped an unresolved workspace:^).
   // 0.8.0 adds the optional AdminIgloo license gate (deps @adminigloo/license),
   // a no-op unless the app passes license config with mode "enforce".
-  feedback: "0.9.0",
+  feedback: "0.9.1",
   // 0.2.1 — 0.2.0 brought the "My reports" view the thread endpoints exist
   // to serve; the patch is the glacier re-skin with the widget's own dark
   // theme, which a caret would cover anyway. Pinned at the workspace version

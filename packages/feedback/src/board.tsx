@@ -190,6 +190,11 @@ ${TOKEN_SCOPE}:where([data-aib-theme="dark"]) { ${paletteDeclarations(DARK_PALET
 :where(.aib-root, .aib-panel-layer) { color: var(--aib-ink);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
 .aib-root:focus { outline: none; }
+/* Containing blocks for the screen-reader-only text (.aib-sr is absolutely
+   positioned). Without a positioned ancestor INSIDE the board's horizontal
+   scroller, the column counts and aging words escaped it and widened the
+   whole page — 0.9.0 made a 412px phone page 999px wide. */
+.aib-root, .aib-col, .aib-card { position: relative; }
 .aib-root.aib-selecting { padding-bottom: 96px; }
 /* While the fixed bulk bar is up, a card focused near the bottom of the window
    scrolls clear of it instead of landing underneath (WCAG 2.4.11). */

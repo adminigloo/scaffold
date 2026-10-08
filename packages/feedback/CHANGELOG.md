@@ -1,5 +1,17 @@
 # @adminigloo/feedback
 
+## 0.9.1
+
+### Patch Changes
+
+- On a phone, 0.9.0 widened the whole PAGE to the board's width (a 390px page
+  became 1267px): the screen-reader-only column counts and aging words are
+  absolutely positioned and had no positioned ancestor inside the board's
+  horizontal scroller, so they escaped it. The fixed bulk bar then centred on
+  that wider page, off screen. `.aib-root`, `.aib-col` and `.aib-card` are now
+  `position: relative`; a browser test pins "the board scrolls sideways, the
+  page never does" at 390px.
+
 ## 0.9.0
 
 ### Minor Changes

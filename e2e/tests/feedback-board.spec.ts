@@ -1995,3 +1995,28 @@ test("keyboard: Alt+Arrow on a card whose move is still in flight says so", asyn
   await page.evaluate(() => window.__srv.release(true));
   await expect(card(page, 1)).not.toHaveClass(/aib-busy/);
 });
+
+// ---------------------------------------------------------------------------
+// 0.9.1
+// ---------------------------------------------------------------------------
+
+test("phone width: the board scrolls sideways inside itself — the PAGE never does (screen-reader text stays contained)", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await boot(page, { bulk: true });
+  const widths = await page.evaluate(() => ({
+    page: document.documentElement.scrollWidth,
+    viewport: document.documentElement.clientWidth,
+    board: (document.querySelector(".aib-board") as HTMLElement).scrollWidth,
+  }));
+  // The board itself is wider than the phone (it scrolls), the page is not.
+  expect(widths.board).toBeGreaterThan(widths.viewport);
+  expect(widths.page, "the page scrolls sideways").toBe(widths.viewport);
+
+  // And so the fixed bulk bar is on screen, where a thumb can reach Apply.
+  await page.getByRole("checkbox", { name: "Select FB-00002" }).check();
+  const apply = bar(page).getByRole("button", { name: "Apply" });
+  const box = await apply.boundingBox();
+  expect(box && box.x >= 0 && box.x + box.width <= widths.viewport, "Apply is off screen").toBe(true);
+});
