@@ -76,5 +76,34 @@ Negative controls: run against the widget as it was before the 2026-09-23 work
 (the first port), 16 of the 18 host-app tests and 14 of the 15 capture
 regressions FAIL — a test that passes either way guards nothing.
 
+## What `feedback-board.spec.ts` proves
+
+`@adminigloo/feedback`'s board and ticket panel, bundled from source (dev React,
+StrictMode) inside an admin shell whose `<main overflow-y:auto>` the document
+scrolls past, with a fake server that can resolve, reject, hold or partly fail
+moves and refreshes the board afterwards. It covers drag-and-drop landing and
+rollback with `onMoveError`, server changes winning over the board's own moves,
+bulk selection (the bar is on screen, painted, and every target is 44px),
+partial bulk failure, keyboard moves with focus and live-region announcements,
+`ticketHref` modified clicks, the "Unrecognised status" column, the theme
+prop, host token overrides beating the package stylesheet, axe WCAG 2.1 AA in
+both themes, and the panel's focus trap and failed-send handling.
+
+The 0.9.0 review fix pass added 27 more: the panel stays above the feedback
+widget's launcher and a host's `--aib-z-panel` moves scrim and dialog together;
+a native `<dialog>` opened above the panel keeps its own Tab and Escape; Escape
+during IME composition (or already handled) doesn't close it; the Status select
+sends one move on Enter or blur, not one per arrow key; a card moved twice
+before the refetch lands never snaps back; `onMoveMany` can resolve
+`{ failed }`; focus never falls to `<body>` after Apply, Clear or closing the
+panel; columns are named groups with real lists; repeated announcements are
+spoken again; and forced colours, control-edge contrast, host link colours and
+the checkbox hit area all hold.
+
+Set `AIB_BOARD_SRC=<path>` to run it against another `board.tsx` (copy
+`board-tokens.ts` next to it). Against 0.8.0 the stale-status, bar-on-screen
+and token tests fail. Against the board as it was before the fix pass, all 27
+fix-pass tests and the two axe tests fail, and the other 22 pass.
+
 To add a browser test for another package, add a target to `bundle.mjs` and a
 spec under `tests/`.

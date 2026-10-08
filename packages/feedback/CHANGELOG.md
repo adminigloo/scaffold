@@ -1,5 +1,53 @@
 # @adminigloo/feedback
 
+## 0.9.0
+
+### Minor Changes
+
+- The board, fixed from the outside in. Installed into an app it was not built
+  with (Riddler Go), 0.8.0 needed a stylesheet of workarounds to be usable; 0.9.0
+  needs none of them.
+
+  **Fixes**
+  - Moved cards no longer ignore the server. 0.8.0 kept every optimistic move
+    forever, so a status changed elsewhere stayed hidden until the board
+    remounted. Moves now show only until the `tickets` prop catches up — the
+    server always wins — and a card moved twice before a refresh lands doesn't
+    snap back a column.
+  - The bulk bar is styled (its tokens resolved to nothing beside `.aib-board`)
+    and `position: fixed` (0.8.0's sticky bar sat below the fold in common admin
+    shells). Position it with `--aib-bar-bottom`, `--aib-bar-left`, `--aib-z-bar`.
+  - WCAG AA throughout: `ink-faint` lifted to 4.5:1 in both themes; input edges
+    at 3:1; no opacity on archived or busy cards; 44px checkboxes and bar
+    controls; forced-colours (Windows High Contrast) support. A unit test now
+    measures every text/background pair the stylesheet uses.
+  - Keyboard: each card's title is a button (with `onOpen`) or a link (with
+    `ticketHref`); Alt+←/→ moves a card a column and keeps focus on it; moves are
+    announced in a live region; Alt+Arrow never reaches the browser's Back.
+  - `TicketPanel` is a real modal dialog: focus in, Tab trapped, Escape closes
+    (without stealing a stacked dialog's keys), focus returns to the card. Its
+    callbacks' errors go to `onError` instead of becoming unhandled rejections.
+    The Status select no longer sends a move per arrow key.
+  - A ticket whose status matches no column shows in an "Unrecognised status"
+    column instead of vanishing.
+  - SSR: on React 19 the stylesheet renders with the component, so the first
+    paint is styled.
+
+  **Added (all optional)**
+  - `FeedbackBoard`: `theme` (`auto` | `light` | `dark`), `onMoveError`,
+    `ticketHref`; `onMoveMany` may resolve `{ failed: [ids] }` to roll back only
+    those.
+  - `TicketPanel`: `onError`, `formatTime`, `theme`.
+  - Theming: every `--aib-*` token has zero specificity on `.aib-root` /
+    `.aib-panel-layer`, so a plain host rule wins in either theme.
+  - A README.
+
+  **Changed defaults**
+  - Columns share the width (`flex: 1 0 240px`, max 360px) instead of a fixed
+    270px.
+  - The bulk bar floats at the bottom of the window.
+  - `drizzle-orm` and `zod` peers are optional (the board entry needs neither).
+
 ## 0.8.0
 
 ### Minor Changes
