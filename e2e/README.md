@@ -105,5 +105,26 @@ Set `AIB_BOARD_SRC=<path>` to run it against another `board.tsx` (copy
 and token tests fail. Against the board as it was before the fix pass, all 27
 fix-pass tests and the two axe tests fail, and the other 22 pass.
 
+## What `audience-ui.spec.ts` proves
+
+`@adminigloo/audience`'s admin components (`./ui`), bundled from source (dev
+React, StrictMode) into an analytics page with a KPI card, the rules panel, the
+Mark this browser button and the unfiltered-sources note, fed by a fake server
+that can resolve, reject, hold, or resolve `{ error }` (how a server action
+keeps its reason in a production Next build) for each callback. It covers axe (WCAG 2.x AA) in
+both themes at rest, with a preview showing and mid-removal, and for the
+analytics role's masked view; 44px targets on every control; Add staying
+disabled until the same draft has been previewed (and again after an edit);
+duplicate and visit-only previews; failed preview, add, remove and mark, thrown
+or resolved as `{ error }`; a
+keyboard-only add and remove (Enter to preview, Escape out of the confirm,
+focus kept); `maskEmails` with view-only showing no address anywhere; the
+include-internal switch (a real link, Space works, banner while on); no
+sideways page scroll at 390px; host token overrides; `theme="dark"` in a light
+host; and forced colours.
+
+Set `AIU_UI_SRC=<path>` to run it against another `ui.tsx` (copy
+`core/labels.ts`, `core/words.ts`, `ui-tokens.ts` and `views.ts` beside it).
+
 To add a browser test for another package, add a target to `bundle.mjs` and a
 spec under `tests/`.
