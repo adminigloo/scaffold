@@ -174,9 +174,8 @@ Entry `@adminigloo/audience/ui`. The components fetch nothing. They take plain d
 - No IPs are stored anywhere.
 - Links store an HMAC of the user id, never the id itself.
 - Rule emails are normalized, and masked for analysts.
-- The device mark reuses the first-party cookie the app already sets. That it is exempt from consent is INFERRED; check with legal.
+- The device mark reuses the first-party cookie the app already sets.
 - The README states exactly what each link mode stores.
-- Riddler Go's privacy page probably needs one sentence about linking signed-in visitors (INFERRED).
 
 ### Guard test
 
@@ -203,7 +202,7 @@ Sizes: S is about 1 to 2 days, M about 3 to 5 days, L more than a week.
 | 4 | **seo 0.1** (new, no tables) | M | Metadata builder (canonical is the page itself, no doubled brand, share image always merged); JSON-LD `@graph` with `@id` and `<` escaped; robots builder fed from `analytics/crawlers`; sitemap with real `lastmod`, images and splitting; llms.txt and llms-full.txt from a content registry; IndexNow; `isIndexable(env)`. | builders | Unit and snapshot tests per builder; an escaping test. |
 | 5 | **seo-reports 0.2** | M | Rewrite `robotsBlocks` (wrong user-agent group handling); new checks (canonical, `X-Robots-Tag`, llms-full.txt, duplicate titles, orphan pages, broken links); parallel fetching; failure history; tenant column; an `AuditStore` adapter. | `createAudit({store})` | Robots fixtures, including the GPTBot/ClaudeBot group case. |
 | 6 | **search-console 0.1** (new) | S/M | Signs its own login (no Google library), nightly import, impressions-weighted reports, `GscStore` adapter. | `createSearchConsole({store, credentials})` | Fake token server; date-math tests. |
-| 7 | **aeo 0.2** | L | Rebuilt from Riddler Go's `lib/aeo` (**blocked on the IP question**); otherwise a clean-room build from Traildek's ideas plus the fixes in 00 §3. Store-first (`AeoStore`). | `createAeo({store, engines, budget})` | RG's `lib/aeo/__tests__` become package tests. |
+| 7 | **aeo 0.2** | L | Rebuilt from Riddler Go's `lib/aeo` (the founder's own code), plus the fixes in 00 §3. Store-first (`AeoStore`). | `createAeo({store, engines, budget})` | RG's `lib/aeo/__tests__` become package tests. |
 | 8 | **digest 0.1** | M | Anomaly engine (`computeAnomalies`), weekly composition, the excluded line, the unfiltered-sources note. | `composeDigest(inputs)`, pure | Pure tests. |
 
 - **How each package stores data.** analytics uses the prefix, because rewriting 20+ report queries per app isn't worth it. aeo, seo-reports and search-console use adapters, because Riddler Go's history lives in its own tables. audience ships both: a default store and the interface.
@@ -221,7 +220,7 @@ Sizes: S is about 1 to 2 days, M about 3 to 5 days, L more than a week.
 | seo 0.1 | Swap out `components/seo/schemas.ts`, `JsonLd.tsx`, the robots builder and `llms-content`. | none | `INDEXNOW_KEY` | none | existing `schemas.test.ts` plus snapshots |
 | seo-reports 0.2 | An adapter over `audit_findings`. | none | none | `site-audit` | audit e2e |
 | search-console | An adapter over `gsc_daily`. | none | 3 `GSC_*` variables (on the client's account) | `gsc-pull` | import vitest |
-| aeo 0.2 | An adapter over `aeo_queries` and `ai_citation_log`, **only if the IP question allows it**. | none | engine keys (client-owned) | `aeo-citations` | `e2e/admin/aeo-citations` |
+| aeo 0.2 | An adapter over `aeo_queries` and `ai_citation_log`. | none | engine keys (client-owned) | `aeo-citations` | `e2e/admin/aeo-citations` |
 
 **Backfill for Riddler Go** (one-off, idempotent, dry-run first):
 - **Internal users:** platform roles, plus the rules, plus the patterns (which catch the nine `+clerk_test` users).
@@ -238,7 +237,7 @@ Sizes: S is about 1 to 2 days, M about 3 to 5 days, L more than a week.
 - Pin exactly, and keep the vendored tarballs current.
 - Amend ADR-0014, or write ADR-0015, to list `@adminigloo/audience` and `@adminigloo/license` before the merge.
 
-**IP question.** audience, seo, seo-reports, search-console and analytics are clean-room AdminIgloo code or Traildek-derived (your own), so they are safe. aeo 0.2 rebuilt from Riddler Go's `lib/aeo` needs the contract checked or Rachel's written OK first. Until then, build aeo 0.2 clean-room.
+**Source.** Every package is the founder's own code: AdminIgloo, Traildek, and the Riddler Go work he built and installs for the client. aeo 0.2 is built from Riddler Go's `lib/aeo`.
 
 ## 5. First slice to build now (in `C:\Users\dalli\scaffold`)
 

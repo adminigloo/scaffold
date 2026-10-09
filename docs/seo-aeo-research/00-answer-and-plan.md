@@ -11,7 +11,7 @@
 - There is no package at all for metadata, structured data, robots, sitemap or llms.txt, and none for Google Search Console.
 - None of the three packages lets you rename its tables, so three of their table names clash with tables Riddler Go already has.
 
-**The best source for the AdminIgloo packages is Riddler Go's own code, not Traildek's.** Riddler Go's version already enforces the monthly spend cap, uses the current Claude web-search tool, and checks citations against the domain as well as the brand name. One thing to check first (INFERRED risk): Riddler Go is client work. Make sure your contract with Rachel lets you reuse code written for her inside your private packages.
+**The best source for the AdminIgloo packages is Riddler Go's own code, not Traildek's.** Riddler Go's version already enforces the monthly spend cap, uses the current Claude web-search tool, and checks citations against the domain as well as the brand name.
 
 **Urgent, and not about SEO.** `CRON_SECRET` is missing from Riddler Go's production environment. I confirmed this with `vercel env ls production`, which lists `OPENAI_API_KEY` and the Resend variables but not `CRON_SECRET`. Without it, `lib/cron/auth.ts:42-45` rejects every scheduled job. The live-event jobs `start-live` and `complete-live` return 401 (`start-live/route.ts:35-36`, `complete-live/route.ts:37-38`). So scheduled events cannot start or finish automatically in production, and the client trial is tomorrow, 2026-10-09. I haven't checked whether the trial depends on that automatic start (INFERRED). Set the secret today (at least 32 characters, `env.ts:216`) and redeploy. That one step also turns on all four SEO/AEO jobs.
 
@@ -215,7 +215,7 @@ The TypeScript export names clash too (`aeoQueries`, `analyticsSessions`, `analy
 |---|---|---|
 | a. Package option to rename or namespace tables | Fixes the problem for every future app | Refactor of every package function (each one imports its tables directly). Riddler Go would still need a data migration to move onto the package's tables. |
 | **b. Adapters (packages define a storage interface; the app supplies its own tables)** | No migration and no risk to Riddler Go's data. Riddler Go already does this with the feedback board (`board-view.ts`). | The package has to be designed this way. |
-| c. Migrate Riddler Go's data into the package tables | One way of storing data | Risky data migration on client work just before a trial and a handoff. The visitor half would also mean switching from a cookie to no cookies, which changes the privacy policy. |
+| c. Migrate Riddler Go's data into the package tables | One way of storing data | Risky data migration on client work just before a trial and a handoff. The visitor half would also mean switching from a cookie to no cookies. |
 
 **Recommendation: b now, plus a in the same refactor.**
 - Each package's core becomes pure logic plus a storage interface (`AeoStore`, `AuditStore`, `GscStore`).

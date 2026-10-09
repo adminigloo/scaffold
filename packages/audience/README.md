@@ -41,7 +41,6 @@ Say these out loud before anyone assumes otherwise:
 - **No routes, no cron, no migration files.** You call the functions from your own server actions, jobs and drizzle-kit setup.
 - **No link retention.** Visitor-to-user links are kept until you delete them (`last_seen` tells you how old each is).
 - **No browser-side device storage.** "Mark this browser" uses the visitor cookie your app already sets.
-- **Not legal advice.** Whether the device-mark cookie needs consent is your call (it is first-party and functional; check with counsel).
 
 ## Install
 
@@ -139,7 +138,7 @@ Everything that "reaches back" works through the visitor id your app already sto
 **Link modes.** A link is pseudonymous personal data, not anonymous: anyone holding the secret and your user list can recompute it (that is how a rule finds a person's devices).
 
 - `"internal-only"` (the default) writes a link only while a signed-in user is internal. A person named later reaches only devices they used while already internal; their earlier anonymous visits stay counted. Preview says so.
-- `"pseudonymous"` writes a link for every signed-in visitor: visitor id plus the HMAC, nothing else. This is what lets a person added later reach their anonymous past. Recommended for Riddler Go, which already keeps a two-year visitor cookie. Your privacy page should say that signed-in visits are linked to the account under a pseudonymous key.
+- `"pseudonymous"` writes a link for every signed-in visitor: visitor id plus the HMAC, nothing else. This is what lets a person added later reach their anonymous past. Recommended for Riddler Go, which already keeps a two-year visitor cookie.
 - A link that has stopped being true (someone left the staff, a rule was removed) is kept; links are never pruned by the package.
 
 **Global Privacy Control and Do Not Track.** A link is written only when the call says the browser did not opt out: pass the request `headers` (or `privacyOptOut: false` from your own check) to `observe` and `classifyActor`. With neither, no link is written. Drop opted-out beacons entirely (`isPrivacyOptOut(headers)`). Expect that to lower your counts: Brave sends `Sec-GPC: 1` by default.
