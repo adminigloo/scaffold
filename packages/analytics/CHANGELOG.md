@@ -86,6 +86,19 @@
     - Fetches are User-Agent claims. `assistantFetchesVerified` (per engine and per page) and `verifiedHits` (per bot) count those inside the operator's published ranges.
   - `reclassifySources({ tenantId, from?, to? }, { force?, dryRun?, batchSize?, maxBatches? })` re-runs the classifier over stored sessions below the current version (`force`: up to it). It never touches a session a newer classifier stored. It is batched by id and idempotent, and reports each move ("referral → aiAssistant: 12").
 
+  **The crawler list, shared with robots.txt**
+  - `./crawlers` exports `KNOWN_CRAWLERS`: every crawler `classifyCrawler` names, in match order, each with its current robots.txt tokens. It also exports `ROBOTS_CONTROL_TOKENS` (Google-Extended and Applebot-Extended, the training opt-outs that are never User-Agents) and the `KnownCrawler` type.
+  - @adminigloo/seo builds its robots.txt groups from this list, so the bots a site lets in or keeps out and the bots the crawler log counts are one list. No robots group is written for the retired `Claude-Web` or `anthropic-ai`, which `classifyCrawler` still counts as ClaudeBot.
+  - **New crawlers, from the operators' own pages.** Each was recorded as a human visit before.
+    - Amazon: Amzn-SearchBot (AI search) and Amzn-User (assistant).
+    - Google: Google-CloudVertexBot (AI search).
+    - Meta: Meta-WebIndexer (AI search) and FacebookBot (training).
+    - Training crawlers: AI2Bot, Timpibot, PanguBot and TikTokSpider.
+    - ImagesiftBot is named as "other".
+  - **GoogleOther is "other", not "ai-training".** It is Google's general fetcher for product teams' one-off and research crawls; Google's training control is the Google-Extended token. New GoogleOther hits leave the AI-crawler reports; rows already stored keep their kind.
+  - **The catch-all counts CamelCase bots.** `\bbot\b` never matched a token such as `SomeSearchBot/1.0`; a case-sensitive `…Bot` now files it as "Other bot". A phone whose model name ends in "BOT" and a page-running monitor such as UptimeRobot are still visits.
+  - Every other user agent classifies exactly as 0.1 did.
+
   **The site's own SEO audit**
   - `adminigloo-seo-reports` was already never a visitor: it is a crawler, so its beacon is dropped.
   - Its crawler rows are now left out of the crawler reports (bot list, kinds, top paths, AI reads and coverage, the trend's crawler line) unless `includeInternal`. The public window never shows them.

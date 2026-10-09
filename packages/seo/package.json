@@ -1,0 +1,83 @@
+{
+  "name": "@adminigloo/seo",
+  "version": "0.1.0",
+  "description": "Search and answer-engine plumbing for an app's own site, with no database: page metadata whose canonical is always the page itself and whose brand is added once, schema.org JSON-LD as one linked @graph with escaping, robots.txt from one path list and the same AI-bot list @adminigloo/analytics classifies, sitemaps with real lastmod that split themselves, llms.txt and llms-full.txt from the app's own content, IndexNow, and a share-image template for next/og.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adminigloo/scaffold.git",
+    "directory": "packages/seo"
+  },
+  "sideEffects": false,
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./react": {
+      "import": {
+        "types": "./dist/react.d.ts",
+        "default": "./dist/react.js"
+      },
+      "require": {
+        "types": "./dist/react.d.cts",
+        "default": "./dist/react.cjs"
+      }
+    },
+    "./og": {
+      "import": {
+        "types": "./dist/og.d.ts",
+        "default": "./dist/og.js"
+      },
+      "require": {
+        "types": "./dist/og.d.cts",
+        "default": "./dist/og.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "public"
+  },
+  "peerDependencies": {
+    "next": "^14.0.0 || ^15.0.0 || ^16.0.0",
+    "react": "^18.0.0 || ^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "next": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@adminigloo/analytics": "workspace:^",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.4",
+    "next": "16.2.12",
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
+  },
+  "scripts": {
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "stamp:bots": "node scripts/stamp-bots.mjs"
+  }
+}

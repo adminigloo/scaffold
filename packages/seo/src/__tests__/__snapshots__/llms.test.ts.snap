@@ -1,0 +1,134 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`llms.txt: the index > is built from the registry only: title, summary, link lists, how it works, pricing, FAQ, contact 1`] = `
+"# Riddler Go
+
+> Riddler Go is a web platform for hosting interactive puzzle events. Guests join with a QR code; no accounts, no downloads.
+
+- [Full text](https://riddlergo.com/llms-full.txt)
+- [Sitemap](https://riddlergo.com/sitemap.xml)
+
+## Product
+
+- [Home](https://riddlergo.com/): Overview and feature summary.
+- [How it works](https://riddlergo.com/how-it-works): Build, share, watch.
+- [Join an event](https://riddlergo.com/join): Enter a 6-character code.
+
+## Templates
+
+- [Bridal shower \\[hunt\\]](https://riddlergo.com/templates/bridal-shower): A themed hunt for guests.
+- [Team building](https://riddlergo.com/templates/team%20building): Remote and in-person challenges.
+
+## How it works
+
+- [How it works](https://riddlergo.com/how-it-works): 1. Build; 2. Share; 3. Watch
+
+## Pricing
+
+- [Free](https://riddlergo.com/pricing): Free. One event at a time.
+- [Pro](https://riddlergo.com/pricing): $29/month. Unlimited events.
+- [Event pass](https://riddlergo.com/pricing): $49.50 one-time
+
+## FAQ
+
+- [FAQ](https://riddlergo.com/#faq): 2 questions
+
+## Contact
+
+- [Email](mailto:hello@riddlergo.com)
+- [Contact](https://riddlergo.com/contact)
+
+## Optional
+
+- [Changelog](https://riddlergo.com/changelog): What shipped, by version.
+"
+`;
+
+exports[`llms-full.txt: the text > has every body, the steps, every plan with features, every answer 1`] = `
+"# Riddler Go
+
+> Riddler Go is a web platform for hosting interactive puzzle events. Guests join with a QR code; no accounts, no downloads.
+
+Hosts author events with puzzles and hints.
+
+Participants race a live leaderboard.
+
+- [Site](https://riddlergo.com/)
+- [Index](https://riddlergo.com/llms.txt)
+- [Sitemap](https://riddlergo.com/sitemap.xml)
+
+## How it works
+
+Source: https://riddlergo.com/how-it-works
+
+1. **Build**: Add puzzles and hints.
+2. **Share**: Send the QR code.
+3. **Watch**: Follow the live leaderboard.
+
+## Pricing
+
+Source: https://riddlergo.com/pricing
+
+### Free: Free
+
+One event at a time.
+
+### Pro: $29/month
+
+Unlimited events.
+
+- Custom branding
+- CSV export
+
+### Event pass: $49.50 one-time
+
+Prices in US dollars.
+
+## Product
+
+### [Home](https://riddlergo.com/)
+
+Overview and feature summary.
+
+### [How it works](https://riddlergo.com/how-it-works)
+
+Build an event from puzzles. Share the code. Watch the leaderboard.
+
+### [Join an event](https://riddlergo.com/join)
+
+Enter a 6-character code.
+
+## Templates
+
+### [Bridal shower \\[hunt\\]](https://riddlergo.com/templates/bridal-shower)
+
+A long description of the bridal shower template. A long description of the bridal shower template. A long description of the bridal shower template. A long description of the bridal shower template. A long description of the bridal shower template. A long description of the bridal shower template. A long description of the bridal shower template. A long description of the bridal shower template. A long description of the bridal shower template. A long description of the bridal shower template. A long description of the bridal shower template. A long description of the bridal shower template. A long description of the bridal shower template. A long description of the bridal shower template. A long description of the bridal shower template. A long description of the bridal shower template. A long description of the bridal shower template. A long description of the bridal shower template. A long description of the bridal shower template. A long description of the bridal shower template.
+
+### [Team building](https://riddlergo.com/templates/team%20building)
+
+Remote and in-person challenges.
+
+## Updates
+
+### [Changelog](https://riddlergo.com/changelog)
+
+What shipped, by version.
+
+## FAQ
+
+Source: https://riddlergo.com/#faq
+
+### Do guests need an account?
+
+No. They join with a code.
+
+### Can I reuse an event?
+
+Yes, duplicate it from the dashboard.
+
+## Contact
+
+- [Email](mailto:hello@riddlergo.com)
+- [Contact](https://riddlergo.com/contact)
+"
+`;

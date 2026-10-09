@@ -1,0 +1,426 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`every builder: snapshot > article 1`] = `
+{
+  "@id": "https://riddlergo.com/blog/launch#article",
+  "@type": "Article",
+  "author": [
+    {
+      "@id": "https://riddlergo.com/#person-dallin",
+    },
+  ],
+  "datePublished": "2026-10-01",
+  "headline": "Riddler Go launches",
+  "image": [
+    "https://riddlergo.com/blog/launch.png",
+  ],
+  "inLanguage": "en-US",
+  "mainEntityOfPage": {
+    "@id": "https://riddlergo.com/blog/launch#webpage",
+  },
+  "publisher": {
+    "@id": "https://riddlergo.com/#organization",
+  },
+  "url": "https://riddlergo.com/blog/launch",
+}
+`;
+
+exports[`every builder: snapshot > blogPosting 1`] = `
+{
+  "@id": "https://riddlergo.com/blog/tips#article",
+  "@type": "BlogPosting",
+  "author": [
+    {
+      "@type": "Person",
+      "name": "Rachel",
+    },
+  ],
+  "datePublished": "2026-10-02",
+  "headline": "Five puzzle tips",
+  "inLanguage": "en-US",
+  "mainEntityOfPage": {
+    "@id": "https://riddlergo.com/blog/tips#webpage",
+  },
+  "publisher": {
+    "@id": "https://riddlergo.com/#organization",
+  },
+  "url": "https://riddlergo.com/blog/tips",
+}
+`;
+
+exports[`every builder: snapshot > breadcrumbList 1`] = `
+{
+  "@id": "https://riddlergo.com/how-it-works#breadcrumb",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "item": "https://riddlergo.com/",
+      "name": "Home",
+      "position": 1,
+    },
+    {
+      "@type": "ListItem",
+      "item": "https://riddlergo.com/how-it-works",
+      "name": "How it works",
+      "position": 2,
+    },
+  ],
+}
+`;
+
+exports[`every builder: snapshot > collectionPage 1`] = `
+{
+  "@id": "https://riddlergo.com/templates#webpage",
+  "@type": "CollectionPage",
+  "inLanguage": "en-US",
+  "isPartOf": {
+    "@id": "https://riddlergo.com/#website",
+  },
+  "name": "Templates",
+  "url": "https://riddlergo.com/templates",
+}
+`;
+
+exports[`every builder: snapshot > event 1`] = `
+{
+  "@id": "https://riddlergo.com/riddler/hunt#event",
+  "@type": "Event",
+  "endDate": "2026-08-08T17:00:00.000Z",
+  "eventAttendanceMode": "https://schema.org/OnlineEventAttendanceMode",
+  "eventStatus": "https://schema.org/EventScheduled",
+  "location": {
+    "@type": "VirtualLocation",
+    "url": "https://riddlergo.com/riddler/hunt",
+  },
+  "name": "Puzzle Hunt",
+  "organizer": {
+    "@type": "Organization",
+    "name": "Riddler",
+    "url": "https://riddlergo.com/riddler",
+  },
+  "startDate": "2026-08-08T15:00:00.000Z",
+  "url": "https://riddlergo.com/riddler/hunt",
+}
+`;
+
+exports[`every builder: snapshot > faqPage 1`] = `
+{
+  "@id": "https://riddlergo.com/#faq",
+  "@type": "FAQPage",
+  "isPartOf": {
+    "@id": "https://riddlergo.com/#website",
+  },
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. They join with a code.",
+      },
+      "name": "Do guests need an account?",
+    },
+  ],
+  "url": "https://riddlergo.com/",
+}
+`;
+
+exports[`every builder: snapshot > howTo 1`] = `
+{
+  "@id": "https://riddlergo.com/how-it-works#howto",
+  "@type": "HowTo",
+  "name": "How to host a puzzle event",
+  "step": [
+    {
+      "@type": "HowToStep",
+      "name": "Build",
+      "position": 1,
+      "text": "Add puzzles.",
+    },
+    {
+      "@type": "HowToStep",
+      "name": "Share",
+      "position": 2,
+      "text": "Send the code.",
+    },
+    {
+      "@type": "HowToStep",
+      "name": "Watch",
+      "position": 3,
+      "text": "Follow the leaderboard.",
+    },
+  ],
+  "totalTime": "PT15M",
+  "url": "https://riddlergo.com/how-it-works",
+}
+`;
+
+exports[`every builder: snapshot > itemList 1`] = `
+{
+  "@id": "https://riddlergo.com/templates#itemlist",
+  "@type": "ItemList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "name": "Bridal shower",
+      "position": 1,
+      "url": "https://riddlergo.com/templates/bridal-shower",
+    },
+    {
+      "@type": "ListItem",
+      "name": "Team building",
+      "position": 2,
+      "url": "https://riddlergo.com/templates/team-building",
+    },
+  ],
+  "name": "Event templates",
+  "numberOfItems": 2,
+}
+`;
+
+exports[`every builder: snapshot > localBusiness 1`] = `
+{
+  "@id": "https://riddlergo.com/#localbusiness",
+  "@type": "HomeAndConstructionBusiness",
+  "address": {
+    "@type": "PostalAddress",
+    "addressCountry": "US",
+    "addressLocality": "Provo",
+    "addressRegion": "UT",
+    "postalCode": "84601",
+    "streetAddress": "1 Main St",
+  },
+  "name": "GS Glass",
+  "openingHoursSpecification": [
+    {
+      "@type": "OpeningHoursSpecification",
+      "closes": "17:00",
+      "dayOfWeek": [
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+      ],
+      "opens": "08:00",
+    },
+  ],
+  "parentOrganization": {
+    "@id": "https://riddlergo.com/#organization",
+  },
+  "priceRange": "$$",
+  "telephone": "+1-801-555-0100",
+  "url": "https://riddlergo.com/",
+}
+`;
+
+exports[`every builder: snapshot > organization 1`] = `
+{
+  "@id": "https://riddlergo.com/#organization",
+  "@type": "Organization",
+  "contactPoint": [
+    {
+      "@type": "ContactPoint",
+      "contactType": "customer support",
+      "email": "hello@riddlergo.com",
+    },
+  ],
+  "description": "Interactive puzzle event platform.",
+  "logo": "https://riddlergo.com/marketing/logos/riddler-go-mark.png",
+  "name": "Riddler Go",
+  "sameAs": [
+    "https://www.instagram.com/riddlergo",
+  ],
+  "url": "https://riddlergo.com/",
+}
+`;
+
+exports[`every builder: snapshot > person 1`] = `
+{
+  "@id": "https://riddlergo.com/#person-dallin",
+  "@type": "Person",
+  "jobTitle": "Founder",
+  "name": "Dallin Humphrey",
+  "sameAs": [
+    "https://github.com/dallin-humphrey",
+  ],
+  "worksFor": {
+    "@id": "https://riddlergo.com/#organization",
+  },
+}
+`;
+
+exports[`every builder: snapshot > place 1`] = `
+{
+  "@id": "https://riddlergo.com/#place-delicate-arch",
+  "@type": "Landform",
+  "geo": {
+    "@type": "GeoCoordinates",
+    "latitude": 38.7436,
+    "longitude": -109.4993,
+  },
+  "name": "Delicate Arch",
+}
+`;
+
+exports[`every builder: snapshot > product 1`] = `
+{
+  "@id": "https://riddlergo.com/pricing#plan-pro",
+  "@type": "Product",
+  "aggregateRating": {
+    "@type": "AggregateRating",
+    "bestRating": 5,
+    "ratingCount": 37,
+    "ratingValue": 4.8,
+    "worstRating": 1,
+  },
+  "brand": {
+    "@id": "https://riddlergo.com/#organization",
+  },
+  "description": "Unlimited events.",
+  "image": [
+    "https://riddlergo.com/opengraph-image",
+  ],
+  "name": "Riddler Go Pro",
+  "offers": {
+    "@type": "Offer",
+    "availability": "https://schema.org/InStock",
+    "price": "29.00",
+    "priceCurrency": "USD",
+    "priceSpecification": {
+      "@type": "UnitPriceSpecification",
+      "billingIncrement": 1,
+      "price": "29.00",
+      "priceCurrency": "USD",
+      "unitCode": "MON",
+    },
+    "seller": {
+      "@id": "https://riddlergo.com/#organization",
+    },
+    "url": "https://riddlergo.com/pricing",
+  },
+  "review": [
+    {
+      "@type": "Review",
+      "author": {
+        "@type": "Person",
+        "name": "Rachel",
+      },
+      "datePublished": "2026-09-01",
+      "reviewBody": "Our guests loved it.",
+      "reviewRating": {
+        "@type": "Rating",
+        "bestRating": 5,
+        "ratingValue": 5,
+        "worstRating": 1,
+      },
+    },
+  ],
+  "url": "https://riddlergo.com/pricing",
+}
+`;
+
+exports[`every builder: snapshot > softwareApplication 1`] = `
+{
+  "@id": "https://riddlergo.com/#software",
+  "@type": "SoftwareApplication",
+  "aggregateRating": {
+    "@type": "AggregateRating",
+    "bestRating": 5,
+    "ratingCount": 21,
+    "ratingValue": 4.6,
+    "worstRating": 1,
+  },
+  "applicationCategory": "GameApplication",
+  "name": "Riddler Go",
+  "offers": {
+    "@type": "Offer",
+    "price": "0.00",
+    "priceCurrency": "USD",
+    "seller": {
+      "@id": "https://riddlergo.com/#organization",
+    },
+    "url": "https://riddlergo.com/",
+  },
+  "operatingSystem": "Web",
+  "publisher": {
+    "@id": "https://riddlergo.com/#organization",
+  },
+  "url": "https://riddlergo.com/",
+}
+`;
+
+exports[`every builder: snapshot > touristAttraction 1`] = `
+{
+  "@id": "https://riddlergo.com/trails/delicate-arch#attraction",
+  "@type": "TouristAttraction",
+  "additionalType": "https://schema.org/Landform",
+  "address": {
+    "@type": "PostalAddress",
+    "addressCountry": "US",
+    "addressRegion": "UT",
+  },
+  "aggregateRating": {
+    "@type": "AggregateRating",
+    "bestRating": 5,
+    "ratingCount": 12,
+    "ratingValue": 4.7,
+    "worstRating": 1,
+  },
+  "geo": {
+    "@type": "GeoCoordinates",
+    "elevation": "4829 ft",
+    "latitude": 38.7436,
+    "longitude": -109.4993,
+  },
+  "name": "Delicate Arch Trail",
+  "tourBookingPage": "https://riddlergo.com/decks/utah",
+  "url": "https://riddlergo.com/trails/delicate-arch",
+}
+`;
+
+exports[`every builder: snapshot > webPage 1`] = `
+{
+  "@id": "https://riddlergo.com/how-it-works#webpage",
+  "@type": "WebPage",
+  "breadcrumb": {
+    "@id": "https://riddlergo.com/how-it-works#breadcrumb",
+  },
+  "dateModified": "2026-09-30",
+  "inLanguage": "en-US",
+  "isPartOf": {
+    "@id": "https://riddlergo.com/#website",
+  },
+  "name": "How it works",
+  "speakable": {
+    "@type": "SpeakableSpecification",
+    "cssSelector": [
+      "h1",
+      "[data-speakable]",
+    ],
+  },
+  "url": "https://riddlergo.com/how-it-works",
+}
+`;
+
+exports[`every builder: snapshot > webSite 1`] = `
+{
+  "@id": "https://riddlergo.com/#website",
+  "@type": "WebSite",
+  "description": "Host puzzle events for any occasion. Guests join with a QR code and race the leaderboard on their phones.",
+  "inLanguage": "en-US",
+  "name": "Riddler Go",
+  "potentialAction": {
+    "@type": "SearchAction",
+    "query-input": "required name=search_term_string",
+    "target": {
+      "@type": "EntryPoint",
+      "urlTemplate": "https://riddlergo.com/templates?q={search_term_string}",
+    },
+  },
+  "publisher": {
+    "@id": "https://riddlergo.com/#organization",
+  },
+  "url": "https://riddlergo.com/",
+}
+`;

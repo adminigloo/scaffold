@@ -126,5 +126,18 @@ host; and forced colours.
 Set `AIU_UI_SRC=<path>` to run it against another `ui.tsx` (copy
 `core/labels.ts`, `core/words.ts`, `ui-tokens.ts` and `views.ts` beside it).
 
+## What `seo-jsonld.spec.ts` proves
+
+@adminigloo/seo's JSON-LD escaping holds in a real HTML parser. The page HTML
+is rendered in Node the way a Server Component renders it (`renderToStaticMarkup`
+of `<JsonLd/>` from the package source), served to Chromium and parsed there.
+For a `</script>` breakout, a `<!--<script>` that pulls the parser into its
+double-escaped state, an upper-case `</SCRIPT >`, an image handler and
+U+2028/U+2029, the page keeps exactly one ld+json block, no injected script
+runs, the content after it survives, and `JSON.parse` of the block equals the
+graph that was built. Its negative control writes the same payload with plain
+`JSON.stringify` (how trailcards, Riddler Go and the AdminIgloo site wrote it)
+and watches it break out.
+
 To add a browser test for another package, add a target to `bundle.mjs` and a
 spec under `tests/`.

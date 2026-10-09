@@ -15,7 +15,7 @@ It ships five entry points:
 | --- | --- | --- |
 | `@adminigloo/analytics` | `createAnalytics` (the beacon endpoint, conversions, the crawler log, maintenance and every report), the source and AI-engine classifiers, `reclassifySources`, and the 0.1 free functions (deprecated) | Server |
 | `@adminigloo/analytics/schema` | `defineAnalyticsTables({ prefix })` and the default tables (`analyticsSessions`, …) to add to your Drizzle schema | Server |
-| `@adminigloo/analytics/crawlers` | `classifyCrawler(userAgent)`, dependency-free, so a request proxy can test a user agent without loading the database layer | Server or edge |
+| `@adminigloo/analytics/crawlers` | `classifyCrawler(userAgent)`, dependency-free, so a request proxy can test a user agent without loading the database layer; `KNOWN_CRAWLERS` and `ROBOTS_CONTROL_TOKENS`, the same list with each bot's robots.txt tokens (what @adminigloo/seo builds robots.txt from) | Server or edge |
 | `@adminigloo/analytics/client` | `<AnalyticsBeacon>`, the opt-out switch, `useAnalyticsVisit`, `describeThisVisit` | Browser (`"use client"`) |
 | `@adminigloo/analytics/dashboard` | Display-only report components (KPI cards, trend chart, tables with CSV export, crawler panel, vitals, heatmap, health strip) | Browser (`"use client"`) |
 
