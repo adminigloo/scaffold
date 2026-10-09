@@ -105,3 +105,28 @@ export function classifyCrawler(userAgent: string | null | undefined): CrawlerMa
 export function isAiCrawlerKind(kind: CrawlerKind): boolean {
   return kind === "ai-assistant" || kind === "ai-search" || kind === "ai-training";
 }
+
+/**
+ * The name `classifyCrawler` gives @adminigloo/seo-reports' own fetcher
+ * (`adminigloo-seo-reports/0.1`): the site auditing itself. It is a bot, so it
+ * never becomes a visit; its crawler rows are still recorded, and the crawler
+ * reports leave them out unless a call asks for `includeInternal`.
+ */
+export const SEO_AUDIT_BOT_NAME = "AdminIgloo audit";
+
+/** Bot names the crawler reports leave out by default (`createAnalytics({ excludeBots })` replaces the list). */
+export const DEFAULT_EXCLUDED_BOTS: readonly string[] = [SEO_AUDIT_BOT_NAME];
+
+/**
+ * The live-fetch bot behind each AI engine — the request an assistant makes
+ * because a person asked it about you. Pairs "ChatGPT-User fetched /pricing
+ * 14 times" with "6 visits came from ChatGPT" in `getAiAssistantTraffic`.
+ */
+export const ASSISTANT_BOT_ENGINES: Readonly<Record<string, string>> = {
+  "ChatGPT-User": "chatgpt",
+  "Claude-User": "claude",
+  "Perplexity-User": "perplexity",
+  "MistralAI-User": "mistral",
+  DuckAssistBot: "duckai",
+  "Meta-ExternalFetcher": "meta",
+};

@@ -91,10 +91,19 @@ importers:
       '@adminigloo/db':
         specifier: workspace:^
         version: link:../db
+      '@adminigloo/license':
+        specifier: workspace:^
+        version: link:../license
       web-vitals:
         specifier: ^6.2.2
         version: 6.2.2
     devDependencies:
+      '@adminigloo/audience':
+        specifier: workspace:^
+        version: link:../audience
+      '@electric-sql/pglite':
+        specifier: ^0.5.8
+        version: 0.5.8
       '@types/react':
         specifier: ^19.2.7
         version: 19.2.18

@@ -483,3 +483,15 @@ describe("store errors", () => {
     expect(isUniqueViolation(new Error("connection reset"))).toBe(false);
   });
 });
+
+describe("excludedSentence wording", () => {
+  it("says 1 session, not 1 sessions, both ways", async () => {
+    const { excludedSentence } = await import("../core/words.js");
+    expect(excludedSentence({ total: 1, byReason: { role: 1 } })).toBe("Excluded: 1 session (staff 1)");
+    expect(excludedSentence({ total: 2, byReason: { role: 2 } })).toBe("Excluded: 2 sessions (staff 2)");
+    expect(excludedSentence({ total: 1, byReason: { role: 1 } }, { includeInternal: true })).toBe(
+      "Including 1 internal session (staff 1)",
+    );
+    expect(excludedSentence({ total: 1, byReason: { role: 1 }, unit: "visitors" })).toBe("Excluded: 1 visitor (staff 1)");
+  });
+});

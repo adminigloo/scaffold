@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactElement, type ReactNode } from "react";
-import type { ActivityReport, CrawlerReport, Metric, PipelineHealth } from "./reports.js";
+import type { ActivityReport, CrawlerReport, Metric } from "./reports.js";
+import type { PipelineHealth } from "./health.js";
 import { SOURCE_LABELS, type SourceBucket } from "./sources.js";
 import { CRAWLER_KIND_LABELS, type CrawlerKind } from "./crawlers.js";
 import { formatWebVital, WEB_VITAL_LABELS, WEB_VITAL_THRESHOLDS, type WebVitalSummary } from "./vitals.js";

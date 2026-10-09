@@ -1,7 +1,7 @@
 {
   "name": "@adminigloo/analytics",
-  "version": "0.1.0",
-  "description": "First-party, cookieless traffic analytics for an app's own site: where visitors come from (search, AI assistants, social, campaigns), what they read and click, how fast it loads, and which AI crawlers are reading it — kept in the app's own database, with the reports to show for it.",
+  "version": "0.2.0",
+  "description": "First-party, cookieless traffic analytics for an app's own site: where visitors come from (search, AI assistants by engine, social, campaigns), what they read and click, how fast it loads, and which AI crawlers are reading it — kept in the app's own database under a table prefix you choose, with staff, testers and automation left out of every report through @adminigloo/audience.",
   "license": "UNLICENSED",
   "type": "module",
   "repository": {
@@ -14,33 +14,60 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
     },
     "./schema": {
-      "types": "./dist/schema.d.ts",
-      "import": "./dist/schema.js",
-      "require": "./dist/schema.cjs"
+      "import": {
+        "types": "./dist/schema.d.ts",
+        "default": "./dist/schema.js"
+      },
+      "require": {
+        "types": "./dist/schema.d.cts",
+        "default": "./dist/schema.cjs"
+      }
     },
     "./crawlers": {
-      "types": "./dist/crawlers.d.ts",
-      "import": "./dist/crawlers.js",
-      "require": "./dist/crawlers.cjs"
+      "import": {
+        "types": "./dist/crawlers.d.ts",
+        "default": "./dist/crawlers.js"
+      },
+      "require": {
+        "types": "./dist/crawlers.d.cts",
+        "default": "./dist/crawlers.cjs"
+      }
     },
     "./client": {
-      "types": "./dist/client.d.ts",
-      "import": "./dist/client.js",
-      "require": "./dist/client.cjs"
+      "import": {
+        "types": "./dist/client.d.ts",
+        "default": "./dist/client.js"
+      },
+      "require": {
+        "types": "./dist/client.d.cts",
+        "default": "./dist/client.cjs"
+      }
     },
     "./dashboard": {
-      "types": "./dist/dashboard.d.ts",
-      "import": "./dist/dashboard.js",
-      "require": "./dist/dashboard.cjs"
+      "import": {
+        "types": "./dist/dashboard.d.ts",
+        "default": "./dist/dashboard.js"
+      },
+      "require": {
+        "types": "./dist/dashboard.d.cts",
+        "default": "./dist/dashboard.cjs"
+      }
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "CHANGELOG.md"
   ],
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
@@ -48,19 +75,26 @@
   },
   "dependencies": {
     "@adminigloo/db": "workspace:^",
+    "@adminigloo/license": "workspace:^",
     "web-vitals": "^6.2.2"
   },
   "peerDependencies": {
     "drizzle-orm": "catalog:peers",
     "zod": "catalog:peers",
-    "react": "^18.0.0 || ^19.0.0"
+    "react": "^18.0.0 || ^19.0.0",
+    "@adminigloo/audience": "^0.1.0"
   },
   "peerDependenciesMeta": {
     "react": {
       "optional": true
+    },
+    "@adminigloo/audience": {
+      "optional": true
     }
   },
   "devDependencies": {
+    "@adminigloo/audience": "workspace:^",
+    "@electric-sql/pglite": "^0.5.8",
     "drizzle-orm": "catalog:",
     "zod": "catalog:",
     "react": "^19.2.4",

@@ -665,7 +665,7 @@ test("Mark this browser: busy, then done — announced; a failure is shown and t
   await expect(page.locator(".aiu-mark").getByRole("button")).toHaveText("Marking…");
   await page.evaluate(() => window.__srv.release(true));
   await expect(page.locator(".aiu-mark")).toContainText("This browser is excluded from analytics.");
-  await expect(page.locator(".aiu-mark").getByRole("status")).toHaveText("This browser is now excluded from analytics, including its past visits.");
+  await expect(page.locator(".aiu-mark").getByRole("status")).toHaveText("This browser is now excluded from analytics.");
   await expect(page.locator(".aiu-mark").getByRole("button")).toHaveCount(0);
 });
 

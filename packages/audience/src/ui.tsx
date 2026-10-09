@@ -1002,11 +1002,13 @@ export interface MarkThisBrowserButtonProps {
   marked?: boolean;
   label?: string;
   theme?: AudienceTheme;
+  /** Shown after a successful mark. Default: "This browser is now excluded from analytics." Say how far back it reaches only if your visitor ids are stable. */
+  doneMessage?: string;
 }
 
 /** "Exclude this browser from analytics" — for the client team's phones and signed-out laptops. */
 export function MarkThisBrowserButton(props: MarkThisBrowserButtonProps): ReactElement {
-  const { onMark, marked = false, label = "Exclude this browser from analytics", theme } = props;
+  const { onMark, marked = false, label = "Exclude this browser from analytics", theme, doneMessage } = props;
   const [state, setState] = useState<"idle" | "busy" | "done" | "error">(marked ? "done" : "idle");
   const [message, setMessage] = useState("");
   const mounted = useRef(true);
@@ -1034,7 +1036,10 @@ export function MarkThisBrowserButton(props: MarkThisBrowserButtonProps): ReactE
         return;
       }
       setState("done");
-      setMessage("This browser is now excluded from analytics, including its past visits.");
+      // How far back this reaches depends on the app's visitor ids (a
+      // rotating cookieless key reaches only today and yesterday), so the
+      // default text promises nothing about the past.
+      setMessage(doneMessage ?? "This browser is now excluded from analytics.");
     } catch (error) {
       if (!mounted.current) return;
       setState("error");
@@ -1109,3 +1114,8 @@ export function UnfilteredSourcesNote(props: UnfilteredSourcesNoteProps): ReactE
     </aside>
   );
 }
+
+// Pure URL helpers for the "Include internal traffic" toggle, re-exported here
+// so a client component can use them without importing the root or core
+// entries (which load Node's crypto).
+export { INCLUDE_INTERNAL_PARAM, includeInternalHref, readIncludeInternal } from "./core/defaults.js";

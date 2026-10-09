@@ -30,14 +30,21 @@ export function excludedParts(excluded: ExcludedCounts, labels: Partial<Record<s
   return parts;
 }
 
+/** "1 session", "2 sessions" — the unit is given in the plural. */
+function unitFor(total: number, unit: string): string {
+  return total === 1 && unit.endsWith("s") ? unit.slice(0, -1) : unit;
+}
+
 /** "Excluded: 312 sessions (staff 200, named person 100, automation 12)" — every card, the digest, the AI report. */
 export function excludedSentence(excluded: ExcludedCounts, options: { unit?: string; labels?: Partial<Record<string, string>>; includeInternal?: boolean } = {}): string {
   const unit = options.unit ?? excluded.unit ?? "sessions";
   const parts = excludedParts(excluded, options.labels);
   const detail = parts.length ? ` (${parts.map((part) => `${part.label} ${number(part.count)}`).join(", ")})` : "";
   if (options.includeInternal) {
-    return excluded.total > 0 ? `Including ${number(excluded.total)} internal ${unit}${detail}` : `Including internal ${unit}: none`;
+    return excluded.total > 0
+      ? `Including ${number(excluded.total)} internal ${unitFor(excluded.total, unit)}${detail}`
+      : `Including internal ${unit}: none`;
   }
-  return excluded.total > 0 ? `Excluded: ${number(excluded.total)} ${unit}${detail}` : "Excluded: none";
+  return excluded.total > 0 ? `Excluded: ${number(excluded.total)} ${unitFor(excluded.total, unit)}${detail}` : "Excluded: none";
 }
 
