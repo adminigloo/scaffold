@@ -140,11 +140,12 @@ export interface Answers {
    * the same way the other suite features are: a server half (router + any
    * app-owned glue) on the answer alone, an admin page half gated on the shell.
    *
-   * Each stands alone. Where the testbed cross-wires them (a booking queuing a
-   * confirmation through comms; a citation check asking the app's model), the
-   * overlay ships that glue as a degrading stub the project wires — a static
-   * overlay cannot conditionally depend on a sibling overlay, and "the producer
-   * is yours to wire" is the same rule notifications already follows.
+   * Each stands alone. Where the testbed cross-wires them (a booking request
+   * acknowledged through comms, and confirmed through it when staff accept; a
+   * citation check asking the app's model), the overlay ships that glue as a
+   * degrading stub the project wires — a static overlay cannot conditionally
+   * depend on a sibling overlay, and "the producer is yours to wire" is the
+   * same rule notifications already follows.
    */
   readonly includeEstimator: boolean;
   readonly includeScheduling: boolean;
@@ -263,8 +264,9 @@ export function packagesFor(answers: Answers): readonly string[] {
   if (answers.includeAssistant) optional.push("assistant");
 
   // Field service. Each installs only its own package; the cross-feature glue
-  // (a booking confirmation through comms, a citation check through a model) is
-  // shipped as a wired-yourself stub, so none of these pulls in another.
+  // (booking acknowledgements and confirmations through comms, a citation
+  // check through a model) is shipped as a wired-yourself stub, so none of
+  // these pulls in another.
   // The estimator server package only. The embed API it serves is what a quote
   // widget on the customer's OWN site calls — the widget SDK is installed there,
   // not here — so this project depends on the engine, not the widget.

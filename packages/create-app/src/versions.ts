@@ -148,11 +148,19 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // price), and the routers pass tenantId to getEstimate/getProductDetail/
   // updateProduct/deactivateProduct/setEstimateStatus — none exist in 0.1.x.
   estimator: "0.2.0",
-  // 0.2.0: createBooking now validates the slot (availability window + overlap +
-  // drive buffer) before writing, and exports BookingNotBookableError — the
-  // emitted scheduling router's requestBooking relies on that guard, so a caret
-  // over 0.1.x would resolve a build that writes out-of-hours bookings.
-  scheduling: "0.2.0",
+  // 0.3.0: the emitted public procedures call findPublicSlots (PublicSlots only —
+  // 0.2's slots route returned the previous customer's street address) and
+  // requestPublicBooking with a requesterKey (server-derived times and crew,
+  // pending, a cap on one caller's waiting requests, one transaction under a
+  // per-crew lock); the policy module extends requestPublicBookingSchema; every
+  // staff call passes the tenant to the by-id functions (updateResource/
+  // deactivateResource/listAvailability/setBookingStatus), `validate` uses
+  // timeOfDaySchema/endTimeSchema, the bookings list sends
+  // nextBookingStatuses, the seed asks listResources({ includeInactive }), and
+  // the admin reads hoursConfigured/acceptsPublicBookings. None of that exists
+  // in 0.2.x, so a caret over it would resolve a build the emitted code cannot
+  // compile against.
+  scheduling: "0.3.0",
   // 0.2.0 (sweep): line items after creation, atomic idempotent payments,
   // reversals, a status transition table and tenant-scoped reads — the emitted
   // admin page and router call addInvoiceItem/reversePayment/markInvoiceViewed

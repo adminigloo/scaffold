@@ -35,6 +35,21 @@ export const schedulingResources = pgTable(
     workStartTime: text("work_start_time").notNull().default("08:00"),
     workEndTime: text("work_end_time").notNull().default("17:00"),
     maxJobsPerDay: integer("max_jobs_per_day").notNull().default(6),
+    /**
+     * Whether this resource's hours have ever been saved (`setAvailability`).
+     * Until they have, it works Mon–Fri during `workStartTime`–`workEndTime`, so
+     * a new crew is bookable at once; from then on its saved weekly rows are the
+     * whole week, and a weekday with no row is a day off. 0.2 inferred "never
+     * set" from "has no rows", so unticking every day and saving — the obvious
+     * way to stop a crew — deleted every row and switched it back on Mon–Fri.
+     */
+    hoursConfigured: boolean("hours_configured").notNull().default(false),
+    /**
+     * Pause online booking for this resource without touching its hours: staff
+     * can still book it, the public finder and request skip it. Separate from
+     * `isActive`, which takes the crew off the schedule altogether.
+     */
+    acceptsPublicBookings: boolean("accepts_public_bookings").notNull().default(true),
     isActive: boolean("is_active").notNull().default(true),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -46,7 +61,8 @@ export const schedulingResources = pgTable(
  * Availability, recurring or as a dated exception. The discriminator is
  * `specificDate IS NULL`: a null date with a `dayOfWeek` is the weekly pattern;
  * a set date is a one-off (time off, or special hours). `isAvailable=false`
- * blocks the day/window.
+ * blocks the day/window. Whether an EMPTY week means "never set" or "off every
+ * day" is the resource's `hoursConfigured`, never the row count.
  */
 export const schedulingAvailability = pgTable(
   "scheduling_availability",
@@ -87,11 +103,22 @@ export const schedulingBookings = pgTable(
     startTime: text("start_time").notNull(),
     endTime: text("end_time").notNull(),
     durationMinutes: integer("duration_minutes").notNull().default(120),
-    /** pending | confirmed | in_progress | completed | cancelled | no_show */
+    /**
+     * pending | confirmed | in_progress | completed | cancelled | no_show. Moves
+     * follow BOOKING_STATUS_TRANSITIONS (`setBookingStatus`); a public request
+     * lands `pending` unless the host's policy says otherwise.
+     */
     status: text("status").notNull().default("pending"),
     /** Optional link to the estimate that produced this visit (plain text, no FK). */
     estimateId: text("estimate_id"),
     notes: text("notes"),
+    /**
+     * Who made a public request, as the host told `requestPublicBooking` (the
+     * caller's IP, say). Null for staff bookings and when the host passed
+     * none. It is what `maxOpenRequestsPerRequester` counts: an email is
+     * whatever the visitor typed, so it can't be the thing that is limited.
+     */
+    requesterKey: text("requester_key"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

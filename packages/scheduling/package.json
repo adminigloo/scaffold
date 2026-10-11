@@ -25,7 +25,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
@@ -39,6 +40,7 @@
     "zod": "catalog:peers"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "drizzle-orm": "catalog:",
     "zod": "catalog:"
   },

@@ -153,6 +153,45 @@ export default defineConfig({
           exclude: ["**/node_modules/**", "**/dist/**"],
         },
       },
+      {
+        /**
+         * The scheduling overlays' decisions that need no database, run against
+         * workspace source: the public inputs derived from PUBLIC_POLICY (so a
+         * picker can't offer a visit length the package refuses) and the
+         * schedule board's range, labels and crew-hours wording (so today's
+         * visits stay on the board, and a crew that is off every day says so).
+         *
+         * The router and the page are not here, for the stripe overlay's
+         * reason: they reach `@/db`, `../trpc` and the rendered app router.
+         * Their contract with the package is checked from their text in
+         * src/__tests__/scheduling-overlay.test.ts.
+         *
+         * `zod` is aliased to the scheduling package's own copy. create-app has
+         * none, and the policy module extends the package's request schema with
+         * a schema of its own — two zod instances in one `.extend` is a test of
+         * something no generated project does.
+         */
+        resolve: {
+          alias: [
+            { find: /^__SCOPE__\/scheduling$/, replacement: here("../scheduling/src/index.ts") },
+            { find: /^zod$/, replacement: here("../scheduling/node_modules/zod/index.js") },
+            {
+              find: /^@\/server\/scheduling-policy$/,
+              replacement: here("./overlays/scheduling/src/server/scheduling-policy.ts"),
+            },
+            {
+              find: /^@\/components\/schedule\//,
+              replacement: here("./overlays/scheduling-admin/src/components/schedule/"),
+            },
+          ],
+        },
+        test: {
+          name: "scheduling",
+          testTimeout,
+          include: ["overlays/scheduling/**/*.test.ts", "overlays/scheduling-admin/**/*.test.ts"],
+          exclude: ["**/node_modules/**", "**/dist/**"],
+        },
+      },
     ],
   },
 });

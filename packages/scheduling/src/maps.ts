@@ -16,7 +16,15 @@ export interface DriveTime {
  * gracefully instead of switching off.
  */
 export interface MapsProvider {
-  /** Address → coordinates, or null if this provider can't geocode (Haversine can't). */
+  /**
+   * False for a provider that can't geocode at all, like the keyless Haversine
+   * default. Omitted means it can, and then a null from `geocode` is taken at
+   * its word: `requestPublicBooking` refuses an address the provider can't
+   * place (`address_unresolved`) rather than booking a visit with no
+   * coordinates, which every later drive check would skip.
+   */
+  readonly geocodes?: boolean;
+  /** Address → coordinates, or null if it can't place the address (Haversine never can). */
   geocode(address: string): Promise<LatLng | null>;
   /** Travel time/distance between two points, or null on failure. */
   driveTime(origin: LatLng, dest: LatLng): Promise<DriveTime | null>;
@@ -36,6 +44,7 @@ export interface HaversineOptions {
 export function createHaversineMapsProvider(options: HaversineOptions = {}): MapsProvider {
   const mph = options.assumedMph ?? 30;
   return {
+    geocodes: false,
     async geocode(): Promise<LatLng | null> {
       return null;
     },

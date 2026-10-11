@@ -174,7 +174,8 @@ Vercel's Hobby plan accepts. On Pro, tighten it (every 15 minutes, `*/15 * * * *
 is a good resolution for appointment reminders), or point any external
 scheduler at the URL with the secret. Either way set `CRON_SECRET` in the
 Vercel project: the route refuses every call without it. Immediate messages
-(a booking confirmation) are sent in the request and never wait for this.
+(the acknowledgement of a booking request, the confirmation when staff accept
+it) are sent in the request that causes them and never wait for this.
 
 ## 3. Day to day
 

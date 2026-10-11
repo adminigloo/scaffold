@@ -57,50 +57,115 @@ export interface FreeSlot {
   startTime: string;
   /** "HH:MM" */
   endTime: string;
-  /** The job immediately before this slot, if any — the drive-time anchor. */
-  previousJob: { lat: number | null; lng: number | null; address: string } | null;
+  /**
+   * The job immediately before this slot, if any — the drive-time anchor.
+   * `endTime` is when it finishes, so a caller can check there is time to drive
+   * from it before `startTime`.
+   */
+  previousJob: { lat: number | null; lng: number | null; address: string; endTime: string } | null;
+  /**
+   * The job that closes the gap this slot sits in, if any — the other end of
+   * the drive buffer (there must be time to get there after `endTime`).
+   */
+  nextJob: { lat: number | null; lng: number | null; address: string; startTime: string } | null;
+  /** True for the first start in its gap: right after the previous job, or the day's first. */
+  isGapStart: boolean;
+}
+
+/** The default grid between offered start times, in minutes. */
+export const DEFAULT_SLOT_STEP_MINUTES = 30;
+
+/**
+ * Every start inside one gap. The gap's own start always comes first (it packs
+ * the day — right after the previous job, or first thing in the morning); after
+ * it, starts fall on the WINDOW's grid (`windowStart + k × step`), so a gap
+ * opening at 10:45 offers 10:45, 11:00, 11:30… rather than 10:45, 11:15,
+ * 11:45 — times a customer reads as a schedule rather than as noise.
+ */
+function startsInGap(
+  windowStartMin: number,
+  gapStartMin: number,
+  gapEndMin: number,
+  requiredMinutes: number,
+  stepMinutes: number,
+): number[] {
+  if (gapEndMin - gapStartMin < requiredMinutes) return [];
+  const starts = [gapStartMin];
+  // A step that is not a positive finite number means one start per gap —
+  // `Infinity` gets 0.2's behaviour back for a caller that wants it.
+  if (!Number.isFinite(stepMinutes) || stepMinutes <= 0) return starts;
+  const stepsIn = Math.floor((gapStartMin - windowStartMin) / stepMinutes) + 1;
+  for (let t = windowStartMin + stepsIn * stepMinutes; t + requiredMinutes <= gapEndMin; t += stepMinutes) {
+    starts.push(t);
+  }
+  return starts;
 }
 
 /**
- * The open gaps in a day large enough to fit `requiredMinutes`, each aligned to
- * the start of its gap and carrying the immediately-preceding booking as
- * `previousJob` (null for the first slot of the day). One slot per gap — the
- * scorer, not a rolling grid, is what ranks them.
+ * Every start in a day that fits `requiredMinutes` between the existing
+ * bookings, on a `stepMinutes` grid (default 30).
+ *
+ * A GRID, NOT ONE START PER GAP. 0.2 offered only the first minute of each gap,
+ * so an empty day offered 08:00 and nothing else, and a customer who could only
+ * do afternoons could never book online. The gap start is still offered first
+ * and flagged `isGapStart`, which the scorer rewards — packing a day tightly is
+ * still the preference, it's just no longer the only offer.
+ *
+ * Each start carries the booking before its gap (`previousJob`, null for the
+ * day's first gap) and the booking that closes it (`nextJob`, null for the
+ * last), which is what a drive-time score and a drive-buffer check need. A gap
+ * never runs past `windowEnd`, even when the next booking starts later (a staff
+ * booking outside the hours): the window is the crew's working day, whatever
+ * else is on the calendar. 0.2 offered only the gap's first minute, so it never
+ * mattered there; with a grid it would have offered times after closing.
  */
 export function findFreeSlots(
   windowStart: string,
   windowEnd: string,
   existingBookings: BookingWindow[],
   requiredMinutes: number,
+  stepMinutes: number = DEFAULT_SLOT_STEP_MINUTES,
 ): FreeSlot[] {
   const sorted = [...existingBookings].sort((a, b) => a.start.localeCompare(b.start));
   const slots: FreeSlot[] = [];
+  const windowStartMin = timeToMinutes(windowStart);
+  const windowEndMin = timeToMinutes(windowEnd);
   let currentTime = windowStart;
   let previousJob: FreeSlot["previousJob"] = null;
 
-  for (const booking of sorted) {
-    const gap = timeToMinutes(booking.start) - timeToMinutes(currentTime);
-    if (gap >= requiredMinutes) {
+  const offerGap = (gapEndMin: number, nextJob: FreeSlot["nextJob"]): void => {
+    const starts = startsInGap(
+      windowStartMin,
+      timeToMinutes(currentTime),
+      Math.min(gapEndMin, windowEndMin),
+      requiredMinutes,
+      stepMinutes,
+    );
+    starts.forEach((start, i) => {
       slots.push({
-        startTime: currentTime,
-        endTime: minutesToTime(timeToMinutes(currentTime) + requiredMinutes),
+        startTime: minutesToTime(start),
+        endTime: minutesToTime(start + requiredMinutes),
         previousJob,
+        nextJob,
+        isGapStart: i === 0,
       });
-    }
+    });
+  };
+
+  for (const booking of sorted) {
+    offerGap(timeToMinutes(booking.start), {
+      lat: booking.lat,
+      lng: booking.lng,
+      address: booking.address,
+      startTime: booking.start,
+    });
     if (timeToMinutes(booking.end) > timeToMinutes(currentTime)) {
       currentTime = booking.end;
-      previousJob = { lat: booking.lat, lng: booking.lng, address: booking.address };
+      previousJob = { lat: booking.lat, lng: booking.lng, address: booking.address, endTime: booking.end };
     }
   }
 
-  const finalGap = timeToMinutes(windowEnd) - timeToMinutes(currentTime);
-  if (finalGap >= requiredMinutes) {
-    slots.push({
-      startTime: currentTime,
-      endTime: minutesToTime(timeToMinutes(currentTime) + requiredMinutes),
-      previousJob,
-    });
-  }
+  offerGap(windowEndMin, null);
 
   return slots;
 }
@@ -114,13 +179,17 @@ export interface ScoreSlotInput {
   startTime: string;
   /** Whether this resource was the customer's preferred one. */
   isPreferredResource: boolean;
+  /** The first start in its gap — right after the previous job, or the day's first. */
+  isGapStart?: boolean;
 }
 
 /**
  * Rank an open slot. Base 100, then: a long drive from the previous job costs
  * (>45 min −40, >30 min −20), a short one earns (<15 min +10); a morning start
- * (+5), the preferred resource (+20), and a first job close to home base
- * (<20 min +15). Higher is better; the orchestrator sorts by this.
+ * (+5), the preferred resource (+20), a first job close to home base
+ * (<20 min +15), and a start at the very beginning of its gap (+5) — the bias
+ * that used to be the ONLY offer, kept as a preference now that the rest of the
+ * gap is offered too. Higher is better; the orchestrator sorts by this.
  */
 export function scoreSlot(input: ScoreSlotInput): number {
   let score = 100;
@@ -138,10 +207,17 @@ export function scoreSlot(input: ScoreSlotInput): number {
 
   if (input.homeBaseDriveMinutes !== null && input.homeBaseDriveMinutes < 20) score += 15;
 
+  if (input.isGapStart) score += 5;
+
   return score;
 }
 
-/** A candidate slot after scoring, ready to sort. */
+/**
+ * A candidate slot after scoring, ready to sort. STAFF-ONLY: it names the crew
+ * and carries the previous job's street address (the drive-time anchor), which
+ * is another customer's home. A public route returns `PublicSlot`s from
+ * `findPublicSlots` instead — never one of these.
+ */
 export interface ScoredSlot {
   date: string;
   startTime: string;

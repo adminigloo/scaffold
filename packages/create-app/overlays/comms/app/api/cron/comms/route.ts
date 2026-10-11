@@ -28,10 +28,12 @@ const TIME_BUDGET_MS = 45_000;
  * than going out days late (pass `maxLatenessMs` below to change the bound; a
  * row's own `expiresAt` overrides it).
  *
- * NOT FOR IMMEDIATE MESSAGES. A booking confirmation must go out in the
- * request that made the booking — call `sendNow(db, {...}, commsSenders)`
- * there. Enqueueing it with sendAt = now makes it wait for the next tick
- * (minutes, or a day on Hobby), which a customer reads as "didn't work".
+ * NOT FOR IMMEDIATE MESSAGES. A message the customer is waiting for goes out
+ * in the request that causes it — the acknowledgement in the request that
+ * asked for a visit, the confirmation in the one where staff accept it: call
+ * `sendNow(db, {...}, commsSenders)` there. Enqueueing it with sendAt = now
+ * makes it wait for the next tick (minutes, or a day on Hobby), which a
+ * customer reads as "didn't work".
  *
  * Re-checking at send time: pass `beforeSend` to skip a row whose subject has
  * moved on since it was queued — `(row) => bookingStillOn(row.refId) ? "send"

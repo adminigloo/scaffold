@@ -29,16 +29,23 @@ const RESOURCE = {
   workStartTime: "08:00",
   workEndTime: "17:00",
   maxJobsPerDay: 5,
+  hoursConfigured: false,
+  isActive: true,
 };
 
 /** A drizzle-shaped fake routed by table reference. `.where()` is both awaitable
- * (availability/bookings read it directly) and has `.limit()` (the resource read). */
+ * (availability/bookings read it directly) and has `.limit()` (the resource read).
+ * It ignores every WHERE, so it can prove the ORDER of validate-then-write and
+ * nothing about tenant scoping — the PGlite suite (services.test.ts) does that.
+ * `transaction` runs the callback on the same fake and `execute` (the advisory
+ * lock) is recorded, so the 0.3 lock-then-validate path runs here unchanged. */
 function fakeDb(state: {
   resource?: typeof RESOURCE | null;
   availability?: unknown[];
   bookings?: unknown[];
 }) {
   const inserted: unknown[] = [];
+  const locks: unknown[] = [];
   const rowsFor = (table: unknown): unknown[] => {
     if (table === schedulingResources) return state.resource ? [state.resource] : [];
     if (table === schedulingAvailability) return state.availability ?? [];
@@ -60,8 +67,13 @@ function fakeDb(state: {
         return { returning: async () => [{ ...v, id: "bk-1", createdAt: new Date() }] };
       },
     }),
+    execute: async (query: unknown) => {
+      locks.push(query);
+      return [];
+    },
+    transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => fn(db),
   };
-  return { db: db as never, inserted };
+  return { db: db as never, inserted, locks };
 }
 
 describe("validateBookingSlot — availability window", () => {
@@ -126,11 +138,33 @@ describe("createBooking — validates before writing", () => {
     endTime: "12:00",
   };
 
-  it("writes a valid, in-hours booking", async () => {
-    const { db, inserted } = fakeDb({ resource: RESOURCE });
+  it("writes a valid, in-hours booking, under the resource lock", async () => {
+    const { db, inserted, locks } = fakeDb({ resource: RESOURCE });
     const row = await createBooking(db, validInput);
     expect(row.id).toBe("bk-1");
     expect(inserted).toHaveLength(1);
+    expect(locks).toHaveLength(1);
+  });
+
+  it("stores the duration the times describe, not a default", async () => {
+    const { db, inserted } = fakeDb({ resource: RESOURCE });
+    await createBooking(db, validInput); // 10:00–12:00, no durationMinutes given
+    expect(inserted[0]).toMatchObject({ durationMinutes: 120 });
+    await createBooking(db, { ...validInput, endTime: "10:45", durationMinutes: 300 });
+    expect(inserted[1]).toMatchObject({ durationMinutes: 45 });
+  });
+
+  it("refuses a booking past the crew's daily cap", async () => {
+    const full = Array.from({ length: RESOURCE.maxJobsPerDay }, (_, i) => ({
+      startTime: `${String(13 + i).padStart(2, "0")}:00`,
+      endTime: `${String(13 + i).padStart(2, "0")}:30`,
+      status: "confirmed",
+      lat: null,
+      lng: null,
+    }));
+    const { db, inserted } = fakeDb({ resource: RESOURCE, bookings: full });
+    await expect(createBooking(db, validInput)).rejects.toThrow(/fully booked/i);
+    expect(inserted).toHaveLength(0);
   });
 
   it("refuses an out-of-hours booking", async () => {

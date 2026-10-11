@@ -418,11 +418,19 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
   {
     capability: "scheduling.booking",
     why:
-      "The scheduling router carrying the public request-a-booking flow — " +
-      "drive-time-validated server-side before it writes. The calendar page is " +
-      "the other key.",
+      "The scheduling router carrying the public online-booking flow: times " +
+      "listed as PublicSlots (nothing about any other customer or the crew), " +
+      "and a request whose times, crew and coordinates the server decides, " +
+      "re-checked under the crew's lock and landing pending. The calendar page " +
+      "is the other key.",
+    // The public package calls, and the absence of the staff finder. Mentioning
+    // the procedure name proved nothing: 0.2's router had a `requestBooking`
+    // too, and it returned the previous customer's street address from `slots`.
+    // The router's header names `findAvailableSlots` as the thing a public
+    // route must not call, which is why the check is for a CALL of it.
     provenBy: (plan) =>
-      mentions(plan, ["src", "server", "routers", "scheduling.ts"], "requestBooking"),
+      mentions(plan, ["src", "server", "routers", "scheduling.ts"], "findPublicSlots(", "requestPublicBooking(") &&
+      !mentions(plan, ["src", "server", "routers", "scheduling.ts"], "findAvailableSlots("),
   },
   {
     capability: "scheduling.calendar",

@@ -31,23 +31,62 @@ describe("time helpers", () => {
 });
 
 describe("findFreeSlots", () => {
-  it("an empty day is one slot from the window start", () => {
+  it("an empty day offers the whole day on a 30-minute grid, not one start", () => {
+    // 0.2 returned exactly one slot here (08:00), so a customer who could only
+    // do afternoons could never book online.
     const slots = findFreeSlots("08:00", "17:00", [], 120);
-    expect(slots).toHaveLength(1);
-    expect(slots[0]).toMatchObject({ startTime: "08:00", endTime: "10:00", previousJob: null });
+    expect(slots.map((s) => s.startTime)).toEqual([
+      "08:00", "08:30", "09:00", "09:30", "10:00", "10:30", "11:00", "11:30",
+      "12:00", "12:30", "13:00", "13:30", "14:00", "14:30", "15:00",
+    ]);
+    expect(slots[0]).toMatchObject({ endTime: "10:00", previousJob: null, nextJob: null, isGapStart: true });
+    expect(slots.at(-1)).toMatchObject({ startTime: "15:00", endTime: "17:00", isGapStart: false });
   });
 
-  it("a booking splits the day and the later slot carries the previous job", () => {
+  it("takes the step as an argument; Infinity is one start per gap (0.2's shape)", () => {
+    expect(findFreeSlots("08:00", "12:00", [], 60, 60).map((s) => s.startTime)).toEqual([
+      "08:00", "09:00", "10:00", "11:00",
+    ]);
+    expect(findFreeSlots("08:00", "17:00", [], 120, Infinity)).toHaveLength(1);
+  });
+
+  it("a booking splits the day: each side carries its neighbours", () => {
     const slots = findFreeSlots(
       "08:00",
       "17:00",
       [{ start: "10:00", end: "12:00", lat: 40.7, lng: -111.9, address: "123 Main" }],
       120,
+      Infinity,
     );
     expect(slots).toHaveLength(2);
     expect(slots[0]!.previousJob).toBeNull();
-    expect(slots[1]).toMatchObject({ startTime: "12:00", endTime: "14:00" });
-    expect(slots[1]!.previousJob?.address).toBe("123 Main");
+    expect(slots[0]!.nextJob).toMatchObject({ address: "123 Main", startTime: "10:00" });
+    expect(slots[1]).toMatchObject({ startTime: "12:00", endTime: "14:00", nextJob: null });
+    expect(slots[1]!.previousJob).toMatchObject({ address: "123 Main", endTime: "12:00" });
+  });
+
+  it("offers the gap start first, then falls back onto the window's grid", () => {
+    const slots = findFreeSlots(
+      "08:00",
+      "13:00",
+      [{ start: "08:00", end: "10:45", lat: null, lng: null, address: "A" }],
+      60,
+    );
+    // 10:45 packs tight against the job before; then :00/:30 times, not 11:15.
+    expect(slots.map((s) => s.startTime)).toEqual(["10:45", "11:00", "11:30", "12:00"]);
+    expect(slots.map((s) => s.isGapStart)).toEqual([true, false, false, false]);
+  });
+
+  it("never offers past the window end, even when the next booking is later", () => {
+    // A staff booking at 14:00 on a day whose hours end at 12:00: the gap to it
+    // is not working time.
+    const slots = findFreeSlots(
+      "08:00",
+      "12:00",
+      [{ start: "14:00", end: "15:00", lat: null, lng: null, address: "late" }],
+      60,
+    );
+    expect(slots.at(-1)).toMatchObject({ startTime: "11:00", endTime: "12:00" });
   });
 
   it("a gap smaller than the duration yields no slot", () => {
@@ -63,6 +102,7 @@ describe("findFreeSlots", () => {
         { start: "10:00", end: "11:00", lat: null, lng: null, address: "A" },
       ],
       60,
+      Infinity,
     );
     // 08–10 (null prev), 11–12 (prev A), 15–16 (prev B) all fit a 60-min job.
     expect(slots.map((s) => s.startTime)).toEqual(["08:00", "11:00", "15:00"]);
@@ -85,6 +125,9 @@ describe("scoreSlot — the drive-time differentiator", () => {
     expect(scoreSlot({ ...base, startTime: "08:00", driveMinutesFromPrevious: 20 })).toBe(105);
     expect(scoreSlot({ ...base, isPreferredResource: true, driveMinutesFromPrevious: 20 })).toBe(120);
     expect(scoreSlot({ ...base, driveMinutesFromPrevious: null, homeBaseDriveMinutes: 10 })).toBe(115);
+  });
+  it("prefers the start of a gap (packing the day) without making it the only offer", () => {
+    expect(scoreSlot({ ...base, driveMinutesFromPrevious: 20, isGapStart: true })).toBe(105);
   });
 });
 
