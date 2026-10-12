@@ -180,7 +180,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.2.0 (sweep): SMS compliance is required with an SMS sender, the queue is
   // bounded and cancellable, and the emitted router calls setTemplateActive and
   // requireEmailSubject — none exist in 0.1.x.
-  comms: "0.2.0",
+  comms: "0.2.1",
   aeo: "0.1.1",
 };
 
