@@ -1,5 +1,11 @@
 # @adminigloo/assistant
 
+## 0.8.1
+
+### Patch Changes
+
+- 9d117d3: Document the prompt-cache contract on `ProviderRequest`: an adapter should mark the end of `system` and the end of the newest message, because the loop keeps both prefixes stable (global-only system, append-only transcript, byte-equivalent rehydration). On Anthropic that is two `cache_control: { type: "ephemeral" }` breakpoints; unmarked, every step pays full price for the same tokens.
+
 ## 0.8.0
 
 ### Minor Changes

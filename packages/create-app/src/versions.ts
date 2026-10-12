@@ -109,7 +109,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.8.0 adds the optional AdminIgloo license gate (deps @adminigloo/license);
   // it is a no-op unless the app passes license config with mode "enforce", so
   // the emitted route needs no change to keep working.
-  assistant: "0.8.0",
+  assistant: "0.8.1",
   // 0.6.0 for the onEvent producer hook (optional, so the emitted route
   // needs no change); 0.5.0 was the column editor and unread marks. The emitted router imports
   // `createStatus`, `deleteStatus`, `markTicketRead` and friends; none exist
@@ -133,7 +133,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // fixed positioning, so a report about a modal used to show only the page
   // behind it. The emitted FeedbackWidget only mounts the provider, so a caret
   // over the old line would resolve a widget that photographs the wrong thing.
-  "feedback-widget": "0.3.0",
+  "feedback-widget": "0.3.1",
   // A devDependency of every generated project rather than a dependency, and
   // it belongs here all the same. `renderPackageJson` spelled `^0.1.1` out
   // inline, which put a fourteenth version in a place no drift test looked at —
