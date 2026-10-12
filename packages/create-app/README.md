@@ -144,7 +144,7 @@ project that looks complete enough to start editing:
 | --- | --- |
 | `template/` | Every file every project gets. Token substitution only — `__SCOPE__`, `__PROJECT_NAME__`, `__TENANT_LABEL_PLURAL__`. Deliberately not a templating language: a template that can branch is a template that will grow branches. |
 | `overlays/*` | Directories copied in whole when the answers select them. Additive; see rule 2. `answers.ts` decides which, in `overlayNamesFor`. |
-| `emit.ts` | Files whose CONTENT depends on the answers: `package.json`, `src/env.ts`, `src/db/schema.ts`, `src/nav.ts`, `src/server/_app.ts`, the audit registry, the landing page, the comms senders and queue hooks (`src/server/comms-senders.ts`, `src/server/comms-hooks.ts`) and who hears about a visit (`src/server/scheduling-notify.ts`). Strings here interpolate `answers` directly, because this is the generator and rule 1 permits it. |
+| `emit.ts` | Files whose CONTENT depends on the answers: `package.json`, `src/env.ts`, `src/db/schema.ts`, `src/nav.ts`, `src/server/_app.ts`, the audit registry, the landing page, the comms senders and queue hooks (`src/server/comms-senders.ts`, `src/server/comms-hooks.ts`) who hears about a visit (`src/server/scheduling-notify.ts`), and the estimator's glue — who hears about an estimate, where its photo is kept, what reads it, what an accepted quote becomes (`src/server/estimator-notify.ts`, `src/server/estimator-services.ts`, `src/server/estimator-features.ts`). Strings here interpolate `answers` directly, because this is the generator and rule 1 permits it. |
 | `manifest.ts` | `adminigloo.json`, then `SCAFFOLD.md` **from** it. |
 
 ## `adminigloo.json`

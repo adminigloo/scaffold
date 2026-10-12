@@ -208,9 +208,16 @@ export const HELP = `
                        only the client can make. Privacy and terms are generated
                        for any project that takes money either way, because
                        Stripe will not activate an account without them.
-  --estimator          Field service: a pricing/takeoff engine with a public
-    / --no-estimator   estimate page and a cross-origin embed widget (client-key
-                       authenticated), plus a staff product/estimate builder.
+  --estimator          Field service — estimator: instant prices from your own
+    / --no-estimator   supplies, photo estimates, quotes customers accept online,
+                       follow-ups. A public /estimate page, an embed for your
+                       other website, the leads queue, the estimate editor and
+                       the price book. Needs an admin panel. Brings --comms,
+                       --storage and --email with it (the lead and quote emails,
+                       the customer's photo kept with the estimate) unless you
+                       say --no-comms, --no-storage or --no-email. With --ai a
+                       photo's steps are counted by Claude Haiku; without it the
+                       customer counts them.
   --scheduling         Field service: a booking page for customers,
     / --no-scheduling  manage-your-visit links, a staff calendar with
                        drag-to-move, today's route for crews, and settings in
@@ -336,9 +343,22 @@ export async function collectAnswers(
   const includeEstimator =
     flags.estimator ??
     (await prompter.confirm(
-      "Field service — estimator? Pricing/takeoff engine, public estimate page and embed widget.",
+      "Field service — estimator: instant prices from your own supplies, photo estimates, quotes customers accept online, follow-ups.",
       DEFAULT_ANSWERS.includeEstimator,
     ));
+  // The estimator keeps each customer's photo with their estimate, so the
+  // business sees the steps before anybody drives out — and the bytes go to
+  // the file store. Storage was asked before the estimator was, so with the
+  // estimator on and storage left to a default it is asked again, defaulting
+  // to yes. Only an explicit --no-storage keeps it off (photos are then read
+  // and thrown away, and the admin says so).
+  const includeStorageForEstimator =
+    includeEstimator && !includeStorage && flags.storage === undefined
+      ? await prompter.confirm(
+          "The estimator keeps each customer's photo with their estimate. Include file storage?",
+          true,
+        )
+      : includeStorage;
   const includeScheduling =
     flags.scheduling ??
     (await prompter.confirm(
@@ -346,14 +366,17 @@ export async function collectAnswers(
       DEFAULT_ANSWERS.includeScheduling,
     ));
   // Scheduling's whole customer side is email — the acknowledgement, the
-  // confirmation with the manage link, the reminder, the expiry notice. Email
-  // was asked before scheduling was, so with scheduling on and email left to
-  // a default, it is asked again, defaulting to yes. Only an explicit
-  // --no-email keeps it off.
-  const includeEmailForScheduling =
-    includeScheduling && !includeEmail && flags.email === undefined
+  // confirmation with the manage link, the reminder, the expiry notice — and
+  // so is the estimator's: the new-lead alert, the customer's copy, the quote
+  // link, the follow-up. Email was asked before either was, so with one of
+  // them on and email left to a default, it is asked again, defaulting to
+  // yes. Only an explicit --no-email keeps it off.
+  const includeEmailForFieldService =
+    (includeScheduling || includeEstimator) && !includeEmail && flags.email === undefined
       ? await prompter.confirm(
-          "Scheduling emails customers their confirmations and reminders. Include transactional email?",
+          includeScheduling
+            ? "Scheduling emails customers their confirmations and reminders. Include transactional email?"
+            : "The estimator emails new leads to you and quotes to your customers. Include transactional email?",
           true,
         )
       : includeEmail;
@@ -367,9 +390,9 @@ export async function collectAnswers(
     flags.comms ??
     (await prompter.confirm(
       "Field service — comms? Templated email/SMS with a scheduler and a cron drain.",
-      // Scheduling sends its emails through comms, so with scheduling it
-      // defaults to yes; --no-comms still says no.
-      includeScheduling ? true : DEFAULT_ANSWERS.includeComms,
+      // Scheduling and the estimator send their emails through comms, so with
+      // either it defaults to yes; --no-comms still says no.
+      includeScheduling || includeEstimator ? true : DEFAULT_ANSWERS.includeComms,
     ));
   const includeAeo =
     flags.aeo ??
@@ -384,11 +407,11 @@ export async function collectAnswers(
     businessModel,
     adminShell,
     includeAi,
-    includeEmail: includeEmailForScheduling,
+    includeEmail: includeEmailForFieldService,
     includeFeedback,
     includeSeoReports,
     includeNotifications,
-    includeStorage,
+    includeStorage: includeStorageForEstimator,
     includeAssistant,
     includeMarketing,
     includeEstimator,
@@ -518,6 +541,73 @@ export function nextSteps(answers: Answers, targetDir: string): string {
         "This project sends no visit emails: scheduling emails need both",
         "--comms and --email. Customers keep the manage link the booking page",
         "shows them. To add them later:",
+        "",
+        ...(answers.includeComms ? [] : ["  pnpm dlx @adminigloo/create-app add comms"]),
+        ...(answers.includeEmail ? [] : ["  pnpm dlx @adminigloo/create-app add email"]),
+        "",
+      );
+    }
+  }
+
+  if (answers.includeEstimator) {
+    const emails = answers.includeComms && answers.includeEmail;
+    lines.push(
+      // The estimator's first afternoon, in the order an owner does it. Only
+      // pages this project has: the estimator is refused without an admin
+      // panel (assertAnswersCompatible), and /book-visit and the invoice step
+      // are named only when scheduling and invoicing were installed with it.
+      "Estimator:",
+      "  1. Save your business name, sales tax and labor rate at",
+      "     /admin/estimator/settings. Until you do, /estimate is closed and no",
+      "     quote can be sent.",
+      "  2. Build your price book at /admin/estimator: your products, priced",
+      "     from your own supplies, labor and markup — or \"Load a sample",
+      "     catalog\" to start from an example. A product stays off /estimate",
+      "     until you turn it on; nothing is added for you.",
+      "  3. Customers get a price at /estimate. Each one they save is a lead in",
+      "     /admin/estimates: edit it, then send the quote. They accept it on",
+      "     the page the email links to.",
+      ...(answers.includeScheduling
+        ? ["     An accepted quote books the visit at /book-visit in one click."]
+        : []),
+      ...(answers.includeInvoicing
+        ? ["     An accepted quote becomes an invoice in one click."]
+        : []),
+      ...(emails
+        ? [
+            "  4. Set CRON_SECRET on the deployment: the follow-up on an unanswered",
+            "     quote and the note when one expires go out from daily jobs that",
+            "     won't run without it.",
+          ]
+        : []),
+      ...(answers.includeStorage
+        ? [
+            "Customers' photos are kept with their estimate once",
+            "BLOB_READ_WRITE_TOKEN is set.",
+          ]
+        : [
+            "Customers' photos are not kept: this project has no file storage.",
+            "  pnpm dlx @adminigloo/create-app add storage",
+          ]),
+      ...(answers.includeAi
+        ? [
+            "A photo's steps are counted by Claude Haiku 4.5 once ANTHROPIC_API_KEY",
+            "is set: a fraction of a cent a photo, capped by the daily budget in",
+            "Estimate settings. Customers can always count them instead.",
+          ]
+        : [
+            "Photo reading is off: this project was generated without --ai, so",
+            "customers count the steps themselves. To have photos read:",
+            "  pnpm dlx @adminigloo/create-app add ai",
+          ]),
+      "",
+    );
+    if (!emails) {
+      lines.push(
+        // Said plainly: a lead nobody is told about is a lead found days late.
+        "This project sends no estimate emails: they need both --comms and",
+        "--email. New leads wait in /admin/estimates, and you copy the quote",
+        "link to the customer yourself. To add them later:",
         "",
         ...(answers.includeComms ? [] : ["  pnpm dlx @adminigloo/create-app add comms"]),
         ...(answers.includeEmail ? [] : ["  pnpm dlx @adminigloo/create-app add email"]),

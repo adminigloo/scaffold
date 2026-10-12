@@ -37,6 +37,7 @@ import {
   estimatorOptions,
   estimatorProductComponents,
   estimatorProducts,
+  estimatorSettings,
 } from "../schema.js";
 import { createFakeDb, type FakeDb, type FakeDbOptions } from "./fake-db.js";
 
@@ -54,8 +55,10 @@ const YEAR = new Date().getUTCFullYear();
  *   retired — inactive
  *   backroom — staff-only (showInEstimator: false)
  */
-function catalog(options: FakeDbOptions = {}): FakeDb {
+function catalog(options: FakeDbOptions & { settings?: boolean } = {}): FakeDb {
   const fake = createFakeDb(options);
+  // Tenant A has saved its settings: the public side takes leads only then (review EST-R02).
+  if (options.settings !== false) fake.seed(estimatorSettings, [{ tenantId: A, businessName: "A Glass", savedAt: new Date() }]);
   fake.seed(estimatorProducts, [
     {
       id: "door",
@@ -140,7 +143,8 @@ describe("createPublicEstimate — the browser names the job, the server prices 
       [{ productId: "door", description: "Shower door", measurement: DOOR, quantity: 1, unitPrice: 1, laborPrice: 0 } as never],
       { discount: 99_999, taxRateBp: 0, photoUrl: "https://evil.example/x.png" } as never,
     );
-    const created = await createPublicEstimate(fake.db, tampered, { tenantId: A, taxRateBp: 600 });
+    fake.rows(estimatorSettings)[0]!.taxRateBp = 600;
+    const created = await createPublicEstimate(fake.db, tampered, { tenantId: A });
 
     const shown = await calculateEstimate(fake.db, { productId: "door", measurement: DOOR, quantity: 1 }, { tenantId: A, audience: "public" });
     const item = fake.rows(estimatorEstimateItems)[0]!;
@@ -156,7 +160,12 @@ describe("createPublicEstimate — the browser names the job, the server prices 
     expect(created.taxAmount).toBe(Math.round((item.total as number) * 0.06));
   });
 
-  it("uses the documented default tax rate when the host configures none", async () => {
+  it("takes no lead before the business has saved its settings; then its tax rate (the 8.25% default until changed)", async () => {
+    const closed = catalog({ settings: false });
+    expect(await refusal(createPublicEstimate(closed.db, lead([{ productId: "posts" }]), { tenantId: A, taxRateBp: 600 }))).toBe(
+      "estimates_closed",
+    );
+    expect(closed.rows(estimatorEstimates)).toHaveLength(0);
     const fake = catalog();
     await createPublicEstimate(fake.db, lead([{ productId: "posts" }]), { tenantId: A });
     expect(fake.rows(estimatorEstimates)[0]!.taxRateBp).toBe(825);
@@ -232,7 +241,10 @@ describe("a server-priced line equals the midpoint of the range quoted at its re
     expect(pub.subtotal).toBe(mid);
   });
 
-  it("with a minimum charge — three $50 posts under a $200 minimum are $205, not $615", async () => {
+  // 0.3 (ES-18): the range's low end is floored at the minimum, so three $50
+  // posts under a $200 minimum show $200 – $230 and save at its midpoint,
+  // $215 (0.2 showed $180 – $230 and saved $205).
+  it("with a minimum charge — three $50 posts under a $200 minimum are $215, not $615", async () => {
     const fake = catalog();
     const shown = await calculateEstimate(fake.db, { productId: "posts", measurement: {}, quantity: 3 }, { tenantId: A });
     expect(shown!.subtotal).toBe(20_000);
@@ -242,7 +254,8 @@ describe("a server-priced line equals the midpoint of the range quoted at its re
       items: [{ productId: "posts", description: "Posts", quantity: 3 }],
     });
     expect(created.subtotal).toBe(midpointOf(shown!.estimateLow, shown!.estimateHigh));
-    expect(created.subtotal).toBe(20_500);
+    expect(shown!.estimateLow).toBe(20_000);
+    expect(created.subtotal).toBe(21_500);
   });
 
   it("adds a staff laborPrice per unit on top of the engine's price", async () => {
@@ -252,7 +265,7 @@ describe("a server-priced line equals the midpoint of the range quoted at its re
       taxRateBp: 0,
       items: [{ productId: "posts", description: "Posts", quantity: 3, laborPrice: 1_000 }],
     });
-    expect(created.subtotal).toBe(20_500 + 3_000);
+    expect(created.subtotal).toBe(21_500 + 3_000); // 0.3: the minimum-floored midpoint (ES-18)
   });
 });
 

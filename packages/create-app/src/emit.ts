@@ -251,6 +251,17 @@ export async function planEmit(
   if (answers.includeScheduling) {
     files.set(join("src", "server", "scheduling-notify.ts"), renderSchedulingNotify(answers));
   }
+  // The estimator's glue, on the same footing. Who hears about an estimate
+  // (the comms listener with --comms, nobody without), where a customer's photo
+  // is kept (storage), what reads it (the --ai model), and what an accepted
+  // quote turns into (a visit with --scheduling, an invoice with --invoicing)
+  // are each a question about ANOTHER answer — so the modules that answer them
+  // are rendered, and the static overlay's routes import them without an `if`.
+  if (answers.includeEstimator) {
+    files.set(join("src", "server", "estimator-notify.ts"), renderEstimatorNotify(answers));
+    files.set(join("src", "server", "estimator-services.ts"), renderEstimatorServices(answers));
+    files.set(join("src", "server", "estimator-features.ts"), renderEstimatorFeatures(answers));
+  }
   // The nav and the landing page that reads it. Generated together and for the
   // same reason: /products exists only in a project that sells something and
   // /admin only in one with an admin shell, so neither the lists nor the page
@@ -636,6 +647,12 @@ export function renderPackageJson(answers: Answers): string {
  * answered in time and tells the customer. It runs without comms too — an
  * expired request must stop showing as waiting whether or not anybody is
  * emailed about it.
+ *
+ * The estimator adds one for the same reason: quotes past their validity are
+ * marked expired (and, with comms, the customer and the office are told), and
+ * photos a customer uploaded but never sent are deleted after two days. The
+ * follow-up on an unanswered quote is a comms message, so it goes out from the
+ * comms drain.
  */
 /**
  * When the comms cron runs on Vercel Hobby (once a day, in UTC): 14:00 UTC is
@@ -655,6 +672,9 @@ export function renderVercelJson(answers: Answers): string {
   }
   if (answers.includeScheduling) {
     crons.push({ path: "/api/cron/scheduling", schedule: "0 13 * * *" });
+  }
+  if (answers.includeEstimator) {
+    crons.push({ path: "/api/cron/estimator", schedule: "30 13 * * *" });
   }
   const config = {
     $schema: "https://openapi.vercel.sh/vercel.json",
@@ -974,7 +994,24 @@ export function renderEnvLocal(answers: Answers): string {
       "# SCHEDULING_TIME_ZONE=America/Denver",
     );
   }
-  if (answers.includeComms || answers.includeScheduling) {
+  if (answers.includeEstimator) {
+    lines.push(
+      "",
+      "# --- Estimator ----------------------------------------------------------------",
+      "# The zone the dates on quotes start in, the first time the estimator runs.",
+      "# After that the owner changes it in /admin/estimator/settings.",
+      "# ESTIMATOR_TIME_ZONE=America/Denver",
+      ...(answers.includeAi
+        ? [
+            "# The model that counts the steps in a customer's photo. Unset is Claude",
+            "# Haiku 4.5 (claude-haiku-4-5), the cheapest capable one; another model",
+            "# needs its price in MODEL_RATES (src/server/ai.ts) or reading stays off.",
+            "# ESTIMATOR_TAKEOFF_MODEL=claude-haiku-4-5",
+          ]
+        : []),
+    );
+  }
+  if (answers.includeComms || answers.includeScheduling || answers.includeEstimator) {
     lines.push(
       "",
       "# --- Cron -------------------------------------------------------------------",
@@ -1284,7 +1321,7 @@ export function renderEnvModule(answers: Answers): string {
     );
   }
 
-  if (answers.includeComms || answers.includeScheduling) {
+  if (answers.includeComms || answers.includeScheduling || answers.includeEstimator) {
     // The shared secret the cron routes check. Declared here rather than in an
     // env fragment of @__SCOPE_NAME__/comms or /scheduling because it is not a
     // credential either package consumes — it is a statement about THIS
@@ -1331,6 +1368,39 @@ export function renderEnvModule(answers: Answers): string {
       `{ name: "Scheduling time zone", vars: ["SCHEDULING_TIME_ZONE"], disables: "Nothing. The zone the business starts in the first time scheduling runs (America/Denver when unset). After that the owner changes it in Schedule settings, and every visit keeps its clock time." }`,
       `{ name: "Expiring requests", vars: ["CRON_SECRET"], disables: "The daily sweep: /api/cron/scheduling answers 401 until the secret is set. An unanswered request still stops holding its time at its deadline, and is released whenever a customer books or staff open the calendar; only the customer's email saying so waits for one of those." }`,
     );
+  }
+
+  if (answers.includeEstimator) {
+    // Neither is a credential the package reads for itself. The zone seeds the
+    // business's first settings row once (the owner changes it in Estimate
+    // settings); the model id is handed to the photo reader the app builds in
+    // src/server/estimator-services.ts. A zone that is present but not a real
+    // one fails at boot, like any malformed value.
+    serverSpreads.push(
+      `ESTIMATOR_TIME_ZONE: z
+    .string()
+    .refine((zone) => {
+      try {
+        new Intl.DateTimeFormat("en-US", { timeZone: zone });
+        return true;
+      } catch {
+        return false;
+      }
+    }, "an IANA time zone, like America/Denver")
+    .optional()`,
+    );
+    runtime.push("ESTIMATOR_TIME_ZONE: process.env.ESTIMATOR_TIME_ZONE");
+    features.push(
+      `{ name: "Estimator time zone", vars: ["ESTIMATOR_TIME_ZONE"], disables: "Nothing. The zone the dates on quotes start in, the first time the estimator runs (America/Denver when unset). After that the owner changes it in Estimate settings." }`,
+      `{ name: "Quote expiry and photo clean-up", vars: ["CRON_SECRET"], disables: "The daily sweep: /api/cron/estimator answers 401 until the secret is set. A quote past its date still can't be accepted, and is marked expired when its link is opened or staff open the estimates list; only the emails saying so wait for one of those. Photos a customer uploaded but never sent stay in storage until it runs." }`,
+    );
+    if (answers.includeAi) {
+      serverSpreads.push("ESTIMATOR_TAKEOFF_MODEL: z.string().min(1).max(120).optional()");
+      runtime.push("ESTIMATOR_TAKEOFF_MODEL: process.env.ESTIMATOR_TAKEOFF_MODEL");
+      features.push(
+        `{ name: "Photo reading model", vars: ["ESTIMATOR_TAKEOFF_MODEL"], disables: "Nothing. Unset is Claude Haiku 4.5, the cheapest capable model. Another model needs its price in MODEL_RATES (src/server/ai.ts), or photo reading stays off and the server log says why. The reading needs ANTHROPIC_API_KEY either way." }`,
+      );
+    }
   }
 
   // Last on /setup, and last here so it stays that way. Everything above
@@ -1634,6 +1704,45 @@ export function renderPermissionsCatalog(answers: Answers): string {
     defaultFor: ["admin", "cs_lead"],
   },`
     : "";
+  // The estimator's staff keys, one per job, on the scheduling pattern. The
+  // package declares its permissions for the TENANT ladder (each business runs
+  // its own price book); this project serves one business from the staff
+  // ladder, so src/server/estimator-config.ts maps the package's five keys onto
+  // these. SEEING COSTS is its own key on purpose: a supply's price and the
+  // margin on a job are the owner's, and staff who quote customers see prices.
+  const estimatorStaffKeys = answers.includeEstimator
+    ? `
+  "staff.estimates.view": {
+    label: "See estimates and the price book",
+    description: "Leads, estimates and quotes, the products and their customer prices, and the estimate settings.",
+    category: "Estimates",
+    defaultFor: ["admin", "cs_lead", "cs_agent"],
+  },
+  "staff.estimates.manage": {
+    label: "Work estimates and send quotes",
+    description: "Edit an estimate's lines, send, resend and revise quotes (the customer is emailed), mark one accepted or declined, archive, book the visit and turn an accepted quote into an invoice.",
+    category: "Estimates",
+    defaultFor: ["admin", "cs_lead", "cs_agent"],
+  },
+  "staff.estimates.costs": {
+    label: "See costs and margins",
+    description: "Supply costs, labor rates, the cost breakdown and the margin on every estimate, and what photo reading has cost. Without it, prices only.",
+    category: "Estimates",
+    defaultFor: ["admin"],
+  },
+  "staff.estimates.pricebook": {
+    label: "Change the price book",
+    description: "Products, supplies, labor, markup and options, and loading the sample catalog. This changes what every customer is quoted.",
+    category: "Estimates",
+    defaultFor: ["admin"],
+  },
+  "staff.estimates.settings": {
+    label: "Change estimate settings",
+    description: "The business's details, tax rate, quote rules, who hears about new leads, photo reading and its daily budget, and website embed keys.",
+    category: "Estimates",
+    defaultFor: ["admin"],
+  },`
+    : "";
   const staffSpread = [...staffFragments, "appStaffPermissions"];
   const tenantSpread = [...tenantFragments, "appTenantPermissions"];
 
@@ -1721,7 +1830,7 @@ const appStaffPermissions = {
     category: "${plural}",
     // Sealed: an override must not hand this to one person quietly.
     sealed: true,
-  },${schedulingStaffKeys}
+  },${schedulingStaffKeys}${estimatorStaffKeys}
 } as const;
 
 export const staffCatalog = definePermissions(
@@ -2070,21 +2179,40 @@ ${templates}`;
  */
 export function renderCommsHooks(answers: Answers): string {
   const scope = answers.scope;
-  const producers = answers.includeScheduling ? ["schedulingComms"] : [];
+  const producers = [
+    ...(answers.includeScheduling ? ["schedulingComms"] : []),
+    ...(answers.includeEstimator ? ["estimatorComms"] : []),
+  ];
   const imports = [
     `import type { BeforeSendResult, ScheduledRow } from "${scope}/comms";`,
     `import { log } from "@/server/logger";`,
     ...(answers.includeScheduling
       ? [`import { schedulingComms } from "@/server/scheduling-notify";`]
       : []),
+    ...(answers.includeEstimator
+      ? [`import { estimatorComms } from "@/server/estimator-notify";`]
+      : []),
   ];
-  const why = answers.includeScheduling
-    ? `
- * Here: scheduling. Its reminders are queued without a link (the row sits in a
+  const paragraphs: string[] = [];
+  if (answers.includeScheduling) {
+    paragraphs.push(`
+ * Scheduling. Its reminders are queued without a link (the row sits in a
  * table for a day), so at send time it checks the visit is still on, at the
  * same time, more than 30 minutes away — and mints the customer's manage link
  * into the one it sends. \`afterCommsRun\` then replaces that link in the
- * delivery log with ":token", so no key to a customer's visit is kept there.`
+ * delivery log with ":token", so no key to a customer's visit is kept there.`);
+  }
+  if (answers.includeEstimator) {
+    paragraphs.push(`
+ * The estimator. The follow-up on an unanswered quote is queued for days
+ * without a link; at send time it checks the quote is still waiting on the
+ * customer (not answered, revised or expired) and mints a fresh quote link
+ * into the one it sends. \`afterCommsRun\` scrubs that link from the delivery
+ * log the same way.`);
+  }
+  const why = paragraphs.length > 0
+    ? `
+ * Here, in order:${paragraphs.join("\n *")}`
     : `
  * Nothing in this project queues messages that need a second look, so the
  * list below is empty and every due row is sent as it is. A feature added
@@ -2371,6 +2499,540 @@ ${dispatch}`;
 }
 
 /**
+ * `src/server/estimator-features.ts` — what the estimator's PUBLIC pages need
+ * to know about the rest of the project, as constants.
+ *
+ * Its own module, and constants only, so /estimate and /quote/[token] can read
+ * it without importing a database handle, a model client or a blob store. Today
+ * that is one fact: whether an estimate leads to a booking page.
+ */
+export function renderEstimatorFeatures(answers: Answers): string {
+  const book = answers.includeScheduling
+    ? `/**
+ * Where "Book a visit to measure" (after a customer saves an estimate) and
+ * "Pick a time for the work" (after they accept a quote) go: the scheduling
+ * booking page. The widget adds ?estimate=<id>, so the visit is tied to the
+ * estimate and listed on it in /admin/estimates/[id].
+ */
+export const ESTIMATE_BOOK_VISIT_HREF: string | undefined = "/book-visit";`
+    : `/**
+ * Where "Book a visit to measure" and "Pick a time for the work" would go.
+ * Nowhere: ${answers.projectName} was generated without scheduling, so neither
+ * button is shown — the customer is told the business will be in touch.
+ * \`add scheduling\` sets this to the booking page.
+ */
+export const ESTIMATE_BOOK_VISIT_HREF: string | undefined = undefined;`;
+
+  return `/**
+ * What this project's estimator is wired to, for the public pages.
+ *
+ * Generated by create-adminigloo-app from the answers this project was created
+ * with; \`add\` rewrites it when a feature it names is added later. Constants
+ * only, so the estimate page and the quote page can import it without pulling
+ * a database, a model or a blob store into their render.
+ */
+
+${book}
+`;
+}
+
+/**
+ * `src/server/estimator-notify.ts` — who hears about each estimate.
+ *
+ * Every estimator write (a customer's lead, a quote sent, viewed, accepted,
+ * declined, revised, expired, an estimate converted) emits one event after it
+ * commits, and the routes hand each to `onEstimatorEvent`. With --comms that is
+ * the estimator comms listener: the new-lead email to the office and the copy
+ * to the customer, the quote with its link, the follow-up queued for when the
+ * customer doesn't answer (withdrawn the moment they do), the thank-you, the
+ * expiry note and the office's notices. Without --comms the list is empty and
+ * the estimate page promises no email.
+ */
+export function renderEstimatorNotify(answers: Answers): string {
+  const scope = answers.scope;
+  const header = `/**
+ * Who hears about each estimate — the listeners every estimator event is
+ * handed to, after the write that caused it has committed.
+ *
+ * Generated by create-adminigloo-app from the answers this project was created
+ * with. Add your own listener to LISTENERS (a Slack ping, a webhook, a CRM);
+ * each is awaited in turn, and one that throws is logged without stopping the
+ * others or failing the customer's request — the lead is saved whether or not
+ * the mail server is up.
+ *
+ * An event carries no quote token, no cost and no requester key, so it is safe
+ * to log or forward as it is. Whoever needs a quote link mints one
+ * (\`issueQuoteToken\`), the way the comms listener does.
+ */`;
+
+  const dispatch = `
+/** The \`onEvent\` both estimator route handlers and the expiry cron are given. Never throws. */
+export async function onEstimatorEvent(event: EstimatorEvent): Promise<void> {
+  for (const listener of LISTENERS) {
+    try {
+      await listener(event);
+    } catch (error) {
+      log.error({ err: error, eventId: event.id, type: event.type }, "an estimator listener failed");
+    }
+  }
+}
+`;
+
+  if (!answers.includeComms) {
+    return `import type { EstimatorDelivery, EstimatorEvent, EstimatorEventListener } from "${scope}/estimator";
+import { estimatorDeliveryStatus } from "@/server/estimator-config";
+import { log } from "@/server/logger";
+
+${header}
+
+/**
+ * EMPTY: ${answers.projectName} was generated without ${scope}/comms, so no
+ * email is sent about an estimate. New leads wait in /admin/estimates, and
+ * staff copy a quote's link to the customer from the estimate ("Copy link").
+ * \`add comms\` (and \`add email\`) wires the emails in.
+ */
+const LISTENERS: readonly EstimatorEventListener[] = [];
+
+/** False: the estimate page promises no email. */
+export const ESTIMATOR_EMAILS_ENABLED: boolean = false;
+
+/** No comms, so no email templates to add. */
+export async function ensureEstimatorEmailTemplates(): Promise<void> {}
+
+/** What the staff screens are told: no email leaves this project. */
+export async function estimatorDelivery(): Promise<EstimatorDelivery> {
+  return estimatorDeliveryStatus({ commsInstalled: false, emailConfigured: false, cronSecretSet: false });
+}
+${dispatch}`;
+  }
+
+  const runAt = `${String(COMMS_CRON_DAILY_AT_UTC.hour).padStart(2, "0")}:${String(COMMS_CRON_DAILY_AT_UTC.minute).padStart(2, "0")}`;
+  // The accepted email's next step is the booking page — only where there is
+  // one. Without scheduling the template's line reads "we'll be in touch".
+  const bookUrl = answers.includeScheduling
+    ? "\n  bookUrl: (estimate) => estimatorUrls.bookVisit(estimate.id),"
+    : "";
+
+  return `import type { EstimatorDelivery, EstimatorEvent, EstimatorEventListener } from "${scope}/estimator";
+import { createEstimatorCommsListener } from "${scope}/estimator/comms";
+import { db } from "@/db";
+import { env } from "@/env";
+import { commsEmailConfigured, commsSenders } from "@/server/comms-senders";
+import { ESTIMATOR_TENANT, estimatorDeliveryStatus, estimatorLinks } from "@/server/estimator-config";
+import { log } from "@/server/logger";
+
+${header}
+
+/**
+ * This module's own copy of the links, built from the same config as
+ * src/server/estimator.ts's — not imported from it, because estimator.ts
+ * imports THIS module (for the email templates at first boot), and two
+ * modules importing each other leave one half-initialised.
+ */
+const estimatorUrls = estimatorLinks(env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000");
+
+/**
+ * When the comms cron runs: vercel.json's "/api/cron/comms" schedule, once a
+ * day at ${runAt} UTC (Vercel Hobby). A follow-up is queued for the last run at
+ * or before its day, so "follow up after 3 days" goes out on the third day's
+ * run rather than the fourth's. Tighten the cron (every 15 minutes on Pro,
+ * DEPLOYMENT.md) and change this to \`{ everyMinutes: 15 }\` with it.
+ */
+const FOLLOW_UP_RUNS = { dailyAtUtc: "${runAt}" } as const;
+
+/**
+ * The estimate emails, through ${scope}/comms: seven templates the owner edits
+ * in /admin/comms (inserted once if absent, never overwritten), sends logged
+ * per message, and the follow-up queued for the comms cron. Every customer
+ * email carries a freshly minted link to /quote/[token]; the link is replaced
+ * with ":token" in the delivery log right after it is sent.
+ *
+ * WHO IN THE OFFICE HEARS about new leads and answers: the addresses the owner
+ * sets in Estimate settings ("Lead alerts"). Until they set any, the first
+ * administrator (BOOTSTRAP_ADMIN_EMAIL) does, so the first lead on a new
+ * deployment is not discovered a day late by accident.
+ */
+export const estimatorComms = createEstimatorCommsListener({
+  db,
+  senders: commsSenders,
+  quoteUrl: (token) => estimatorUrls.quote(token),
+  adminEstimateUrl: (estimateId) => estimatorUrls.adminEstimate(estimateId),${bookUrl}
+  staffEmails: env.BOOTSTRAP_ADMIN_EMAIL ? [env.BOOTSTRAP_ADMIN_EMAIL] : [],
+  followUpRuns: FOLLOW_UP_RUNS,
+  onError: (error, context) => log.error({ err: error, ...context }, "estimator: an email step failed"),
+});
+
+const LISTENERS: readonly EstimatorEventListener[] = [estimatorComms.onEvent];
+
+/**
+ * Told to the estimate page through the public handler's \`emailsEnabled\`:
+ * true only when an email would actually leave (RESEND_API_KEY set), so the
+ * page never says "we've emailed you a copy" from a deployment that cannot.
+ */
+export const ESTIMATOR_EMAILS_ENABLED: boolean = commsEmailConfigured;
+
+/**
+ * The seven estimate emails, added to Messages at first boot (never over an
+ * owner's edit), so the owner can read and brand them before the first lead.
+ */
+export async function ensureEstimatorEmailTemplates(): Promise<void> {
+  await estimatorComms.ensureTemplates(ESTIMATOR_TENANT);
+}
+
+/**
+ * What the staff screens are told — their banner, and the editor's warning
+ * before "Send quote": is the sender configured, and is the cron allowed to
+ * run the follow-ups.
+ */
+export async function estimatorDelivery(): Promise<EstimatorDelivery> {
+  return estimatorDeliveryStatus({
+    commsInstalled: true,
+    emailConfigured: commsEmailConfigured,
+    cronSecretSet: Boolean(env.CRON_SECRET),
+  });
+}
+${dispatch}`;
+}
+
+/**
+ * `src/server/estimator-services.ts` — the estimator's glue to the rest of the
+ * project, each piece written only when the feature it needs was installed:
+ *
+ *   storage     a customer's photo is kept with the estimate (Vercel Blob,
+ *               through the storage package's rows)
+ *   ai          the photo is read by Claude Haiku 4.5 — observations only — and
+ *               every call's tokens and cost go into ai_usage
+ *   scheduling  an accepted quote books the visit, and the visits booked from
+ *               an estimate are listed on it
+ *   invoicing   an accepted quote becomes an invoice in one transaction, once
+ *
+ * Without one, the export is \`undefined\` and the package says so on its own
+ * screens ("Photo reading is off", no "Create invoice" button) — never an \`if\`
+ * in the routes.
+ */
+export function renderEstimatorServices(answers: Answers): string {
+  const scope = answers.scope;
+  const storage = answers.includeStorage;
+  const ai = answers.includeAi;
+  const scheduling = answers.includeScheduling;
+  const invoicing = answers.includeInvoicing;
+
+  const estimatorValues = invoicing ? ["EstimatorInputError", "getEstimate", "markEstimateConverted"] : [];
+  const estimatorTypes = [
+    "type CreateEstimatorAdminHandlersOptions",
+    "type CreateEstimatorHandlersOptions",
+    "type EstimatorPhotoStore",
+    ...(invoicing ? ["type LinkedInvoice"] : []),
+    "type PhotoReadingOffReason",
+    ...(scheduling ? ["type LinkedVisit"] : []),
+  ];
+  const configImports = [
+    ...(invoicing ? ["ESTIMATOR_TENANT"] : []),
+    ...(scheduling ? ["estimatorLinks", "linkedVisit"] : []),
+    ...(ai ? ["takeoffModelFor"] : []),
+  ];
+
+  const imports = [
+    ...(scheduling || invoicing ? [`import { ${scheduling ? "and, asc, eq" : "and, eq"} } from "drizzle-orm";`] : []),
+    `import {\n${[...estimatorValues, ...estimatorTypes].map((name) => `  ${name},`).join("\n")}\n} from "${scope}/estimator";`,
+    ...(ai ? [`import { createAnthropicTakeoffRunner } from "${scope}/estimator/anthropic";`] : []),
+    ...(invoicing ? [`import { createInvoice, invoiceInputFromEstimate, invoices, InvoicingError } from "${scope}/invoicing";`] : []),
+    ...(scheduling ? [`import { getSchedulingSettings, schedulingBookings } from "${scope}/scheduling";`] : []),
+    ...(storage ? [`import { deleteFile, storeFile } from "${scope}/storage";`] : []),
+    ...(storage || scheduling || invoicing ? [`import { db } from "@/db";`] : []),
+    `import { env } from "@/env";`,
+    ...(invoicing ? [`import { invoicePreviewPath } from "@/invoice-link";`] : []),
+    ...(ai ? [`import { anthropic, MODEL_RATES, recordAiUsage } from "@/server/ai";`] : []),
+    ...(storage ? [`import { getBlobStore } from "@/server/blob-store";`] : []),
+    ...(configImports.length > 0 ? [`import { ${configImports.join(", ")} } from "@/server/estimator-config";`] : []),
+    ...(ai ? [`import { log } from "@/server/logger";`] : []),
+    ...(scheduling ? [`import { SCHEDULING_TENANT } from "@/server/scheduling-config";`] : []),
+  ];
+
+  const zones = `/**
+ * Where the business's starting time zone comes from, in order: the
+ * estimator's own variable${scheduling ? `, then the one scheduling starts in
+ * (so a business set up for both starts both in the same zone)` : ""}. Read
+ * once, at the first boot (src/server/estimator.ts); after that the owner
+ * changes it in Estimate settings.
+ */
+export const ESTIMATOR_TIME_ZONE_HINTS: readonly (string | undefined)[] = [env.ESTIMATOR_TIME_ZONE${scheduling ? ", env.SCHEDULING_TIME_ZONE" : ""}];`;
+
+  const photos = storage
+    ? `/**
+ * Where a customer's photo is kept: this project's file storage, as a row in
+ * stored_files (kind "estimator.photo") with the bytes in the blob store
+ * behind src/server/blob-store.ts. The estimator package never sees the vendor.
+ *
+ * KEPT so the business sees the steps before anybody drives out — the photo
+ * is on the estimate in /admin/estimates/[id], beside what the AI saw in it.
+ * One a customer uploaded and never sent is deleted after two days by
+ * /api/cron/estimator.
+ *
+ * Undefined while BLOB_READ_WRITE_TOKEN is unset: photos are then read (with
+ * --ai) and not kept, and the staff screens say "Photos can't be kept: no file
+ * storage is connected."
+ */
+const blobStore = getBlobStore();
+
+export const estimatorPhotoStore: EstimatorPhotoStore | undefined = blobStore
+  ? {
+      put: async ({ tenantId, bytes, contentType, filename }) => {
+        const row = await storeFile(db, blobStore, {
+          tenantId,
+          ownerId: "estimator",
+          kind: "estimator.photo",
+          filename,
+          contentType,
+          sizeBytes: bytes.byteLength,
+          body: bytes,
+        });
+        return { fileId: row.id, url: row.url };
+      },
+      delete: async ({ tenantId, fileId }) => {
+        await deleteFile(db, blobStore, { id: fileId, tenantId });
+      },
+    }
+  : undefined;`
+    : `/**
+ * Where a customer's photo would be kept. Nowhere: ${answers.projectName} was
+ * generated without file storage, so a photo is read (with --ai) and not kept,
+ * and the staff screens say so. \`add storage\` wires it in.
+ */
+export const estimatorPhotoStore: EstimatorPhotoStore | undefined = undefined;`;
+
+  const reading = ai
+    ? `/**
+ * What reads a customer's photo: Claude, through the package's runner — Haiku
+ * 4.5 unless ESTIMATOR_TAKEOFF_MODEL names another. ONE SMALL CALL PER PHOTO:
+ * the browser has already shrunk it to 768 px, the prompt is a few lines, the
+ * answer is a strict JSON of what the model SAW (how many steps, how tall they
+ * look, how sure it is) in at most 150 tokens, and no number a customer is
+ * quoted comes from it — the package's code works those out. The same photo
+ * for the same product is never read twice, nothing is read once the customer
+ * has typed the measurement, and the business's daily budget (Estimate
+ * settings) stops reading when it is spent.
+ *
+ * Every call's tokens and cost are written to ai_usage as "estimator_takeoff"
+ * (src/server/ai.ts's MODEL_RATES prices it), so the spend is the owner's to
+ * see in Estimate settings and in the AI usage totals.
+ *
+ * Undefined while ANTHROPIC_API_KEY is unset, or when the model named has no
+ * price in MODEL_RATES (logged): reading is then off, the estimate page asks
+ * the customer to count, and the staff screens say why, in words that name the
+ * fix (estimatorPhotoReadingOff): no key connected, or a model with no price.
+ */
+const takeoffSetup = buildTakeoff();
+
+export const estimatorTakeoff: CreateEstimatorHandlersOptions["takeoff"] = takeoffSetup.takeoff;
+
+/** Why photo reading is off, for the staff screens' notice; undefined while it is on. */
+export const estimatorPhotoReadingOff: PhotoReadingOffReason | undefined = takeoffSetup.off;
+
+function buildTakeoff(): { takeoff: CreateEstimatorHandlersOptions["takeoff"]; off?: PhotoReadingOffReason } {
+  if (!anthropic) return { takeoff: undefined, off: "no_key" };
+  const model = takeoffModelFor(env.ESTIMATOR_TAKEOFF_MODEL);
+  const rate = MODEL_RATES[model];
+  if (!rate) {
+    log.error({ model }, "estimator: photo reading is off — MODEL_RATES in src/server/ai.ts has no price for this model");
+    return { takeoff: undefined, off: "model_unpriced" };
+  }
+  return {
+    takeoff: {
+      model: createAnthropicTakeoffRunner({
+        client: anthropic,
+        model,
+        rates: { inputMicrosPerMTok: rate.inputMicrosPerMTok, outputMicrosPerMTok: rate.outputMicrosPerMTok },
+      }),
+      // The customer is nobody signed in: the row is the business's spend.
+      recordUsage: (usage) =>
+        recordAiUsage({
+          tenantId: usage.tenantId,
+          userId: null,
+          operation: usage.operation,
+          spend: {
+            model: usage.model,
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+            cachedInputTokens: 0,
+            // A call that failed before the provider reported usage has an
+            // unknown cost: written as null, never as zero.
+            reported: !usage.costEstimated,
+          },
+          usage: { outcome: usage.outcome === "errored" ? "errored" : "completed", chunks: 0, durationMs: usage.durationMs },
+        }),
+    },
+  };
+}`
+    : `/**
+ * What would read a customer's photo. Nothing: ${answers.projectName} was
+ * generated without --ai, so the estimate page asks the customer to count the
+ * steps themselves (it always can), photos are kept but not read, and the
+ * staff screens say "Photo reading isn't part of this site" and how to add it.
+ * \`add ai\` wires in Claude Haiku 4.5 — one small call per photo, metered.
+ * (Adding ANTHROPIC_API_KEY alone does nothing here: the wiring isn't in this
+ * project, which is why the notice names the command, not the key.)
+ */
+export const estimatorTakeoff: CreateEstimatorHandlersOptions["takeoff"] = undefined;
+
+/** Why photo reading is off, for the staff screens' notice: it was never installed. */
+export const estimatorPhotoReadingOff: PhotoReadingOffReason | undefined = "not_installed";`;
+
+  const urls = scheduling
+    ? `
+/** Absolute links on this deployment (estimator-config). */
+const estimatorUrls = estimatorLinks(env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000");
+`
+    : "";
+
+  const visitsFn = scheduling
+    ? `
+/**
+ * The visits booked from an estimate (the booking page's ?estimate=<id>), for
+ * the estimate's own page: when, in the business's zone, the status in words,
+ * and a link to that day on the staff calendar. Read from scheduling's table
+ * by (tenant, estimate) — scheduling exports no lookup for it.
+ */
+async function visitsForEstimate(estimateId: string): Promise<LinkedVisit[]> {
+  const rows = await db
+    .select({
+      id: schedulingBookings.id,
+      status: schedulingBookings.status,
+      startsAt: schedulingBookings.startsAt,
+      scheduledDate: schedulingBookings.scheduledDate,
+      startTime: schedulingBookings.startTime,
+    })
+    .from(schedulingBookings)
+    .where(and(eq(schedulingBookings.tenantId, SCHEDULING_TENANT), eq(schedulingBookings.estimateId, estimateId)))
+    .orderBy(asc(schedulingBookings.scheduledDate), asc(schedulingBookings.startTime))
+    .limit(20);
+  if (rows.length === 0) return [];
+  const { timeZone } = await getSchedulingSettings(db, SCHEDULING_TENANT);
+  return rows.map((row) => linkedVisit(row, timeZone, estimatorUrls.scheduleAdmin));
+}
+`
+    : "";
+
+  const invoiceFns = invoicing
+    ? `
+/**
+ * The tenant invoices are written for: the invoicing router's INVOICING_TENANT,
+ * which is "primary" like ESTIMATOR_TENANT — one business, one id.
+ */
+const INVOICING_TENANT = ESTIMATOR_TENANT;
+
+/**
+ * The invoice an estimate became, for the estimate's own page: its number and
+ * status, and the staff PREVIEW of the customer's invoice page (opening it
+ * never counts as the customer viewing it).
+ */
+async function invoiceForEstimate(estimateId: string): Promise<LinkedInvoice | null> {
+  const [row] = await db
+    .select({ id: invoices.id, number: invoices.invoiceNumber, status: invoices.status, viewToken: invoices.viewToken })
+    .from(invoices)
+    .where(and(eq(invoices.tenantId, INVOICING_TENANT), eq(invoices.estimateId, estimateId)))
+    .limit(1);
+  return row ? { id: row.id, number: row.number, status: row.status, url: invoicePreviewPath(row.viewToken) } : null;
+}
+
+/**
+ * "Create invoice" on an accepted quote: ONE TRANSACTION, so a quote is
+ * invoiced once or not at all.
+ *
+ *   1. the estimate and its lines, as the customer accepted them;
+ *   2. the invoice input, from invoicing's own bridge — labor folded into each
+ *      line with the quoted total kept to the cent, the tax rate AND the
+ *      discount carried over, nothing billed from a quote that isn't accepted;
+ *   3. the invoice and its lines;
+ *   4. the estimate CLAIMED as converted — only an accepted one, only once. If
+ *      it was not (somebody revised it a moment ago, or a second click got
+ *      here first), the claim fails and the invoice is rolled back.
+ *
+ * A refusal from either package (already invoiced, not accepted) is the
+ * refusal the estimate's page shows ("transition_not_allowed"), never a 500.
+ * The estimator's handler announces \`estimate.converted\` after this commits.
+ */
+export const convertEstimateToInvoice: CreateEstimatorAdminHandlersOptions["convertToInvoice"] = async ({
+  tenantId,
+  estimateId,
+  userId,
+}) => {
+  const found = await getEstimate(db, tenantId, estimateId);
+  if (!found) throw new EstimatorInputError("transition_not_allowed", "This estimate can't be invoiced.");
+  try {
+    return await db.transaction(async (tx) => {
+      const invoice = await createInvoice(
+        tx,
+        { tenantId: INVOICING_TENANT, ...invoiceInputFromEstimate(found.estimate, found.items) },
+        userId ?? undefined,
+      );
+      const claimed = await markEstimateConverted(tx, tenantId, estimateId);
+      if (!claimed) {
+        throw new EstimatorInputError("transition_not_allowed", "Only an accepted quote can become an invoice, and only once.");
+      }
+      return { id: invoice.id, number: invoice.invoiceNumber, status: "draft", url: invoicePreviewPath(invoice.viewToken) };
+    });
+  } catch (error) {
+    if (error instanceof InvoicingError) throw new EstimatorInputError("transition_not_allowed", error.message);
+    throw error;
+  }
+};
+`
+    : `
+/**
+ * "Create invoice" on an accepted quote. Not offered: ${answers.projectName} was
+ * generated without invoicing. \`add invoicing\` wires it in.
+ */
+export const convertEstimateToInvoice: CreateEstimatorAdminHandlersOptions["convertToInvoice"] = undefined;
+`;
+
+  const seamLines = [
+    ...(scheduling
+      ? [
+          "  // An accepted quote's \"Book the visit\": the booking page, tied to the estimate.",
+          "  bookVisitUrl: (estimate) => estimatorUrls.bookVisit(estimate.id),",
+          "  visits: (estimateId) => visitsForEstimate(estimateId),",
+        ]
+      : []),
+    ...(invoicing ? ["  invoice: (estimateId) => invoiceForEstimate(estimateId),"] : []),
+  ];
+  const seams = seamLines.length > 0
+    ? `
+/** What an estimate's page links to elsewhere in this project. */
+export const estimatorLinkSeams: CreateEstimatorAdminHandlersOptions["links"] = {
+${seamLines.join("\n")}
+};
+`
+    : `
+/**
+ * What an estimate's page would link to elsewhere. Nothing: ${answers.projectName}
+ * has neither scheduling nor invoicing. \`add scheduling\` / \`add invoicing\`
+ * wire in "Book the visit" and the invoice.
+ */
+export const estimatorLinkSeams: CreateEstimatorAdminHandlersOptions["links"] = undefined;
+`;
+
+  return `${imports.join("\n")}
+
+/**
+ * The estimator's glue to the rest of ${answers.projectName}: where a customer's
+ * photo is kept, what reads it, and what an accepted quote turns into.
+ *
+ * Generated by create-adminigloo-app from the answers this project was created
+ * with — each piece is here only when the feature it needs was installed, and
+ * \`add\` rewrites this file when one is added later. Editing it is fine (it is
+ * yours), but \`add\` will then write its version beside yours as \`.new\`.
+ */
+
+${zones}
+
+${photos}
+
+${reading}
+${urls}${visitsFn}${invoiceFns}${seams}`;
+}
+
+/**
  * `src/server/audit.ts` for this project.
  *
  * Generated for the same reason `src/permissions/catalog.ts` is: which packages
@@ -2562,9 +3224,6 @@ export function renderAppRouter(answers: Answers): string {
   if (answers.includeAssistant) {
     imports.splice(1, 0, 'import { assistantRouter } from "./assistant";');
   }
-  if (answers.includeEstimator) {
-    imports.splice(1, 0, 'import { estimatorRouter } from "./estimator";');
-  }
   if (answers.includeInvoicing) {
     imports.splice(1, 0, 'import { invoicingRouter } from "./invoicing";');
   }
@@ -2645,19 +3304,17 @@ export function renderAppRouter(answers: Answers): string {
 `
     : "";
 
-  // Field service. The estimator and invoicing routers each carry PUBLIC
-  // procedures (the estimate, the pay-by-token read) beside their staff ones —
-  // a quote the customer never signs in to get.
-  // What keeps those safe is the same rule the shop follows: amount, tenant and
-  // eligibility are read server-side, never from the request.
-  const estimator = answers.includeEstimator
-    ? `
-  // Pricing an estimate from the catalog, the staff product/estimate builder,
-  // and the client keys the embed widget authenticates with. The cross-origin
-  // intake itself is the /api/estimator/embed route handler, not tRPC.
-  estimator: estimatorRouter,
-`
-    : "";
+  // Field service. The invoicing router carries a PUBLIC procedure (the
+  // pay-by-token read) beside its staff ones — an invoice the customer never
+  // signs in to see. What keeps it safe is the same rule the shop follows:
+  // amount, tenant and eligibility are read server-side, never from the
+  // request.
+  //
+  // The estimator has no router here, deliberately, for scheduling's reason.
+  // Its estimate page, quote page and staff screens speak HTTP to the
+  // package's own handlers (app/api/estimator and app/api/admin/estimator) —
+  // the wire the widgets are built against, one path rather than a tRPC copy
+  // of it that drifts.
 
   // Scheduling has no router here, deliberately. Its booking page, manage
   // page and staff screens speak HTTP to the package's own handlers
@@ -2753,7 +3410,7 @@ export const appRouter = createTRPCRouter({
   // writes actually live. Mounted even in a project generated without the admin
   // shell, so the panel can be added later without re-deriving its boundary.
   admin: adminRouter,
-${ai}${feedback}${seo}${notifications}${storage}${assistant}${estimator}${invoicing}${comms}${aeo}${shop}});
+${ai}${feedback}${seo}${notifications}${storage}${assistant}${invoicing}${comms}${aeo}${shop}});
 
 export type AppRouter = typeof appRouter;
 `;
@@ -3003,6 +3660,23 @@ export function renderSiteNav(answers: Answers): string {
         "without --scheduling. The manage page a customer reaches from their " +
         "email, /visit/[token], is deliberately in no nav: its URL is the " +
         "key to one person's visit.",
+    });
+  }
+
+  // The instant estimate, from the estimator overlay. Public for the booking
+  // page's reason: it is the page a field-service business sends people to,
+  // and a price somebody can only reach from a pasted link is a price most
+  // customers never see.
+  if (answers.includeEstimator) {
+    site.push({
+      href: "/estimate",
+      label: "Get an estimate",
+      why:
+        "The instant estimate (<EstimateTool>): a price from the business's " +
+        "own price book for what the customer can count or measure, with an " +
+        "optional photo. Absent without --estimator. The quote page a customer " +
+        "reaches from their email, /quote/[token], is deliberately in no nav: " +
+        "its URL is the key to one person's quote.",
     });
   }
 
@@ -3482,22 +4156,35 @@ export function renderAdminNav(answers: Answers): string {
   if (answers.includeEstimator) {
     fieldService.push(
       {
-        href: "/admin/estimator",
-        label: "Price book",
-        permission: "staff.dashboard.view",
-        why:
-          "The catalog builder from the estimator package: price parts and " +
-          "products, and issue the client keys the embed widget authenticates " +
-          "with. From estimator-admin, so a project without the answer has " +
-          "neither the page nor this entry.",
-      },
-      {
         href: "/admin/estimates",
         label: "Estimates",
-        permission: "staff.dashboard.view",
+        permission: "staff.estimates.view",
         why:
-          "The estimates the public tool and the embed filed as leads, newest " +
-          "first, with status. The read side of the same estimator package.",
+          "Every lead the estimate page and the embed saved, and every quote " +
+          "sent, from the estimator widget: search, filter by where it stands, " +
+          "archive. Opening one shows the customer's photo, what the AI saw " +
+          "beside what the customer said, and the priced lines to edit and " +
+          "send as a quote.",
+      },
+      {
+        href: "/admin/estimator",
+        label: "Price book",
+        permission: "staff.estimates.view",
+        why:
+          "Products priced from the business's own supplies, labor and " +
+          "markup, with a live test quote and exactly what a customer will be " +
+          "asked. Viewing is everybody's; changing it is " +
+          "staff.estimates.pricebook, and costs and margins show only with " +
+          "staff.estimates.costs.",
+      },
+      {
+        href: "/admin/estimator/settings",
+        label: "Estimate settings",
+        permission: "staff.estimates.settings",
+        why:
+          "The business's name and contact, tax rate, quote validity and " +
+          "follow-up, who hears about new leads, photo reading and its daily " +
+          "budget, and the keys for putting the estimate on another website.",
       },
     );
   }
@@ -4993,6 +5680,12 @@ export function renderRobots(answers: Answers): string {
       why: "The admin shell, from the admin overlay. Absent in a project generated with --admin none, which is why this list is generated.",
     });
   }
+  if (answers.includeEstimator) {
+    disallowed.push({
+      path: "/quote/",
+      why: "A customer's own quote, opened from the link in their email. The URL is the key to it (anyone holding it can accept); the page already says noindex and the API sends X-Robots-Tag, and this keeps a crawler that found a leaked link from fetching it at all.",
+    });
+  }
   if (answers.includeScheduling) {
     disallowed.push({
       path: "/visit/",
@@ -5100,6 +5793,12 @@ export function renderSitemap(answers: Answers): string {
       why: "The booking page, from the scheduling overlay — for a field-service business the page most worth finding. The manage pages under /visit are never listed: each URL is one customer's key.",
     });
   }
+  if (answers.includeEstimator) {
+    pages.push({
+      path: "/estimate",
+      why: "The instant estimate, from the estimator overlay. The quote pages under /quote are never listed: each URL is one customer's key.",
+    });
+  }
   if (sells) {
     pages.push({
       path: "/products",
@@ -5188,6 +5887,9 @@ export function renderLlmsTxt(answers: Answers): string {
   }
   if (answers.includeScheduling) {
     pages.push({ path: "/book-visit", line: "Book a visit: pick a service and a time; we come to you." });
+  }
+  if (answers.includeEstimator) {
+    pages.push({ path: "/estimate", line: "Instant estimate: a price from our own price book for what you can count or measure." });
   }
   if (sells) {
     pages.push({ path: "/products", line: "Published products available to buy." });

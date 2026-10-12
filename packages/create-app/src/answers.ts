@@ -140,12 +140,15 @@ export interface Answers {
    * the same way the other suite features are: a server half (router + any
    * app-owned glue) on the answer alone, an admin page half gated on the shell.
    *
-   * Each stands alone. Where the testbed cross-wires them (a booking request
-   * acknowledged through comms, and confirmed through it when staff accept; a
-   * citation check asking the app's model), the overlay ships that glue as a
-   * degrading stub the project wires — a static overlay cannot conditionally
-   * depend on a sibling overlay, and "the producer is yours to wire" is the
-   * same rule notifications already follows.
+   * Each stands alone. Where two are selected together the generator writes
+   * the glue between them into GENERATED modules — a booking request
+   * acknowledged through comms (src/server/scheduling-notify.ts); an estimate
+   * emailed through comms, its photo kept through storage, read through the
+   * --ai model, an accepted quote booking the visit and becoming an invoice
+   * (src/server/estimator-notify.ts, src/server/estimator-services.ts) —
+   * because a static overlay cannot conditionally depend on a sibling overlay.
+   * Glue nothing generates yet (a citation check asking the app's model) is a
+   * degrading stub the project wires, the rule notifications follows.
    */
   readonly includeEstimator: boolean;
   readonly includeScheduling: boolean;
@@ -200,6 +203,17 @@ export function assertAnswersCompatible(answers: Answers): void {
     throw new IncompatibleAnswersError(
       "Scheduling needs an admin panel: staff accept or decline online booking requests on its calendar, and crews open today's route there. " +
         "With --admin none every request would wait unanswered until it expired. Use --admin minimal (or full) with --scheduling.",
+    );
+  }
+  // THE ESTIMATOR NEEDS ONE TOO, for the same reason: leads nobody can answer.
+  // The price book is built, the lead is read and the quote is sent from the
+  // staff screens. With --admin none the public page would price from an
+  // empty catalog for ever, and a lead a customer saved would sit in a table
+  // no page reads.
+  if (answers.includeEstimator && answers.adminShell === "none") {
+    throw new IncompatibleAnswersError(
+      "The estimator needs an admin panel: the owner builds the price book there, and staff read each lead, edit it and send the quote from it. " +
+        "With --admin none nothing could be priced and every saved estimate would go unanswered. Use --admin minimal (or full) with --estimator.",
     );
   }
 }
@@ -294,10 +308,14 @@ export function packagesFor(answers: Answers): readonly string[] {
   // (booking acknowledgements and confirmations through comms, a citation
   // check through a model) is shipped as a wired-yourself stub, so none of
   // these pulls in another.
-  // The estimator server package only. The embed API it serves is what a quote
-  // widget on the customer's OWN site calls — the widget SDK is installed there,
-  // not here — so this project depends on the engine, not the widget.
-  if (answers.includeEstimator) optional.push("estimator");
+  // Two packages for one answer, the scheduling split: `estimator` is the
+  // server half (schema, the public and staff HTTP handlers, the comms
+  // listener, the photo reading on Claude) and `estimator-widget` is the
+  // screens — the estimate page, the quote page a customer accepts on and,
+  // under /admin, the leads queue, the estimate editor, the price book and
+  // the settings. They version independently, and a business's other website
+  // that only embeds the estimate installs the widget alone.
+  if (answers.includeEstimator) optional.push("estimator", "estimator-widget");
   // Two packages for one answer, the feedback split: `scheduling` is the
   // server half (schema, the two HTTP handlers, the comms listener) and
   // `scheduling-widget` is the screens — the booking and manage-your-visit
@@ -409,12 +427,12 @@ export function optionalEnvFor(answers: Answers): readonly string[] {
     // so the file library and the screenshots share a credential.
     vars.push("BLOB_READ_WRITE_TOKEN");
   }
-  if (answers.includeComms || answers.includeScheduling) {
+  if (answers.includeComms || answers.includeScheduling || answers.includeEstimator) {
     // What the /api/cron/* routes check. Optional because a laptop drains
     // nothing on a schedule; on a deployment, unset means every cron call is
-    // refused — reminders wait and expired requests go untold — which is why
-    // it is listed here, where somebody will see it, rather than only in
-    // src/env.ts.
+    // refused — reminders and quote follow-ups wait, and expired requests and
+    // quotes go untold — which is why it is listed here, where somebody will
+    // see it, rather than only in src/env.ts.
     vars.push("CRON_SECRET");
   }
   if (answers.includeScheduling) {
@@ -423,6 +441,15 @@ export function optionalEnvFor(answers: Answers): readonly string[] {
     // zone the business starts in Mountain Time and the owner changes it in
     // Schedule settings.
     vars.push("GOOGLE_MAPS_API_KEY", "SCHEDULING_TIME_ZONE");
+  }
+  if (answers.includeEstimator) {
+    // The zone the dates on quotes start in (the owner changes it in Estimate
+    // settings) and, with --ai, which model reads a customer's photo: Claude
+    // Haiku 4.5 unless this names another — the founder's choice of the
+    // cheapest capable model. The photos themselves are kept with
+    // BLOB_READ_WRITE_TOKEN, listed above with storage.
+    vars.push("ESTIMATOR_TIME_ZONE");
+    if (answers.includeAi) vars.push("ESTIMATOR_TAKEOFF_MODEL");
   }
   // Deduped, not sorted: two features naming one variable (the blob token)
   // must not print it twice, and order is the order the reader meets them.
@@ -754,10 +781,24 @@ export function capabilitiesFor(answers: Answers): readonly string[] {
 
   // Field service. Split the way the other suite features are: the server half
   // (router/handlers/schema) on the answer, the staff screen on the shell.
-  if (answers.includeEstimator) keys.push("estimator.pricing", "estimator.embed");
+  //
+  // The estimator: instant prices on the public page and the embed, quotes a
+  // customer accepts on /quote/[token] (sent from the admin), the staff
+  // screens — and then one key per feature it is GLUED to, because "is a
+  // customer's photo kept here", "is it read by a model", "does an unanswered
+  // quote get a follow-up", "can an accepted quote book the visit" and "can it
+  // become an invoice" each have their own answer.
+  if (answers.includeEstimator) {
+    keys.push("estimator.pricing", "estimator.embed", "estimator.quotes");
+  }
   if (answers.includeEstimator && answers.adminShell !== "none") {
     keys.push("estimator.builder");
   }
+  if (answers.includeEstimator && answers.includeStorage) keys.push("estimator.photos");
+  if (answers.includeEstimator && answers.includeAi) keys.push("estimator.photo-reading");
+  if (answers.includeEstimator && answers.includeComms) keys.push("estimator.followups");
+  if (answers.includeEstimator && answers.includeScheduling) keys.push("estimator.book-visit");
+  if (answers.includeEstimator && answers.includeInvoicing) keys.push("estimator.invoicing");
   // Scheduling: the public booking and manage pages on the answer; the
   // calendar and the crew's route under the shell; and the emails —
   // confirmations, reminders, expiry notices — only where comms is there to

@@ -61,6 +61,16 @@ export const MODEL_RATES: Readonly<Record<string, TokenRate>> = {
     outputMicrosPerMTok: 25_000_000,
     cachedInputMicrosPerMTok: 500_000,
   },
+  // $1.00 in, $5.00 out, per million tokens. The model the estimator's photo
+  // reading calls by default (src/server/estimator-services.ts, when this
+  // project has the estimator): one small call per photo, recorded here as
+  // "estimator_takeoff". Harmless in a project without it — a row nothing
+  // calls costs nothing.
+  "claude-haiku-4-5": {
+    inputMicrosPerMTok: 1_000_000,
+    outputMicrosPerMTok: 5_000_000,
+    cachedInputMicrosPerMTok: 100_000,
+  },
 };
 
 /**
@@ -119,7 +129,11 @@ export function newSpend(): ModelSpend {
 
 export interface RecordAiUsageInput {
   readonly tenantId: string;
-  readonly userId: string;
+  /**
+   * Null for a call no signed-in person made: a customer's photo read on the
+   * public estimate page is spent on the business's behalf, by nobody.
+   */
+  readonly userId: string | null;
   /** What the call was FOR — "chat", "title", "summarise". */
   readonly operation: string;
   readonly spend: ModelSpend;

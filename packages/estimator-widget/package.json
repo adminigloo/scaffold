@@ -1,7 +1,7 @@
 {
   "name": "@adminigloo/estimator-widget",
   "version": "0.1.1",
-  "description": "The embeddable instant-estimate widget: a keyed React provider a customer drops into their own site so their visitors get a live estimate — measurement or photo — that files back as a lead.",
+  "description": "The client half of AdminIgloo's estimator: an instant estimate for the business's website (questions in plain words, an optional photo whose reading pre-fills the count, a live price with its working) and the quote page customers accept, plus the staff screens under ./admin (the leads and quotes queue, the estimate editor, a price book built from the business's own supplies with a live test quote, settings and embed keys). React is its only peer.",
   "license": "UNLICENSED",
   "type": "module",
   "repository": {
@@ -17,10 +17,16 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
+    },
+    "./admin": {
+      "types": "./dist/admin.d.ts",
+      "import": "./dist/admin.js",
+      "require": "./dist/admin.cjs"
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
@@ -31,11 +37,15 @@
     "react-dom": "^18.0.0 || ^19.0.0"
   },
   "devDependencies": {
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.4",
+    "happy-dom": "^20.0.0",
     "react": "^19.2.4",
-    "@types/react": "^19.2.7"
+    "react-dom": "^19.2.4"
   },
   "scripts": {
     "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsup",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit"
   }
 }

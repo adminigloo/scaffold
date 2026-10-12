@@ -161,6 +161,64 @@ false`, the staff handler not given `onEvent`, or the expiry cron not given
 It needs `packages/scheduling` and `packages/comms` built (`pnpm --filter
 @adminigloo/scheduling build`, same for comms), because their `dist` is what runs.
 
+## What `estimator-scenario.spec.ts` proves
+
+The business scenario the estimator is sold on, end to end, in a browser.
+Summit Ramps, a wheelchair-ramp company in Salt Lake City, runs through the
+REAL widgets (bundled from `@adminigloo/estimator-widget`'s source, and the
+scheduling widget's for the booking page) against the REAL handlers and comms
+listener (`@adminigloo/estimator`, from its built `dist`) on PGlite, with the
+customer's photo kept through `@adminigloo/storage`'s real `storeFile`, the
+invoice made by `@adminigloo/invoicing` and the visit booked through
+`@adminigloo/scheduling` — wired the way a generated `--estimator --scheduling
+--invoicing --comms --email --storage --ai` project wires them
+(`fixtures/estimator-scenario-server.ts`, which imports create-app's own
+`estimator-config.ts` for the staff keys, links, delivery status and visit
+listing). Every email goes to an in-memory outbox; the photo is read by a fake
+model that reports only OBSERVATIONS (the founder's porch: three risers, 7.5–8.5
+in, medium confidence), so every number on screen is the package's code.
+
+It walks the steps as the people involved: a customer finds /estimate not set
+up until the owner loads the sample price book on purpose; the owner tests a
+quote (cost and margin beside the price); a customer on a phone is asked how
+many steps go up to the door and the height of one (never a "length of run"),
+sees the price with the assumed step height said plainly, collapses the range
+by entering a measured height, adds a real 1600 × 1200 photo the browser
+shrinks to 768 × 576, sees the photo and "We counted 3 steps", the count
+filled in and the code's working ("3 steps × 7.5–8.5 in each (from your photo)
+= 22.5–25.5 in rise → … 23–26 ft of ramp"), corrects it to 2 and watches the
+measurement and price follow, and saves; the lead is stored with the photo
+(a stored_files row), the reading (observations only) and the correction, and
+the office and the customer are emailed; office staff (prices, no costs) read
+the lead with the photo and the AI's reading beside "steps 3 → 2", re-price it
+from a measured height, add a line and send the quote; the customer accepts
+from the emailed link, the office is told and the follow-up is withdrawn; the
+accepted quote books the visit (listed on the estimate in the business's zone)
+and becomes an invoice for exactly the accepted total, once; another customer
+who never answers gets the follow-up on its day with a fresh link, and the
+quote lapses on the estimator cron. One model call in the whole scenario, no
+failure reported, no quote key in the delivery log.
+
+Negative controls (break one piece of wiring, run, restore): the comms cron
+without `beforeSend`, the public route without the photo store, the listener
+without `bookUrl`, no `convertToInvoice`, the staff handler not given
+`onEvent`, or office staff holding the costs key — the spec fails at the step
+that guards that piece, 6 of 6.
+
+It needs `packages/estimator`, `comms`, `storage`, `invoicing` and
+`scheduling` built (their `dist` is what runs).
+
+## What `estimator-widget.spec.ts` proves
+
+`@adminigloo/estimator-widget` on its own, against a fake server answered with
+`page.route`: the ramp flow at 390px (the stepper, the live price, the assumed
+step height said plainly, no "length of run"); a real photo shrunk by the
+browser's canvas to 768 px (the request's JPEG decoded here), the reading
+beside the photo, the count pre-filled and corrected; the quote page's
+Accept; the price book's sample load and test quote with the margin; the
+host's light or dark theme and a brand colour; axe on the estimate tool, the
+quote page and the price book.
+
 ## What `seo-jsonld.spec.ts` proves
 
 @adminigloo/seo's JSON-LD escaping holds in a real HTML parser. The page HTML

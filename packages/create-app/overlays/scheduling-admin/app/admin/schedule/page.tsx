@@ -21,16 +21,25 @@ export const dynamic = "force-dynamic";
  *     to move it, change the crew or edit the details.
  *   - New visit books one for a customer on the phone, with suggested times.
  *
+ * ?date=YYYY-MM-DD opens the calendar on that day — how a visit listed on an
+ * estimate (/admin/estimates/[id]) links here. Anything else is ignored.
+ *
  * Unanswered requests are released after the hours set in Schedule settings.
  */
-export default function SchedulePage() {
+export default async function SchedulePage({
+  searchParams,
+}: {
+  readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const { date } = await searchParams;
+  const initialDate = typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : undefined;
   return (
     <>
       <PageHeader
         title="Schedule"
         description="Every crew's visits, in your business's time zone. Online requests wait in Requests until you accept or decline them; drag a visit to move it."
       />
-      <ScheduleCalendar baseUrl="/api/admin/schedule" bookingPageUrl={schedulingUrls.book} />
+      <ScheduleCalendar baseUrl="/api/admin/schedule" bookingPageUrl={schedulingUrls.book} initialDate={initialDate} />
     </>
   );
 }

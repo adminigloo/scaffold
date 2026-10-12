@@ -1,40 +1,19 @@
-import { createEstimatorHandlers } from "__SCOPE__/estimator";
-import { db } from "@/db";
-import { ESTIMATOR_TAX_RATE_BP } from "@/server/estimator-seed";
-import { runEstimatorTakeoff } from "@/server/estimator-takeoff";
-
+// Written here, not re-exported: Next reads a route's segment config from the
+// file itself and refuses one passed through from another module.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 30;
 
 /**
- * The estimator's embed platform — the keyed, cross-origin API the
- * __SCOPE__/estimator-widget calls from a customer's own website. Thin app
- * code that mounts the package's handler factory (which owns auth, tenant
- * resolution, CORS, and the wire contract) and injects what must live in the
- * app: the tax rate a lead is saved at (the widget's body is never asked), the
- * photo takeoff (AI + metering + rate limiting, shared with the same-origin
- * route) and — optionally — `onLead`, the hook to notify someone of a new lead.
- * Mirrors how /api/igloo mounts the feedback handlers.
+ * The 0.2 embed's address, kept: a widget pasted onto another website before
+ * estimator 0.3 calls /api/estimator/embed/v1/…, and it must keep working
+ * without anybody touching that website.
+ *
+ * The SAME handler as /api/estimator — one factory serves the business's own
+ * pages and the keyed embed (a request carrying `x-adminigloo-key` is checked
+ * against the key's allowed websites and gets CORS for that page; one without
+ * a key is same-site only). The handler routes by the path's ending, so both
+ * addresses answer identically. New embeds use /api/estimator (Estimate
+ * settings → Website embed shows the snippet).
  */
-const handlers = createEstimatorHandlers({
-  db,
-  // Keys are only ever issued for ESTIMATOR_TENANT here; a multi-tenant host
-  // passes `(tenantId) => rateFor(tenantId)` instead.
-  taxRateBp: ESTIMATOR_TAX_RATE_BP,
-  runTakeoff: async (request) => {
-    const out = await runEstimatorTakeoff({
-      tenantId: request.tenantId,
-      measurementMode: request.measurementMode,
-      productContext: request.productContext,
-      imageBase64: request.imageBase64,
-      mediaType: request.mediaType,
-      ip: request.ip,
-    });
-    // A rate-limited embed call degrades to manual entry, like a missing key.
-    return { available: out.available, result: out.rateLimited ? null : out.result };
-  },
-});
-
-export const GET = handlers.handle;
-export const POST = handlers.handle;
-export const OPTIONS = handlers.handle;
+export { GET, OPTIONS, POST } from "../../[...path]/route";

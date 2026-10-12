@@ -147,7 +147,20 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // createPublicEstimate/publicSubmitSchema (a browser can no longer set its own
   // price), and the routers pass tenantId to getEstimate/getProductDetail/
   // updateProduct/deactivateProduct/setEstimateStatus — none exist in 0.1.x.
-  estimator: "0.2.0",
+  // 0.3.0: the generated project has no estimator router any more. Its routes
+  // mount createEstimatorHandlers / createEstimatorAdminHandlers (one public
+  // factory for the page and the embed, a staff factory behind the authorize
+  // seam), its notify module builds createEstimatorCommsListener from
+  // ./comms, the photo reading is createAnthropicTakeoffRunner from
+  // ./anthropic, the cron calls expireQuotes and purgeOrphanPhotos, and the
+  // glue calls markEstimateConverted, getEstimate and the estimator_settings
+  // table — none of which exist (or have these shapes) in 0.2.x.
+  estimator: "0.3.0",
+  // 0.2.0: the estimate page, the quote page and the four staff pages render
+  // its components (EstimateTool, QuoteView, EstimatesQueue, EstimateEditor,
+  // PriceBook, EstimatorSettings, EmbedKeys). It speaks 0.3's wire, so it
+  // moves with estimator 0.3 and never with 0.2; 0.1.x had only the modal.
+  "estimator-widget": "0.2.0",
   // 0.3.0: the emitted public procedures call findPublicSlots (PublicSlots only —
   // 0.2's slots route returned the previous customer's street address) and
   // requestPublicBooking with a requesterKey (server-derived times and crew,

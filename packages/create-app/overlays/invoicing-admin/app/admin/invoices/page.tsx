@@ -71,8 +71,9 @@ function statusTone(status: string): BadgeTone {
  * lines, adjust the lines until money is against it, move it draft → sent, and
  * record payments — the status follows the money (partial → paid), and a
  * mistaken payment is reversed, never edited. The customer opens theirs by a
- * token link, no account. (With --estimator, add a convert-from-estimate
- * action; see the invoicing router.)
+ * token link, no account. (With --estimator, an accepted quote becomes an
+ * invoice here from the estimate's own page, "Create invoice"; see the
+ * invoicing router.)
  */
 export default function InvoicesPage() {
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("all");

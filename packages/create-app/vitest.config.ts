@@ -190,6 +190,33 @@ export default defineConfig({
           exclude: ["**/node_modules/**", "**/dist/**"],
         },
       },
+      {
+        /**
+         * The estimator overlay's decisions that need no database, run against
+         * workspace source: the business's starting zone (never UTC), the model
+         * that reads a photo when nothing names one, the staff key each
+         * estimator permission is checked against, the public API's throttle
+         * and which of its buckets fail closed, what the staff screens are told
+         * about email, the absolute links the emails carry, and how a visit
+         * booked from an estimate is listed on it.
+         *
+         * The routes, pages and generated glue are not here, for the
+         * scheduling overlay's reason: they reach `@/db`, `@/env` and the
+         * GENERATED `@/server/estimator-notify` and `-services`. Their contract
+         * with the package is checked from their text in
+         * src/__tests__/estimator-overlay.test.ts, and they run for real in a
+         * generated project and in e2e/tests/estimator-scenario.spec.ts.
+         */
+        resolve: {
+          alias: [{ find: /^__SCOPE__\/estimator$/, replacement: here("../estimator/src/index.ts") }],
+        },
+        test: {
+          name: "estimator",
+          testTimeout,
+          include: ["overlays/estimator/**/*.test.ts"],
+          exclude: ["**/node_modules/**", "**/dist/**"],
+        },
+      },
     ],
   },
 });

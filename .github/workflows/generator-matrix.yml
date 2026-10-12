@@ -11,17 +11,19 @@ name: Generator matrix
 # product builder once emitted admin pages into a project that had deliberately
 # declined an admin panel.
 #
-# Six combinations, chosen to cover six DISTINCT overlay sets rather than six
-# plausible-looking products. The degenerate corners are in on purpose: nobody
-# generates `--model none --admin none` by hand, so nobody finds out that every
-# generated list is empty in it until a client does.
+# Eight combinations, chosen to cover eight DISTINCT overlay sets rather than
+# eight plausible-looking products. The degenerate corners are in on purpose:
+# nobody generates `--model none --admin none` by hand, so nobody finds out that
+# every generated list is empty in it until a client does. The last two are the
+# estimator, fully glued and barely glued: its routes are generated from what
+# else is installed, so they are where an unrelated package breaks it.
 #
 # `both / full / --ai --email` is deliberately NOT here. The `generate` job in
 # ci.yml already builds that maximal combination on every pull request, and a
 # nightly slot spent repeating it buys nothing.
 #
 # NIGHTLY rather than per-PR because each entry is a full `pnpm install` plus
-# `next build` against the private registry, and six of those cost more than
+# `next build` against the private registry, and eight of those cost more than
 # every other job in this repository put together. A regression here is a
 # regression in a combination nobody is generating this afternoon.
 #
@@ -150,6 +152,25 @@ jobs:
           - id: one-time-full-shell
             flags: --model one-time --admin full --ai --no-email --tenant-noun Company
             overlays: admin-minimal, admin-full, stripe, catalog-admin, account, ai, legal
+
+          # Overlays: the estimator with everything it can be glued to — the
+          # founder's field-service project. Photos kept (storage) and read
+          # (ai), leads and quotes emailed (comms + email), an accepted quote
+          # booking the visit (scheduling) and becoming an invoice (invoicing).
+          # The estimator's glue is generated from what else is installed, so a
+          # change to any of those five packages can break it with a green unit
+          # test; only an install + build + route sweep of this shape says so.
+          - id: estimator-field-service
+            flags: --estimator --scheduling --invoicing --comms --email --storage --ai --admin full
+            overlays: admin-minimal, admin-full, ai, comms, comms-admin, email, estimator, estimator-admin, invoicing, invoicing-admin, scheduling, scheduling-admin, storage, storage-admin
+
+          # Overlays: the estimator with the least around it — the minimal
+          # shell, no comms (no emails, no follow-ups), no storage (photos read
+          # nowhere and kept nowhere). Every "undefined" branch of the generated
+          # estimator-services and estimator-notify modules is built here.
+          - id: estimator-minimal
+            flags: --estimator --admin minimal --no-comms --no-storage
+            overlays: admin-minimal, email, estimator, estimator-admin
 
     env:
       # OUTSIDE the workspace, deliberately. pnpm walks up from the directory it

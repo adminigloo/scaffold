@@ -35,45 +35,21 @@ import { createTRPCRouter, publicProcedure, requireStaff } from "../trpc";
  * Totals are the package's — a client never sends a figure it made up — and
  * every call carries the tenant, so an id from another tenant is "not found".
  *
- * ESTIMATE → INVOICE IS YOURS TO WIRE. On the dogfood site an approved estimate
- * becomes an invoice in one call. That coupling is left out here so invoicing
- * stands alone: add `--estimator`, then the procedure below. The package owns
- * the parts the source got wrong — `invoiceInputFromEstimate` refuses anything
- * but an approved estimate, folds labor into the unit price with the quoted
- * line total preserved, carries the tax rate AND the discount, and bills a
- * line-less estimate at its PRE-tax subtotal (never its tax-inclusive total,
- * which the invoice would tax again). A unique index allows one invoice per
- * estimate; a second convert throws InvoiceAlreadyExistsForEstimateError, which
- * `refused` turns into a CONFLICT.
+ * ESTIMATE → INVOICE. With `--estimator` an accepted quote becomes an invoice
+ * from the estimate's own page ("Create invoice"): the generator writes
+ * `convertEstimateToInvoice` into src/server/estimator-services.ts and hands it
+ * to the estimator's staff route. It runs in ONE transaction — the estimate
+ * and its lines, `invoiceInputFromEstimate` (which refuses anything but an
+ * approved estimate, folds labor into the unit price with the quoted line
+ * total preserved, carries the tax rate AND the discount, and bills a
+ * line-less estimate at its PRE-tax subtotal), `createInvoice`, then
+ * `markEstimateConverted` claiming the quote, whose failure rolls the invoice
+ * back. A unique index allows one invoice per estimate. Without the
+ * estimator, invoicing stands alone and nothing here mentions one.
  *
- *   createFromEstimate: requireStaff("staff.dashboard.view")
- *     .meta({ scope: "staff" })
- *     .input(z.object({ estimateId: z.string().min(1) }))
- *     .mutation(async ({ input, ctx }) => {
- *       // getEstimate / markEstimateConverted from __SCOPE__/estimator (both
- *       // tenant-scoped from estimator 0.2.0 — on an older one, getEstimate
- *       // takes (db, id): check detail.estimate.tenantId yourself, since an
- *       // unscoped read is an IDOR). ESTIMATOR_TENANT is in @/server/estimator-seed.
- *       const detail = await getEstimate(db, ESTIMATOR_TENANT, input.estimateId);
- *       if (!detail) throw new TRPCError({ code: "NOT_FOUND", message: "Estimate not found." });
- *       return db
- *         .transaction(async (tx) => {
- *           const invoice = await createInvoice(
- *             tx,
- *             { tenantId: INVOICING_TENANT, ...invoiceInputFromEstimate(detail.estimate, detail.items) },
- *             ctx.principal.userId,
- *           );
- *           // Claim the quote in the same transaction. It claims only an
- *           // APPROVED estimate, so null means it was not approved (or stopped
- *           // being approved since the read) or was already converted; throwing
- *           // rolls the new invoice back.
- *           if (!(await markEstimateConverted(tx, ESTIMATOR_TENANT, detail.estimate.id))) {
- *             throw new TRPCError({ code: "CONFLICT", message: "This estimate is not approved, or was already converted." });
- *           }
- *           return invoice;
- *         })
- *         .catch(refused);
- *     }),
+ * INVOICING_TENANT is the one business, "primary" — the same id as the
+ * estimator's, scheduling's and comms', so an estimate and the invoice it
+ * becomes are found under one tenant.
  */
 const INVOICING_TENANT = "primary";
 const PAGE_SIZE = 50;

@@ -1,250 +1,39 @@
 "use client";
 
-import { useState } from "react";
-import Link from "next/link";
-import { api } from "@/trpc/client";
-import {
-  Badge,
-  Button,
-  Card,
-  CardBody,
-  EmptyState,
-  PageHeader,
-  Table,
-  TBody,
-  TD,
-  TH,
-  THead,
-  TR,
-} from "@/components/ui";
-import type { BadgeTone } from "@/components/ui/Badge";
-
-function usd(cents: number): string {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
-}
-
-const STATUSES = ["draft", "sent", "viewed", "approved", "rejected", "expired", "converted"] as const;
-
-/** The moves staff may pick by hand: never `converted` (only the invoicing claim sets it). */
-function manualMoves(next: readonly string[]): string[] {
-  return next.filter((s) => s !== "converted");
-}
-
-function statusTone(status: string): BadgeTone {
-  if (status === "approved" || status === "converted") return "accent";
-  if (status === "rejected" || status === "expired") return "danger";
-  return "neutral";
-}
+import { EstimatesQueue } from "__SCOPE__/estimator-widget/admin";
+import { PageHeader } from "@/components/ui";
 
 /**
- * The estimates queue — quotes built by the public tool and by staff, from
- * __SCOPE__/estimator. Click one to read its lines and move it along its
- * lifecycle. Read-through the tRPC caller so the staff permission rung is where
- * the scope audit can see it, exactly like the feedback and catalog queues.
+ * Leads and quotes: every estimate a customer saved on /estimate (or through
+ * the embed on another website) and every one staff started, from
+ * __SCOPE__/estimator-widget's <EstimatesQueue>, talking to /api/admin/estimator
+ * (which checks the signed-in person's staff permissions on every call — the
+ * admin layout's gate is a convenience, not the boundary).
+ *
+ *   - Filters by where each one stands — new leads, quotes waiting on the
+ *     customer, accepted, declined, expired, archived — with counts, and a
+ *     search over names, emails, addresses and numbers.
+ *   - Each row says whether a photo came with it and whether the AI read it.
+ *   - Opening one goes to /admin/estimates/[id]: the photo, the AI's reading
+ *     beside what the customer settled on, the priced lines to edit, and
+ *     "Send quote".
+ *
+ * A CLIENT PAGE because the row links are built by a function
+ * (`estimateHref`), and a function can't be handed from the server to the
+ * browser. Quotes past their date are marked expired when this list loads (at
+ * most once a minute), as well as by the daily job.
  */
 export default function EstimatesPage() {
-  const estimates = api.estimator.estimates.useQuery({ limit: 100 });
-  const [openId, setOpenId] = useState<string | null>(null);
-  const detail = api.estimator.estimate.useQuery({ id: openId ?? "" }, { enabled: openId !== null });
-  const setStatus = api.estimator.setEstimateStatus.useMutation();
-  const [statusNote, setStatusNote] = useState<string | null>(null);
-  // Turning an approved estimate into an invoice is a cross-feature action, so
-  // it lives with the project, not this overlay. Generate with `--invoicing`,
-  // add `createFromEstimate` to the invoicing router — read the estimate with
-  // `getEstimate(db, tenantId, id)` and claim it with
-  // `markEstimateConverted(db, tenantId, id)` inside the invoice's transaction
-  // — and call `api.invoicing.createFromEstimate` from a button here. The claim
-  // takes only an APPROVED estimate: null means it is not approved (a draft,
-  // rejected or expired quote the customer never accepted) or was already
-  // invoiced — stop, and bill nothing. It is also the only way an estimate
-  // becomes `converted`; the status picker below never offers it.
-
   return (
     <>
       <PageHeader
         title="Estimates"
-        description="Quotes from the public instant-estimate tool and from staff. The customer, the measurements, and the priced lines all arrive here."
-        actions={
-          <Link href="/estimate" target="_blank" className="text-sm text-accent underline underline-offset-2">
-            Open the public tool ↗
-          </Link>
-        }
+        description="New leads from your website and the quotes you've sent. Open one to see the customer's photo, edit the lines and send the quote."
       />
-
-      {estimates.isLoading ? (
-        <EmptyState title="Loading estimates…">Reading the queue.</EmptyState>
-      ) : (estimates.data ?? []).length === 0 ? (
-        <EmptyState title="No estimates yet">
-          They appear the moment someone saves one from the{" "}
-          <Link href="/estimate" className="text-accent underline underline-offset-2">
-            instant-estimate tool
-          </Link>
-          .
-        </EmptyState>
-      ) : (
-        <div className="flex flex-col gap-4">
-          <Card>
-            <Table>
-              <THead>
-                <TR>
-                  <TH className="w-28">Number</TH>
-                  <TH className="w-36">When</TH>
-                  <TH>Customer</TH>
-                  <TH className="w-24">Source</TH>
-                  <TH className="w-24">Total</TH>
-                  <TH className="w-24">Status</TH>
-                </TR>
-              </THead>
-              <TBody>
-                {(estimates.data ?? []).map((e) => (
-                  <TR key={e.id}>
-                    <TD className="align-top">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setOpenId(openId === e.id ? null : e.id);
-                          setStatusNote(null);
-                        }}
-                        className="font-mono text-xs text-accent underline underline-offset-2"
-                      >
-                        {e.estimateNumber}
-                      </button>
-                    </TD>
-                    <TD className="whitespace-nowrap align-top font-mono text-xs text-ink-muted">
-                      {new Date(e.createdAt).toISOString().replace("T", " ").slice(0, 16)}
-                    </TD>
-                    <TD className="align-top text-sm">
-                      <span className="text-ink">{e.customerName ?? "—"}</span>
-                      <span className="mt-0.5 block text-xs text-ink-muted">
-                        {e.customerEmail ?? e.customerPhone ?? e.jobAddress ?? ""}
-                      </span>
-                    </TD>
-                    <TD className="align-top text-xs text-ink-muted">{e.source}</TD>
-                    <TD className="align-top font-mono text-sm tabular-nums">{usd(e.total)}</TD>
-                    <TD className="align-top">
-                      <Badge tone={statusTone(e.status)}>{e.status}</Badge>
-                    </TD>
-                  </TR>
-                ))}
-              </TBody>
-            </Table>
-          </Card>
-
-          {openId && detail.data ? (
-            <Card>
-              <CardBody className="flex flex-col gap-4">
-                <div className="flex flex-wrap items-center gap-3">
-                  <span className="font-mono text-sm text-ink">{detail.data.estimate.estimateNumber}</span>
-                  <Badge tone={statusTone(detail.data.estimate.status)}>{detail.data.estimate.status}</Badge>
-                  {/* Only the lifecycle's next moves are offered (the package
-                      enforces them too): converted is terminal, so an invoiced
-                      estimate cannot be walked back and invoiced again. Nor is
-                      converted a manual move — picked by hand it marked an
-                      approved estimate invoiced with no invoice, and invoicing
-                      refuses a converted estimate, so it could never be billed.
-                      The router leaves it out; this filter keeps it out even
-                      against an older router. */}
-                  <label className="ml-auto flex items-center gap-2 text-xs text-ink-muted">
-                    Status
-                    <select
-                      value={detail.data.estimate.status}
-                      disabled={manualMoves(detail.data.nextStatuses).length === 0 || setStatus.isPending}
-                      onChange={(event) =>
-                        void setStatus
-                          .mutateAsync({ id: detail.data!.estimate.id, status: event.target.value as (typeof STATUSES)[number] })
-                          .then((result) => {
-                            setStatusNote(
-                              result.ok ? null : "That status change isn't allowed from here — the estimate may have moved on. Refreshed.",
-                            );
-                            void estimates.refetch();
-                            void detail.refetch();
-                          })
-                      }
-                      className="rounded-control border border-line-strong bg-surface px-2 py-1.5 text-sm text-ink"
-                    >
-                      {[detail.data.estimate.status, ...manualMoves(detail.data.nextStatuses)].map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-                {statusNote ? <p className="text-xs text-danger">{statusNote}</p> : null}
-
-                <div className="grid grid-cols-1 gap-1 text-sm sm:grid-cols-2">
-                  <p><span className="text-ink-faint">Customer:</span> {detail.data.estimate.customerName ?? "—"}</p>
-                  <p><span className="text-ink-faint">Email:</span> {detail.data.estimate.customerEmail ?? "—"}</p>
-                  <p><span className="text-ink-faint">Phone:</span> {detail.data.estimate.customerPhone ?? "—"}</p>
-                  <p><span className="text-ink-faint">Address:</span> {detail.data.estimate.jobAddress ?? "—"}</p>
-                </div>
-
-                {detail.data.estimate.photoUrl ? (
-                  <a href={detail.data.estimate.photoUrl} target="_blank" rel="noreferrer" className="block w-fit">
-                    {/* eslint-disable-next-line @next/next/no-img-element -- blob URL, no loader */}
-                    <img
-                      src={detail.data.estimate.photoUrl}
-                      alt="Job photo"
-                      loading="lazy"
-                      className="max-h-64 rounded-[--radius-card] border border-line"
-                    />
-                  </a>
-                ) : null}
-
-                <div className="overflow-x-auto">
-                  <Table>
-                    <THead>
-                      <TR>
-                        <TH>Line</TH>
-                        <TH className="w-24">Measure</TH>
-                        <TH className="w-16">Qty</TH>
-                        <TH className="w-24">Unit</TH>
-                        <TH className="w-24">Total</TH>
-                      </TR>
-                    </THead>
-                    <TBody>
-                      {detail.data.items.map((item) => (
-                        <TR key={item.id}>
-                          <TD className="align-top text-sm text-ink">
-                            {item.description}
-                            {item.optionSnapshot && item.optionSnapshot.length > 0 ? (
-                              <span className="mt-0.5 block text-xs text-ink-muted">
-                                {item.optionSnapshot
-                                  .map((o) => `${o.optionName}: ${o.valueLabel}${o.priceModifier > 0 ? ` (+${usd(o.priceModifier)})` : ""}`)
-                                  .join(" · ")}
-                              </span>
-                            ) : null}
-                            {item.notes ? <span className="mt-0.5 block text-xs text-ink-faint">{item.notes}</span> : null}
-                          </TD>
-                          <TD className="align-top text-xs text-ink-muted">{formatMeasure(item.measurement)}</TD>
-                          <TD className="align-top text-sm tabular-nums">{item.quantity}</TD>
-                          <TD className="align-top font-mono text-sm tabular-nums">{usd(item.unitPrice)}</TD>
-                          <TD className="align-top font-mono text-sm tabular-nums">{usd(item.total)}</TD>
-                        </TR>
-                      ))}
-                    </TBody>
-                  </Table>
-                </div>
-
-                <div className="ml-auto text-right text-sm">
-                  <p><span className="text-ink-faint">Subtotal:</span> <span className="font-mono tabular-nums">{usd(detail.data.estimate.subtotal)}</span></p>
-                  <p><span className="text-ink-faint">Tax:</span> <span className="font-mono tabular-nums">{usd(detail.data.estimate.taxAmount)}</span></p>
-                  <p className="text-base font-semibold"><span className="text-ink-faint">Total:</span> <span className="font-mono tabular-nums">{usd(detail.data.estimate.total)}</span></p>
-                </div>
-              </CardBody>
-            </Card>
-          ) : null}
-        </div>
-      )}
+      <EstimatesQueue
+        baseUrl="/api/admin/estimator"
+        estimateHref={(id) => `/admin/estimates/${encodeURIComponent(id)}`}
+      />
     </>
   );
-}
-
-function formatMeasure(m: unknown): string {
-  if (!m || typeof m !== "object") return "—";
-  const v = m as { widthIn?: number; heightIn?: number; linearFt?: number; units?: number };
-  if (v.linearFt) return `${v.linearFt} ft`;
-  if (v.widthIn && v.heightIn) return `${v.widthIn}×${v.heightIn} in`;
-  if (v.units) return `${v.units} unit${v.units === 1 ? "" : "s"}`;
-  return "—";
 }

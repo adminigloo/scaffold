@@ -10,7 +10,7 @@ import {
   timestamp,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
-import { createdAt, idColumn, updatedAt } from "@adminigloo/db";
+import { createdAt, idColumn, updatedAt } from "./columns.js";
 import type { TemplateVars } from "./render.js";
 
 /**

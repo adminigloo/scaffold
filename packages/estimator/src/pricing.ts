@@ -43,7 +43,7 @@ export const DEFAULT_TAX_RATE_BP = 825;
  * many" is `quantity`, and sending the same count as `units` too would bill a
  * per-unit material quantity² times. It is staff-only: the package's input
  * schemas take a whole number ≥ 1, and a public line is priced with 1 whatever
- * the caller sent (see `publicMeasurement` in index.ts).
+ * the caller sent (see `legacyInputs` in recipes.ts).
  */
 export interface Measurement {
   widthIn?: number | null;
@@ -166,6 +166,11 @@ function cents(value: number): number {
 }
 
 /**
+ * @deprecated — use `buildPrice` (build.ts), which prices a product from the
+ * owner's supplies, labor hours and markup or margin, and takes its range from
+ * the measurement's own low and high. Kept, unchanged except ES-18 (the low end
+ * is floored at the minimum), for 0.2 callers.
+ *
  * The full estimate calculation, from catalog inputs to a low–high range.
  *
  * Material subtotal = base + per-sqft·area + per-linear-ft·perimeter + Σ
@@ -234,13 +239,19 @@ export function calculateEstimatePrice(input: EstimatePriceInput): EstimatePrice
   const lowBp = input.estimateLowBp ?? 9000;
   const highBp = input.estimateHighBp ?? 11500;
 
+  // ES-18 (0.3): the LOW end never goes below the minimum either. A $200
+  // minimum used to show "$180 – $230": a price the business never charges,
+  // in the very number the customer anchors on.
+  const estimateLow = Math.max(cents(minimum), cents(lineSubtotal * (lowBp / BP)));
+  const estimateHigh = Math.max(estimateLow, cents(lineSubtotal * (highBp / BP)));
+
   return {
     sqFt: Math.round(dims.sqFt * 100) / 100,
     linearFt: Math.round(dims.linearFt * 100) / 100,
     units: dims.units,
     subtotal: cents(lineSubtotal),
-    estimateLow: cents(lineSubtotal * (lowBp / BP)),
-    estimateHigh: cents(lineSubtotal * (highBp / BP)),
+    estimateLow,
+    estimateHigh,
   };
 }
 

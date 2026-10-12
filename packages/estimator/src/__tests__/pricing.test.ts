@@ -127,7 +127,10 @@ describe("calculateEstimatePrice — the knobs the original never applied", () =
       minimumCharge: 20_000,
     });
     expect(result.subtotal).toBe(20_000);
-    expect(result.estimateLow).toBe(18_000);
+    // 0.3 (ES-18): the LOW end is floored at the minimum too. It used to show
+    // $180 — a price the business never charges — while this test's title
+    // promised it never quotes below the minimum.
+    expect(result.estimateLow).toBe(20_000);
     expect(result.estimateHigh).toBe(23_000);
   });
 

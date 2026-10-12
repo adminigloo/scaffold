@@ -40,10 +40,11 @@ const EVERY_CONFIGURATION = ["none", "one-time", "subscription", "both"].flatMap
                       `--model ${businessModel} --admin ${adminShell}` +
                         `${includeAi ? " --ai" : ""}${includeEmail ? " --email" : ""}` +
                         `${includeFeedback ? " --feedback" : ""}` +
-                        `${includeSuite ? " --seo-reports --notifications --storage --assistant --estimator --invoicing --comms --aeo" : ""}` +
-                        // Scheduling needs an admin panel (`--scheduling --admin
-                        // none` is refused), so the suite drops it there.
-                        `${includeSuite && adminShell !== "none" ? " --scheduling" : ""}` +
+                        `${includeSuite ? " --seo-reports --notifications --storage --assistant --invoicing --comms --aeo" : ""}` +
+                        // The estimator and scheduling need an admin panel
+                        // (`--admin none` with either is refused), so the
+                        // suite drops them there.
+                        `${includeSuite && adminShell !== "none" ? " --estimator --scheduling" : ""}` +
                         `${includeMarketing ? " --marketing" : ""}` +
                         ` --tenant ${tenantNoun}`,
                       {
@@ -56,7 +57,7 @@ const EVERY_CONFIGURATION = ["none", "one-time", "subscription", "both"].flatMap
                         includeNotifications: includeSuite,
                         includeStorage: includeSuite,
                         includeAssistant: includeSuite,
-                        includeEstimator: includeSuite,
+                        includeEstimator: includeSuite && adminShell !== "none",
                         includeScheduling: includeSuite && adminShell !== "none",
                         includeInvoicing: includeSuite,
                         includeComms: includeSuite,

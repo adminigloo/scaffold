@@ -201,7 +201,42 @@ reminders go out at the lead time exactly. The staff calendar shows a banner
 when reminders are waiting past their time (the cron isn't running) or the
 secret isn't set.
 
-The same `CRON_SECRET` covers both routes.
+With the estimator it also holds `/api/cron/estimator`, once a day: quotes
+past their date are marked expired (with comms, the customer and the office
+are told), and photos a customer uploaded but never sent are deleted after two
+days. The follow-up on an unanswered quote is a comms message, sent by
+`/api/cron/comms`; `src/server/estimator-notify.ts` queues it for that cron's
+daily run (`FOLLOW_UP_RUNS`) — change it to `{ everyMinutes: 15 }` when you
+tighten the comms cron, as with reminders.
+
+The same `CRON_SECRET` covers every route.
+
+### Estimator: photos and photo reading
+
+A customer's photo is kept with their estimate in the project's file storage
+(`BLOB_READ_WRITE_TOKEN`, Vercel → Storage → Blob). Without it photos are not
+kept, and the staff screens say so.
+
+With `--ai`, the photo is read by Claude Haiku 4.5 (`ESTIMATOR_TAKEOFF_MODEL`
+to change it; the model needs its price in `MODEL_RATES`, `src/server/ai.ts`).
+The model only reports what it sees — how many steps, how tall they look —
+and every price is worked out by the estimator's code. One small call per
+photo, never two for the same photo, none when the customer has typed the
+measurement; each call's tokens and cost are written to `ai_usage`. The owner
+sets the daily budget and the readings per visitor in Estimate settings; past
+either, customers are asked to count the steps themselves. `ANTHROPIC_API_KEY`
+switches it on.
+
+The business's name, tax rate, quote rules and who hears about new leads are
+set by the owner in `/admin/estimator/settings`. Until the owner has saved the
+name and tax rate there, `/estimate` says instant estimates aren't available
+and no quote can be sent: a customer never gets an email from a business with
+no name, at a tax rate nobody chose. `ESTIMATOR_TIME_ZONE` only
+chooses the zone quotes are dated in the first time the estimator runs
+(SCHEDULING_TIME_ZONE, then America/Denver, when unset). The price book starts
+empty: the owner builds it, or loads the sample catalog, at
+`/admin/estimator`. A new product, and every sample product, stays off
+`/estimate` until the owner turns it on.
 
 ### Scheduling: Google Maps
 

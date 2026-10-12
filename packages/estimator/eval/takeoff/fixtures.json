@@ -1,0 +1,72 @@
+[
+  {
+    "file": "photos/porch-2-steps-plus-deck.jpg",
+    "recipe": "ramp_over_steps",
+    "subject": "the steps up to the door",
+    "expect": { "risers": 3, "riserHeightIn": [6.5, 8] },
+    "note": "2 steps and a deck: 3 risers (the founder's test house)"
+  },
+  {
+    "file": "photos/three-steps-side-view.jpg",
+    "recipe": "ramp_over_steps",
+    "subject": "the steps up to the door",
+    "expect": { "risers": 3, "riserHeightIn": [6.5, 8] },
+    "note": "three concrete steps, photographed from the side"
+  },
+  {
+    "file": "photos/two-steps-front.jpg",
+    "recipe": "ramp_over_steps",
+    "subject": "the steps up to the door",
+    "expect": { "risers": 2, "riserHeightIn": [6, 8] },
+    "note": "two steps, photographed straight on (harder to judge height)"
+  },
+  {
+    "file": "photos/five-steps.jpg",
+    "recipe": "ramp_over_steps",
+    "subject": "the steps up to the door",
+    "expect": { "risers": 5, "riserHeightIn": [6.5, 8] },
+    "note": "five steps up to a raised entry"
+  },
+  {
+    "file": "photos/single-step-threshold.jpg",
+    "recipe": "ramp_over_steps",
+    "subject": "the steps up to the door",
+    "expect": { "risers": 1, "riserHeightIn": [4, 8] },
+    "note": "one low step at a threshold"
+  },
+  {
+    "file": "photos/no-steps-flat-entry.jpg",
+    "recipe": "ramp_over_steps",
+    "subject": "the steps up to the door",
+    "expect": { "seen": false },
+    "note": "a level entry: the model should say it sees no steps"
+  },
+  {
+    "file": "photos/synthetic-2-risers.png",
+    "recipe": "ramp_over_steps",
+    "subject": "the steps up to the door",
+    "expect": { "risers": 2, "riserHeightIn": null },
+    "note": "synthetic diagram (no scale: the height isn't scored)"
+  },
+  {
+    "file": "photos/synthetic-3-risers-deck.png",
+    "recipe": "ramp_over_steps",
+    "subject": "the steps up to the door",
+    "expect": { "risers": 3, "riserHeightIn": null },
+    "note": "synthetic diagram: 2 steps and a deck"
+  },
+  {
+    "file": "photos/synthetic-4-risers.png",
+    "recipe": "ramp_over_steps",
+    "subject": "the steps up to the door",
+    "expect": { "risers": 4, "riserHeightIn": null },
+    "note": "synthetic diagram"
+  },
+  {
+    "file": "photos/synthetic-5-risers.png",
+    "recipe": "ramp_over_steps",
+    "subject": "the steps up to the door",
+    "expect": { "risers": 5, "riserHeightIn": null },
+    "note": "synthetic diagram"
+  }
+]

@@ -391,29 +391,100 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
   {
     capability: "estimator.pricing",
     why:
-      "The estimator router that prices an estimate from the catalog, over " +
-      "tRPC whether or not a shell renders a builder. The embed handler and the " +
-      "builder page are the other two keys.",
+      "The instant estimate: the PUBLIC route mounting the package's handler " +
+      "(createEstimatorHandlers — prices from the business's price book, the " +
+      "questions each product asks, never a cost) and /estimate rendering " +
+      "<EstimateTool> against it. Proven by the handler factory being called " +
+      "there and the staff factory being called nowhere in that file: a " +
+      "public route mounting the staff handler would put the price book's " +
+      "costs on the open internet.",
     provenBy: (plan) =>
-      mentions(plan, ["src", "server", "routers", "estimator.ts"], "calculate"),
+      mentions(plan, ["app", "api", "estimator", "[...path]", "route.ts"], "createEstimatorHandlers(") &&
+      !mentions(plan, ["app", "api", "estimator", "[...path]", "route.ts"], "createEstimatorAdminHandlers(") &&
+      mentions(plan, ["app", "(site)", "estimate", "page.tsx"], "<EstimateTool"),
   },
   {
     capability: "estimator.embed",
     why:
-      "The cross-origin embed handler — a client-key-authenticated route a " +
-      "quote widget on another site posts to. The intake half, mounted on the " +
-      "answer alone the way feedback's is.",
+      "The estimate on the business's OTHER website: the same public handler " +
+      "answers a request carrying an embed key (checked against the key's " +
+      "allowed websites, with CORS for that page), and the 0.2 embed address " +
+      "/api/estimator/embed re-exports it so a widget already pasted keeps " +
+      "working.",
     provenBy: (plan) =>
-      mentions(
-        plan,
-        ["app", "api", "estimator", "embed", "[...path]", "route.ts"],
-        "createEstimatorHandlers(",
-      ),
+      mentions(plan, ["app", "api", "estimator", "[...path]", "route.ts"], "createEstimatorHandlers(") &&
+      mentions(plan, ["app", "api", "estimator", "embed", "[...path]", "route.ts"], 'from "../../[...path]/route"'),
+  },
+  {
+    capability: "estimator.quotes",
+    why:
+      "A quote the customer accepts or declines online: the staff route " +
+      "mounting createEstimatorAdminHandlers (where staff edit the estimate " +
+      "and send the quote) with the quote link it emails, and /quote/[token] " +
+      "rendering <QuoteView>.",
+    provenBy: (plan) =>
+      mentions(plan, ["app", "api", "admin", "estimator", "[...path]", "route.ts"], "createEstimatorAdminHandlers(", "quoteUrl:") &&
+      mentions(plan, ["app", "(site)", "quote", "[token]", "page.tsx"], "<QuoteView"),
   },
   {
     capability: "estimator.builder",
-    why: "The staff product/estimate builder under the shell, from estimator-admin.",
-    provenBy: (plan) => exists(plan, "app", "admin", "estimator", "page.tsx"),
+    why:
+      "The staff screens under the shell, from estimator-admin: the price book " +
+      "(<PriceBook>), the leads and quotes queue (<EstimatesQueue>) and one " +
+      "estimate's editor (<EstimateEditor>).",
+    provenBy: (plan) =>
+      mentions(plan, ["app", "admin", "estimator", "page.tsx"], "<PriceBook") &&
+      mentions(plan, ["app", "admin", "estimates", "page.tsx"], "<EstimatesQueue") &&
+      mentions(plan, ["app", "admin", "estimates", "[id]", "page.tsx"], "<EstimateEditor"),
+  },
+  {
+    capability: "estimator.photos",
+    why:
+      "A customer's photo kept with their estimate: the generated services " +
+      "module building the photo store over the storage package's storeFile, " +
+      "handed to both estimator routes.",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "server", "estimator-services.ts"], "storeFile(db, blobStore") &&
+      mentions(plan, ["app", "api", "estimator", "[...path]", "route.ts"], "photoStore: estimatorPhotoStore"),
+  },
+  {
+    capability: "estimator.photo-reading",
+    why:
+      "A photo read by a model — observations only, metered: the generated " +
+      "services module building createAnthropicTakeoffRunner and recording " +
+      "every call's spend through the app's ai_usage writer.",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "server", "estimator-services.ts"], "createAnthropicTakeoffRunner(", "recordAiUsage("),
+  },
+  {
+    capability: "estimator.followups",
+    why:
+      "The estimate emails and the follow-up on an unanswered quote: the " +
+      "estimator comms listener wired as the routes' onEvent, and the comms " +
+      "cron consulting it at send time (the hook that drops a follow-up whose " +
+      "quote was answered and puts a fresh link in the one it sends).",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "server", "estimator-notify.ts"], "createEstimatorCommsListener(") &&
+      mentions(plan, ["src", "server", "comms-hooks.ts"], "estimatorComms") &&
+      mentions(plan, ["app", "api", "cron", "comms", "route.ts"], "beforeSend: commsBeforeSend"),
+  },
+  {
+    capability: "estimator.book-visit",
+    why:
+      "An accepted quote one click from booking the visit: the generated " +
+      "services module's bookVisitUrl into scheduling's booking page with the " +
+      "estimate, and the visits booked from it read back for the estimate's page.",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "server", "estimator-services.ts"], "bookVisitUrl:", "schedulingBookings.estimateId"),
+  },
+  {
+    capability: "estimator.invoicing",
+    why:
+      "An accepted quote one click from an invoice: the generated services " +
+      "module's convertToInvoice — invoicing's own bridge, createInvoice and " +
+      "the estimate claimed as converted in one transaction.",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "server", "estimator-services.ts"], "invoiceInputFromEstimate(", "markEstimateConverted(tx"),
   },
   {
     capability: "scheduling.booking",

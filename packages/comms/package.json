@@ -32,11 +32,11 @@
     "access": "public"
   },
   "dependencies": {
-    "@adminigloo/db": "workspace:^"
+    "uuidv7": "^1.2.1"
   },
   "peerDependencies": {
     "drizzle-orm": "catalog:peers",
-    "zod": "catalog:peers"
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "drizzle-orm": "catalog:",
