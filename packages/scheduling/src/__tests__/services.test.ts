@@ -118,7 +118,7 @@ describe("tenant isolation: every by-id function", () => {
         startTime: "13:00",
         endTime: "14:00",
       }),
-    ).toMatchObject({ valid: false, reason: "Resource not found" });
+    ).toMatchObject({ valid: false, reason: "That crew isn't on the schedule any more" });
     await expect(
       createBooking(t.db, {
         tenantId: b,
@@ -165,7 +165,9 @@ describe("tenant isolation: every by-id function", () => {
 });
 
 describe("the public projection", () => {
-  it("carries four fields and nothing about the crew or any other customer", async () => {
+  // 0.4: the slot also carries its start and end as instants (startsAt,
+  // endsAt) in the business's zone — still nothing about anybody else.
+  it("carries the slot's own fields and nothing about the crew or any other customer", async () => {
     const tenantId = tenant();
     const resource = await crew(tenantId, { name: "Crew Bravo", homeBaseLat: 40.76, homeBaseLng: -111.89 });
     await createBooking(t.db, {
@@ -193,7 +195,7 @@ describe("the public projection", () => {
     const slots = await publicSlotsOn(tenantId, WED);
     expect(slots.length).toBeGreaterThan(0);
     for (const slot of slots) {
-      expect(Object.keys(slot).sort()).toEqual(["date", "endTime", "slotId", "startTime"]);
+      expect(Object.keys(slot).sort()).toEqual(["date", "endTime", "endsAt", "slotId", "startTime", "startsAt"]);
     }
     const wire = JSON.stringify(slots);
     for (const secret of [
@@ -331,7 +333,8 @@ describe("the slot grid", () => {
     t.queries.length = 0;
     const slots = await findPublicSlots(t.db, { tenantId, durationMinutes: 60 }, { now: NOW });
     expect(slots.length).toBeGreaterThan(100);
-    expect(t.queries.length).toBeLessThanOrEqual(3); // crews, their hours, the range's visits
+    // 0.4: the tenant's settings (zone, policy), crews, their hours, the range's visits.
+    expect(t.queries.length).toBeLessThanOrEqual(4);
   });
 });
 
@@ -440,12 +443,19 @@ describe("requestPublicBooking", () => {
       },
       { now: NOW },
     );
+    // 0.4: the receipt also carries the instants, the zone (UTC for a tenant
+    // that never saved settings), the customer's manage token, and `repeated`.
     expect(receipt).toEqual({
       id: expect.any(String),
       date: WED,
       startTime: "10:00",
       endTime: "11:00",
       status: "pending",
+      startsAt: new Date(`${WED}T10:00:00.000Z`),
+      endsAt: new Date(`${WED}T11:00:00.000Z`),
+      timeZone: "UTC",
+      manageToken: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+      repeated: false,
     });
     const row = await getBooking(t.db, tenantId, receipt.id);
     expect(row).toMatchObject({
@@ -682,7 +692,11 @@ describe("requestPublicBooking", () => {
           { now: NOW, requesterKey: "ip:203.0.113.7" },
         );
       const first = await ask("pat@example.com");
-      expect(await ask("PAT@example.com")).toEqual(first);
+      // 0.4: the same visit, flagged as a repeat — and NO manage token (F4): a
+      // repeat proves only that somebody typed this email for this time; the
+      // first request's email carries the link.
+      const again = await ask("PAT@example.com");
+      expect(again).toEqual({ ...first, manageToken: null, repeated: true });
       // Somebody else asking for that time is still refused.
       await expect(ask("other@example.com")).rejects.toMatchObject({ code: "slot_unavailable" });
       expect(await listBookings(t.db, tenantId, { from: day(WED), to: day(WED) })).toHaveLength(1);
@@ -692,8 +706,9 @@ describe("requestPublicBooking", () => {
       const tenantId = tenant();
       await crew(tenantId);
       const slot = (await publicSlotsOn(tenantId, WED)).find((s) => s.startTime === "15:00")!;
+      // A repeat is recognised only for the same requester (F4).
       const ask = () =>
-        requestPublicBooking(t.db, { tenantId, slotId: slot.slotId, durationMinutes: 60, ...visitor }, { now: NOW });
+        requestPublicBooking(t.db, { tenantId, slotId: slot.slotId, durationMinutes: 60, ...visitor }, { now: NOW, requesterKey: "ip:198.51.100.4" });
       const [a, b] = await Promise.all([ask(), ask()]);
       expect(a.id).toBe(b.id);
       expect(await listBookings(t.db, tenantId, { from: day(WED), to: day(WED) })).toHaveLength(1);

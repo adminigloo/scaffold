@@ -2,6 +2,7 @@ import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import {
+  assertAnswersCompatible,
   isPersonalWorkspaceOnly,
   optionalEnvFor,
   overlayNamesFor,
@@ -185,6 +186,9 @@ export async function planEmit(
   targetDir: string,
   answers: Answers,
 ): Promise<EmitPlan> {
+  // A combination that would ship a broken business is refused before
+  // anything is planned (see `assertAnswersCompatible`).
+  assertAnswersCompatible(answers);
   const files = new Map<string, string>();
 
   // Base first, then overlays. An overlay ADDS files; it never rewrites one the
@@ -230,6 +234,23 @@ export async function planEmit(
     join("src", "server", "invitation-mail.ts"),
     renderInvitationMail(answers),
   );
+  // THE COMMS SENDERS AND THE COMMS CRON'S HOOKS. Generated, not copied, for
+  // the invitation mailer's reason: whether a sender exists depends on
+  // `--email`, and what the queue drain has to consult at send time depends
+  // on which features queue messages. The senders used to be a static overlay
+  // file shipping `commsSenders = {}` with the wiring in a comment — so a
+  // project generated with --comms --email logged every message "skipped"
+  // until a developer read a comment and typed it in (MN-04).
+  if (answers.includeComms) {
+    files.set(join("src", "server", "comms-senders.ts"), renderCommsSenders(answers));
+    files.set(join("src", "server", "comms-hooks.ts"), renderCommsHooks(answers));
+  }
+  // Who hears about each visit. Generated because the answer is "the comms
+  // listener" with --comms and "nobody" without it, and the routes that call
+  // it must not carry an `if` about which.
+  if (answers.includeScheduling) {
+    files.set(join("src", "server", "scheduling-notify.ts"), renderSchedulingNotify(answers));
+  }
   // The nav and the landing page that reads it. Generated together and for the
   // same reason: /products exists only in a project that sells something and
   // /admin only in one with an admin shell, so neither the lists nor the page
@@ -610,10 +631,31 @@ export function renderPackageJson(answers: Answers): string {
  * that is the one schedule Vercel's Hobby plan accepts — DEPLOYMENT.md says how
  * to tighten it on Pro. Byte-identical to the old template file when there is
  * nothing to schedule.
+ *
+ * Scheduling adds its own: the sweep that releases booking requests nobody
+ * answered in time and tells the customer. It runs without comms too — an
+ * expired request must stop showing as waiting whether or not anybody is
+ * emailed about it.
  */
+/**
+ * When the comms cron runs on Vercel Hobby (once a day, in UTC): 14:00 UTC is
+ * 7 AM Mountain Standard Time, early in a field-service business's day. It is
+ * written into vercel.json AND into the scheduling listener's `reminderRuns`
+ * (src/server/scheduling-notify.ts) from this one value, because the listener
+ * queues each reminder for the last run at or before its time: a reminder
+ * queued for 9 AM on a cron that runs at 7 AM used to go out the NEXT day — the
+ * morning of the visit, past the change cutoff.
+ */
+export const COMMS_CRON_DAILY_AT_UTC = { hour: 14, minute: 0 } as const;
+
 export function renderVercelJson(answers: Answers): string {
   const crons: Array<{ path: string; schedule: string }> = [];
-  if (answers.includeComms) crons.push({ path: "/api/cron/comms", schedule: "0 14 * * *" });
+  if (answers.includeComms) {
+    crons.push({ path: "/api/cron/comms", schedule: `${COMMS_CRON_DAILY_AT_UTC.minute} ${COMMS_CRON_DAILY_AT_UTC.hour} * * *` });
+  }
+  if (answers.includeScheduling) {
+    crons.push({ path: "/api/cron/scheduling", schedule: "0 13 * * *" });
+  }
   const config = {
     $schema: "https://openapi.vercel.sh/vercel.json",
     framework: "nextjs",
@@ -917,6 +959,31 @@ export function renderEnvLocal(answers: Answers): string {
     );
   }
 
+  if (answers.includeScheduling) {
+    lines.push(
+      "",
+      "# --- Scheduling ---------------------------------------------------------------",
+      "# Real drive times and address lookup. Without a key, drive times are",
+      "# straight-line estimates (marked as estimates) and addresses are kept as",
+      "# typed. Google Cloud console -> APIs & Services: enable the Geocoding API",
+      "# and the Distance Matrix API, create an API key, and restrict it to those",
+      "# two APIs. It is a SERVER key — it never reaches a browser.",
+      "# GOOGLE_MAPS_API_KEY=",
+      "# The zone the business starts in the first time scheduling runs. After",
+      "# that the owner changes it in /admin/schedule/settings.",
+      "# SCHEDULING_TIME_ZONE=America/Denver",
+    );
+  }
+  if (answers.includeComms || answers.includeScheduling) {
+    lines.push(
+      "",
+      "# --- Cron -------------------------------------------------------------------",
+      "# Not needed locally. On a deployment, the /api/cron/* routes refuse every",
+      "# call until this is set (Vercel Cron sends it as a Bearer token).",
+      "# CRON_SECRET=",
+    );
+  }
+
   if (answers.includeStorage && !answers.includeFeedback) {
     // When feedback is also on, its block above already introduces the same
     // variable; a second copy would be the duplicate the reader trips on.
@@ -1217,17 +1284,52 @@ export function renderEnvModule(answers: Answers): string {
     );
   }
 
-  if (answers.includeComms) {
-    // The shared secret the comms cron route checks. Declared here rather than
-    // in an env fragment of @__SCOPE_NAME__/comms because it is not a credential
-    // the package consumes — it is a statement about THIS deployment, and the
-    // /api/cron/comms route is the only reader. Optional: unset, the route
-    // refuses every caller (401), so an unconfigured deployment cannot have its
-    // queue drained by a stranger.
+  if (answers.includeComms || answers.includeScheduling) {
+    // The shared secret the cron routes check. Declared here rather than in an
+    // env fragment of @__SCOPE_NAME__/comms or /scheduling because it is not a
+    // credential either package consumes — it is a statement about THIS
+    // deployment, and the /api/cron/* routes are the only readers. ONE secret
+    // for however many cron routes there are, because Vercel Cron sends one.
+    // Optional: unset, every cron route refuses every caller (401), so an
+    // unconfigured deployment cannot be driven by a stranger.
     serverSpreads.push("CRON_SECRET: z.string().min(1).optional()");
     runtime.push("CRON_SECRET: process.env.CRON_SECRET");
+  }
+  if (answers.includeComms) {
     features.push(
       `{ name: "Scheduled messages", vars: ["CRON_SECRET"], disables: "The comms cron: /api/cron/comms answers 401 until the secret is set and the scheduler sends it. Templates and the log are unaffected; nothing drains the queue automatically." }`,
+    );
+  }
+
+  if (answers.includeScheduling) {
+    // Both optional everywhere, and neither is a credential the package reads
+    // for itself: the app hands the key to the maps provider it builds in
+    // src/server/scheduling.ts, and the zone seeds the business's first
+    // settings row once. A zone that is present but not a real one fails at
+    // boot, like any malformed value — not at the first booking, where it
+    // would quietly fall back to Mountain Time.
+    serverSpreads.push(
+      "GOOGLE_MAPS_API_KEY: z.string().min(1).optional()",
+      `SCHEDULING_TIME_ZONE: z
+    .string()
+    .refine((zone) => {
+      try {
+        new Intl.DateTimeFormat("en-US", { timeZone: zone });
+        return true;
+      } catch {
+        return false;
+      }
+    }, "an IANA time zone, like America/Denver")
+    .optional()`,
+    );
+    runtime.push(
+      "GOOGLE_MAPS_API_KEY: process.env.GOOGLE_MAPS_API_KEY",
+      "SCHEDULING_TIME_ZONE: process.env.SCHEDULING_TIME_ZONE",
+    );
+    features.push(
+      `{ name: "Drive times", vars: ["GOOGLE_MAPS_API_KEY"], disables: "Real drive times and address lookup for scheduling. Without it, drive times between visits are straight-line estimates, marked as estimates on the calendar and the crew's route, and addresses are stored as typed. On the key, enable the Geocoding API and the Distance Matrix API, and restrict it to those two." }`,
+      `{ name: "Scheduling time zone", vars: ["SCHEDULING_TIME_ZONE"], disables: "Nothing. The zone the business starts in the first time scheduling runs (America/Denver when unset). After that the owner changes it in Schedule settings, and every visit keeps its clock time." }`,
+      `{ name: "Expiring requests", vars: ["CRON_SECRET"], disables: "The daily sweep: /api/cron/scheduling answers 401 until the secret is set. An unanswered request still stops holding its time at its deadline, and is released whenever a customer books or staff open the calendar; only the customer's email saying so waits for one of those." }`,
     );
   }
 
@@ -1495,6 +1597,43 @@ export function renderPermissionsCatalog(answers: Answers): string {
 
   const staffFragments = inScope("staff");
   const tenantFragments = inScope("tenant");
+
+  // Scheduling's staff keys, one per job, so a crew member can be given their
+  // route without the office's full power (the crew role holds only
+  // `staff.schedule.route`). src/server/scheduling-config.ts maps the
+  // package's four permissions onto these.
+  const schedulingStaffKeys = answers.includeScheduling
+    ? `
+  "staff.schedule.route": {
+    label: "Work a crew's route",
+    description: "Open their own crew's day on a phone and mark its stops started, done or couldn't-do. Nothing else.",
+    category: "Schedule",
+    // And the crew role, which is not in this list on purpose: it is created
+    // when the owner first picks somebody for a crew (src/server/scheduling.ts
+    // gives it this key and nothing else), not by the staff seed — a
+    // \`defaultFor\` naming a template the seed doesn't write grants nothing.
+    defaultFor: ["admin", "cs_lead", "cs_agent"],
+  },
+  "staff.schedule.view": {
+    label: "See the schedule",
+    description: "The calendar, every crew's day, and the requests waiting for an answer.",
+    category: "Schedule",
+    defaultFor: ["admin", "cs_lead", "cs_agent"],
+  },
+  "staff.schedule.manage": {
+    label: "Book and change visits",
+    description: "Book visits, accept or decline requests, move, reassign and cancel visits. Customers are emailed about each change.",
+    category: "Schedule",
+    defaultFor: ["admin", "cs_lead", "cs_agent"],
+  },
+  "staff.schedule.settings": {
+    label: "Change scheduling settings",
+    description: "The business's time zone, online booking, services, crews, hours and who opens each crew's route.",
+    category: "Schedule",
+    // Not cs_agent: these decide what customers can book at all.
+    defaultFor: ["admin", "cs_lead"],
+  },`
+    : "";
   const staffSpread = [...staffFragments, "appStaffPermissions"];
   const tenantSpread = [...tenantFragments, "appTenantPermissions"];
 
@@ -1582,7 +1721,7 @@ const appStaffPermissions = {
     category: "${plural}",
     // Sealed: an override must not hand this to one person quietly.
     sealed: true,
-  },
+  },${schedulingStaffKeys}
 } as const;
 
 export const staffCatalog = definePermissions(
@@ -1773,6 +1912,465 @@ export async function sendInvitationEmail(
 
 
 /**
+ * `src/server/comms-senders.ts` — how a comms message actually leaves.
+ *
+ * GENERATED, AND THAT IS THE FIX FOR MN-04. This used to be a static file in
+ * the comms overlay holding `commsSenders = {}` and the Resend wiring in a
+ * comment, so a project generated with BOTH --comms and --email — every one
+ * of its parts installed — recorded every message "skipped" until a developer
+ * found the comment and typed it in. A business owner told "it sends
+ * confirmations" would have deployed a booking page whose customers heard
+ * nothing. With --email the sender is wired here; without it there is
+ * nothing to send with, and the file says so instead of pretending.
+ *
+ * `commsEmailConfigured` travels with the senders so a feature that promises
+ * an email (the scheduling widget's "we've emailed you") asks the same object
+ * that does the sending, rather than re-deriving the answer from the key.
+ */
+export function renderCommsSenders(answers: Answers): string {
+  const scope = answers.scope;
+
+  const header = `/**
+ * The app's comms senders, injected into ${scope}/comms. A sender is a function
+ * that actually delivers a message; the package owns the templates, the queue
+ * and the log, and takes the delivery from here so the provider is the app's
+ * choice, not the package's.
+ *
+ * Generated by create-adminigloo-app from the answers this project was
+ * created with. Editing it is fine — it is yours — but \`add email\` will
+ * then write its version beside yours as \`.new\` rather than over it.
+ *
+ * SMS — wire it here when you need it. It REQUIRES \`smsCompliance\` (a type
+ * error without it):
+ *
+ *   import twilio from "twilio";
+ *   const twilioClient = twilio(env.TWILIO_ACCOUNT_SID, env.TWILIO_AUTH_TOKEN);
+ *   sms: (m) =>
+ *     twilioClient.messages.create({
+ *       to: m.to,
+ *       body: m.body,
+ *       messagingServiceSid: env.TWILIO_MESSAGING_SERVICE_SID,
+ *     }),
+ *   smsCompliance: { senderName: "Your Business Name" },
+ *
+ *   Every text is then sent as "Your Business Name: …" with "Reply STOP to opt
+ *   out." (or your \`optOutText\`) appended unless the text already contains
+ *   that exact line. Send through a Twilio MESSAGING SERVICE registered to
+ *   your A2P 10DLC campaign (messagingServiceSid), not a bare \`from\` number:
+ *   unregistered traffic from a US long code is filtered or blocked.
+ *   Recipients arrive already normalised to E.164.
+ *
+ * IMMEDIATE vs LATER. A confirmation goes out in the request that caused it:
+ * \`sendNow(db, { tenantId: COMMS_TENANT, to, templateKey, vars }, commsSenders)\`.
+ * Only future messages (reminders, follow-ups) belong in \`enqueueMessage\` —
+ * give them \`refType\`/\`refId\` so \`cancelScheduled\` can withdraw them when the
+ * thing they are about is cancelled or moved, and a \`dedupeKey\` if the
+ * enqueue can be retried.
+ */`;
+
+  const templates = `
+/**
+ * The tenant every comms row in this project is written for. Single-business,
+ * like the rest of the field-service features — and equal to the scheduling
+ * tenant, so the visit emails are edited in /admin/comms beside the rest.
+ */
+export const COMMS_TENANT = "primary";
+
+let templatesSeeded = false;
+export async function ensureCommsTemplates(db = sharedDb): Promise<void> {
+  if (templatesSeeded) return;
+  await seedDefaultTemplates(db, COMMS_TENANT);
+  templatesSeeded = true;
+}
+`;
+
+  if (!answers.includeEmail) {
+    return `import { seedDefaultTemplates, type CommsSenders } from "${scope}/comms";
+import { db as sharedDb } from "@/db";
+
+${header}
+
+/**
+ * NO EMAIL SENDER: ${answers.projectName} was generated without
+ * ${scope}/email, so there is nothing here to send mail with. comms records
+ * each email as "skipped" — a real outcome in the log, never a fake "sent" —
+ * and nothing throws. \`add email\` (pnpm dlx @adminigloo/create-app add email)
+ * rewrites this file with Resend wired in.
+ */
+export const commsSenders: CommsSenders = {};
+
+/** False: an email "sent" from this project is logged as skipped. Promise none. */
+export const commsEmailConfigured: boolean = false;
+${templates}`;
+  }
+
+  return `import { seedDefaultTemplates, type CommsSenders } from "${scope}/comms";
+import { createEmailSender } from "${scope}/email";
+import { db as sharedDb } from "@/db";
+import { env } from "@/env";
+
+${header}
+
+/**
+ * EMAIL THROUGH ${scope}/email (Resend). With no RESEND_API_KEY the sender
+ * answers "skipped" for every message and comms logs exactly that, so the
+ * whole flow runs on a laptop and the log shows what would have gone out.
+ * Set the key (and EMAIL_FROM, on a domain Resend has verified) and the same
+ * code sends.
+ *
+ * EMAIL_FROM is deferred until deployment, so on a laptop it is undefined —
+ * and \`createEmailSender\` refuses a From it cannot parse at construction,
+ * which at module scope would fail every import of this file. The fallback is
+ * an RFC 2606 reserved domain that can never receive anything, so a key set
+ * without a From fails at the provider naming an obvious placeholder.
+ */
+const mailer = createEmailSender({
+  apiKey: env.RESEND_API_KEY,
+  from: env.EMAIL_FROM ?? "messages@example.invalid",
+  replyTo: env.EMAIL_REPLY_TO,
+});
+
+export const commsSenders: CommsSenders = {
+  // The template is plain text; comms hands over \`html\` already converted
+  // (escaped first, then paragraphs and links), so a customer's name can
+  // never become markup. Never interpolate \`message.body\` into HTML yourself.
+  //
+  // The outcome is returned as it is: comms reads \`{ status: "skipped" }\` as a
+  // skip and an outcome carrying \`error\` as a failure, so the delivery log
+  // stays honest without this function throwing.
+  email: (message) =>
+    mailer.send({
+      to: message.to,
+      subject: message.subject,
+      text: message.body,
+      html: message.html,
+      template: "comms",
+    }),
+};
+
+/**
+ * Whether an email sent now would actually leave: true once RESEND_API_KEY is
+ * set. The scheduling widget reads it (through the handlers' \`emailsEnabled\`)
+ * so it never tells a customer "we've emailed you" from a deployment that
+ * cannot.
+ */
+export const commsEmailConfigured: boolean = mailer.configured;
+${templates}`;
+}
+
+/**
+ * `src/server/comms-hooks.ts` — what the comms queue drain asks at send time.
+ *
+ * GENERATED FROM WHICH FEATURES QUEUE MESSAGES. Scheduling queues reminders,
+ * and a reminder has to be re-checked when it is due (the visit may have moved
+ * or been cancelled since) and given a freshly minted manage link, which is
+ * then scrubbed from the delivery log. The cron route and the console's "send
+ * due now" both call these two functions; which producers they consult is a
+ * generated array — empty without scheduling, never an `if`.
+ */
+export function renderCommsHooks(answers: Answers): string {
+  const scope = answers.scope;
+  const producers = answers.includeScheduling ? ["schedulingComms"] : [];
+  const imports = [
+    `import type { BeforeSendResult, ScheduledRow } from "${scope}/comms";`,
+    `import { log } from "@/server/logger";`,
+    ...(answers.includeScheduling
+      ? [`import { schedulingComms } from "@/server/scheduling-notify";`]
+      : []),
+  ];
+  const why = answers.includeScheduling
+    ? `
+ * Here: scheduling. Its reminders are queued without a link (the row sits in a
+ * table for a day), so at send time it checks the visit is still on, at the
+ * same time, more than 30 minutes away — and mints the customer's manage link
+ * into the one it sends. \`afterCommsRun\` then replaces that link in the
+ * delivery log with ":token", so no key to a customer's visit is kept there.`
+    : `
+ * Nothing in this project queues messages that need a second look, so the
+ * list below is empty and every due row is sent as it is. A feature added
+ * later with \`add\` that does (scheduling's reminders) is listed here.`;
+
+  return `${imports.join("\n")}
+
+/**
+ * The comms queue drain's hooks, from the features that queue messages.
+ *${why}
+ *
+ * Called by /api/cron/comms and by the console's "send due now", so a message
+ * sent either way is handled the same.
+ */
+interface QueueProducer {
+  /** null: not one of this producer's rows — let the next one, or the default, decide. */
+  beforeSend(row: ScheduledRow): Promise<BeforeSendResult | null>;
+  /** After the drain: remove whatever \`beforeSend\` put into the delivery log that must not stay there. */
+  redactSent(): Promise<number>;
+  /** The producer's own email templates, added if absent (never over an owner's edit). */
+  ensureTemplates?(tenantId: string): Promise<number>;
+}
+
+const PRODUCERS: readonly QueueProducer[] = [${producers.join(", ")}];
+
+/** For \`runDueMessages\`' \`beforeSend\`. A row no producer claims is sent as queued. */
+export async function commsBeforeSend(row: ScheduledRow): Promise<BeforeSendResult> {
+  for (const producer of PRODUCERS) {
+    const decision = await producer.beforeSend(row);
+    if (decision !== null) return decision;
+  }
+  return "send";
+}
+
+/**
+ * The features' own templates, for the Messages console: added if absent and
+ * never over an owner's edit, so they can be read and edited before the
+ * first message of their kind is ever sent.
+ */
+export async function ensureProducerTemplates(tenantId: string): Promise<void> {
+  for (const producer of PRODUCERS) {
+    try {
+      await producer.ensureTemplates?.(tenantId);
+    } catch (error) {
+      log.error({ err: error }, "comms: a feature's templates couldn't be added");
+    }
+  }
+}
+
+/**
+ * Right after \`runDueMessages\`, in a \`finally\` in the same invocation. A
+ * failure is logged and left for the next run rather than failing a drain
+ * whose messages have already gone; the scheduling producer also sweeps the
+ * recent log for any link a crashed run left behind, so nothing depends on
+ * this process's memory.
+ */
+export async function afterCommsRun(): Promise<void> {
+  for (const producer of PRODUCERS) {
+    try {
+      await producer.redactSent();
+    } catch (error) {
+      log.error({ err: error }, "comms: cleaning the delivery log after a run failed");
+    }
+  }
+}
+`;
+}
+
+/**
+ * `src/server/scheduling-notify.ts` — who hears about each visit.
+ *
+ * Every scheduling write (a customer's request, staff accepting or moving a
+ * visit, a request lapsing) emits one event after it commits, and the routes
+ * hand each to `onSchedulingEvent`. With --comms that is the scheduling comms
+ * listener: the acknowledgement, the confirmation with a manage link, the
+ * reminder queued a day ahead, the notes when a visit is moved, reassigned,
+ * declined, cancelled or released, and the office's notices. Without --comms
+ * the list is empty and the booking page says it sends no email.
+ */
+export function renderSchedulingNotify(answers: Answers): string {
+  const scope = answers.scope;
+  const header = `/**
+ * Who hears about each visit — the listeners every scheduling event is handed
+ * to, after the write that caused it has committed.
+ *
+ * Generated by create-adminigloo-app from the answers this project was created
+ * with. Add your own listener to LISTENERS (a Slack ping, a webhook, an audit
+ * row); each is awaited in turn, and one that throws is logged without
+ * stopping the others or failing the customer's request — the visit is booked
+ * whether or not the mail server is up.
+ *
+ * An event carries no manage token and no requester key, so it is safe to log
+ * or forward as it is. Whoever needs a manage link mints one
+ * (\`issueManageToken\`), the way the comms listener does.
+ */`;
+
+  const dispatch = `
+/** The \`onEvent\` both scheduling route handlers and the expiry cron are given. Never throws. */
+export async function onSchedulingEvent(event: SchedulingEvent): Promise<void> {
+  for (const listener of LISTENERS) {
+    try {
+      await listener(event);
+    } catch (error) {
+      log.error({ err: error, eventId: event.id, type: event.type }, "a scheduling listener failed");
+    }
+  }
+}
+`;
+
+  if (!answers.includeComms) {
+    return `import type { DeliveryStatus, SchedulingEvent, SchedulingEventListener } from "${scope}/scheduling";
+import { log } from "@/server/logger";
+import { schedulingDeliveryStatus } from "@/server/scheduling-config";
+
+${header}
+
+/**
+ * EMPTY: ${answers.projectName} was generated without ${scope}/comms, so no
+ * email is sent about a visit. Customers keep the manage link the booking
+ * page hands them, and staff see requests in /admin/schedule.
+ * \`add comms\` (and \`add email\`) wires the emails in.
+ */
+const LISTENERS: readonly SchedulingEventListener[] = [];
+
+/** False: the booking page promises no email and shows the manage link to keep instead. */
+export const SCHEDULING_EMAILS_ENABLED: boolean = false;
+
+/** No comms, so no email templates to add. */
+export async function ensureSchedulingEmailTemplates(): Promise<void> {}
+
+/**
+ * What the staff screens are told (their banner, and whether they offer
+ * "Email the customer"): no email leaves this project, so nothing offers one.
+ */
+export async function schedulingDelivery(): Promise<DeliveryStatus> {
+  return schedulingDeliveryStatus({
+    commsInstalled: false,
+    emailConfigured: false,
+    cronSecretSet: false,
+    reminderRuns: { dailyAtUtc: "00:00" },
+    failedLastWeek: 0,
+    overdueReminders: 0,
+    overdueSince: null,
+    timeZone: "UTC",
+  });
+}
+${dispatch}`;
+  }
+
+  // The staff calendar link in the office's notices exists only where there
+  // is a shell to hold the calendar; a link to a 404 in every "new request"
+  // email is worse than none (the template reads "—").
+  const adminUrl =
+    answers.adminShell !== "none" ? "\n  adminUrl: schedulingUrls.admin," : "";
+  const runAt = `${String(COMMS_CRON_DAILY_AT_UTC.hour).padStart(2, "0")}:${String(COMMS_CRON_DAILY_AT_UTC.minute).padStart(2, "0")}`;
+
+  return `import { and, count, eq, gte, like, lt, min } from "drizzle-orm";
+import { commsMessages, commsScheduled } from "${scope}/comms";
+import { getSchedulingSettings, type DeliveryStatus, type SchedulingEvent, type SchedulingEventListener } from "${scope}/scheduling";
+import { SCHEDULING_COMMS_REF_TYPE, createSchedulingCommsListener } from "${scope}/scheduling/comms";
+import { db } from "@/db";
+import { env } from "@/env";
+import { commsEmailConfigured, commsSenders } from "@/server/comms-senders";
+import { log } from "@/server/logger";
+import { SCHEDULING_TENANT, schedulingDeliveryStatus, schedulingLinks } from "@/server/scheduling-config";
+
+${header}
+
+/**
+ * This module's own copy of the links, built from the same config as
+ * src/server/scheduling.ts's — not imported from it, because scheduling.ts
+ * imports THIS module (for the email templates at first boot), and two
+ * modules importing each other leave one half-initialised.
+ */
+const schedulingUrls = schedulingLinks(env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000");
+
+/**
+ * When the comms cron runs: vercel.json's "/api/cron/comms" schedule, once a
+ * day at ${runAt} UTC (Vercel Hobby). The listener queues each reminder for
+ * the last run at or before its time, so it arrives the day before the visit,
+ * a little more than the lead ahead — never the morning of, past the change
+ * cutoff. Tighten the cron (every 15 minutes on Pro, DEPLOYMENT.md) and change
+ * this to \`{ everyMinutes: 15 }\` with it, and reminders go out at the lead.
+ */
+const REMINDER_RUNS = { dailyAtUtc: "${runAt}" } as const;
+
+/**
+ * The visit emails, through ${scope}/comms: templates the owner edits in
+ * /admin/comms (inserted once if absent, never overwritten), sends logged
+ * per message, and the reminder queued for the comms cron. Every customer
+ * email carries a freshly minted link to /visit/[token]; the link is
+ * replaced with ":token" in the delivery log right after it is sent.
+ *
+ * WHO IN THE OFFICE HEARS about new requests and customer changes: the
+ * addresses the owner sets in Schedule settings. Until they set any, the
+ * first administrator (BOOTSTRAP_ADMIN_EMAIL) does, so the first online
+ * request on a new deployment is not discovered a day late by accident.
+ */
+export const schedulingComms = createSchedulingCommsListener({
+  db,
+  senders: commsSenders,
+  manageUrl: (token) => schedulingUrls.manage(token),
+  bookUrl: schedulingUrls.book,${adminUrl}
+  staffEmails: env.BOOTSTRAP_ADMIN_EMAIL ? [env.BOOTSTRAP_ADMIN_EMAIL] : [],
+  reminderRuns: REMINDER_RUNS,
+  onError: (error, context) => log.error({ err: error, ...context }, "scheduling: an email step failed"),
+});
+
+const LISTENERS: readonly SchedulingEventListener[] = [schedulingComms.onEvent];
+
+/**
+ * Told to the booking widget through the public handler's \`emailsEnabled\`:
+ * true only when an email would actually leave (RESEND_API_KEY set), so the
+ * page never says "we've emailed you" from a deployment that cannot.
+ */
+export const SCHEDULING_EMAILS_ENABLED: boolean = commsEmailConfigured;
+
+/**
+ * The nine visit emails, added to Messages at first boot (never over an
+ * owner's edit), so the owner can read and brand them before the first
+ * customer books.
+ */
+export async function ensureSchedulingEmailTemplates(): Promise<void> {
+  await schedulingComms.ensureTemplates(SCHEDULING_TENANT);
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * What the staff screens are told — their banner, and whether they offer
+ * "Email the customer": is the sender configured, is the cron allowed to run,
+ * did visit emails fail this week, and are reminders sitting unsent past their
+ * time (the cron not running). The office reads it in plain words on the
+ * calendar instead of discovering it from a customer.
+ */
+export async function schedulingDelivery(): Promise<DeliveryStatus> {
+  let failedLastWeek = 0;
+  let overdueReminders = 0;
+  let overdueSince: Date | null = null;
+  let timeZone = "UTC";
+  try {
+    timeZone = (await getSchedulingSettings(db, SCHEDULING_TENANT)).timeZone;
+    const [failed] = await db
+      .select({ n: count() })
+      .from(commsMessages)
+      .where(
+        and(
+          eq(commsMessages.tenantId, SCHEDULING_TENANT),
+          eq(commsMessages.status, "failed"),
+          like(commsMessages.templateKey, "visit_%"),
+          gte(commsMessages.createdAt, new Date(Date.now() - 7 * DAY_MS)),
+        ),
+      );
+    failedLastWeek = Number(failed?.n ?? 0);
+    // A reminder more than a day past its time is a cron that isn't running.
+    const [late] = await db
+      .select({ n: count(), oldest: min(commsScheduled.sendAt) })
+      .from(commsScheduled)
+      .where(
+        and(
+          eq(commsScheduled.tenantId, SCHEDULING_TENANT),
+          eq(commsScheduled.status, "pending"),
+          eq(commsScheduled.refType, SCHEDULING_COMMS_REF_TYPE),
+          lt(commsScheduled.sendAt, new Date(Date.now() - 26 * 60 * 60 * 1000)),
+        ),
+      );
+    overdueReminders = Number(late?.n ?? 0);
+    overdueSince = late?.oldest ? new Date(late.oldest) : null;
+  } catch (error) {
+    log.warn({ err: error }, "scheduling: couldn't read the delivery log for the staff banner");
+  }
+  return schedulingDeliveryStatus({
+    commsInstalled: true,
+    emailConfigured: commsEmailConfigured,
+    cronSecretSet: Boolean(env.CRON_SECRET),
+    reminderRuns: REMINDER_RUNS,
+    failedLastWeek,
+    overdueReminders,
+    overdueSince,
+    timeZone,
+  });
+}
+${dispatch}`;
+}
+
+/**
  * `src/server/audit.ts` for this project.
  *
  * Generated for the same reason `src/permissions/catalog.ts` is: which packages
@@ -1802,6 +2400,14 @@ export function renderAuditRegistry(answers: Answers): string {
     `import type { AuditActionKeyOf } from "${scope}/observability";`,
   ];
   const fragments = ["adminAuditedActions", "invitationAuditedActions"];
+
+  if (answers.includeScheduling) {
+    // Giving a crew member their route (the crew-only staff role) and taking
+    // it away. Declared beside the decision in scheduling-config, which
+    // imports nothing from here, so there is no cycle.
+    imports.push('import { schedulingAuditedActions } from "./scheduling-config";');
+    fragments.push("schedulingAuditedActions");
+  }
 
   if (answers.businessModel !== "none") {
     // One-way. `routers/catalog.ts` writes through its own registry and imports
@@ -1959,9 +2565,6 @@ export function renderAppRouter(answers: Answers): string {
   if (answers.includeEstimator) {
     imports.splice(1, 0, 'import { estimatorRouter } from "./estimator";');
   }
-  if (answers.includeScheduling) {
-    imports.splice(1, 0, 'import { schedulingRouter } from "./scheduling";');
-  }
   if (answers.includeInvoicing) {
     imports.splice(1, 0, 'import { invoicingRouter } from "./invoicing";');
   }
@@ -2042,9 +2645,9 @@ export function renderAppRouter(answers: Answers): string {
 `
     : "";
 
-  // Field service. The estimator, scheduling and invoicing routers each carry
-  // PUBLIC procedures (the estimate, the booking request, the pay-by-token
-  // read) beside their staff ones — a quote the customer never signs in to get.
+  // Field service. The estimator and invoicing routers each carry PUBLIC
+  // procedures (the estimate, the pay-by-token read) beside their staff ones —
+  // a quote the customer never signs in to get.
   // What keeps those safe is the same rule the shop follows: amount, tenant and
   // eligibility are read server-side, never from the request.
   const estimator = answers.includeEstimator
@@ -2056,14 +2659,10 @@ export function renderAppRouter(answers: Answers): string {
 `
     : "";
 
-  const scheduling = answers.includeScheduling
-    ? `
-  // Drive-time-aware booking. Public slots and request-a-booking power the
-  // estimate -> book flow; the rest is the staff calendar, resources and
-  // availability.
-  scheduling: schedulingRouter,
-`
-    : "";
+  // Scheduling has no router here, deliberately. Its booking page, manage
+  // page and staff screens speak HTTP to the package's own handlers
+  // (app/api/schedule and app/api/admin/schedule) — the wire the widgets are
+  // built against, one path rather than a tRPC copy of it that drifts.
 
   const invoicing = answers.includeInvoicing
     ? `
@@ -2154,7 +2753,7 @@ export const appRouter = createTRPCRouter({
   // writes actually live. Mounted even in a project generated without the admin
   // shell, so the panel can be added later without re-deriving its boundary.
   admin: adminRouter,
-${ai}${feedback}${seo}${notifications}${storage}${assistant}${estimator}${scheduling}${invoicing}${comms}${aeo}${shop}});
+${ai}${feedback}${seo}${notifications}${storage}${assistant}${estimator}${invoicing}${comms}${aeo}${shop}});
 
 export type AppRouter = typeof appRouter;
 `;
@@ -2387,6 +2986,23 @@ export function renderSiteNav(answers: Answers): string {
         "marketing site and absent again in one with no plans to price, which " +
         "is two conditions and therefore two ways this list would have been " +
         "wrong if it were written by hand.",
+    });
+  }
+
+  // The booking page, from the scheduling overlay. In the PUBLIC nav because
+  // it is the page a field-service business exists to send people to — a
+  // booking page reachable only from a link somebody pasted is one most
+  // customers never find. Signed out is the main audience.
+  if (answers.includeScheduling) {
+    site.push({
+      href: "/book-visit",
+      label: "Book a visit",
+      why:
+        "The customer booking page (<VisitPicker>): a service, a day and a " +
+        "time in the business's own time zone, then their details. Absent " +
+        "without --scheduling. The manage page a customer reaches from their " +
+        "email, /visit/[token], is deliberately in no nav: its URL is the " +
+        "key to one person's visit.",
     });
   }
 
@@ -2886,15 +3502,36 @@ export function renderAdminNav(answers: Answers): string {
     );
   }
   if (answers.includeScheduling) {
-    fieldService.push({
-      href: "/admin/schedule",
-      label: "Schedule",
-      permission: "staff.dashboard.view",
-      why:
-        "The staff calendar, resources and availability from the scheduling " +
-        "package. The public request-a-booking flow feeds it; this is where the " +
-        "crew's day is read and edited.",
-    });
+    fieldService.push(
+      {
+        href: "/admin/schedule",
+        label: "Schedule",
+        permission: "staff.schedule.view",
+        why:
+          "The day/week calendar per crew from the scheduling widget: requests " +
+          "from /book-visit to accept or decline, drag to move or reassign, " +
+          "and a new visit for a customer on the phone. Every change emails " +
+          "the customer when comms is installed.",
+      },
+      {
+        href: "/admin/schedule/today",
+        label: "Today's route",
+        permission: "staff.schedule.route",
+        why:
+          "A crew's stops for the day, on a phone: directions, call, Start " +
+          "and Complete. On the crew's own key, so a crew member signed in " +
+          "on their phone sees this and nothing else in the sidebar.",
+      },
+      {
+        href: "/admin/schedule/settings",
+        label: "Schedule settings",
+        permission: "staff.schedule.settings",
+        why:
+          "The business's time zone, services, notice, auto-confirm, request " +
+          "expiry, reminders, crews and hours — every decision an owner makes " +
+          "about scheduling, saved without a deploy.",
+      },
+    );
   }
   if (answers.includeInvoicing) {
     fieldService.push({
@@ -4356,6 +4993,12 @@ export function renderRobots(answers: Answers): string {
       why: "The admin shell, from the admin overlay. Absent in a project generated with --admin none, which is why this list is generated.",
     });
   }
+  if (answers.includeScheduling) {
+    disallowed.push({
+      path: "/visit/",
+      why: "A customer's own visit, opened from the link in their email. The URL is the key to it; the page already says noindex and the API sends X-Robots-Tag, and this keeps a crawler that found a leaked link from fetching it at all.",
+    });
+  }
   if (sells) {
     disallowed.push(
       {
@@ -4451,6 +5094,12 @@ export function renderSitemap(answers: Answers): string {
       why: "From the marketing-pricing overlay, which needs both a marketing site and something to sell.",
     });
   }
+  if (answers.includeScheduling) {
+    pages.push({
+      path: "/book-visit",
+      why: "The booking page, from the scheduling overlay — for a field-service business the page most worth finding. The manage pages under /visit are never listed: each URL is one customer's key.",
+    });
+  }
   if (sells) {
     pages.push({
       path: "/products",
@@ -4536,6 +5185,9 @@ export function renderLlmsTxt(answers: Answers): string {
   ];
   if (answers.includeMarketing && sells) {
     pages.push({ path: "/pricing", line: "Plans and pricing." });
+  }
+  if (answers.includeScheduling) {
+    pages.push({ path: "/book-visit", line: "Book a visit: pick a service and a time; we come to you." });
   }
   if (sells) {
     pages.push({ path: "/products", line: "Published products available to buy." });

@@ -99,7 +99,7 @@ describe("validateBookingSlot — availability window", () => {
       endTime: "05:00",
     });
     expect(r.valid).toBe(false);
-    expect(r.reason).toMatch(/outside availability/i);
+    expect(r.reason).toBe("Installer works 8:00 AM – 5:00 PM on Mondays; 3:00 AM – 5:00 AM is outside those hours");
   });
 
   it("rejects a day the resource is not available (weekend, no rows)", async () => {
@@ -112,7 +112,7 @@ describe("validateBookingSlot — availability window", () => {
       endTime: "12:00",
     });
     expect(r.valid).toBe(false);
-    expect(r.reason).toMatch(/not available/i);
+    expect(r.reason).toBe("Installer doesn't work on Sunday, February 1");
   });
 
   it("rejects an unknown resource", async () => {
@@ -125,7 +125,7 @@ describe("validateBookingSlot — availability window", () => {
       endTime: "12:00",
     });
     expect(r.valid).toBe(false);
-    expect(r.reason).toMatch(/not found/i);
+    expect(r.reason).toBe("That crew isn't on the schedule any more");
   });
 });
 
@@ -143,7 +143,8 @@ describe("createBooking — validates before writing", () => {
     const row = await createBooking(db, validInput);
     expect(row.id).toBe("bk-1");
     expect(inserted).toHaveLength(1);
-    expect(locks).toHaveLength(1);
+    // The time-zone fence (the settings lock, shared), then the crew's lock.
+    expect(locks).toHaveLength(2);
   });
 
   it("stores the duration the times describe, not a default", async () => {

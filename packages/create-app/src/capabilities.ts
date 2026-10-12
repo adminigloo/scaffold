@@ -418,24 +418,52 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
   {
     capability: "scheduling.booking",
     why:
-      "The scheduling router carrying the public online-booking flow: times " +
-      "listed as PublicSlots (nothing about any other customer or the crew), " +
-      "and a request whose times, crew and coordinates the server decides, " +
-      "re-checked under the crew's lock and landing pending. The calendar page " +
-      "is the other key.",
-    // The public package calls, and the absence of the staff finder. Mentioning
-    // the procedure name proved nothing: 0.2's router had a `requestBooking`
-    // too, and it returned the previous customer's street address from `slots`.
-    // The router's header names `findAvailableSlots` as the thing a public
-    // route must not call, which is why the check is for a CALL of it.
+      "The public booking page and the customer's own visit page — a ready-made " +
+      "<VisitPicker> on /book-visit and <ManageVisit> on /visit/[token] — over " +
+      "the route that mounts the package's PUBLIC handler. Proven by the " +
+      "handler factory being called there and the staff finder and staff " +
+      "handler being called nowhere in that file: 0.2's public route returned " +
+      "the previous customer's street address from the staff finder, and a " +
+      "route that merely mentioned the right names proved nothing.",
     provenBy: (plan) =>
-      mentions(plan, ["src", "server", "routers", "scheduling.ts"], "findPublicSlots(", "requestPublicBooking(") &&
-      !mentions(plan, ["src", "server", "routers", "scheduling.ts"], "findAvailableSlots("),
+      mentions(plan, ["app", "api", "schedule", "[...path]", "route.ts"], "createSchedulingHandlers(") &&
+      !mentions(plan, ["app", "api", "schedule", "[...path]", "route.ts"], "findAvailableSlots(") &&
+      !mentions(plan, ["app", "api", "schedule", "[...path]", "route.ts"], "createSchedulingAdminHandlers(") &&
+      mentions(plan, ["app", "(site)", "book-visit", "page.tsx"], "<VisitPicker") &&
+      mentions(plan, ["app", "(site)", "visit", "[token]", "page.tsx"], "<ManageVisit"),
   },
   {
     capability: "scheduling.calendar",
-    why: "The staff calendar/resources page under the shell, from scheduling-admin.",
-    provenBy: (plan) => exists(plan, "app", "admin", "schedule", "page.tsx"),
+    why:
+      "The staff calendar under the shell — <ScheduleCalendar> on " +
+      "/admin/schedule, from scheduling-admin — and Schedule settings beside " +
+      "it, over the staff handler that checks this project's permissions on " +
+      "every call.",
+    provenBy: (plan) =>
+      mentions(plan, ["app", "admin", "schedule", "page.tsx"], "<ScheduleCalendar") &&
+      mentions(plan, ["app", "admin", "schedule", "settings", "page.tsx"], "<SchedulingSettings") &&
+      mentions(plan, ["app", "api", "admin", "schedule", "[...path]", "route.ts"], "createSchedulingAdminHandlers("),
+  },
+  {
+    capability: "scheduling.route",
+    why:
+      "Today's route for a crew on a phone — <CrewDay> on " +
+      "/admin/schedule/today, from scheduling-admin: stops in order with " +
+      "directions and Start/Complete.",
+    provenBy: (plan) => mentions(plan, ["app", "admin", "schedule", "today", "page.tsx"], "<CrewDay"),
+  },
+  {
+    capability: "scheduling.reminders",
+    why:
+      "The visit emails and the reminder before each visit: the scheduling " +
+      "comms listener wired as the routes' onEvent, and the comms cron " +
+      "consulting it at send time (the hook that re-checks a reminder and " +
+      "puts the customer's link in it). Either half alone sends nothing " +
+      "useful — a listener nobody drains queues reminders that never go.",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "server", "scheduling-notify.ts"], "createSchedulingCommsListener(") &&
+      mentions(plan, ["src", "server", "comms-hooks.ts"], "schedulingComms") &&
+      mentions(plan, ["app", "api", "cron", "comms", "route.ts"], "beforeSend: commsBeforeSend"),
   },
   {
     capability: "invoicing.invoices",

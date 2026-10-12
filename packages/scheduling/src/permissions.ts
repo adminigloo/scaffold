@@ -12,8 +12,13 @@
  * catalog with its own `defaultFor`; the keys are the contract, the defaults are
  * a starting point.
  *
- * Three keys because there are three different jobs. Seeing the schedule is
- * everybody's; moving visits is the office's; deciding which crews exist,
+ * Four keys because there are four different jobs. Working a route — a
+ * crew member opening their own day on a phone and marking stops started,
+ * done or missed — is the crew's, and is ALL a crew member needs: before 0.4
+ * there was no such key, so the only way to give a seasonal mower his route
+ * was the office's full power (decline and cancel customers, change the time
+ * zone, turn off online booking). Seeing the whole schedule is everybody's
+ * in the office; moving visits is the office's; deciding which crews exist,
  * their hours, and whether customers may book them online changes what the
  * public can buy, and is the owner's or an admin's.
  *
@@ -37,6 +42,13 @@ export interface SchedulingPermissionDefinition {
 }
 
 export const schedulingPermissions = {
+  "schedule.route": {
+    label: "Work a crew's route",
+    description:
+      "Open their own crew's day on a phone — the stops, directions and the customer's phone — and mark each stop started, done or couldn't-do, with an undo. Nothing else: not the calendar, not other crews' routes, not settings.",
+    category: "Schedule",
+    defaultFor: ["owner", "admin", "member"],
+  },
   "schedule.view": {
     label: "View the schedule",
     description: "See booked visits — who, where and when — the crews and their hours.",

@@ -4,6 +4,7 @@ import {
   BUSINESS_MODELS,
   DEFAULT_ANSWERS,
   TENANT_NOUNS,
+  assertAnswersCompatible,
   packagesFor,
   requiredEnvFor,
   validateProjectName,
@@ -210,9 +211,14 @@ export const HELP = `
   --estimator          Field service: a pricing/takeoff engine with a public
     / --no-estimator   estimate page and a cross-origin embed widget (client-key
                        authenticated), plus a staff product/estimate builder.
-  --scheduling         Field service: drive-time-aware booking — a public
-    / --no-scheduling  slots/request flow and a staff calendar, resources and
-                       availability. Keyless Haversine drive times by default.
+  --scheduling         Field service: a booking page for customers,
+    / --no-scheduling  manage-your-visit links, a staff calendar with
+                       drag-to-move, today's route for crews, and settings in
+                       the business's own time zone. Needs an admin panel
+                       (--admin minimal or full). Brings --comms and --email
+                       with it — the confirmations, reminders and expiry
+                       notices are emails — unless you say --no-comms or
+                       --no-email. Google drive times with GOOGLE_MAPS_API_KEY.
   --invoicing          Field service: invoices with a public pay-by-token page
     / --no-invoicing   customers view without an account, and a staff ledger.
   --comms              Field service: templated email/SMS with a scheduler and a
@@ -336,9 +342,21 @@ export async function collectAnswers(
   const includeScheduling =
     flags.scheduling ??
     (await prompter.confirm(
-      "Field service — scheduling? Drive-time-aware booking with a public request flow and a staff calendar.",
+      "Field service — scheduling? A booking page, manage-your-visit links, a staff calendar with drag-to-move and today's route for crews.",
       DEFAULT_ANSWERS.includeScheduling,
     ));
+  // Scheduling's whole customer side is email — the acknowledgement, the
+  // confirmation with the manage link, the reminder, the expiry notice. Email
+  // was asked before scheduling was, so with scheduling on and email left to
+  // a default, it is asked again, defaulting to yes. Only an explicit
+  // --no-email keeps it off.
+  const includeEmailForScheduling =
+    includeScheduling && !includeEmail && flags.email === undefined
+      ? await prompter.confirm(
+          "Scheduling emails customers their confirmations and reminders. Include transactional email?",
+          true,
+        )
+      : includeEmail;
   const includeInvoicing =
     flags.invoicing ??
     (await prompter.confirm(
@@ -349,7 +367,9 @@ export async function collectAnswers(
     flags.comms ??
     (await prompter.confirm(
       "Field service — comms? Templated email/SMS with a scheduler and a cron drain.",
-      DEFAULT_ANSWERS.includeComms,
+      // Scheduling sends its emails through comms, so with scheduling it
+      // defaults to yes; --no-comms still says no.
+      includeScheduling ? true : DEFAULT_ANSWERS.includeComms,
     ));
   const includeAeo =
     flags.aeo ??
@@ -358,13 +378,13 @@ export async function collectAnswers(
       DEFAULT_ANSWERS.includeAeo,
     ));
 
-  return {
+  const answers: Answers = {
     projectName,
     tenantNoun,
     businessModel,
     adminShell,
     includeAi,
-    includeEmail,
+    includeEmail: includeEmailForScheduling,
     includeFeedback,
     includeSeoReports,
     includeNotifications,
@@ -378,6 +398,9 @@ export async function collectAnswers(
     includeAeo,
     scope: DEFAULT_ANSWERS.scope,
   };
+  // Refused here, before a directory is created, with the reason.
+  assertAnswersCompatible(answers);
+  return answers;
 }
 
 export function targetDirFor(flags: CliFlags, answers: Answers, cwd: string): string {
@@ -456,6 +479,51 @@ export function nextSteps(answers: Answers, targetDir: string): string {
       "Blob). Until then /admin/files says exactly that, in one sentence.",
       "",
     );
+  }
+
+  if (answers.includeScheduling) {
+    const emails = answers.includeComms && answers.includeEmail;
+    lines.push(
+      // Where the feature is, and the things that make it a business's rather
+      // than a demo. The terminal right after generating is the only
+      // documentation that reliably gets read. Only pages this project has:
+      // scheduling is refused without an admin panel (assertAnswersCompatible).
+      "Scheduling:",
+      "  1. Online booking starts OFF. Open /admin/schedule/settings, set the",
+      "     business name, time zone, phone, services, crews and hours, then",
+      "     switch on \"Take bookings online\". Customers book at /book-visit.",
+      "  2. Staff answer requests and run the week at /admin/schedule.",
+      "  3. Crews: each crew member signs in once at /sign-in; then pick them",
+      "     for their crew in Schedule settings → Crews. That gives them",
+      "     Today's route (/admin/schedule/today) on their phone — their own",
+      "     stops, nothing else. No developer, no database.",
+      ...(emails
+        ? [
+            "  4. Set CRON_SECRET on the deployment: reminders and expiry notices",
+            "     go out from a daily job that won't run without it. On Vercel Hobby",
+            "     it runs once a day (7 AM Mountain), so each reminder arrives the",
+            "     day before the visit — at least the lead time ahead, often more.",
+            "     For reminders at exactly the lead time, run /api/cron/comms every",
+            "     15 minutes (DEPLOYMENT.md).",
+          ]
+        : []),
+      "Set GOOGLE_MAPS_API_KEY for real drive times (straight-line estimates",
+      "without it).",
+      "",
+    );
+    if (!emails) {
+      lines.push(
+        // Said plainly, because the business scenario is mostly emails and
+        // nothing else in the project will mention that none are going out.
+        "This project sends no visit emails: scheduling emails need both",
+        "--comms and --email. Customers keep the manage link the booking page",
+        "shows them. To add them later:",
+        "",
+        ...(answers.includeComms ? [] : ["  pnpm dlx @adminigloo/create-app add comms"]),
+        ...(answers.includeEmail ? [] : ["  pnpm dlx @adminigloo/create-app add email"]),
+        "",
+      );
+    }
   }
 
   if (answers.businessModel !== "none") {

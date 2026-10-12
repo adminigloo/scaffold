@@ -9,6 +9,7 @@ import {
   upsertTemplateSchema,
 } from "__SCOPE__/comms";
 import { db } from "@/db";
+import { afterCommsRun, commsBeforeSend, ensureProducerTemplates } from "@/server/comms-hooks";
 import { COMMS_TENANT, commsSenders, ensureCommsTemplates } from "@/server/comms-senders";
 import { createTRPCRouter, requireStaff } from "../trpc";
 
@@ -25,6 +26,9 @@ export const commsRouter = createTRPCRouter({
     .meta({ scope: "staff" })
     .query(async () => {
       await ensureCommsTemplates(db);
+      // The features' own emails too (scheduling's nine visit emails), so an
+      // owner can read and edit them before the first customer books.
+      await ensureProducerTemplates(COMMS_TENANT);
       return listTemplates(db, COMMS_TENANT);
     }),
 
@@ -46,8 +50,20 @@ export const commsRouter = createTRPCRouter({
     .meta({ scope: "staff" })
     .query(() => listMessages(db, COMMS_TENANT)),
 
-  /** Send everything currently due — the button that stands in for the cron in a demo. */
+  /**
+   * Send everything currently due — the button that stands in for the cron in
+   * a demo. Through the same hooks the cron uses, so a reminder sent from here
+   * is re-checked and carries its link exactly as one sent by the schedule.
+   */
   runDue: requireStaff("staff.dashboard.view")
     .meta({ scope: "staff" })
-    .mutation(() => runDueMessages(db, commsSenders, { timeBudgetMs: 20_000 })),
+    .mutation(async () => {
+      // The scrub in a finally, as in the cron route: a drain that throws
+      // part-way must not leave sent links in the log.
+      try {
+        return await runDueMessages(db, commsSenders, { timeBudgetMs: 20_000, beforeSend: commsBeforeSend });
+      } finally {
+        await afterCommsRun();
+      }
+    }),
 });

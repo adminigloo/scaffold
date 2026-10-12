@@ -42,11 +42,17 @@ export default async function AdminLayout({ children }: { children: ReactNode })
   if (!can) return <AdminUnavailable reason="not-staff" />;
 
   return (
-    <div className="flex min-h-dvh">
+    <div className="flex min-h-dvh flex-col md:flex-row">
       {/* `sticky top-0 h-dvh` rather than a scrolling column: an audit page a
           thousand rows long otherwise scrolls the nav off the top, and the way
-          out of a long table should not be to scroll back up it. */}
-      <aside className="sticky top-0 flex h-dvh w-60 shrink-0 flex-col border-r border-line bg-surface">
+          out of a long table should not be to scroll back up it.
+
+          BELOW THE PAGE ON A PHONE (`order-last`, full width, under md). A
+          240px sidebar beside the page leaves a 390px screen about 80px of
+          content, and some of these pages are used on a phone first — a
+          crew opening today's route at /admin/schedule/today should see their
+          stops, not the menu. From md up it is the sticky sidebar as before. */}
+      <aside className="order-last flex w-full flex-col border-t border-line bg-surface md:sticky md:top-0 md:order-none md:h-dvh md:w-60 md:shrink-0 md:border-r md:border-t-0">
         <div className="border-b border-line px-4 py-4">
           <p className="truncate font-mono text-[11px] uppercase tracking-[0.14em] text-ink-muted">
             __PROJECT_NAME__
@@ -67,7 +73,7 @@ export default async function AdminLayout({ children }: { children: ReactNode })
         </div>
       </aside>
 
-      <main className="min-w-0 flex-1 px-8 py-8">{children}</main>
+      <main className="min-w-0 flex-1 px-4 py-6 md:px-8 md:py-8">{children}</main>
     </div>
   );
 }

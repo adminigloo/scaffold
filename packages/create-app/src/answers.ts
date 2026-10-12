@@ -177,6 +177,33 @@ export const DEFAULT_ANSWERS: Answers = {
   scope: "@adminigloo",
 };
 
+/**
+ * A combination of answers that generates a project which can't do what it
+ * promises — refused, in plain words, before anything is written.
+ */
+export class IncompatibleAnswersError extends Error {
+  readonly name = "IncompatibleAnswersError";
+}
+
+/**
+ * Refuse the answer sets that would ship a broken business.
+ *
+ * SCHEDULING NEEDS AN ADMIN PANEL. Online requests are accepted or declined
+ * on the staff calendar, and crews open today's route there. A project
+ * generated with `--scheduling --admin none` took bookings nobody could
+ * answer — every one sat until it expired, after the customer had been told
+ * "we'll confirm it soon" — and its next steps still pointed at three admin
+ * pages that 404.
+ */
+export function assertAnswersCompatible(answers: Answers): void {
+  if (answers.includeScheduling && answers.adminShell === "none") {
+    throw new IncompatibleAnswersError(
+      "Scheduling needs an admin panel: staff accept or decline online booking requests on its calendar, and crews open today's route there. " +
+        "With --admin none every request would wait unanswered until it expired. Use --admin minimal (or full) with --scheduling.",
+    );
+  }
+}
+
 export class InvalidProjectNameError extends Error {
   readonly name = "InvalidProjectNameError";
   constructor(value: string, reason: string) {
@@ -271,7 +298,13 @@ export function packagesFor(answers: Answers): readonly string[] {
   // widget on the customer's OWN site calls — the widget SDK is installed there,
   // not here — so this project depends on the engine, not the widget.
   if (answers.includeEstimator) optional.push("estimator");
-  if (answers.includeScheduling) optional.push("scheduling");
+  // Two packages for one answer, the feedback split: `scheduling` is the
+  // server half (schema, the two HTTP handlers, the comms listener) and
+  // `scheduling-widget` is the screens — the booking and manage-your-visit
+  // pages and, under /admin, the calendar, today's route and settings. They
+  // version independently, and a marketing site that only embeds the picker
+  // against a hosted API installs the widget alone.
+  if (answers.includeScheduling) optional.push("scheduling", "scheduling-widget");
   if (answers.includeInvoicing) optional.push("invoicing");
   if (answers.includeComms) optional.push("comms");
   if (answers.includeAeo) optional.push("aeo");
@@ -375,6 +408,21 @@ export function optionalEnvFor(answers: Answers): readonly string[] {
     // Same variable feedback's screenshots use — one blob store per project,
     // so the file library and the screenshots share a credential.
     vars.push("BLOB_READ_WRITE_TOKEN");
+  }
+  if (answers.includeComms || answers.includeScheduling) {
+    // What the /api/cron/* routes check. Optional because a laptop drains
+    // nothing on a schedule; on a deployment, unset means every cron call is
+    // refused — reminders wait and expired requests go untold — which is why
+    // it is listed here, where somebody will see it, rather than only in
+    // src/env.ts.
+    vars.push("CRON_SECRET");
+  }
+  if (answers.includeScheduling) {
+    // Both degrade rather than disable. Without the key drive times are
+    // straight-line estimates and addresses are stored as typed; without the
+    // zone the business starts in Mountain Time and the owner changes it in
+    // Schedule settings.
+    vars.push("GOOGLE_MAPS_API_KEY", "SCHEDULING_TIME_ZONE");
   }
   // Deduped, not sorted: two features naming one variable (the blob token)
   // must not print it twice, and order is the order the reader meets them.
@@ -710,9 +758,17 @@ export function capabilitiesFor(answers: Answers): readonly string[] {
   if (answers.includeEstimator && answers.adminShell !== "none") {
     keys.push("estimator.builder");
   }
+  // Scheduling: the public booking and manage pages on the answer; the
+  // calendar and the crew's route under the shell; and the emails —
+  // confirmations, reminders, expiry notices — only where comms is there to
+  // send them, which is a question a consumer asks separately ("does a
+  // customer here get reminded?").
   if (answers.includeScheduling) keys.push("scheduling.booking");
   if (answers.includeScheduling && answers.adminShell !== "none") {
-    keys.push("scheduling.calendar");
+    keys.push("scheduling.calendar", "scheduling.route");
+  }
+  if (answers.includeScheduling && answers.includeComms) {
+    keys.push("scheduling.reminders");
   }
   if (answers.includeInvoicing) keys.push("invoicing.invoices");
   if (answers.includeInvoicing && answers.adminShell !== "none") {

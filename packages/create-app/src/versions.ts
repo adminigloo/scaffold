@@ -160,7 +160,18 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // the admin reads hoursConfigured/acceptsPublicBookings. None of that exists
   // in 0.2.x, so a caret over it would resolve a build the emitted code cannot
   // compile against.
-  scheduling: "0.3.0",
+  // 0.4.0: the generated project no longer has a scheduling router at all. Its
+  // routes mount createSchedulingHandlers / createSchedulingAdminHandlers, its
+  // notify module builds createSchedulingCommsListener from ./comms, the cron
+  // calls expirePendingRequests, the setup writes first settings through
+  // updateSchedulingSettings and runs backfillVisitInstants, and the maps
+  // provider is createGoogleMapsProvider behind createCachedMapsProvider —
+  // none of which exist in 0.3.x.
+  scheduling: "0.4.0",
+  // First release. The booking page, the manage page and the three staff
+  // pages render its components; it speaks 0.4's wire, so it moves with
+  // scheduling 0.4 and never with 0.3.
+  "scheduling-widget": "0.1.0",
   // 0.2.0 (sweep): line items after creation, atomic idempotent payments,
   // reversals, a status transition table and tenant-scoped reads — the emitted
   // admin page and router call addInvoiceItem/reversePayment/markInvoiceViewed

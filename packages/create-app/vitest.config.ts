@@ -155,40 +155,38 @@ export default defineConfig({
       },
       {
         /**
-         * The scheduling overlays' decisions that need no database, run against
-         * workspace source: the public inputs derived from PUBLIC_POLICY (so a
-         * picker can't offer a visit length the package refuses) and the
-         * schedule board's range, labels and crew-hours wording (so today's
-         * visits stay on the board, and a crew that is off every day says so).
+         * The scheduling overlay's decisions that need no database, run against
+         * workspace source: the first settings a business starts with (a real
+         * zone, never UTC; a service the package accepts), the staff key each
+         * scheduling permission is checked against, the public API's throttle,
+         * and the absolute links the emails carry.
          *
-         * The router and the page are not here, for the stripe overlay's
-         * reason: they reach `@/db`, `../trpc` and the rendered app router.
-         * Their contract with the package is checked from their text in
-         * src/__tests__/scheduling-overlay.test.ts.
+         * The route handlers and pages are not here, for the stripe overlay's
+         * reason: they reach `@/db`, `@/env` and the GENERATED
+         * `@/server/scheduling-notify`. Their contract with the package is
+         * checked from their text in src/__tests__/scheduling-overlay.test.ts,
+         * and they run for real in a generated project and in
+         * e2e/tests/scheduling-scenario.spec.ts.
          *
          * `zod` is aliased to the scheduling package's own copy. create-app has
-         * none, and the policy module extends the package's request schema with
-         * a schema of its own — two zod instances in one `.extend` is a test of
-         * something no generated project does.
+         * none, and the config module parses through the package's settings
+         * schema — two zod instances in one parse is a test of something no
+         * generated project does.
          */
         resolve: {
           alias: [
             { find: /^__SCOPE__\/scheduling$/, replacement: here("../scheduling/src/index.ts") },
             { find: /^zod$/, replacement: here("../scheduling/node_modules/zod/index.js") },
             {
-              find: /^@\/server\/scheduling-policy$/,
-              replacement: here("./overlays/scheduling/src/server/scheduling-policy.ts"),
-            },
-            {
-              find: /^@\/components\/schedule\//,
-              replacement: here("./overlays/scheduling-admin/src/components/schedule/"),
+              find: /^@\/server\/scheduling-config$/,
+              replacement: here("./overlays/scheduling/src/server/scheduling-config.ts"),
             },
           ],
         },
         test: {
           name: "scheduling",
           testTimeout,
-          include: ["overlays/scheduling/**/*.test.ts", "overlays/scheduling-admin/**/*.test.ts"],
+          include: ["overlays/scheduling/**/*.test.ts"],
           exclude: ["**/node_modules/**", "**/dist/**"],
         },
       },

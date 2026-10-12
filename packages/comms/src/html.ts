@@ -27,12 +27,20 @@ export function escapeHtml(text: string): string {
 // `javascript:` "link" in a template stays inert text.
 const URL_IN_ESCAPED_TEXT = /https?:\/\/(?:(?!&(?:quot|#39|lt|gt);)[^\s])+/g;
 
+/**
+ * WRAPPED, so a long link — a customer's manage link is 70-odd characters of
+ * one unbroken word — breaks across lines on a phone instead of running off a
+ * 375px screen and widening the whole email. Inline, because email clients
+ * drop <style> blocks.
+ */
+const LINK_STYLE = "word-break:break-all";
+
 function linkify(escaped: string): string {
   return escaped.replace(URL_IN_ESCAPED_TEXT, (match) => {
     // Sentence punctuation after a URL ("see https://x.com.") is not part of it.
     const url = match.replace(/[.,!?:)]+$/, "");
     const trailing = match.slice(url.length);
-    return `<a href="${url}">${url}</a>${trailing}`;
+    return `<a href="${url}" style="${LINK_STYLE}">${url}</a>${trailing}`;
   });
 }
 

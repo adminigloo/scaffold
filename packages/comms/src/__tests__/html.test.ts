@@ -16,14 +16,22 @@ describe("plainTextToEmailHtml", () => {
 
   it("links http(s) URLs, leaving trailing punctuation outside the link", () => {
     expect(plainTextToEmailHtml("Review us: https://example.com/r?a=1&b=2.")).toBe(
-      '<p>Review us: <a href="https://example.com/r?a=1&amp;b=2">https://example.com/r?a=1&amp;b=2</a>.</p>',
+      '<p>Review us: <a href="https://example.com/r?a=1&amp;b=2" style="word-break:break-all">https://example.com/r?a=1&amp;b=2</a>.</p>',
     );
   });
 
   it("does not let a quote in a URL break out of the href", () => {
     const html = plainTextToEmailHtml('https://x.com/"><img src=x onerror=alert(1)>');
     expect(html).not.toContain("<img");
-    expect(html).toContain('<a href="https://x.com/">https://x.com/</a>&quot;&gt;&lt;img');
+    expect(html).toContain('<a href="https://x.com/" style="word-break:break-all">https://x.com/</a>&quot;&gt;&lt;img');
+  });
+
+  it("a long link (a customer's manage link) wraps on a phone instead of running off a 375px screen", () => {
+    const url = `https://acme.test/visit/${"A".repeat(43)}`;
+    expect(plainTextToEmailHtml(`Change it here:
+${url}`)).toBe(
+      `<p>Change it here:<br><a href="${url}" style="word-break:break-all">${url}</a></p>`,
+    );
   });
 
   it("never links a javascript: URL", () => {

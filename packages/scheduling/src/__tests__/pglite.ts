@@ -3,11 +3,14 @@ import { is, SQL } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
 import { getTableConfig, PgDialect, type PgTable } from "drizzle-orm/pg-core";
 import type { SchedulingDb } from "../index.js";
+import { commsMessages, commsScheduled, commsTemplates } from "@adminigloo/comms/schema";
 import {
   schedulingAvailability,
   schedulingBookings,
   schedulingDriveCache,
   schedulingResources,
+  schedulingSettings,
+  schedulingVisitTokens,
 } from "../schema.js";
 
 /**
@@ -30,7 +33,21 @@ import {
  * race on one connection can fail without it.
  */
 
-const TABLES: PgTable[] = [schedulingResources, schedulingAvailability, schedulingBookings, schedulingDriveCache];
+const TABLES: PgTable[] = [
+  schedulingResources,
+  schedulingAvailability,
+  schedulingBookings,
+  schedulingDriveCache,
+  schedulingSettings,
+  schedulingVisitTokens,
+];
+
+/**
+ * @adminigloo/comms's tables (a devDependency, built to dist), for the suites
+ * that run the real comms listener: the email templates, the delivery log and
+ * the reminder queue live in the same database as the visits.
+ */
+const COMMS_TABLES: PgTable[] = [commsTemplates, commsMessages, commsScheduled];
 
 const dialect = new PgDialect();
 
@@ -44,9 +61,9 @@ function literal(value: unknown): string {
   throw new Error(`no literal for default ${String(value)}`);
 }
 
-export function schemaDdl(): string[] {
+export function schemaDdl(tables: readonly PgTable[] = TABLES): string[] {
   const statements: string[] = [];
-  for (const table of TABLES) {
+  for (const table of tables) {
     const config = getTableConfig(table);
     const lines = config.columns.map((column) => {
       let line = `"${column.name}" ${column.getSQLType()}`;
@@ -58,8 +75,12 @@ export function schemaDdl(): string[] {
     statements.push(`CREATE TABLE "${config.name}" (\n  ${lines.join(",\n  ")}\n)`);
     for (const index of config.indexes) {
       const columns = index.config.columns.map((column) => `"${(column as { name: string }).name}"`).join(", ");
+      // A PARTIAL index keeps its predicate (comms' dedupe key is unique only
+      // where it is set): without it the test database would refuse rows the
+      // real one accepts, and `ON CONFLICT … WHERE` couldn't find its index.
+      const where = index.config.where ? ` WHERE ${dialect.sqlToQuery(index.config.where).sql}` : "";
       statements.push(
-        `CREATE ${index.config.unique ? "UNIQUE " : ""}INDEX "${index.config.name}" ON "${config.name}" (${columns})`,
+        `CREATE ${index.config.unique ? "UNIQUE " : ""}INDEX "${index.config.name}" ON "${config.name}" (${columns})${where}`,
       );
     }
   }
@@ -87,9 +108,15 @@ export interface TestDb {
   close: () => Promise<void>;
 }
 
-export async function createTestDb(): Promise<TestDb> {
+export interface CreateTestDbOptions {
+  /** Also create @adminigloo/comms's tables (templates, delivery log, queue). */
+  comms?: boolean;
+}
+
+export async function createTestDb(options: CreateTestDbOptions = {}): Promise<TestDb> {
   const client = new PGlite();
-  for (const statement of schemaDdl()) await client.exec(statement);
+  const tables = options.comms ? [...TABLES, ...COMMS_TABLES] : TABLES;
+  for (const statement of schemaDdl(tables)) await client.exec(statement);
 
   const queries: LoggedQuery[] = [];
   let depth = 0;

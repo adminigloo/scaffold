@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { runDueMessages } from "__SCOPE__/comms";
 import { db } from "@/db";
 import { env } from "@/env";
+import { afterCommsRun, commsBeforeSend } from "@/server/comms-hooks";
 import { commsSenders } from "@/server/comms-senders";
 
 export const runtime = "nodejs";
@@ -35,11 +36,18 @@ const TIME_BUDGET_MS = 45_000;
  * makes it wait for the next tick (minutes, or a day on Hobby), which a
  * customer reads as "didn't work".
  *
- * Re-checking at send time: pass `beforeSend` to skip a row whose subject has
- * moved on since it was queued — `(row) => bookingStillOn(row.refId) ? "send"
- * : "skip"` — or to return fresh `{ vars }`. Cancelling when the thing changes
- * (`cancelScheduled(db, { tenantId, refType, refId })`) is better still;
+ * RE-CHECKED AT SEND TIME, through `commsBeforeSend` (src/server/comms-hooks.ts,
+ * generated from what this project installed). A feature that queues messages
+ * gets a say over its own rows there: scheduling skips a reminder whose visit
+ * was moved or cancelled since it was queued, and puts a freshly minted
+ * manage link into the one it sends. `afterCommsRun` then scrubs those links
+ * out of the delivery log. Cancelling when the thing changes
+ * (`cancelScheduled(db, { tenantId, refType, refId })`) is the first line;
  * beforeSend is the backstop.
+ *
+ * THE SCRUB RUNS IN A `finally`. A drain that throws part-way — a database
+ * error on a later row, after some reminders have gone — used to skip it, and
+ * the links those reminders carried stayed readable in the delivery log.
  */
 async function handle(request: Request): Promise<Response> {
   const secret = env.CRON_SECRET;
@@ -49,8 +57,15 @@ async function handle(request: Request): Promise<Response> {
   if (!secret || provided !== secret) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  const result = await runDueMessages(db, commsSenders, { timeBudgetMs: TIME_BUDGET_MS });
-  return NextResponse.json(result);
+  try {
+    const result = await runDueMessages(db, commsSenders, {
+      timeBudgetMs: TIME_BUDGET_MS,
+      beforeSend: commsBeforeSend,
+    });
+    return NextResponse.json(result);
+  } finally {
+    await afterCommsRun();
+  }
 }
 
 export const GET = handle;

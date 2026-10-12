@@ -186,7 +186,7 @@ describe("sendNow — the sender contract", () => {
     );
     expect(r.emails[0]?.body).toBe("Hi <b>Sam</b>,\n\nSee https://x.com/a");
     expect(r.emails[0]?.html).toBe(
-      '<p>Hi &lt;b&gt;Sam&lt;/b&gt;,</p>\n<p>See <a href="https://x.com/a">https://x.com/a</a></p>',
+      '<p>Hi &lt;b&gt;Sam&lt;/b&gt;,</p>\n<p>See <a href="https://x.com/a" style="word-break:break-all">https://x.com/a</a></p>',
     );
   });
 });

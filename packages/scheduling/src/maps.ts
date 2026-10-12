@@ -10,10 +10,10 @@ export interface DriveTime {
 /**
  * The seam between the scheduler and a maps API. Ship the keyless Haversine
  * default so the engine works out of the box (the demo path); inject a real
- * provider — Google Distance Matrix, Mapbox — when a key exists. Choosing the
- * provider by whether a key is present, not a boolean flag, is the house
- * configuration-not-flags rule, and it's why drive-time scoring degrades
- * gracefully instead of switching off.
+ * provider — `createGoogleMapsProvider`, or your own — when a key exists.
+ * Choosing the provider by whether a key is present (`selectMapsProvider`),
+ * not a boolean flag, is the house configuration-not-flags rule, and it's why
+ * drive-time scoring degrades gracefully instead of switching off.
  */
 export interface MapsProvider {
   /**
@@ -24,10 +24,43 @@ export interface MapsProvider {
    * coordinates, which every later drive check would skip.
    */
   readonly geocodes?: boolean;
-  /** Address → coordinates, or null if it can't place the address (Haversine never can). */
+  /**
+   * True when drive times are straight-line ESTIMATES (Haversine at an
+   * assumed speed) rather than a road router's answer. The crew's route and
+   * the staff suggestions say "estimate" when it is set, so nobody plans a day
+   * around a number that ignores the canyon road.
+   */
+  readonly estimates?: boolean;
+  /**
+   * Address → coordinates. Null means "no such place": the provider looked
+   * and found nothing. It MAY THROW (`MapsProviderError`) for "couldn't ask"
+   * — a timeout, a quota, a revoked key — which callers treat differently: a
+   * customer's request is booked without coordinates rather than refused for
+   * an outage that isn't their fault.
+   */
   geocode(address: string): Promise<LatLng | null>;
-  /** Travel time/distance between two points, or null on failure. */
+  /** Travel time and distance between two points, or null when it couldn't be had. Never throws. */
   driveTime(origin: LatLng, dest: LatLng): Promise<DriveTime | null>;
+}
+
+export type MapsProviderErrorKind = "timeout" | "network" | "http" | "denied" | "quota" | "invalid" | "unknown";
+
+/**
+ * A maps provider couldn't answer. The message is built from the kind and the
+ * provider's status only — NEVER from a request URL, because a URL carries the
+ * API key, and an error message ends up in logs, error trackers and, through a
+ * careless handler, HTTP responses.
+ */
+export class MapsProviderError extends Error {
+  readonly name = "MapsProviderError";
+  readonly kind: MapsProviderErrorKind;
+  /** The provider's own status string ("OVER_QUERY_LIMIT"), when there was one. */
+  readonly status?: string;
+  constructor(kind: MapsProviderErrorKind, message: string, status?: string) {
+    super(message);
+    this.kind = kind;
+    if (status !== undefined) this.status = status;
+  }
 }
 
 export interface HaversineOptions {
@@ -39,12 +72,14 @@ export interface HaversineOptions {
  * The no-key default: it cannot geocode (returns null, so the caller keeps the
  * coordinates it already has), but it estimates drive time from straight-line
  * distance at an assumed average speed. Good enough to cluster a route in a
- * demo; a real provider makes it traffic-accurate in production.
+ * demo; a real provider makes it road-accurate in production. It says so:
+ * `estimates: true`.
  */
 export function createHaversineMapsProvider(options: HaversineOptions = {}): MapsProvider {
   const mph = options.assumedMph ?? 30;
   return {
     geocodes: false,
+    estimates: true,
     async geocode(): Promise<LatLng | null> {
       return null;
     },

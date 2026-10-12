@@ -126,6 +126,41 @@ host; and forced colours.
 Set `AIU_UI_SRC=<path>` to run it against another `ui.tsx` (copy
 `core/labels.ts`, `core/words.ts`, `ui-tokens.ts` and `views.ts` beside it).
 
+## What `scheduling-scenario.spec.ts` proves
+
+The business scenario scheduling is sold on, end to end, in a browser. A
+window-cleaning business in Salt Lake City (America/Denver) runs its week
+through the REAL widgets (bundled from `@adminigloo/scheduling-widget`'s source)
+against the REAL handlers and comms listener (`@adminigloo/scheduling` and
+`@adminigloo/comms`, from their built `dist`) on PGlite, wired the way a
+generated `--scheduling --comms --email` project wires them
+(`fixtures/scheduling-scenario-server.ts`). Every email goes to an in-memory
+outbox the test reads; the clock is one scenario clock the test moves, shared
+by the server and each browser (Playwright's clock); Google Maps is a fake
+`fetch` behind the real Google provider.
+
+It walks the steps as the people involved, checking what each one sees and
+receives: customers book at 390px from New York (the page must show the
+business's 9:00 AM, not New York's 11:00 AM) and get the acknowledgement with a
+working manage link; the office accepts one request, declines another with a
+note, drags a visit two hours later with a real mouse and reassigns its crew,
+and each customer is emailed; an unanswered request expires after 24 hours and
+its customer is told; the reminder arrives 24 real hours before the visit across
+the 2026-11-01 fall-back, with a link minted at send time, and the customer
+reschedules from it; another customer cancels; inside the 12-hour cutoff the
+link shows the phone number instead of the buttons and the API refuses
+`too_late`; the crew opens today's route on a phone and sees the stop, its
+directions link and Google's drive time, and starts and completes it. Finally,
+every subject is in MST and the delivery log holds no manage key.
+
+Negative controls (break one piece of wiring, run, restore): with no
+`beforeSend` on the comms cron, no `redactSent` after it, `emailsEnabled:
+false`, the staff handler not given `onEvent`, or the expiry cron not given
+`onEvent`, the spec fails at the step that guards that piece — 5 of 5.
+
+It needs `packages/scheduling` and `packages/comms` built (`pnpm --filter
+@adminigloo/scheduling build`, same for comms), because their `dist` is what runs.
+
 ## What `seo-jsonld.spec.ts` proves
 
 @adminigloo/seo's JSON-LD escaping holds in a real HTML parser. The page HTML

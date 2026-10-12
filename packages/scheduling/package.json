@@ -1,7 +1,7 @@
 {
   "name": "@adminigloo/scheduling",
   "version": "0.3.0",
-  "description": "Drive-time-aware booking: generate open slots across staff availability and score them by travel time from the previous job, so a day of visits clusters instead of crisscrossing — with a Haversine fallback when no maps key is set.",
+  "description": "Field-service scheduling in the business's own time zone: customers book online and manage their visit from an emailed link, staff accept, move and reassign visits on a calendar, crews get today's route, and unanswered requests expire. Drive times come from Google Maps when you pass a key (selectMapsProvider), or straight-line estimates without one. Emails and reminders via ./comms.",
   "license": "UNLICENSED",
   "type": "module",
   "repository": {
@@ -22,6 +22,11 @@
       "types": "./dist/schema.d.ts",
       "import": "./dist/schema.js",
       "require": "./dist/schema.cjs"
+    },
+    "./comms": {
+      "types": "./dist/comms.d.ts",
+      "import": "./dist/comms.js",
+      "require": "./dist/comms.cjs"
     }
   },
   "files": [
@@ -37,9 +42,16 @@
   },
   "peerDependencies": {
     "drizzle-orm": "catalog:peers",
-    "zod": "catalog:peers"
+    "zod": "catalog:peers",
+    "@adminigloo/comms": "^0.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@adminigloo/comms": {
+      "optional": true
+    }
   },
   "devDependencies": {
+    "@adminigloo/comms": "workspace:^",
     "@electric-sql/pglite": "^0.5.8",
     "drizzle-orm": "catalog:",
     "zod": "catalog:"

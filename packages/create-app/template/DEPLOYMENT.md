@@ -177,6 +177,68 @@ Vercel project: the route refuses every call without it. Immediate messages
 (the acknowledgement of a booking request, the confirmation when staff accept
 it) are sent in the request that causes them and never wait for this.
 
+With scheduling it also holds `/api/cron/scheduling`, once a day: it releases
+booking requests nobody answered in time and tells the customer. A lapsed
+request stops holding its time at its deadline either way, and is also
+released whenever a customer books or staff open the calendar, so the cron
+matters most in a quiet week. On Pro, run both every 15 minutes:
+
+```json
+"crons": [
+  { "path": "/api/cron/comms", "schedule": "*/15 * * * *" },
+  { "path": "/api/cron/scheduling", "schedule": "*/15 * * * *" }
+]
+```
+
+**Appointment reminders on the daily schedule.** The comms cron runs at 14:00
+UTC (7 AM Mountain Standard Time), and `src/server/scheduling-notify.ts` tells
+the scheduling emails so (`REMINDER_RUNS`): each reminder is queued for the
+last run at or before its time, so it arrives the day before the visit — at
+least the lead time ahead, often a few hours more — while the reschedule and
+cancel link in it still works. When you tighten the cron to every 15 minutes,
+change `REMINDER_RUNS` to `{ everyMinutes: 15 }` in the same commit, and
+reminders go out at the lead time exactly. The staff calendar shows a banner
+when reminders are waiting past their time (the cron isn't running) or the
+secret isn't set.
+
+The same `CRON_SECRET` covers both routes.
+
+### Scheduling: Google Maps
+
+`GOOGLE_MAPS_API_KEY` turns on real drive times and address lookup for
+scheduling. Without it the app still schedules: drive times are straight-line
+estimates, marked as estimates on the calendar and the crew's route, and
+addresses are kept as typed.
+
+In the Google Cloud console, on the project that holds the key:
+
+1. Enable the **Geocoding API** and the **Distance Matrix API**.
+2. Restrict the key to those two APIs (API restrictions), and to your server
+   (an IP restriction, where your host has fixed outbound addresses). It is a
+   server key and never reaches a browser.
+3. Set it in the Vercel project for Production and Preview.
+
+A key with either API switched off answers REQUEST_DENIED; the app logs
+"google maps request failed" and carries on with what it has.
+
+The business's time zone, name, services, crews and hours are set by the owner
+in `/admin/schedule/settings`. `SCHEDULING_TIME_ZONE` only chooses the zone the
+business starts in the first time scheduling runs (America/Denver when unset).
+Online booking starts **off**: the booking page says it is closed until the
+owner has checked those and switched on "Take bookings online", and the staff
+calendar lists what is left to set up.
+
+### Scheduling: crews on their phones
+
+A crew member needs no developer. They sign in once at `/sign-in`; the owner
+then picks them for their crew in Schedule settings → Crews ("Who opens this
+crew's route"). Picking somebody who holds no staff role gives them the
+**Crew member** role — `staff.schedule.route` and nothing else: their own
+stops at `/admin/schedule/today`, Start, Complete and "Couldn't do it", no
+calendar, no settings, no Messages. Un-picking them takes it away. Both are in
+the audit log. Office staff keep their own role (`staff.schedule.view`,
+`.manage`, `.settings`); picking the owner for a van never demotes them.
+
 ## 3. Day to day
 
 ```

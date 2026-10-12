@@ -1,5 +1,9 @@
+import { visitInstants } from "./instants.js";
 import { DEFAULT_SLOT_STEP_MINUTES, type ScoredSlot } from "./math.js";
 import { TIME_OF_DAY_PATTERN } from "./time.js";
+import type { PublicSlot } from "./wire.js";
+
+export type { PublicSlot } from "./wire.js";
 
 /**
  * What an anonymous visitor may see and send — pure, no DB.
@@ -13,9 +17,12 @@ import { TIME_OF_DAY_PATTERN } from "./time.js";
  * them with `toPublicSlot` and has no path that returns anything else.
  */
 
-/**
- * One bookable start, as an anonymous visitor sees it. No crew, no score, no
- * drive time, no address — nothing about any other booking.
+/*
+ * `PublicSlot` (declared in wire.ts, the shape the widget reads) is one
+ * bookable start, as an anonymous visitor sees it: the slot id, the date and
+ * wall-clock times in the business's zone, and the same start and end as
+ * instants. No crew, no score, no drive time, no address — nothing about any
+ * other booking.
  *
  * The slot id names a day and a start, and nothing else: not the crew. It is
  * opaque but not secret, and it carries no authority. `requestPublicBooking`
@@ -29,16 +36,6 @@ import { TIME_OF_DAY_PATTERN } from "./time.js";
  * held back, a crew the visitor wasn't offered, or a crew without the skill
  * the service needs.
  */
-export interface PublicSlot {
-  /** Opaque. Send it back to `requestPublicBooking` as is. */
-  slotId: string;
-  /** "YYYY-MM-DD" */
-  date: string;
-  /** "HH:MM" */
-  startTime: string;
-  /** "HH:MM" */
-  endTime: string;
-}
 
 interface SlotRef {
   date: string;
@@ -98,13 +95,20 @@ export function decodeSlotId(slotId: string): SlotRef | null {
   return { date, startTime };
 }
 
-/** The public projection of a staff slot: the four fields. The crew stays on the server. */
-export function toPublicSlot(slot: ScoredSlot): PublicSlot {
+/**
+ * The public projection of a staff slot: the slot id, the wall-clock date and
+ * times, and the same start and end as instants in `timeZone` (default UTC,
+ * 0.3's reading). The crew stays on the server.
+ */
+export function toPublicSlot(slot: ScoredSlot, timeZone = "UTC"): PublicSlot {
+  const { startsAt, endsAt } = visitInstants(slot.date, slot.startTime, slot.endTime, timeZone);
   return {
     slotId: encodeSlotId({ date: slot.date, startTime: slot.startTime }),
     date: slot.date,
     startTime: slot.startTime,
     endTime: slot.endTime,
+    startsAt: startsAt.toISOString(),
+    endsAt: endsAt.toISOString(),
   };
 }
 

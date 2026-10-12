@@ -84,7 +84,10 @@ export const EVERY_CONFIGURATION: readonly Configuration[] = TENANT_NOUNS.flatMa
                     // together still exercises every shell pairing without an
                     // axis apiece (which would multiply this product by 32).
                     includeSuite ? "--estimator" : "--no-estimator",
-                    includeSuite ? "--scheduling" : "--no-scheduling",
+                    // Scheduling needs an admin panel: `--scheduling --admin
+                    // none` is refused (assertAnswersCompatible), so it is
+                    // not a configuration — the suite axis drops it there.
+                    includeSuite && adminShell !== "none" ? "--scheduling" : "--no-scheduling",
                     includeSuite ? "--invoicing" : "--no-invoicing",
                     includeSuite ? "--comms" : "--no-comms",
                     includeSuite ? "--aeo" : "--no-aeo",
@@ -107,7 +110,7 @@ export const EVERY_CONFIGURATION: readonly Configuration[] = TENANT_NOUNS.flatMa
                       includeStorage: includeSuite,
                       includeAssistant: includeSuite,
                       includeEstimator: includeSuite,
-                      includeScheduling: includeSuite,
+                      includeScheduling: includeSuite && adminShell !== "none",
                       includeInvoicing: includeSuite,
                       includeComms: includeSuite,
                       includeAeo: includeSuite,
