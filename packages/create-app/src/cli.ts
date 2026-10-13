@@ -7,6 +7,8 @@ import {
   assertAnswersCompatible,
   packagesFor,
   requiredEnvFor,
+  deferredUntilDeployedFor,
+  tenantLabelPlural,
   validateProjectName,
   type AdminShell,
   type Answers,
@@ -340,10 +342,17 @@ export async function collectAnswers(
       DEFAULT_ANSWERS.includeMarketing,
     ));
 
+  // With companies, the field-service features run for the PLATFORM owner in
+  // this release (review R2 TB2-06): said when the question is asked, not
+  // only afterwards.
+  const forPlatform =
+    tenantNoun !== "none"
+      ? ` (With ${tenantLabelPlural({ ...DEFAULT_ANSWERS, tenantNoun }).toLowerCase()}, this release runs it for your own business, not for each ${tenantNoun.toLowerCase()}: that comes in Tenancy 2.)`
+      : "";
   const includeEstimator =
     flags.estimator ??
     (await prompter.confirm(
-      "Field service — estimator: instant prices from your own supplies, photo estimates, quotes customers accept online, follow-ups.",
+      `Field service — estimator: instant prices from your own supplies, photo estimates, quotes customers accept online, follow-ups.${forPlatform}`,
       DEFAULT_ANSWERS.includeEstimator,
     ));
   // The estimator keeps each customer's photo with their estimate, so the
@@ -362,7 +371,7 @@ export async function collectAnswers(
   const includeScheduling =
     flags.scheduling ??
     (await prompter.confirm(
-      "Field service — scheduling? A booking page, manage-your-visit links, a staff calendar with drag-to-move and today's route for crews.",
+      `Field service — scheduling? A booking page, manage-your-visit links, a staff calendar with drag-to-move and today's route for crews.${forPlatform}`,
       DEFAULT_ANSWERS.includeScheduling,
     ));
   // Scheduling's whole customer side is email — the acknowledgement, the
@@ -383,7 +392,7 @@ export async function collectAnswers(
   const includeInvoicing =
     flags.invoicing ??
     (await prompter.confirm(
-      "Field service — invoicing? Invoices with a public pay-by-token page and a staff ledger.",
+      `Field service — invoicing? Invoices with a public pay-by-token page and a staff ledger.${forPlatform}`,
       DEFAULT_ANSWERS.includeInvoicing,
     ));
   const includeComms =
@@ -447,16 +456,105 @@ export function nextSteps(answers: Answers, targetDir: string): string {
     "",
     "Next:",
     `  cd ${answers.projectName}`,
-    "  cp .env.example .env.local",
+    // NOT `cp .env.example .env.local` (TB-DEPLOY-14): .env.local was just
+    // written, commented and ready to run, and copying the example over it
+    // threw that away — along with the localhost app URL.
+    "  .env.local is already there and the app runs as is; fill in what you",
+    "  need as you go (/setup lists what is set and what each missing key",
+    "  switches off).",
     "",
-    "Then fill in .env.local. The app will not boot until these are set:",
-    ...requiredEnvFor(answers).map((v) => `  ${v}`),
-    "",
+    "  Before pnpm install: export GITHUB_TOKEN, a CLASSIC personal access token",
+    "  with read:packages from a GitHub account that has access to the",
+    "  @adminigloo packages (README.md, \"Private packages\"); .npmrc reads it.",
     "  pnpm install",
-    "  pnpm db:generate && pnpm db:migrate",
     "  pnpm dev",
     "",
+    // The database steps need a database (review R2 TB2-04): .env.local
+    // starts without one, and migrate and seed fail on an empty URL.
+    "Then put your Neon staging DATABASE_URL and DATABASE_URL_UNPOOLED, and",
+    "Clerk's development keys, in .env.local, and:",
+    "  pnpm db:generate && pnpm db:migrate",
+    "  pnpm db:seed",
+    "",
+    // What really happens locally (review R2 T1BO-11): the first sign-in is
+    // made administrator at once, and staff with no company land in /admin.
+    "Sign in. On your laptop the first person to sign in becomes the",
+    "administrator straight away and lands in /admin; on a deployment it's",
+    "BOOTSTRAP_ADMIN_EMAIL (DEPLOYMENT.md).",
+    "",
+    // SPLIT, and pulled from the env module's own deferred list so it can't
+    // drift: what stops a DEPLOYMENT from starting, and what only switches a
+    // feature off. "The app will not boot until these are set" was wrong on a
+    // laptop for every one of them.
+    "A deployment refuses to start without:",
+    ...deferredUntilDeployedFor(answers).map((v) => `  ${v}`),
+    "",
+    "Each of these switches its feature on (it stays off, and says so, until set):",
+    ...requiredEnvFor(answers)
+      .filter((v) => !deferredUntilDeployedFor(answers).includes(v))
+      .map((v) => `  ${v}`),
+    "",
+    "Deploying: DEPLOYMENT.md walks through Clerk's production instance and its",
+    "webhook, the database, NEXT_PUBLIC_APP_URL, and the first administrator.",
+    "",
   ];
+
+  if (answers.tenantNoun !== "none") {
+    const noun = answers.tenantNoun.toLowerCase();
+    lines.push(
+      // What a business owner can do on day one, and — said plainly, because a
+      // developer telling an owner "companies work" must not overstate it
+      // (review T1-10) — what this release does not do yet.
+      `${tenantLabelPlural(answers)}:`,
+      `  A new owner signs up, names their ${noun} at /onboarding, and invites`,
+      `  their team at /settings/team (owner, admin, member or viewer).`,
+      ...(answers.adminShell !== "none"
+        ? [`  Every ${noun} is at /admin/companies: suspend, reactivate, new owner.`]
+        : []),
+      `  In this release the feature screens are still run by your own staff`,
+      `  in /admin; they move onto each ${noun} in Tenancy 2.`,
+      // Review R2 TB2-06: the public booking and estimate pages book with the
+      // PLATFORM owner, not with each company. Said where it's read.
+      ...(answers.includeScheduling || answers.includeEstimator
+        ? [
+            `  The site's ${[
+              ...(answers.includeScheduling ? ["Book a visit"] : []),
+              ...(answers.includeEstimator ? ["Get an estimate"] : []),
+            ].join(" and ")} ${answers.includeScheduling && answers.includeEstimator ? "pages book" : "page books"} with YOUR business, not`,
+            `  with each ${noun}, until Tenancy 2.`,
+          ]
+        : []),
+      `  Set SUPPORT_EMAIL so a suspended ${noun} knows where to write.`,
+      "",
+    );
+    if (!answers.includeEmail) {
+      lines.push(
+        // TB-DEPLOY-07: without mail, every invitation is a link the inviter
+        // copies. The team page handles that well; nothing else would say so.
+        "Invitations are copy-a-link until email is added (they need a sending",
+        "domain you've verified in Resend):",
+        "  pnpm dlx @adminigloo/create-app add email",
+        "",
+      );
+    }
+  } else {
+    lines.push(
+      "Single business: everyone who signs up gets their own workspace, and",
+      "you invite your staff from /settings/team.",
+      "",
+    );
+  }
+
+  if (answers.includeComms) {
+    lines.push(
+      // CA-11: the queue drains from a cron, and the cron refuses everyone
+      // until the secret is set — so without this line scheduled messages sit
+      // there and nothing anywhere says why.
+      "Scheduled messages need CRON_SECRET in Vercel; until then",
+      "/api/cron/comms answers 401.",
+      "",
+    );
+  }
 
   if (answers.includeFeedback) {
     lines.push(

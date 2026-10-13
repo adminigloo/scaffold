@@ -388,12 +388,12 @@ async function seedRoles(): Promise<void> {
 
   // Only once a REAL staff member exists.
   //
-  // `grantBootstrapAdminIfFirst` gives the first person to sign in an admin
-  // role, and it is guarded by "no staff role exists yet". Seeding a demo staff
-  // row satisfies that guard, so the very next real sign-in silently gets
-  // nothing and lands on "You do not have access to the admin panel" with no
-  // way in short of hand-writing SQL. The demo data would lock you out of the
-  // demo.
+  // `ensureBootstrapAdmin` (@__SCOPE_NAME__/permissions/server) gives the
+  // first person to sign in an admin role, and it is guarded by "no
+  // administrator exists yet". Seeding a demo staff row satisfies that guard,
+  // so the very next real sign-in would get nothing and land on "You do not
+  // have access to the admin panel" (with `pnpm admin:grant` as the only way
+  // in). The demo data would lock you out of the demo.
   //
   // Seeded after you have your own role, the demo lead is still useful: it puts
   // a second person in /admin/people and gives the impersonation audit entry a

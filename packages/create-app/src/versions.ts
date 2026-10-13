@@ -51,17 +51,17 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // on precisely that answer.
   env: "0.3.0",
   db: "0.2.2",
-  auth: "0.1.3",
+  auth: "0.2.0",
   // 0.3.0: creating a tenant now writes its owner the owner role as a row, and
   // the emitted code calls the export that does it. Owning a tenant conferred
   // nothing before that, so a project on 0.2.x compiles and grants nobody
   // anything.
-  tenancy: "0.3.0",
-  permissions: "0.1.2",
+  tenancy: "0.4.0",
+  permissions: "0.2.0",
   // 0.2.0 rather than 0.1.x because `requireTenant(...).input(...)` did not
   // compile before it. `^0.1.0` would resolve to a build a generated project
   // cannot typecheck against.
-  trpc: "0.2.0",
+  trpc: "0.3.0",
   // The same, and the one that was actually broken: `createErrorReporter` ships
   // in 0.2.0 and `src/server/error-reporter.ts` imports it unconditionally, so
   // a project resolving 0.1.x fails to compile on a file every project gets.
@@ -138,7 +138,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // it belongs here all the same. `renderPackageJson` spelled `^0.1.1` out
   // inline, which put a fourteenth version in a place no drift test looked at —
   // the exact arrangement the rest of this table exists to replace.
-  testing: "0.1.4",
+  testing: "0.2.0",
   // Field service — first releases, pinned at the workspace versions the drift
   // test reads. The emitted routers/handlers import from each unconditionally
   // for the config that selects it, so a caret over anything older can resolve
@@ -185,6 +185,10 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // pages render its components; it speaks 0.4's wire, so it moves with
   // scheduling 0.4 and never with 0.3.
   "scheduling-widget": "0.1.0",
+  // Tenancy 1's screens (onboarding, the switcher, the team page, company
+  // settings, the operator console). In the BASE set: the team page is in
+  // every project, single-business ones included.
+  "tenancy-widget": "0.1.0",
   // 0.2.0 (sweep): line items after creation, atomic idempotent payments,
   // reversals, a status transition table and tenant-scoped reads — the emitted
   // admin page and router call addInvoiceItem/reversePayment/markInvoiceViewed

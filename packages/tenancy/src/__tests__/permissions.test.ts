@@ -21,6 +21,7 @@ describe("tenancyPermissions — catalog shape", () => {
     expect(Object.keys(catalog).sort()).toEqual([
       "members.invite",
       "members.remove",
+      "members.role.change",
       "members.view",
       "tenant.edit",
       "tenant.transfer",
@@ -36,18 +37,21 @@ describe("tenancyPermissions — catalog shape", () => {
     }
   });
 
-  it("groups into Team, Organisation and Danger", () => {
+  // Tenancy 1 renamed the "Organisation" category to "Company" (labels are
+  // what an owner reads; keys are unchanged) and added members.role.change.
+  it("groups into Team, Company and Danger", () => {
     const grouped = new Map<string, string[]>();
     for (const [key, def] of entries) {
       const bucket = grouped.get(def.category ?? "General");
       if (bucket) bucket.push(key);
       else grouped.set(def.category ?? "General", [key]);
     }
-    expect([...grouped.keys()].sort()).toEqual(["Danger", "Organisation", "Team"]);
+    expect([...grouped.keys()].sort()).toEqual(["Company", "Danger", "Team"]);
     expect(grouped.get("Danger")).toEqual(["tenant.transfer"]);
     expect(grouped.get("Team")?.sort()).toEqual([
       "members.invite",
       "members.remove",
+      "members.role.change",
       "members.view",
     ]);
   });

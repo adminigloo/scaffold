@@ -91,6 +91,21 @@ export function notAMember(tenantId: string): TRPCError {
   });
 }
 
+/**
+ * The caller IS a member, but the account they named is suspended (Tenancy 1,
+ * decision D15). Its own refusal so the screen can say what happened instead
+ * of "not a member" — which would read as "you were removed".
+ *
+ * The wording avoids the tenant noun on purpose: this package can't know
+ * whether the project calls them companies, shops or clinics.
+ */
+export function companySuspended(): TRPCError {
+  return new TRPCError({
+    code: "FORBIDDEN",
+    message: "Access to this account is suspended. Contact support to restore it.",
+  });
+}
+
 /** The caller is signed in but holds no staff role at all. */
 export function notStaff(): TRPCError {
   return new TRPCError({

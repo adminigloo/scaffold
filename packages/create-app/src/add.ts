@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
+  deferredUntilDeployedFor,
   optionalEnvFor,
   requiredEnvFor,
   type Answers,
@@ -176,8 +177,17 @@ export interface AddPlan {
   readonly conflicts: ReadonlyMap<string, string>;
   /** `package.json` after merging the feature's new dependencies into yours. */
   readonly packageJson: string | null;
-  /** Variables the feature introduces. Reported; `.env.local` is never edited. */
+  /**
+   * Variables the feature introduces. Reported; `.env.local` is never edited.
+   *
+   * THE SAME SPLIT A FRESH GENERATION PRINTS (review R2 TB2-08), from the
+   * env module's own lists: what a DEPLOYMENT refuses to start without
+   * (`deferredUntilDeployedFor`); what only switches the feature on; and
+   * what is optional. `add email` used to call RESEND_API_KEY boot-required
+   * while a fresh project with email called it optional.
+   */
   readonly newRequiredEnv: readonly string[];
+  readonly newFeatureEnv: readonly string[];
   readonly newOptionalEnv: readonly string[];
 }
 
@@ -254,8 +264,10 @@ export async function planAdd(
     else conflicts.set(relPath, next);
   }
 
+  const oldDeferred = new Set(deferredUntilDeployedFor(oldAnswers));
   const oldRequired = new Set(requiredEnvFor(oldAnswers));
   const oldOptional = new Set(optionalEnvFor(oldAnswers));
+  const newDeferred = deferredUntilDeployedFor(newAnswers);
 
   return {
     projectDir,
@@ -268,7 +280,8 @@ export async function planAdd(
     rewrites,
     conflicts,
     packageJson,
-    newRequiredEnv: requiredEnvFor(newAnswers).filter((v) => !oldRequired.has(v)),
+    newRequiredEnv: newDeferred.filter((v) => !oldDeferred.has(v)),
+    newFeatureEnv: requiredEnvFor(newAnswers).filter((v) => !oldRequired.has(v) && !newDeferred.includes(v)),
     newOptionalEnv: optionalEnvFor(newAnswers).filter((v) => !oldOptional.has(v)),
   };
 }
@@ -334,17 +347,29 @@ export function addNextSteps(plan: AddPlan): string {
   lines.push("Then:", "  pnpm install");
   // The schema changed whenever a feature with tables was added, and a schema
   // the migrations do not know about is a table that does not exist.
+  //
+  // AND THE SEED, every time (CA-10): a feature that added permission keys
+  // grants them to nobody until the catalog is seeded again, and a feature
+  // nobody can use reads as a feature that's broken. The seed is idempotent,
+  // so running it after a feature that added no keys changes nothing.
   if (plan.rewrites.has(join("src", "db", "schema.ts"))) {
-    lines.push("  pnpm db:generate && pnpm db:migrate");
+    lines.push("  pnpm db:generate && pnpm db:migrate && pnpm db:seed");
+  } else {
+    lines.push("  pnpm db:seed");
   }
   lines.push("");
 
   if (plan.newRequiredEnv.length > 0) {
     lines.push(
-      "This feature needs these before the app will boot once deployed — add",
-      "them to .env.local (it was not touched):",
+      "A deployment refuses to start without these — set them in Vercel (both",
+      "scopes) and in .env.local when you need them (it was not touched):",
     );
     for (const v of plan.newRequiredEnv) lines.push(`  ${v}`);
+    lines.push("");
+  }
+  if (plan.newFeatureEnv.length > 0) {
+    lines.push("Each of these switches the feature on (it stays off, and says so, until set):");
+    for (const v of plan.newFeatureEnv) lines.push(`  ${v}`);
     lines.push("");
   }
   if (plan.newOptionalEnv.length > 0) {

@@ -19,7 +19,7 @@
  * an invitee to support instead of back to the sender.
  *
  * Relative, deliberately. Every in-app link wants a path; only the mail wants
- * an absolute URL, and `invitationUrl` in src/server/invitations.ts builds that
+ * an absolute URL, and `invitationUrl` in src/server/tenancy-handlers.ts builds that
  * one from this and NEXT_PUBLIC_APP_URL. A function that returned an absolute
  * URL would put the deployment's origin into every href on the page, which
  * breaks preview deployments in the least obvious way possible.

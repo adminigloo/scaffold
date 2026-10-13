@@ -360,6 +360,10 @@ const SEALED_BY_DECISION: readonly string[] = [
   // staff. Reading a customer's own screen, written to the audit log as
   // sensitive access.
   "staff.tenants.impersonate",
+  // staff. Whoever holds it decides what every other staff member holds, so
+  // an override must never hand it to one person quietly (review T1-05): a
+  // lead given it by override could then give themselves every other key.
+  "staff.roles.manage",
 ];
 
 /**

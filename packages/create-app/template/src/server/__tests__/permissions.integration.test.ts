@@ -69,7 +69,7 @@ const ids = {
 /**
  * Permission keys invented for this file, NOT keys from the app catalog.
  *
- * `resolveFor` calls `resolvePermissionSet`, which does not validate against a
+ * `resolvePermissionsFor` calls `resolvePermissionSet`, which does not validate against a
  * catalog — so these exercise the SQL and the merge without pinning the suite
  * to whichever packages this particular project installed. A test written
  * against `catalog.products.view` starts failing the day someone generates the
@@ -144,7 +144,7 @@ describeIntegration("loadTenantPermissions, against real rows", () => {
 
   it("lets a per-person override deny take a template grant away", async () => {
     // The unit suite proves the merge from rows it built by hand. What is
-    // unproven there is that `resolveFor` issues the override query at all,
+    // unproven there is that `resolvePermissionsFor` issues the override query at all,
     // and with all three predicates — principal, scope AND tenant. Delete the
     // query and every template-only test stays green.
     await withAppDb(async (tx) => {
@@ -312,7 +312,7 @@ describeIntegration("membership is checked separately from grants", () => {
  * Staff rows are firm-wide, so they need a tenant_id meaning "no tenant". The
  * schema comment justifies the sentinel by unique-index semantics; the
  * consequence that bites at RUNTIME is simpler and is what these tests pin.
- * `resolveFor` matches with `tenant_id = '*'`, and `NULL = '*'` is UNKNOWN — so
+ * `resolvePermissionsFor` matches with `tenant_id = '*'`, and `NULL = '*'` is UNKNOWN — so
  * a nullable column would make every staff grant silently invisible to the
  * resolver, with no error anywhere.
  */
@@ -359,7 +359,7 @@ describeIntegration("loadStaffPermissions and the '*' sentinel", () => {
   it("would lose the row entirely if tenant_id were NULL, because NULL = '*' is UNKNOWN", async () => {
     // The reason the NOT NULL matters at RUNTIME, asked of the same server the
     // resolver runs on rather than asserted from memory of the SQL standard.
-    // `resolveFor` filters with `tenant_id = '*'`; a NULL would make that
+    // `resolvePermissionsFor` filters with `tenant_id = '*'`; a NULL would make that
     // comparison UNKNOWN, the WHERE would drop the row, and the staff grant
     // would vanish with no error and no log line anywhere.
     await withAppDb(async (tx) => {
@@ -415,7 +415,7 @@ describeIntegration("loadStaffPermissions and the '*' sentinel", () => {
     // support script — from filing a staff assignment under a real tenant id.
     //
     // The gate used to match `scope = 'staff'` with no tenant predicate while
-    // `resolveFor` re-queried pinned to '*'. A misfiled row therefore passed
+    // `resolvePermissionsFor` re-queried pinned to '*'. A misfiled row therefore passed
     // the gate and resolved to nothing, and every caller reads a non-null
     // return as ADMISSION: `staffProcedure` throws `notStaff()` on null and
     // otherwise runs the handler, and `app/admin/layout.tsx` renders the shell

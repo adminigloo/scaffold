@@ -91,9 +91,10 @@ jobs:
       matrix:
         include:
           # Overlays: none at all. The floor, and the emptiest artifact the
-          # generator can produce: APP_LINKS is `[]`, there is no /admin and no
-          # shop, and tenancy runs on an invisible personal workspace. Every
-          # generated list being empty at once is only ever exercised here.
+          # generator can produce: APP_LINKS holds only the team page, there is
+          # no /admin and no shop, and tenancy runs on each person's own
+          # workspace (no `companies` overlay: --tenant-noun none). Every
+          # generated list being as short as it gets is only exercised here.
           - id: floor-nothing-installed
             flags: --model none --admin none --no-ai --no-email --tenant-noun none
             overlays: none
@@ -109,14 +110,14 @@ jobs:
           # shell underneath.
           - id: money-without-admin
             flags: --model both --admin none --no-ai --no-email
-            overlays: stripe, account, legal
+            overlays: companies, stripe, account, legal
 
           # Overlays: admin-minimal + admin-full. An admin shell with nothing to
           # sell. Every admin page must hold up with no catalog, no orders and
           # no Stripe package installed at all.
           - id: admin-without-money
             flags: --model none --admin full --no-ai --no-email
-            overlays: admin-minimal, admin-full
+            overlays: admin-minimal, admin-full, companies
 
           # Overlays: feedback, alone. The intake half with no admin shell —
           # the widget mount, the key-authenticated API route and the staff
@@ -128,7 +129,7 @@ jobs:
           # it on every pull request.
           - id: feedback-without-admin
             flags: --model none --admin none --no-ai --no-email --feedback
-            overlays: feedback
+            overlays: companies, feedback
 
           # Overlays: email + ai. The mail templates and /setup/email standing
           # with no admin sidebar to hang off and no storefront — the footer
@@ -136,14 +137,14 @@ jobs:
           # them, which is the only place `--ai` without `--model` is built.
           - id: email-alone
             flags: --model none --admin none --ai --email --tenant-noun Workspace
-            overlays: email, ai
+            overlays: companies, email, ai
 
           # Overlays: admin-minimal + stripe + catalog-admin + account + email +
           # legal. The subscription path against the MINIMAL shell, which is the
           # shell the product builder is least often seen in.
           - id: subscription-minimal-shell
             flags: --model subscription --admin minimal --no-ai --email --tenant-noun Team
-            overlays: admin-minimal, stripe, catalog-admin, account, email, legal
+            overlays: admin-minimal, companies, stripe, catalog-admin, account, email, legal
 
           # Overlays: admin-minimal + admin-full + stripe + catalog-admin +
           # account + ai + legal. The one-time path with the full shell and the
@@ -151,7 +152,7 @@ jobs:
           # no-Resend branch while everything else is switched on.
           - id: one-time-full-shell
             flags: --model one-time --admin full --ai --no-email --tenant-noun Company
-            overlays: admin-minimal, admin-full, stripe, catalog-admin, account, ai, legal
+            overlays: admin-minimal, admin-full, companies, stripe, catalog-admin, account, ai, legal
 
           # Overlays: the estimator with everything it can be glued to — the
           # founder's field-service project. Photos kept (storage) and read
@@ -162,7 +163,7 @@ jobs:
           # test; only an install + build + route sweep of this shape says so.
           - id: estimator-field-service
             flags: --estimator --scheduling --invoicing --comms --email --storage --ai --admin full
-            overlays: admin-minimal, admin-full, ai, comms, comms-admin, email, estimator, estimator-admin, invoicing, invoicing-admin, scheduling, scheduling-admin, storage, storage-admin
+            overlays: admin-minimal, admin-full, ai, comms, comms-admin, companies, email, estimator, estimator-admin, invoicing, invoicing-admin, scheduling, scheduling-admin, storage, storage-admin
 
           # Overlays: the estimator with the least around it — the minimal
           # shell, no comms (no emails, no follow-ups), no storage (photos read
@@ -170,7 +171,7 @@ jobs:
           # estimator-services and estimator-notify modules is built here.
           - id: estimator-minimal
             flags: --estimator --admin minimal --no-comms --no-storage
-            overlays: admin-minimal, email, estimator, estimator-admin
+            overlays: admin-minimal, companies, email, estimator, estimator-admin
 
     env:
       # OUTSIDE the workspace, deliberately. pnpm walks up from the directory it

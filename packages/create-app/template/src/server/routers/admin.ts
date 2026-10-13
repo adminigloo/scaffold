@@ -17,6 +17,8 @@ import {
   roleTemplate,
   roleTemplateGrant,
 } from "__SCOPE__/permissions/schema";
+import { listRoleTemplates, roleOf } from "__SCOPE__/permissions/server";
+import { tenantMembers, tenants } from "__SCOPE__/tenancy/schema";
 import { db } from "@/db";
 import { staffCatalog, tenantCatalog } from "@/permissions/catalog";
 import { auditRegistry } from "../audit";
@@ -82,27 +84,37 @@ function catalogFor(scope: Scope): Catalog {
   return scope === "staff" ? staffCatalog : tenantCatalog;
 }
 
+/** `db`, or a transaction: a write decides on what its own transaction reads. */
+type Handle = Pick<typeof db, "select">;
+
 /** The template a principal holds in one scope, and what it grants. */
-async function loadTemplateFor(input: {
-  principalId: string;
-  scope: Scope;
-  tenantId: string;
-}) {
-  const assignment = await db.query.principalRole.findFirst({
-    where: and(
-      eq(principalRole.principalId, input.principalId),
-      eq(principalRole.scope, input.scope),
-      eq(principalRole.tenantId, input.tenantId),
-    ),
-  });
+async function loadTemplateFor(
+  input: {
+    principalId: string;
+    scope: Scope;
+    tenantId: string;
+  },
+  on: Handle = db,
+) {
+  const [assignment] = await on
+    .select({ templateId: principalRole.templateId })
+    .from(principalRole)
+    .where(
+      and(
+        eq(principalRole.principalId, input.principalId),
+        eq(principalRole.scope, input.scope),
+        eq(principalRole.tenantId, input.tenantId),
+      ),
+    );
 
   if (!assignment) return { template: null, grants: [] as PermissionRule[] };
 
-  const template = await db.query.roleTemplate.findFirst({
-    where: eq(roleTemplate.id, assignment.templateId),
-  });
+  const [template] = await on
+    .select()
+    .from(roleTemplate)
+    .where(eq(roleTemplate.id, assignment.templateId));
 
-  const grants = await db
+  const grants = await on
     .select({
       permission: roleTemplateGrant.permission,
       effect: roleTemplateGrant.effect,
@@ -169,6 +181,81 @@ export class SealedPermissionError extends Error {
       `"${permission}" is sealed and cannot be granted or revoked for one ` +
         `person. Change the role template, or unseal it in the catalog.`,
     );
+  }
+}
+
+/**
+ * Why a per-person change was refused, in words the RoleEditor shows as is.
+ */
+export class OverrideNotAllowedError extends Error {
+  readonly name = "OverrideNotAllowedError";
+}
+
+/**
+ * THE RANK RULES, APPLIED TO PER-PERSON CHANGES TOO (review T1-05).
+ *
+ * Staff roles are rank-guarded where they are given (People, through
+ * `assignRoleTemplate`): a customer service lead can't make anyone an
+ * administrator. This procedure is a second way into the same permissions, and
+ * until now it had no ranks at all — anyone holding `staff.roles.manage` could
+ * give THEMSELVES `staff.tenants.suspend` and every other unsealed staff key,
+ * which is administrator in all but name, or quietly hand a company member
+ * access their role never gave them. Two ways to do one thing, one guarded and
+ * one not, is the gap this closes:
+ *
+ *   - never on yourself — ask another administrator;
+ *   - staff: only on someone you strictly outrank, who HOLDS a staff role (an
+ *     override on someone with none changes nothing: there is no staff set for
+ *     it to sit on top of), and you may only GRANT a key you hold yourself;
+ *   - a company member's access: only the top staff rank may grant extra
+ *     access (taking it away, or clearing an override, is any rank's to do).
+ *
+ * Checked on the server because the checklist's disabled rows are a courtesy:
+ * this procedure is reachable with a hand-written request.
+ */
+async function assertMayOverride(input: {
+  readonly actorId: string;
+  readonly actorCan: { can(key: string): boolean };
+  readonly principalId: string;
+  readonly scope: Scope;
+  readonly tenantId: string;
+  readonly permission: string;
+  readonly effect: OverrideEffect;
+}): Promise<void> {
+  if (input.principalId === input.actorId) {
+    throw new OverrideNotAllowedError(
+      "You can't change your own access. Ask another administrator to do it.",
+    );
+  }
+  const actor = await roleOf(db, { principalId: input.actorId, scope: "staff" });
+  const actorRank = actor?.rank ?? 0;
+  if (input.scope === "staff") {
+    const target = await roleOf(db, { principalId: input.principalId, scope: "staff" });
+    if (!target) {
+      throw new OverrideNotAllowedError(
+        "This person has no staff role. Give them one on People first; per-person changes only apply on top of a role.",
+      );
+    }
+    if (target.rank >= actorRank) {
+      throw new OverrideNotAllowedError(
+        `Only someone above ${target.name} can change their access.`,
+      );
+    }
+    if (input.effect === "allow" && !input.actorCan.can(input.permission)) {
+      throw new OverrideNotAllowedError(
+        "You can only give someone access you have yourself.",
+      );
+    }
+    return;
+  }
+  if (input.effect === "allow") {
+    const templates = await listRoleTemplates(db, { scope: "staff" });
+    const top = Math.max(0, ...templates.map((template) => template.rank));
+    if (actorRank < top) {
+      throw new OverrideNotAllowedError(
+        "Only an administrator can give a customer's team member extra access.",
+      );
+    }
   }
 }
 
@@ -404,12 +491,63 @@ export const adminRouter = createTRPCRouter({
         });
       }
 
+      try {
+        await assertMayOverride({
+          actorId: ctx.principal.userId,
+          actorCan: ctx.can,
+          principalId: input.principalId,
+          scope: input.scope,
+          tenantId: input.tenantId,
+          permission: input.permission,
+          effect: input.effect,
+        });
+      } catch (error) {
+        if (!(error instanceof OverrideNotAllowedError)) throw error;
+        throw new TRPCError({ code: "FORBIDDEN", message: error.message, cause: error });
+      }
+
       const request = await requestContext();
 
       // One transaction. An override that lands without its audit row is
       // precisely the change somebody asks about six months later, and the
       // answer would be that the database says it was always that way.
       return db.transaction(async (tx) => {
+        // A COMPANY MEMBER'S ACCESS IS DECIDED UNDER THE COMPANY LOCK, ON WHAT
+        // IS TRUE NOW (review R2 F3; decision D7). Removing someone, changing
+        // their role and accepting an invitation all serialise on the
+        // company's row; without taking it here, an override decided from a
+        // screen opened before a removal landed after it, on a person who was
+        // no longer there — and lay dormant until they were re-invited. So:
+        // the row first, then the person must still be an active member (an
+        // override on anyone else is refused; clearing one is always allowed),
+        // and whether the key is sealed is read again, on this transaction.
+        if (input.scope === "tenant") {
+          await tx.select({ id: tenants.id }).from(tenants).where(eq(tenants.id, input.tenantId)).for("update");
+          if (input.effect !== "inherit") {
+            const [member] = await tx
+              .select({ status: tenantMembers.status })
+              .from(tenantMembers)
+              .where(and(eq(tenantMembers.tenantId, input.tenantId), eq(tenantMembers.userId, input.principalId)));
+            if (member?.status !== "active") {
+              const error = new OverrideNotAllowedError(
+                "This person isn't on that company's team, so there is no access to change. Their access starts from their role when they join.",
+              );
+              throw new TRPCError({ code: "FORBIDDEN", message: error.message, cause: error });
+            }
+            const now = await loadTemplateFor(input, tx);
+            if (
+              isSealedFor(
+                catalog,
+                input.permission,
+                explainPermission(input.permission, { templateGrants: now.grants, overrides: [] }).reason,
+              )
+            ) {
+              const error = new SealedPermissionError(input.permission);
+              throw new TRPCError({ code: "FORBIDDEN", message: error.message, cause: error });
+            }
+          }
+        }
+
         const identity = and(
           eq(principalOverride.principalId, input.principalId),
           eq(principalOverride.scope, input.scope),

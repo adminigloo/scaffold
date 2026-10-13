@@ -23,6 +23,21 @@ export const users = pgTable(
     identityProvider: text("identity_provider").notNull().default("clerk"),
     /** The provider's own user id. */
     externalId: text("external_id").notNull(),
+    /**
+     * The person's VERIFIED address, lowercased, or NULL when they have none.
+     *
+     * Only ever a verified one (the webhook's `primaryEmail` and create-app's
+     * `mirrorUser` both skip unverified addresses). This column decides who
+     * may accept an invitation (`requireMatchingEmail`) and who the
+     * BOOTSTRAP_ADMIN_EMAIL person is, so an address somebody merely typed
+     * into their profile must never land here: on a Clerk instance that lets
+     * people add an address without proving it, that would let a stranger
+     * claim the founder's address and be made platform admin.
+     *
+     * Not unique: two accounts can verify the same mailbox at different
+     * times. Everything that looks a user up by email refuses an ambiguous
+     * answer rather than picking one (admin:grant, the bootstrap backfill).
+     */
     email: text("email"),
     displayName: text("display_name"),
     imageUrl: text("image_url"),
@@ -43,6 +58,17 @@ export const users = pgTable(
      * and nothing looks wrong.
      */
     providerUpdatedAt: timestamp("provider_updated_at", { withTimezone: true }),
+    /**
+     * When provisioning finished for this user (decision D8 in the Tenancy 1
+     * contract). NULL = not yet: the next request (`currentPrincipal`) or
+     * webhook delivery runs `provisionUser` from `@adminigloo/tenancy/server`,
+     * which is idempotent and stamps this LAST — so a crash halfway leaves it
+     * null and the next request finishes the job.
+     *
+     * Deliberately NOT backfilled on upgrade: a null stamp is what makes the
+     * next request provision a user the 0.3 webhook race left with nothing.
+     */
+    provisionedAt: timestamp("provisioned_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
     deletedAt: deletedAt(),

@@ -37,8 +37,8 @@ export {
 } from "./ownership.js";
 export type { OwnerRoleDb } from "./ownership.js";
 
-export { tenancyPermissions } from "./permissions.js";
-export type { TenancyPermission } from "./permissions.js";
+export { tenancyPermissions, TENANCY_STAFF_PERMISSION_KEYS } from "./permissions.js";
+export type { TenancyPermission, TenancyStaffPermission } from "./permissions.js";
 
 export {
   TENANT_ROLE_TEMPLATES,
@@ -47,6 +47,49 @@ export {
   canManageTemplateKey,
 } from "./templates.js";
 export type { TenantRoleTemplate, TenantRoleTemplateKey } from "./templates.js";
+
+// Tenancy 1 (companies): the client-safe rules. Names and web addresses,
+// brand-colour contrast, the settings registry, the checklist types and the
+// audit vocabulary. Pure — `zod` is the only new import (settings.ts).
+export {
+  SLUG_MIN,
+  SLUG_MAX,
+  COMPANY_NAME_MAX,
+  RESERVED_SLUGS,
+  suggestSlug,
+  validateSlug,
+  slugProblemMessage,
+  normaliseCompanyName,
+  companyNameProblem,
+  companyNameProblemMessage,
+} from "./slug.js";
+export type { SlugProblem, CompanyNameProblem } from "./slug.js";
+
+export { normaliseHexColor, contrastRatio, brandColorReport, AA_TEXT_RATIO } from "./color.js";
+export type { BrandColorReport } from "./color.js";
+
+export {
+  isTimeZone,
+  defineSettingsFragment,
+  defineTenantSettings,
+  companySettings,
+  DuplicateSettingsFragmentError,
+  InvalidSettingsFragmentError,
+} from "./settings.js";
+export type {
+  SettingsFieldKind,
+  SettingsField,
+  SettingsParseProblem,
+  TenantSettingsFragment,
+  TenantSettingsRegistry,
+  SettingsValues,
+} from "./settings.js";
+
+export { defineSetupChecklist, DuplicateChecklistItemError, InvalidChecklistItemError } from "./checklist.js";
+export type { SetupChecklistItem, SetupChecklist, ChecklistContext } from "./checklist.js";
+
+export { tenancyAuditedActions, describeTenancyAuditEntry } from "./audit.js";
+export type { TenancyAuditAction } from "./audit.js";
 
 /**
  * Tables are reachable ONLY from "@adminigloo/tenancy/schema", matching auth,
@@ -64,4 +107,10 @@ export type { TenantRoleTemplate, TenantRoleTemplateKey } from "./templates.js";
  *
  * Types are safe to re-export: they erase at build time and pull in nothing.
  */
-export type { TenantJson, TenantKind, TenantMemberStatus } from "./schema.js";
+export type {
+  TenantBranding,
+  TenantJson,
+  TenantKind,
+  TenantMemberStatus,
+  TenantSetupState,
+} from "./schema.js";

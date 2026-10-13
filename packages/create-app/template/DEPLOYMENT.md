@@ -59,7 +59,9 @@ Each branch gives you two connection strings, and both are needed:
 
 One Clerk application with its two built-in instances: **Development** (local +
 Preview) and **Production**. Instance settings do not sync — every dashboard
-change is made twice.
+change is made twice. Keep **"verify email at sign-up"** on in both: the first
+administrator and every invitation are matched against VERIFIED addresses only,
+and an instance that lets people skip verification lets anyone claim one.
 
 One Stripe account, test mode for local + Preview, live mode for Production,
 with a separate webhook endpoint and signing secret per mode.
@@ -82,14 +84,16 @@ Where values live:
 | ----------------------------- | ---------------------------------------- |
 | `.env.local` (gitignored)     | your local values — staging branch, test keys |
 | `.env.example`                | the names only, no values. The authority on what this project needs |
-| Vercel → Preview scope        | staging values                            |
-| Vercel → Production scope     | production values                         |
+| Vercel → Preview scope        | staging values, `DATABASE_URL_UNPOOLED` included |
+| Vercel → Production scope     | production values, `DATABASE_URL_UNPOOLED` included |
 | GitHub Environment `staging`  | `DATABASE_URL_UNPOOLED` for the staging branch |
 | GitHub Environment `production` | `DATABASE_URL_UNPOOLED` for the production branch |
 
-The production database URL exists in exactly one place: the `production`
-GitHub Environment. It is not in anyone's `.env.local`, which is what makes
-"nobody hand-runs a production migration" true rather than agreed.
+The production database URL is never on anyone's laptop: it lives in Vercel's
+**Production** scope (the app reads it, and the build refuses to start
+without it) and in the `production` GitHub Environment (the migrations run
+from there). It is not in anyone's `.env.local`, which is what makes "nobody
+hand-runs a production migration" true rather than agreed.
 
 ### Off Vercel, one variable names the environment: `APP_ENV`
 
@@ -105,7 +109,7 @@ anything dangerous, lenient about anything missing.
 | --- | --- | --- |
 | deferred credentials (`DATABASE_URL`, Clerk) | required, boot fails without them | still optional |
 | `NEXT_PUBLIC_APP_URL` pointing at localhost | refused at boot | allowed |
-| first user to sign in | administrator only if their email matches `BOOTSTRAP_ADMIN_EMAIL` | same |
+| first administrator | whoever signs in with `BOOTSTRAP_ADMIN_EMAIL` verified, whenever no administrator exists — once the roles are installed (the deploy seeds them; §4) | same |
 | live Stripe / Clerk keys | accepted on `production` only | refused |
 | simulated checkout | `staging` + `ALLOW_SIMULATED_CHECKOUT=true`, never on `production` | unavailable |
 
@@ -334,11 +338,16 @@ any pipeline whose job is to run these; leave it unset on a laptop.
 
 ```
 verify (typecheck + test)
-   └─ migrate-staging          ← always, both branches
+   └─ migrate-staging          ← always, both branches; then db:seed:deploy
         ├─ deploy-staging      ← only on `staging`
-        └─ migrate-production  ← only on `main`, needs migrate-staging
+        └─ migrate-production  ← only on `main`, needs migrate-staging; then db:seed:deploy
              └─ deploy-production
 ```
+
+Each migrate job ends by seeding the permission catalog (`pnpm db:seed:deploy`),
+so the roles and the first administrator exist before the new code is live.
+Run by hand (Actions → Deploy → Run workflow), the same workflow runs only its
+`admin-grant` job.
 
 **The `needs` edge from `migrate-production` to `migrate-staging` is the
 protection.** A push to `main` applies the migration to a real database forked
@@ -364,9 +373,20 @@ Three more things hold it up:
 per branch).
 
 **Vercel** — import the repo. Production branch = `main`. Set env vars in the
-Preview scope (staging values) and the Production scope (production values);
-`.env.example` lists the names. Add `GITHUB_TOKEN` to both scopes — `.npmrc`
-interpolates it to install `__SCOPE__/*` from GitHub Packages during the build.
+Preview scope (staging values) and the Production scope (production values).
+Add `GITHUB_TOKEN` to both scopes — `.npmrc` interpolates it to install
+`__SCOPE__/*` from GitHub Packages during the build (the same classic token
+as `PACKAGES_READ_TOKEN` below).
+
+**Vercel needs these in BOTH scopes, or the build refuses to start** — set them
+before the first push to `main`, or that release stops halfway (the
+migrations and the seed run, then `vercel build` fails on the environment
+check):
+
+<!-- adminigloo:deploy-required-env -->
+
+Everything else in `.env.example` switches a feature on, or is optional: the
+app starts without it and `/setup` says what each missing key turns off.
 
 **GitHub** — create two Environments:
 
@@ -382,7 +402,7 @@ Repository secrets:
 | `VERCEL_TOKEN`         | Vercel account token, used by the CLI in the deploy jobs                 |
 | `VERCEL_ORG_ID`        | from `.vercel/project.json` after `vercel link`                          |
 | `VERCEL_PROJECT_ID`    | same file                                                                |
-| `PACKAGES_READ_TOKEN`  | PAT with `read:packages`. The automatic `secrets.GITHUB_TOKEN` is scoped to this repository and cannot read packages published from the scaffold repo |
+| `PACKAGES_READ_TOKEN`  | A **classic** personal access token with the `read:packages` scope, from a GitHub account that has been given read access to the `__SCOPE__` packages (your seller grants it). GitHub's fine-grained tokens can't read npm packages, and the automatic `secrets.GITHUB_TOKEN` is scoped to this repository and cannot read packages published from the scaffold repo |
 
 Repository variable (optional):
 
@@ -390,8 +410,101 @@ Repository variable (optional):
 | ---------------- | ----------------------------------------------------------------------- |
 | `STAGING_DOMAIN` | A domain on the Vercel project. Every `staging` deploy is aliased to it, so reviewers get one stable URL instead of a new one per push |
 
+`PACKAGES_READ_TOKEN` serves BOTH workflows: `ci.yml` installs with it too, so a
+pull request can pass the check branch protection requires.
+
+Repository (or environment) variable `BOOTSTRAP_ADMIN_EMAIL` — the address that
+becomes the first administrator. Set it here for the deploy seed AND in Vercel
+(both scopes) for the app; see "First run" below.
+
 **Branch protection on `main`** — pull requests required, `ci.yml` required to
 pass, linear history, no direct pushes.
+
+### Clerk's Production instance
+
+Production refuses test keys, and Clerk's live keys need a domain you own.
+
+1. In Clerk, create the **Production** instance and give it your domain.
+2. Attach the same domain to the Vercel project (Settings → Domains).
+3. Add the DNS records Clerk lists for that domain, and wait for Clerk to show
+   them as verified. Clerk sends its sign-in emails from this domain.
+4. Put `pk_live_…` / `sk_live_…` in Vercel's **Production** scope only; the
+   Development instance's `pk_test_…` / `sk_test_…` go in **Preview**.
+
+### Clerk's webhook (one per instance)
+
+The webhook keeps each person's row in step with Clerk, sets new people up if
+their first page request hasn't, and — the part nothing else does — takes a
+deleted account's access away. Without it, deleting someone in Clerk never
+reaches this app.
+
+| Instance | Endpoint URL | Events | Secret goes in |
+| --- | --- | --- | --- |
+| Development | `https://<STAGING_DOMAIN>/api/webhooks/clerk` | `user.created`, `user.updated`, `user.deleted` | Vercel **Preview** → `CLERK_WEBHOOK_SIGNING_SECRET` |
+| Production | `https://<your domain>/api/webhooks/clerk` | the same three | Vercel **Production** → `CLERK_WEBHOOK_SIGNING_SECRET` |
+
+The staging endpoint needs `STAGING_DOMAIN` (a per-deploy URL changes on every
+push) and must not sit behind Vercel's login wall — see the next section.
+Locally no webhook is needed: the first page request sets you up.
+
+### `NEXT_PUBLIC_APP_URL` and Vercel's Deployment Protection
+
+Invitation links and each company's public address are built from
+`NEXT_PUBLIC_APP_URL`. Set it to your domain in **Production** and to
+`https://<STAGING_DOMAIN>` in **Preview**, then redeploy (it is inlined at build
+time). Unset on production it falls back to the project's production domain,
+never a `*.vercel.app` deployment URL.
+
+Vercel protects preview deployments with a login by default ("Standard
+Protection"). An invitee opening a staging invitation link, and Clerk delivering
+a staging webhook, would both meet that login. Add your staging domain as a
+**Deployment Protection Exception** (Settings → Deployment Protection →
+Deployment Protection Exceptions → Add Domain, `STAGING_DOMAIN`; available
+on every plan): both then reach the app, and every other preview stays
+protected.
+
+A "Protection Bypass for Automation" in the webhook URL is NOT enough on its
+own: it lets Clerk's webhook through, but people opening a staging invitation
+link still land on Vercel's login page.
+
+### Email (invitations by email)
+
+Without `--email` (or until Resend is set up) every invitation is a link the
+inviter copies — the team page says so and hands it over. In a project made
+with `--email`, `EMAIL_FROM` is still needed for a deployment to start (it's
+in the table above); `RESEND_API_KEY` is what can wait. To send them:
+
+1. In Resend, add and verify your sending domain.
+2. Set `RESEND_API_KEY` and `EMAIL_FROM` (an address on that domain) in both
+   Vercel scopes.
+3. Send a test invitation on staging and open it from the email.
+
+A project generated without email gets it with
+`pnpm dlx @adminigloo/create-app add email`.
+
+### First run: roles, the first administrator, and getting back in
+
+- **The deploy installs the roles.** Right after `pnpm db:migrate:deploy`, both
+  migrate jobs run `pnpm db:seed:deploy` (`scripts/seed-deploy.ts`): the role
+  templates, what each may do, and the owner-role backfill. Idempotent, and it
+  never touches a role you customised. A permission a new feature adds reaches
+  production's roles in the same release.
+- **The first administrator** is `BOOTSTRAP_ADMIN_EMAIL` — set as a GitHub
+  variable (for the deploy seed) and in Vercel (for the app). They become an
+  administrator whenever NO administrator exists: at the deploy seed if they
+  have already signed in, or the moment they sign in or open /admin. The
+  address must be verified in Clerk.
+- **Self-heal.** Signing in before the roles were installed no longer locks
+  /admin: open it again after the next deploy (or `pnpm db:seed` locally).
+  The bootstrap logic is `ensureBootstrapAdmin` in
+  `__SCOPE__/permissions/server` (it was `src/server/bootstrap.ts`).
+- **Locked out, and an administrator exists?** For production: GitHub →
+  Actions → Deploy → **Run workflow**, with your email and `production` (it
+  waits for the production environment's reviewer, like a migration). On your
+  laptop, `pnpm admin:grant you@example.com` changes the database in
+  `.env.local` — staging.
+- **Adding more administrators** needs neither: an administrator gives anyone
+  a staff role, including administrator, from **People** in /admin.
 
 ## 6. When a migration fails mid-deploy
 
@@ -431,7 +544,13 @@ working. The production database has not been touched.
 | Boot fails with `KeyModeMismatchError` | which key is in which scope | A `_test_` key in Production or a `_live_` key in Preview. This check cannot be disabled — the values are wrong, not the check. |
 | Preview 500s on a query against a new column | whether `staging` has the migration | Merge to `staging` first; feature-branch previews share the staging database. |
 | A `staging` push seems to have been skipped | the Actions queue | Deploys serialise on one concurrency group. A run queued behind a production approval is superseded by the next push to the same branch. Approve or cancel the pending production run. |
-| `pnpm install` fails in Actions with 401 from `npm.pkg.github.com` | `PACKAGES_READ_TOKEN` | Expired or missing `read:packages`. |
+| `pnpm install` fails in Actions with 401 from `npm.pkg.github.com` | `PACKAGES_READ_TOKEN` | Missing, expired, fine-grained, or without `read:packages`. Make a new classic token. Both `ci.yml` and `deploy.yml` use it. |
+| `pnpm install` fails with 404 from `npm.pkg.github.com` | which account the token belongs to | The token works, but that GitHub account has no access to the `__SCOPE__` packages yet. Ask your seller for access. |
+| `vercel build` stops on the environment check after the migrations ran | the table in §5 | A variable from "Vercel needs these in BOTH scopes" is missing in that scope. Add it and run the deploy again. |
+| `pnpm/action-setup` stops with "No pnpm version is specified" | `packageManager` in package.json | The generator writes it; put it back if it was removed. |
+| /admin says "The roles aren't installed yet" | the deploy's `db:seed:deploy` step | Re-run the deploy, or `pnpm db:seed` locally. |
+| /admin says "You do not have access" and you run the site | whether an administrator exists | Run the Admin grant workflow (production) or `pnpm admin:grant` (local/staging). |
+| Someone deleted in Clerk can still sign in | the Clerk webhook for that instance | Set it up (§5); deletions reach the app only through it. |
 
 ## 8. Demo data
 

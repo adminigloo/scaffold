@@ -151,7 +151,8 @@ describe("who owns `/`", () => {
     // rather than the header for the same reason /setup is: a developer surface
     // that has to be reachable from anywhere and belongs in front of nobody.
     const nav = renderSiteNav(answers({ includeMarketing: true }));
-    expect(nav).toContain('{ href: "/setup/start", label: "Where to start" }');
+    // A developer page: listed, and left out of a production footer.
+    expect(nav).toContain('{ href: "/setup/start", label: "Where to start", audience: "developer" }');
     expect(renderSiteNav(answers({ includeMarketing: false }))).not.toContain(
       "/setup/start",
     );

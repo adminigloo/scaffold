@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { Principal } from "@adminigloo/auth";
 import type { PermissionSet } from "@adminigloo/permissions";
 import type { ScaffoldContext } from "./context.js";
-import { notAMember, notStaff, permissionDenied, permissionDeniedToTRPCError } from "./errors.js";
+import { companySuspended, notAMember, notStaff, permissionDenied, permissionDeniedToTRPCError } from "./errors.js";
 import { enforceRateLimit, type RateLimitLadderOptions } from "./ratelimit.js";
 
 /**
@@ -138,6 +138,17 @@ export interface PermissionLoaders {
   loadStaffPermissions(input: {
     readonly principal: Principal;
   }): Promise<PermissionSet | null>;
+  /**
+   * OPTIONAL (Tenancy 1): why `loadTenantPermissions` answered null. When it
+   * says "company-suspended", the tenant rung refuses with the suspended
+   * message instead of "not a member". Absent → the old refusal, unchanged.
+   * `createDrizzlePermissionLoaders` from @adminigloo/permissions/server
+   * satisfies this structurally.
+   */
+  explainTenantDenial?(input: {
+    readonly principal: Principal;
+    readonly tenantId: string;
+  }): Promise<"not-a-member" | "company-suspended">;
 }
 
 export interface Procedures<
@@ -301,7 +312,15 @@ export function createProcedures<
       // Not a member. This rung is exported and usable on its own, so it must
       // deny here rather than relying on a later `requireTenant` to notice an
       // empty set — otherwise `tenantProcedure.query(...)` is an open door.
-      if (can === null) throw notAMember(tenantId);
+      if (can === null) {
+        // A suspended company is not the same answer as "not yours": the
+        // member would otherwise read the refusal as having been removed.
+        if (loaders.explainTenantDenial) {
+          const why = await loaders.explainTenantDenial({ principal, tenantId });
+          if (why === "company-suspended") throw companySuspended();
+        }
+        throw notAMember(tenantId);
+      }
 
       // Overwrite `ctx.tenantId`, which arrived from the host or a header. The
       // permission set below was resolved for the tenant named in the input, so

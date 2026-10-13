@@ -208,6 +208,90 @@ that guards that piece, 6 of 6.
 It needs `packages/estimator`, `comms`, `storage`, `invoicing` and
 `scheduling` built (their `dist` is what runs).
 
+## What `tenancy-scenario.spec.ts` proves
+
+The business scenario companies (Tenancy 1) are sold on, end to end, in a
+browser. Summit Window Co. signs up for "Igloo Back Office" through the REAL
+screens (bundled from `@adminigloo/tenancy-widget`'s source) against the REAL
+service and HTTP handlers (`@adminigloo/tenancy` 0.4, from its built `dist`),
+the permissions package's loaders and deploy seed, on PGlite — wired the way a
+generated `--tenant-noun Company` project wires them
+(`fixtures/tenancy-scenario-server.ts`: the company gate, the admin layout's
+first-administrator self-heal, a fake sign-in that can arrive as the Clerk
+webhook or as the first page request, an outbox for invitation emails, an
+in-memory logo store). The fixture bundles the widgets itself, so `bundle.mjs`
+needs no entry for them.
+
+It walks the steps as the people involved, with an axe check (no serious or
+critical violations) on every screen it lands on:
+
+1. Olivia signs up (the webhook arrives first) and lands on "What's your company
+   called?"; a reserved web address is refused with a free one offered; the
+   first answer is lost after the save (the fixture drops it, fails the page's
+   next session check too, and ages the company past the server's 10-minute
+   same-name window, so only the request key protects the retry) and she
+   presses again, twice — one company.
+2. The setup checklist starts at 0 of 3; "Add details" lands on the details
+   section; saving the time zone and contact ticks one off.
+3. A brand colour that reads well, and a logo that appears in the header switcher.
+4. An invitation is emailed; Sam opens it signed out, creates an account, sees
+   which company and role it is for, accepts, and never sees onboarding.
+5. Olivia promotes Sam (with a confirmation), then removes him: his open tab is
+   refused in a sentence on its next action, and his next page sends him to
+   onboarding, which names the company he was removed from.
+6. Sam rejoins, starts Side Gig through "Create another company" (its answer
+   lost too: still one Side Gig), and switches between the two; each team page
+   shows only its own people.
+7. Olivia hands Summit to Sam (the button stays disabled until the name is
+   typed) and leaves; the new owner can't just leave.
+8. Ava (BOOTSTRAP_ADMIN_EMAIL) is let into the console, finds Summit, suspends
+   Side Gig (Sam sees "Side Gig is suspended" with a way back to Summit) and
+   reactivates it, and gives Olivia a staff role on People — her own row locked,
+   with the reason shown.
+9. At 390, 360 and 320 px: onboarding, the dashboard, the switcher menu, the
+   team page and the settings page — nothing scrolls sideways, the account
+   button stays on screen, and every control is at least 44 px tall.
+
+A separate test (`lostAnswer: "check"`) loses the create answer while the
+session still answers: the page says the company was made and opens it, for
+onboarding and for "Create another" — no retry, no twin (review R2 T1BO-01).
+
+Negative controls run in the same file, with `test.fail()`, against a
+deliberately broken FIXTURE (the packages carry no bug switches):
+`break: "fresh-key"` (a new request key on every create: the retry after a lost
+answer makes a second Side Gig) and `break: "cached-gate"` (company pages from
+the session cached at sign-in: a removed member keeps the company). Both must
+fail, and do.
+
+It needs `packages/tenancy`, `auth`, `permissions`, `observability` and
+`testing` built (their `dist` is what runs).
+
+### What it does NOT prove (review R2 T1BO-05)
+
+"End to end" here means **the packages, wired the way we believe create-app
+wires them** — not the generated project's own pages. The fixture draws its
+own host pages (`HOST_APP`, `PAGE_CSS`, `signInPage`, the signed-out invite
+page): the generated `src/components/CompanyGate.tsx`, `AuthHeader.tsx`,
+`app/(site)/invite/[token]/page.tsx`, `app/admin/layout.tsx` (with
+`AdminUnavailable`), the dashboard's link cards and the Clerk redirects are
+never rendered in a browser by any test. What covers them instead:
+
+- the generated project's own `tsc`, `next build` and unit suite (its emitted
+  isolation, provisioning, override and webhook proofs run on PGlite);
+- `scripts/verify-generated.mjs`'s route sweep, with Clerk unconfigured;
+- create-app's generator tests, which read the emitted pages' text.
+
+Where the fixture copies a generated page's WORDS (the signed-out invite page)
+or its CATALOG (the staff permission defaults), it is kept in step by hand, and
+says so where it does it. Running this scenario against a generated project
+under `next start` needs a sign-in seam that bypasses Clerk, and that seam
+must never ship in a buyer's project — so it is not done here.
+
+The confirmations an owner reads after removing someone, changing a role or
+handing over ownership are asserted ON SCREEN (`seenOnScreen`: a box larger
+than a pixel), because Playwright counts a clipped screen-reader line as
+"visible" (review R2 T1BO-04).
+
 ## What `estimator-widget.spec.ts` proves
 
 `@adminigloo/estimator-widget` on its own, against a fake server answered with

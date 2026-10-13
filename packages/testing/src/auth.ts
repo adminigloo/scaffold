@@ -78,6 +78,13 @@ export interface IdentityPayloadOverrides {
   readonly emails?: readonly string[];
   /** Which address `primary_email_address_id` names. Defaults to the first. */
   readonly primaryEmailIndex?: number;
+  /**
+   * Indexes (into `emails`, or 0 for `email`) of addresses Clerk has NOT
+   * verified. Every address is verified by default, as on a real sign-up;
+   * auth 0.2 mirrors only verified addresses, so this is how a test models a
+   * profile with an address the person never proved.
+   */
+  readonly unverifiedEmailIndexes?: readonly number[];
   readonly firstName?: string | null;
   readonly lastName?: string | null;
   readonly imageUrl?: string | null;
@@ -93,6 +100,8 @@ export class IdentityFixtureError extends Error {
 interface ClerkEmailAddress {
   readonly id: string;
   readonly email_address: string;
+  /** Clerk's per-address verification, which auth 0.2 reads. */
+  readonly verification: { readonly status: "verified" | "unverified" };
 }
 
 /** Opaque to Clerk; these only have to be distinct and stable per index. */
@@ -103,14 +112,17 @@ function emailAddressId(index: number): string {
 function emailAddresses(
   overrides: IdentityPayloadOverrides,
 ): readonly ClerkEmailAddress[] {
+  const unverified = new Set(overrides.unverifiedEmailIndexes ?? []);
+  const verification = (index: number) => ({ status: unverified.has(index) ? ("unverified" as const) : ("verified" as const) });
   if (overrides.emails !== undefined) {
     return overrides.emails.map((address, index) => ({
       id: emailAddressId(index),
       email_address: address,
+      verification: verification(index),
     }));
   }
   const email = overrides.email === undefined ? "ada@example.com" : overrides.email;
-  return email === null ? [] : [{ id: emailAddressId(0), email_address: email }];
+  return email === null ? [] : [{ id: emailAddressId(0), email_address: email, verification: verification(0) }];
 }
 
 /**

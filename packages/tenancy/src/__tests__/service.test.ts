@@ -202,6 +202,8 @@ describe("accept", () => {
     await expect(service.accept(token, INVITEE)).resolves.toEqual({
       status: "accepted",
       tenantId: TENANT,
+      replacedRole: null,
+      clearedOverrides: [],
     });
 
     expect(pg.tables.members).toEqual([
@@ -365,6 +367,8 @@ describe("accept", () => {
     await expect(service.accept(token, INVITEE)).resolves.toEqual({
       status: "accepted",
       tenantId: TENANT,
+      replacedRole: null,
+      clearedOverrides: [],
     });
     expect(pg.tables.members).toHaveLength(1);
   });
@@ -412,6 +416,8 @@ describe("accept", () => {
     await expect(service.accept(token, INVITEE)).resolves.toEqual({
       status: "accepted",
       tenantId: TENANT,
+      replacedRole: null,
+      clearedOverrides: [],
     });
     expect(pg.tables.members).toHaveLength(1);
     expect(pg.tables.roles).toHaveLength(0);

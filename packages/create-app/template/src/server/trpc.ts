@@ -5,7 +5,7 @@ import { createProcedures, createScaffoldContext } from "__SCOPE__/trpc";
 import type { ProcedureMeta } from "__SCOPE__/trpc";
 import type { ScaffoldContext } from "__SCOPE__/trpc";
 import type { HeaderSource } from "__SCOPE__/observability";
-import { loadStaffPermissions, loadTenantPermissions } from "./permissions";
+import { explainTenantDenial, loadStaffPermissions, loadTenantPermissions } from "./permissions";
 import { currentPrincipal } from "./auth";
 import { limiter } from "./rate-limit";
 
@@ -79,7 +79,10 @@ export const {
   requireStaff,
 } = createProcedures(
   t,
-  { loadTenantPermissions, loadStaffPermissions },
+  // `explainTenantDenial` turns a refusal for a SUSPENDED company into "Access
+  // to this account is suspended. Contact support to restore it." instead of
+  // "not a member" — the people in it are members; their company is paused.
+  { loadTenantPermissions, loadStaffPermissions, explainTenantDenial },
   { rateLimit: { limiter } },
 );
 

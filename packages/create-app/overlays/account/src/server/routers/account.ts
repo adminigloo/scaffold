@@ -17,7 +17,7 @@ import { createTRPCRouter, requireTenant } from "../trpc";
  * The one mutation the customer account area has.
  *
  * EVERYTHING ELSE IN THIS OVERLAY IS A SERVER-COMPONENT READ, deliberately, and
- * matching `app/(site)/members/page.tsx`: pages read the database directly,
+ * matching the company pages (`<CompanyGate>`): pages read on the server,
  * mutations go through a router, because a mutation written into a page is a
  * mutation the scope audit cannot see. There is exactly one thing a customer
  * can DO here that is not navigation, and it is this.

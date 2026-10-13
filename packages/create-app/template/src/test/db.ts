@@ -158,7 +158,7 @@ function announceOnce(): void {
  * transaction.
  *
  * WHY THIS EXISTS AT ALL. Every server module — `src/server/permissions.ts`,
- * `src/server/auth.ts`, `src/server/bootstrap.ts` — closes over `db` from
+ * `src/server/auth.ts`, `src/server/tenancy.ts` — closes over `db` from
  * "@/db" at module scope. It is not injectable, and that is a deliberate
  * design choice everywhere except in a test: `withRollback` runs on ONE pooled
  * connection, `db` hands out a DIFFERENT one, and READ COMMITTED means rows
@@ -191,7 +191,7 @@ export type AppTransaction = Parameters<TransactionCallback>[0];
  * Open a rolled-back transaction AND point the app's `db` at it.
  *
  * Use this whenever the assertion runs the app's own code —
- * `loadTenantPermissions`, `currentPrincipal`, `grantBootstrapAdminIfFirst`.
+ * `loadTenantPermissions`, `currentPrincipal`, `tenancy.provisionUser`.
  * Use plain `withRollback` when the test issues its own SQL and nothing under
  * test reads "@/db".
  *

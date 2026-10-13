@@ -1,9 +1,10 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { AcceptInvitation } from "@/components/invitations/AcceptInvitation";
-import { Card, CardBody, Notice, PageHeader, buttonClass } from "@/components/ui";
+import { AcceptInvitation } from "__SCOPE__/tenancy-widget";
+import { Card, CardBody, PageHeader, buttonClass } from "@/components/ui";
 import { invitePath } from "@/invitations";
 import { currentPrincipal } from "@/server/auth";
+import { AFTER_AUTH_PATH, NOUN, TENANCY_API } from "@/tenancy";
 
 /**
  * Where an invitation link lands.
@@ -23,12 +24,22 @@ import { currentPrincipal } from "@/server/auth";
  * on render, a corporate mail scanner would join the __TENANT_LABEL_LOWER__ on
  * the invitee's behalf before they ever clicked. So the signed-out screen says
  * only that an invitation exists at this URL, which the visitor already knew
- * because they are holding it, and every real answer comes from a mutation
- * somebody deliberately triggers.
+ * because they are holding it.
  *
- * The consequence is that an unknown token is indistinguishable from a real one
- * until it is redeemed, which is exactly the property wanted: this page never
- * confirms or denies that a token ever existed.
+ * IN PLAIN WORDS (review R2 T1BO-06). This is the first screen every office
+ * manager and crew lead sees, so it says what to do — sign up or sign in, with
+ * the address the invitation went to — and nothing about scanners or hashes.
+ * It also doesn't say "keep this tab open": the link is still in their email
+ * and works again after they sign up.
+ *
+ * SIGNED IN, the package's <AcceptInvitation> takes over (Tenancy 1). It first
+ * asks the server what the link is for — "{company} invited you to join as
+ * {role}" — through a POST that only a signed-in person can make (a scanner
+ * can't), then accepts only when the person presses the button. When the
+ * account's address doesn't match the invitation it offers a way to sign out
+ * and back in with the right one (`signOutHref`), instead of just saying so.
+ * The screen ships in @__SCOPE_NAME__/tenancy-widget so a fix to it reaches
+ * this project by `npm update`.
  *
  * The redirect back here is `forceRedirectUrl` on the Clerk components rather
  * than a hand-rolled `?next=` on the sign-up route, so it survives the whole
@@ -42,7 +53,7 @@ export default async function InvitePage({
   params,
 }: {
   // A Promise since Next 15. Destructuring it synchronously compiles and then
-  // hands the accept mutation "[object Promise]", which reports every real
+  // hands the accept call "[object Promise]", which reports every real
   // invitation as unknown.
   readonly params: Promise<{ readonly token: string }>;
 }) {
@@ -54,15 +65,14 @@ export default async function InvitePage({
     return (
       <Main>
         <PageHeader
-          title="You have been invited"
-          description="Create an account or sign in, and this page will pick up where it left off."
+          title="You've been invited"
+          description="Create an account or sign in to see your invitation."
         />
         <Card>
           <CardBody className="flex flex-col gap-4">
             <p className="max-w-[62ch] text-sm text-ink-muted">
-              We will not say who invited you or what to until you are signed in.
-              A link in an inbox is read by more than the person it was sent to,
-              and there is nothing here worth telling a mail scanner.
+              Use the email address the invitation was sent to. You can come
+              back to this link from your email at any time.
             </p>
             <div className="flex flex-wrap gap-2">
               {/* Both destinations carry the same return path. Somebody who
@@ -84,22 +94,25 @@ export default async function InvitePage({
             </div>
           </CardBody>
         </Card>
-        <Notice tone="info" title="Keep this tab open">
-          The link is the invitation. If you lose it, whoever invited you has to
-          send a new one &mdash; we store a hash of it and cannot recover the
-          original.
-        </Notice>
       </Main>
     );
   }
 
   return (
     <Main>
-      <PageHeader
-        title="Accept your invitation"
-        description="Nothing happens until you press the button."
+      <AcceptInvitation
+        baseUrl={TENANCY_API}
+        token={token}
+        signedInAs={principal.email}
+        afterHref={AFTER_AUTH_PATH}
+        noun={NOUN}
+        // Out, then straight back to sign-in with THIS page as the return
+        // path, so signing in with the address the invitation was sent to
+        // lands on it again.
+        signOutHref={`/sign-out?redirect_url=${encodeURIComponent(
+          `/sign-in?redirect_url=${encodeURIComponent(here)}`,
+        )}`}
       />
-      <AcceptInvitation token={token} signedInAs={principal.email} />
     </Main>
   );
 }

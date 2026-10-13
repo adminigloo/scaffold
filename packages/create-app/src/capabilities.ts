@@ -101,32 +101,63 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
   {
     capability: "tenancy.invitations",
     why:
-      "The router exists AND `_app.ts` mounts it. A router nothing mounts is " +
-      "a file, not a capability — which is how this whole class of lie starts.",
+      "Invitations are served by the package's handlers (send, resend, revoke, " +
+      "accept, preview) through the ONE construction site, and the invite page " +
+      "renders the package's accept screen. The 0.3 tRPC router is retired: a " +
+      "second write path into the same rows would be two places to keep the " +
+      "rank rules right.",
     provenBy: (plan) =>
-      exists(plan, "src", "server", "routers", "invitations.ts") &&
-      mentions(
-        plan,
-        ["src", "server", "routers", "_app.ts"],
-        "invitations: invitationsRouter",
-      ),
+      mentions(plan, ["src", "server", "tenancy-handlers.ts"], "createTenancyHandlers(") &&
+      mentions(plan, ["app", "api", "tenancy", "[...path]", "route.ts"], "buildTenancyHandlers(") &&
+      mentions(plan, ["app", "(site)", "invite", "[token]", "page.tsx"], "<AcceptInvitation"),
   },
   {
     capability: "tenancy.personal-workspace",
     why:
-      "`currentPrincipal` mints a personal workspace for every mirrored user. " +
-      "See UNDISTINGUISHED_CAPABILITIES: this evidence cannot separate the " +
-      "personal-workspace shape from the organisations one.",
+      "The personal variant of the one construction site: every person gets " +
+      "their own workspace from `provisionUser`, from the webhook or the first " +
+      "page, whichever arrives first.",
     provenBy: (plan) =>
-      mentions(plan, ["src", "server", "auth.ts"], "personalWorkspaceId("),
+      mentions(plan, ["src", "server", "tenancy.ts"], 'mode: "personal"'),
   },
   {
     capability: "tenancy.organizations",
     why:
-      "The same tenancy machinery, with a customer-visible noun on it. See " +
-      "UNDISTINGUISHED_CAPABILITIES.",
+      "A company is something a person creates, switches between and runs: " +
+      "the onboarding form, the header switcher, the company settings and team " +
+      "pages, and the routes they talk to. Each page renders the package " +
+      "component, so the evidence is the component on the page.",
     provenBy: (plan) =>
-      mentions(plan, ["src", "server", "auth.ts"], "personalWorkspaceId("),
+      mentions(plan, ["src", "server", "tenancy.ts"], 'mode: "companies"') &&
+      mentions(plan, ["app", "(site)", "onboarding", "page.tsx"], "<Onboarding") &&
+      mentions(plan, ["src", "components", "CompanySwitcherSlot.tsx"], "<CompanySwitcher") &&
+      mentions(plan, ["app", "(site)", "settings", "company", "page.tsx"], "<CompanySettings") &&
+      mentions(plan, ["app", "(site)", "settings", "team", "page.tsx"], "<TeamManager") &&
+      mentions(plan, ["src", "server", "tenancy-handlers.ts"], "createTenancyHandlers("),
+  },
+  {
+    capability: "tenancy.first-run",
+    why:
+      "The permission catalog is seeded on every deploy, right after the " +
+      "migrations (PC-09), and a locked-out owner has a recovery command. " +
+      "Without the deploy step production never gets its roles and the first " +
+      "administrator is never made.",
+    provenBy: (plan) =>
+      mentions(plan, ["scripts", "seed-deploy.ts"], "seedPermissions(") &&
+      mentions(plan, ["src", "permissions", "seed.ts"], "seedPermissionCatalog(") &&
+      mentions(plan, [".github", "workflows", "deploy.yml"], "db:seed:deploy") &&
+      exists(plan, "scripts", "admin-grant.ts"),
+  },
+  {
+    capability: "tenancy.isolation-proof",
+    why:
+      "The project proves, in its own unit suite on an in-process Postgres, " +
+      "that one company can't read or change another's rows through any " +
+      "tenant procedure or company route, and that every procedure sits on the " +
+      "rung it was meant to.",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "server", "__tests__", "tenant-isolation.test.ts"], "ISOLATION_BODIES") &&
+      mentions(plan, ["src", "server", "__tests__", "procedure-scopes.test.ts"], "auditBuiltProcedures("),
   },
   {
     capability: "observability.audit-log",
@@ -208,6 +239,16 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
     capability: "admin.shell",
     why: "The panel's index page, from the admin-minimal overlay.",
     provenBy: (plan) => exists(plan, "app", "admin", "page.tsx"),
+  },
+  {
+    capability: "admin.operator-console",
+    why:
+      "Every company, searchable, with suspend, reactivate and a new owner " +
+      "for one whose owner closed their account; and People, where staff " +
+      "roles are given. Both are package components on admin pages.",
+    provenBy: (plan) =>
+      mentions(plan, ["app", "admin", "companies", "page.tsx"], "<CompaniesConsole") &&
+      mentions(plan, ["app", "admin", "people", "page.tsx"], "<StaffPeople"),
   },
   {
     capability: "admin.support-tools",
@@ -597,15 +638,6 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
  * so — which is the only mechanism that gets a list like this pruned.
  */
 export const UNDISTINGUISHED_CAPABILITIES: Readonly<Record<string, string>> = {
-  "tenancy.personal-workspace":
-    "a `--tenant none` project and a `--tenant Workspace` project are the same " +
-    "bytes. Every project mints a personal workspace in `currentPrincipal`; " +
-    "the answer changes only the noun the UI prints, and `Workspace` is also " +
-    "the fallback noun. Real, but presentational.",
-  "tenancy.organizations":
-    "the other half of the same pair. Distinguishing them means the generator " +
-    "emitting something structural for an organisation — a switcher, a create " +
-    "form — that it does not emit today.",
   "commerce.one-time-checkout":
     "`--model one-time`, `--model subscription` and `--model both` select the " +
     "same overlays, the same packages and the same router. The answer reaches " +

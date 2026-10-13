@@ -2,6 +2,7 @@ import { SignUp } from "@clerk/nextjs";
 import Link from "next/link";
 import { env } from "@/env";
 import { safeReturnPath } from "@/redirect";
+import { AFTER_AUTH_PATH } from "@/tenancy";
 import { Card, CardBody, PageHeader } from "@/components/ui";
 
 /**
@@ -71,10 +72,17 @@ export default async function SignUpPage({
   // main pushes the footer off every screen and paints over the header's rule.
   return (
     <main className="grid min-h-[70vh] place-items-center px-6 py-12">
+      {/* WITH NO RETURN PATH, the person goes to AFTER_AUTH_PATH (the
+          company dashboard, which sends a new owner to onboarding). Without a
+          fallback Clerk uses its dashboard's "after sign-in" address — usually
+          "/" — and a new owner never meets "What's your company called?".
+          The other page's address is ALWAYS passed, so the link inside Clerk's
+          card stays on this site instead of Clerk's hosted page (TB-DEPLOY-11). */}
       <SignUp
+        fallbackRedirectUrl={AFTER_AUTH_PATH}
         forceRedirectUrl={back ?? undefined}
         signInUrl={
-          back === null ? undefined : `/sign-in?redirect_url=${encodeURIComponent(back)}`
+          back === null ? "/sign-in" : `/sign-in?redirect_url=${encodeURIComponent(back)}`
         }
       />
     </main>

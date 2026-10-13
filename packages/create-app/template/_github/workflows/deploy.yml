@@ -13,11 +13,33 @@
 # vercel.json, so this workflow is the only thing that can deploy them. Left on,
 # Vercel would build and promote the moment the commit landed — in parallel with
 # the migration, not after it — and the new code would meet the old schema.
+#
+# After each migration the permission catalog is SEEDED (`pnpm db:seed:deploy`)
+# — the roles, what each may do, and the first administrator — so a deployed
+# database is never left without them. And run BY HAND (Actions -> Deploy ->
+# Run workflow), the `admin-grant` job makes someone an administrator on
+# staging or production: the way back in when nobody can open /admin.
 name: Deploy
 
 on:
   push:
     branches: [staging, main]
+  # The recovery path (TB-DEPLOY-08). `pnpm admin:grant` on a laptop reaches
+  # only the database in .env.local — staging — because production's URL is on
+  # nobody's laptop. This runs it where that URL lives, behind the same
+  # environment protection as a production migration.
+  workflow_dispatch:
+    inputs:
+      email:
+        description: "Make this person an administrator (they must have signed in once)"
+        required: true
+        type: string
+      target:
+        description: "Which site"
+        required: true
+        type: choice
+        options: [production, staging]
+        default: production
 
 # One release at a time, repo-wide rather than per-branch: both branches migrate
 # the same staging database, and two runs interleaving there would race the
@@ -51,6 +73,9 @@ jobs:
   # the production migration that is already running beside it.
   verify:
     name: Typecheck and test
+    # Pushes only. A hand-run of this workflow is the admin grant below, and
+    # must not deploy anything.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -84,6 +109,14 @@ jobs:
         env:
           MIGRATION_TARGET: staging
           DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      # The permission catalog is seeded on every deploy, after migrations; new
+      # feature keys reach staging's roles here, and BOOTSTRAP_ADMIN_EMAIL (a
+      # repository or environment VARIABLE) becomes the first administrator if
+      # nobody is one yet. Idempotent: it never touches a customised role.
+      - run: pnpm db:seed:deploy
+        env:
+          DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+          BOOTSTRAP_ADMIN_EMAIL: ${{ vars.BOOTSTRAP_ADMIN_EMAIL }}
 
   deploy-staging:
     name: Deploy Preview
@@ -156,6 +189,13 @@ jobs:
           # that has not typed this out.
           ALLOW_PRODUCTION_MIGRATION: "true"
           DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+      # The permission catalog is seeded on every deploy, after migrations; new
+      # feature keys reach production roles here. Without this step production
+      # never had its roles, and the first administrator was never made.
+      - run: pnpm db:seed:deploy
+        env:
+          DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+          BOOTSTRAP_ADMIN_EMAIL: ${{ vars.BOOTSTRAP_ADMIN_EMAIL }}
 
   deploy-production:
     name: Deploy Production
@@ -181,3 +221,28 @@ jobs:
       - run: |
           url="$(vercel deploy --prebuilt --prod)"
           echo "Production: $url" >> "$GITHUB_STEP_SUMMARY"
+
+  # Run by hand only (Actions -> Deploy -> Run workflow). Makes the given person
+  # an administrator on the chosen site, in that site's GitHub Environment —
+  # so a production grant waits for the production environment's required
+  # reviewer, exactly like a production migration.
+  admin-grant:
+    name: Admin grant
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ inputs.target }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # The address goes through an environment variable, never into the
+      # script text: a value typed into a form must not become shell.
+      - run: pnpm admin:grant "$GRANT_EMAIL"
+        env:
+          GRANT_EMAIL: ${{ inputs.email }}
+          DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}

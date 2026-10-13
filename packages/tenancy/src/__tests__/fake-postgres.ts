@@ -39,6 +39,8 @@ export interface InvitationRow {
   email: string;
   template_id: string | null;
   token_hash: string;
+  /** The links before each re-send (0.4, review R2 T1BO-02); absent on rows seeded by older tests. */
+  earlier_token_hashes?: string[];
   expires_at: Date | null;
   revoked_at: Date | null;
   revoked_by: string | null;
@@ -232,6 +234,10 @@ export function createFakePostgres(seed: Partial<FakeTables> = {}): FakePostgres
             row.revoked_at === null,
         );
         if (open) {
+          const earlier = open.earlier_token_hashes ?? [];
+          // EARLIER_LINKS_KEPT = 20: the first stays, the second-oldest goes.
+          open.earlier_token_hashes =
+            earlier.length >= 19 ? [...earlier.slice(0, 1), ...earlier.slice(2, 19), open.token_hash] : [...earlier, open.token_hash];
           open.token_hash = tokenHash;
           open.template_id = templateId;
           open.expires_at = expiresAt;
@@ -273,12 +279,23 @@ export function createFakePostgres(seed: Partial<FakeTables> = {}): FakePostgres
 
       case "invitations/lock-by-token": {
         const [tokenHash] = params as [string];
-        const target = tables.invitations.find((row) => row.token_hash === tokenHash);
+        const target = tables.invitations.find(
+          (row) => row.token_hash === tokenHash || (row.earlier_token_hashes ?? []).includes(tokenHash),
+        );
         if (!target) return [];
         held.push(await locks.acquire(target.id));
         // Re-read after the wait. Under READ COMMITTED a blocked `for update`
         // re-evaluates against the row version the winner committed, which is
         // the behaviour the loser of a double-click depends on.
+        const fresh = tables.invitations.find((row) => row.id === target.id);
+        return fresh ? [{ ...fresh }] : [];
+      }
+
+      case "invitations/lock-by-id": {
+        const [id] = params as [string];
+        const target = tables.invitations.find((row) => row.id === id);
+        if (!target) return [];
+        held.push(await locks.acquire(target.id));
         const fresh = tables.invitations.find((row) => row.id === target.id);
         return fresh ? [{ ...fresh }] : [];
       }
@@ -305,14 +322,17 @@ export function createFakePostgres(seed: Partial<FakeTables> = {}): FakePostgres
       }
 
       case "invitations/assign-role": {
+        // on conflict … do update: joining starts clean (review R2 SEC-T1-E).
         const [userId, tenantId, templateId] = params as [string, string, string];
-        const exists = tables.roles.some(
+        const existing = tables.roles.find(
           (row) =>
             row.principal_id === userId &&
             row.scope === "tenant" &&
             row.tenant_id === tenantId,
         );
-        if (!exists) {
+        if (existing) {
+          existing.template_id = templateId;
+        } else {
           tables.roles.push({
             principal_id: userId,
             scope: "tenant",
@@ -320,6 +340,25 @@ export function createFakePostgres(seed: Partial<FakeTables> = {}): FakePostgres
             template_id: templateId,
           });
         }
+        return [];
+      }
+
+      case "invitations/clear-stray-overrides":
+        // This fake keeps no override table: there is never one to clear.
+        return [];
+
+      case "invitations/stray-role": {
+        const [userId, tenantId] = params as [string, string];
+        return tables.roles
+          .filter((row) => row.principal_id === userId && row.scope === "tenant" && row.tenant_id === tenantId)
+          .map((row) => ({ key: tables.templates.find((t) => t.id === row.template_id)?.key ?? null }));
+      }
+
+      case "invitations/drop-stray-role": {
+        const [userId, tenantId] = params as [string, string];
+        tables.roles = tables.roles.filter(
+          (row) => !(row.principal_id === userId && row.scope === "tenant" && row.tenant_id === tenantId),
+        );
         return [];
       }
 

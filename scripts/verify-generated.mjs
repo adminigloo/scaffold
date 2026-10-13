@@ -123,6 +123,11 @@ console.log(`\n=== rewrote ${manifestPath} to install the tarballs`);
 // workspace, which would resolve `catalog:` ranges a real user cannot see.
 run("install", "pnpm", ["install", "--no-frozen-lockfile", "--ignore-workspace"], { cwd: app });
 run("typecheck", "pnpm", ["exec", "tsc", "--noEmit"], { cwd: app });
+// THE PROJECT'S OWN PROOFS (contract 12.8): procedure scopes, the two-company
+// isolation test, provisioning in both orders and the per-person permission
+// rules. PGlite, so they need no database — every generated project runs them
+// here, before anything is built.
+run("unit tests", "pnpm", ["exec", "vitest", "run", "--project=unit"], { cwd: app });
 run("next build", "pnpm", ["exec", "next", "build"], { cwd: app });
 
 const sweep = join(REPO, ".github", "scripts", "route-sweep.sh");

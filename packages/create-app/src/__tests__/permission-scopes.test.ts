@@ -45,13 +45,12 @@ import { DEFAULT_ANSWERS, type Answers } from "../answers.js";
 
 const PACKAGES_DIR = join(__dirname, "..", "..", "..");
 const TENANCY_TEMPLATES = join(PACKAGES_DIR, "tenancy", "src", "templates.ts");
-const SEED_ROLES = join(
-  PACKAGES_DIR,
-  "create-app",
-  "template",
-  "scripts",
-  "seed-roles.ts",
-);
+/**
+ * The staff ladder lives in @adminigloo/permissions since Tenancy 1
+ * (`STAFF_ROLE_TEMPLATES`, which the generated seed installs on every deploy);
+ * it used to be a list inside the template's seed-roles.ts.
+ */
+const STAFF_ROLES = join(PACKAGES_DIR, "permissions", "src", "roles.ts");
 
 /** Widest answers there are, so every fragment in the table is installed. */
 const EVERYTHING: Answers = {
@@ -79,8 +78,8 @@ async function tenantLadder(): Promise<string[]> {
 }
 
 async function staffLadder(): Promise<string[]> {
-  const source = await readFile(SEED_ROLES, "utf8");
-  const block = source.slice(source.indexOf("STAFF_TEMPLATES"));
+  const source = await readFile(STAFF_ROLES, "utf8");
+  const block = source.slice(source.indexOf("export const STAFF_ROLE_TEMPLATES"));
   return [
     ...block.slice(0, block.indexOf("] as const")).matchAll(/key:\s*"([^"]+)"/g),
   ].flatMap((m) => m[1] ?? []);

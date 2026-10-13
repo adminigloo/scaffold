@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Webhook } from "svix";
 import {
+  isResurrection,
   shouldApplyEvent,
   verifyIdentityWebhook,
   WebhookVerificationError,
@@ -29,9 +30,12 @@ const userCreated = {
   type: "user.created",
   data: {
     id: "user_2abc",
+    // Clerk's real payload carries a verification object per address. The
+    // fixture says "verified" because only verified addresses are mirrored
+    // (see "mirrors VERIFIED addresses only" below).
     email_addresses: [
-      { id: "idn_1", email_address: "Someone@Example.com" },
-      { id: "idn_2", email_address: "alt@example.com" },
+      { id: "idn_1", email_address: "Someone@Example.com", verification: { status: "verified" } },
+      { id: "idn_2", email_address: "alt@example.com", verification: { status: "verified" } },
     ],
     primary_email_address_id: "idn_1",
     first_name: "Dallin",
@@ -50,6 +54,7 @@ describe("verifyIdentityWebhook", () => {
       type: "user.created",
       externalId: "user_2abc",
       email: "someone@example.com",
+      verifiedEmails: ["someone@example.com", "alt@example.com"],
       displayName: "Dallin Humphrey",
       imageUrl: "https://img.clerk.com/x",
       providerUpdatedAt: new Date(1756382400000),
@@ -143,5 +148,81 @@ describe("shouldApplyEvent — out-of-order delivery", () => {
 
   it("rejects an undated event against a dated row rather than guessing", () => {
     expect(shouldApplyEvent({ providerUpdatedAt: null }, newer)).toBe(false);
+  });
+});
+
+describe("mirrors VERIFIED addresses only (review T1-02 / TB-DEPLOY-09)", () => {
+  // users.email decides who the BOOTSTRAP_ADMIN_EMAIL person is and who may
+  // accept an invitation. An address the provider never verified must not
+  // become it, or anybody can add the founder's address to their own account.
+  it("never mirrors an unverified address, even with no primary set", () => {
+    const { body, headers } = signed({
+      type: "user.updated",
+      data: {
+        id: "user_attacker",
+        email_addresses: [
+          { id: "idn_x", email_address: "founder@site.test", verification: { status: "unverified" } },
+        ],
+        primary_email_address_id: null,
+        updated_at: 1756382400000,
+      },
+    });
+    const event = verifyIdentityWebhook(body, headers, SECRET);
+    expect(event?.email).toBeNull();
+    expect(event?.verifiedEmails).toEqual([]);
+  });
+
+  it("skips an unverified primary and takes the first verified address", () => {
+    const { body, headers } = signed({
+      type: "user.updated",
+      data: {
+        id: "user_2",
+        email_addresses: [
+          { id: "idn_a", email_address: "claimed@site.test", verification: { status: "unverified" } },
+          { id: "idn_b", email_address: "Real@Example.com", verification: { status: "verified" } },
+        ],
+        primary_email_address_id: "idn_a",
+        updated_at: 1756382400000,
+      },
+    });
+    const event = verifyIdentityWebhook(body, headers, SECRET);
+    expect(event?.email).toBe("real@example.com");
+    expect(event?.verifiedEmails).toEqual(["real@example.com"]);
+  });
+
+  it("treats an address with no verification object as unverified", () => {
+    const { body, headers } = signed({
+      type: "user.created",
+      data: { id: "u", email_addresses: [{ id: "i", email_address: "x@y.test" }] },
+    });
+    expect(verifyIdentityWebhook(body, headers, SECRET)?.email).toBeNull();
+  });
+});
+
+describe("deletions always apply and are final (review T1-08)", () => {
+  const stored = new Date("2026-08-28T00:00:00Z");
+
+  it("applies Clerk's undated user.deleted against a row the webhook dated", () => {
+    // Clerk's user.deleted payload is { id, deleted: true, object: "user" }
+    // with no updated_at. The staleness rule used to skip it, so deprovision
+    // never ran for anybody the webhook had ever written.
+    const { body, headers } = signed({ type: "user.deleted", data: { id: "user_gone", deleted: true, object: "user" } });
+    const event = verifyIdentityWebhook(body, headers, SECRET);
+    expect(event?.type).toBe("user.deleted");
+    expect(event?.providerUpdatedAt).toBeNull();
+    expect(shouldApplyEvent(event!, stored)).toBe(true);
+  });
+
+  it("still skips an undated user.updated against a dated row", () => {
+    expect(shouldApplyEvent({ type: "user.updated", providerUpdatedAt: null }, stored)).toBe(false);
+  });
+
+  it("never lets a late created/updated bring a deleted row back", () => {
+    const deletedRow = { deletedAt: new Date("2026-09-01T00:00:00Z") };
+    expect(isResurrection({ type: "user.updated" }, deletedRow)).toBe(true);
+    expect(isResurrection({ type: "user.created" }, deletedRow)).toBe(true);
+    expect(isResurrection({ type: "user.deleted" }, deletedRow)).toBe(false);
+    expect(isResurrection({ type: "user.updated" }, { deletedAt: null })).toBe(false);
+    expect(isResurrection({ type: "user.updated" }, null)).toBe(false);
   });
 });

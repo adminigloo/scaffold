@@ -12,6 +12,41 @@ verbatim and only the rest are prompted for, so a specific project can be
 reproduced from a single command — which is the first thing you want when a
 generated app misbehaves.
 
+## Quick start (for buyers)
+
+1. **Registry.** The packages are private, on GitHub Packages. Put the scope line
+   in the folder you generate into (the generated project carries its own copy):
+
+   ```
+   @adminigloo:registry=https://npm.pkg.github.com
+   ```
+
+   and export a GitHub token with `read:packages` as `GITHUB_TOKEN` — the
+   project's `.npmrc` reads it.
+
+2. **Generate:**
+
+   ```
+   pnpm dlx @adminigloo/create-app igloo-back-office --tenant-noun Company --admin full --email
+   ```
+
+3. **First run**, in the new folder:
+
+   ```
+   pnpm install
+   pnpm db:generate && pnpm db:migrate
+   pnpm db:seed
+   pnpm dev
+   ```
+
+   Sign in. With no administrator yet, you become one when you open /admin.
+   `.env.local` is already there; `/setup` lists what each missing key switches
+   off. The generated `README.md` and `DEPLOYMENT.md` take it from there,
+   including the Clerk production instance, its webhook and the first
+   administrator on a deployed site.
+
+`--help` lists every flag.
+
 ---
 
 ## The rules

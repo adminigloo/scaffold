@@ -9,21 +9,17 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { createdAt, deletedAt, idColumn, updatedAt } from "@adminigloo/db";
+import { FIRM_WIDE } from "./constants.js";
 
 export const permissionScope = pgEnum("permission_scope", ["staff", "tenant"]);
 export const permissionEffect = pgEnum("permission_effect", ["allow", "deny"]);
 
 /**
- * Sentinel tenant for firm-wide rows (all staff rows, and default tenant
- * presets).
- *
- * NOT NULL with a sentinel rather than a nullable column, deliberately.
- * Postgres treats NULLs as distinct in a unique index, so
- * `UNIQUE (scope, tenant_id, key)` with a nullable tenant_id would happily
- * accept two firm-wide templates with the same key. Removing the trap beats
- * working around it with partial indexes.
+ * Sentinel tenant for firm-wide rows; declared in ./constants (no imports) so
+ * the package root can export it without loading this module. Re-exported
+ * here so `@adminigloo/permissions/schema` keeps exporting it.
  */
-export const FIRM_WIDE = "*";
+export { FIRM_WIDE };
 
 /** A named preset: "CS Lead", "Client Admin". Assigned to principals. */
 export const roleTemplate = pgTable(

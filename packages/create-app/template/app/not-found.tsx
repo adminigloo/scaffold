@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { FOOTER_LINKS, SITE_LINKS } from "@/nav";
+import { visibleFooterLinks } from "@/components/SiteFooter";
 
 /**
  * The 404 for a URL that matches no route at all.
@@ -40,7 +40,7 @@ export default function NotFound() {
           aria-label="Site"
           className="mt-5 flex flex-wrap items-center justify-center gap-x-5 gap-y-2"
         >
-          {[...SITE_LINKS, ...FOOTER_LINKS].map((link) => (
+          {visibleFooterLinks().map((link) => (
             <Link
               key={link.href}
               href={link.href}

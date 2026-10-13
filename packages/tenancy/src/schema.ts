@@ -34,6 +34,32 @@ export type TenantMemberStatus = "active" | "suspended";
  */
 export type TenantJson = Readonly<Record<string, unknown>>;
 
+/**
+ * The setup checklist's per-company state (`tenants.setup_state`).
+ *
+ * `hiddenKeys` records WHICH items were on the list when the owner hid it, so
+ * an item a package adds later (Tenancy 2's "Set your hours") brings the list
+ * back instead of staying hidden forever (review T1-13). A `hiddenAt` with no
+ * `hiddenKeys` (never written by 0.4, kept for hand-edited rows) hides
+ * everything.
+ */
+export interface TenantSetupState {
+  readonly dismissed?: readonly string[];
+  readonly hiddenAt?: string;
+  readonly hiddenKeys?: readonly string[];
+}
+
+/** `tenants.branding`, parsed by the server with a schema; anything unparseable reads as `{}`. */
+export interface TenantBranding {
+  readonly logoUrl?: string;
+  /** The storage key, so a replaced logo can be deleted. */
+  readonly logoKey?: string;
+  /** Normalised "#rrggbb". */
+  readonly brandColor?: string;
+  /** The text colour that reads on brandColor (brandColorReport().textOnColor). */
+  readonly onBrandColor?: "#ffffff" | "#111111";
+}
+
 export const tenants = pgTable(
   "tenants",
   {
@@ -53,17 +79,42 @@ export const tenants = pgTable(
      * create — ownership transfers instead. A cascade here would take the
      * tenant, its members and its billing history with the owner's account
      * closure, and `restrict` would make deleting any founder impossible.
-     * Ownership is a pointer that the transfer path rewrites.
+     * Ownership is a pointer that `transferOwnership` (the owner handing
+     * over) and `assignOwner` (an operator, when the owner's account is gone)
+     * rewrite, together with the owner role (decision D4).
      */
     ownerUserId: text("owner_user_id"),
     stripeCustomerId: text("stripe_customer_id"),
     branding: jsonb("branding").$type<TenantJson>().notNull().default({}),
     settings: jsonb("settings").$type<TenantJson>().notNull().default({}),
+    /** Who created it. Immutable; the owner pointer moves, this never does. Bare text, no FK (same reason as owner_user_id). */
+    createdBy: text("created_by"),
+    /**
+     * The creating form's one-time key (a UUID minted when the form mounted).
+     * (created_by, creation_key) is unique, so a refresh or a double submit
+     * replays instead of creating a second company. NULL for rows not made by
+     * createCompany (personal workspaces, seeds).
+     */
+    creationKey: text("creation_key"),
+    /** Set by an operator. Non-null = suspended (decision D15). */
+    suspendedAt: timestamp("suspended_at", { withTimezone: true }),
+    /** Why, in the operator's words. Shown to staff only, never to the company. */
+    suspendedReason: text("suspended_reason"),
+    /** The staff user who suspended it. */
+    suspendedBy: text("suspended_by"),
+    /** Setup checklist state (decision D13): see TenantSetupState. */
+    setupState: jsonb("setup_state").$type<TenantSetupState>().notNull().default({}),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
     deletedAt: deletedAt(),
   },
   (t) => [
+    /** A refresh or double submit of one onboarding form finds its company here instead of making a second. */
+    uniqueIndex("tenants_creation_key_idx")
+      .on(t.createdBy, t.creationKey)
+      .where(sql`${t.creationKey} is not null`),
+    /** The operator console lists companies newest first, personal workspaces hidden by default. */
+    index("tenants_kind_created_idx").on(t.kind, t.createdAt),
     /**
      * Unqualified by `deleted_at`, on purpose: a soft-deleted tenant keeps its
      * slug reserved. Freeing it would let a new tenant claim the URL of a
@@ -145,6 +196,22 @@ export const tenantInvitations = pgTable(
      */
     templateId: text("template_id"),
     tokenHash: text("token_hash").notNull(),
+    /**
+     * The hashes of the links this row carried BEFORE each re-send, oldest
+     * first (the first email's always kept; at most EARLIER_LINKS_KEPT).
+     *
+     * Re-sending rotates the token (only a hash is stored, so the old link
+     * can't be mailed again). Without these the earlier emails' links died
+     * the moment the owner pressed Resend, and the usual support path — "I
+     * never got it", Resend, Resend again, then the office manager finds the
+     * FIRST email in spam and clicks it — told her the link "may have been
+     * used already", which wasn't true (review T1-06; R2 T1BO-02, F7: keeping
+     * only the one before the last re-send still killed the first email after
+     * two). Accepting honours the current link and every earlier one, on the
+     * same row: same address check, same expiry, same single use. Revoking the
+     * row kills them all.
+     */
+    earlierTokenHashes: text("earlier_token_hashes").array().notNull().default(sql`'{}'::text[]`),
     /** NULL means no expiry — a deliberate never-expiring invite, not a gap. */
     expiresAt: timestamp("expires_at", { withTimezone: true }),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
@@ -164,6 +231,44 @@ export const tenantInvitations = pgTable(
      * depend on the audit log still holding that week.
      */
     revokedBy: text("revoked_by"),
+    /**
+     * When this row's link was EMAILED, oldest first, the last day's only
+     * (review R3 SEC-T1-B). One company emails one address at most once per
+     * `INVITATION_EMAIL_COOLDOWN_MINUTES` for an open invitation, and at most
+     * `INVITATION_EMAILS_PER_ADDRESS_PER_DAY` times a day across all its rows
+     * for that address — otherwise Resend, Resend, Resend (or withdraw and
+     * invite again) was a way to fill a stranger's inbox from our domain. A
+     * re-send the limits hold back is still saved; only the email waits, and
+     * the inviter gets the link. Kept on the row, not in the audit log, because
+     * a host may connect no audit sink and the limits must hold anyway.
+     *
+     * ONLY EMAILS THE PROVIDER TOOK (review R4 SEC-T1-B): a time goes in here
+     * when the mailer answered "sent", never before. The inviter's sentence
+     * ("We emailed … 3 minutes ago") is read from here, so it can't describe
+     * an email that was skipped, failed or never attempted.
+     */
+    emailedAt: timestamp("emailed_at", { withTimezone: true }).array().notNull().default(sql`'{}'::timestamptz[]`),
+    /**
+     * An invitation email on its way: reserved under the company lock before
+     * the mailer is called, so two Resends at once can't both email (review R4
+     * SEC-T1-B). Cleared when the mailer answers — moved into `emailed_at` if
+     * it said "sent", dropped otherwise. One that never comes back (the server
+     * stopped mid-send) holds the address for at most
+     * `INVITATION_EMAIL_COOLDOWN_MINUTES`, with a sentence that says only that
+     * we haven't heard back, and is never counted as emailed.
+     */
+    emailSendingAt: timestamp("email_sending_at", { withTimezone: true }),
+    /**
+     * The last time someone pressed Accept on this invitation's link while
+     * signed in with a different address, and that address masked the way
+     * the invite page masks one ("j•••@gmail.com": enough to recognise)
+     * (review R3 T1BO-07). The team page shows it beside the invitation, so
+     * the owner learns "they used their Gmail" without a support ticket.
+     * Written at most once per `WRONG_ACCOUNT_NOTE_MINUTES`, so a forwarded
+     * link pressed in a loop can't churn the row.
+     */
+    wrongAccountAt: timestamp("wrong_account_at", { withTimezone: true }),
+    wrongAccountEmail: text("wrong_account_email"),
     createdAt: createdAt(),
   },
   (t) => [
@@ -187,8 +292,74 @@ export const tenantInvitations = pgTable(
      * a coin flip between tenants.
      */
     uniqueIndex("tenant_invitations_token_hash_idx").on(t.tokenHash),
+    /**
+     * An earlier link is looked up the same way. A GIN index can't be UNIQUE;
+     * a hash is 256 random bits, so two rows never share one.
+     */
+    index("tenant_invitations_earlier_token_hashes_idx").using("gin", t.earlierTokenHashes),
     index("tenant_invitations_email_idx").on(t.email),
   ],
 );
 
-export const tenancySchema = { tenants, tenantMembers, tenantInvitations };
+/**
+ * Web addresses a company used before (decision D14).
+ *
+ * WHY KEEP THEM. A renamed company's old links, invitation emails and
+ * receipts keep pointing at its old address. If that address were freed, the
+ * next company to claim it would receive every one of them. So the old slug
+ * is kept here, counts as taken, and `resolveCompanyBySlug` follows it to the
+ * company that retired it (Tenancy 2 answers with a redirect).
+ *
+ * BOUNDED (review T1-07). Unlimited retirements let one free account rename
+ * over and over and lock up thousands of business names as permanent
+ * redirects to itself. So a company keeps only its last few old addresses
+ * (`RETIRED_SLUGS_KEPT`), changes its address at most a few times a day, and
+ * an operator can release a company's old addresses from the console.
+ */
+export const tenantRetiredSlugs = pgTable(
+  "tenant_retired_slugs",
+  {
+    /** Globally unique: a retired slug belongs to the company that retired it. */
+    slug: text("slug").primaryKey(),
+    tenantId: text("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    // Named explicitly: `createdAt()` would name the column `created_at`, and
+    // the upgrade SQL (and every query) says `retired_at`.
+    retiredAt: timestamp("retired_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("tenant_retired_slugs_tenant_idx").on(t.tenantId)],
+);
+
+/**
+ * Every web-address change, one row each (review R2 F6, SEC-T1-C).
+ *
+ * WHY A LOG AND NOT A COUNT OF RETIRED ADDRESSES. "Three changes a day" used
+ * to be counted from `tenant_retired_slugs`, but switching back to an old
+ * address deletes its retired row and the cap deletes older ones, so a
+ * company switching a → b → a → b… was never stopped. It was also per company
+ * only, so one person with several companies multiplied it. These rows are
+ * never deleted by a change, so the day's count is the day's count: per
+ * company (`SLUG_CHANGES_PER_DAY`) and per person
+ * (`SLUG_CHANGES_PER_PERSON_PER_DAY`). It doubles as the address history.
+ */
+export const tenantSlugChanges = pgTable(
+  "tenant_slug_changes",
+  {
+    id: idColumn(),
+    tenantId: text("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    fromSlug: text("from_slug").notNull(),
+    toSlug: text("to_slug").notNull(),
+    /** Who changed it (null: staff freeing a squatted address, or another system act). */
+    changedBy: text("changed_by"),
+    changedAt: timestamp("changed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("tenant_slug_changes_tenant_idx").on(t.tenantId, t.changedAt),
+    index("tenant_slug_changes_by_idx").on(t.changedBy, t.changedAt),
+  ],
+);
+
+export const tenancySchema = { tenants, tenantMembers, tenantInvitations, tenantRetiredSlugs, tenantSlugChanges };

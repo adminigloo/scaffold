@@ -12,17 +12,19 @@ import type { TenantPermission } from "@/permissions/catalog";
  * The four cases below are the whole authorization model. They are worth
  * pinning in the app rather than leaving to __SCOPE__/permissions, because the
  * thing that breaks is not the resolver — it is somebody "simplifying"
- * `resolveFor` in src/server/permissions.ts to read one table instead of two.
+ * `resolvePermissionsFor` (@__SCOPE_NAME__/permissions/server, which
+ * src/server/permissions.ts builds its loaders from) to read one table instead
+ * of two.
  * Drop the override query and every test that only grants through a template
  * still passes; the only thing that notices is case 2.
  */
 
 /**
- * The last two lines of `resolveFor` in src/server/permissions.ts, given the
- * rows instead of the queries that fetch them.
+ * The last two lines of `resolvePermissionsFor` (@__SCOPE_NAME__/permissions/
+ * server), given the rows instead of the queries that fetch them.
  *
- * Mirrored rather than imported because `resolveFor` is private and takes a
- * principal id, not rows. If the two ever disagree, this comment is the pointer
+ * Mirrored rather than imported because that function takes a principal id and
+ * a database, not rows. If the two ever disagree, this comment is the pointer
  * to the file that has to change with it.
  */
 function resolve(input: {

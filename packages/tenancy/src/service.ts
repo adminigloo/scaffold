@@ -70,6 +70,13 @@ const FIRM_WIDE_TENANT = "*";
 export const DEFAULT_INVITATION_EXPIRY_HOURS = 24 * 7;
 
 /**
+ * How many earlier links one invitation keeps working (review R2 T1BO-02):
+ * the first email's, plus the most recent ones, this many in all. Twenty
+ * re-sends of one invitation inside its week is not a real owner.
+ */
+export const EARLIER_LINKS_KEPT = 20;
+
+/**
  * The narrowest shape of a Drizzle handle this service can work through.
  *
  * `execute` rather than the query builder, for the reason in the block comment
@@ -166,6 +173,28 @@ export interface CreateInvitationServiceDeps {
     db: InvitationDb,
     userId: string,
   ) => Promise<string | null>;
+  /**
+   * Last word before an invitation is consumed (Tenancy 1, D16/D18).
+   *
+   * Runs inside the accept transaction, AFTER the identity gate and the state
+   * checks and right before anything is written, under the locks the caller
+   * already holds (the company row, then this invitation row). Returning a
+   * refusal consumes nothing: the result is `{ status: "refused" }` and the
+   * invitation stays usable. The tenancy lifecycle uses it for the seat limit
+   * and for "this company is suspended", so both are decided under the same
+   * locks every joining path takes — and so a stranger holding a forwarded
+   * link learns only "not for you", never the company's state (review T1-11).
+   */
+  readonly beforeConsume?: (
+    tx: InvitationDb,
+    input: {
+      readonly tenantId: string;
+      readonly userId: string;
+      readonly invitationId: string;
+      /** Who sent it (null for a row written without one). The lifecycle checks they may still invite (review R2 SEC-T1-F). */
+      readonly invitedBy: string | null;
+    },
+  ) => Promise<{ readonly refuse: string; readonly message: string } | null>;
 }
 
 export interface SendInvitationInput {
@@ -200,13 +229,26 @@ export interface SentInvitation {
  * use for the distinction.
  */
 export type AcceptResult =
-  | { readonly status: "accepted"; readonly tenantId: string }
+  | {
+      readonly status: "accepted";
+      readonly tenantId: string;
+      /**
+       * A role row left behind without a membership (an out-of-band delete, a
+       * bad import), which joining REPLACED with the invitation's role: its
+       * template key. Null when there was none (review R2 SEC-T1-E).
+       */
+      readonly replacedRole?: string | null;
+      /** Per-person overrides left behind the same way, which joining deleted (sorted keys). */
+      readonly clearedOverrides?: readonly string[];
+    }
   | { readonly status: "already-a-member"; readonly tenantId: string }
   | { readonly status: "expired" }
   | { readonly status: "revoked" }
   /** The invited address, for the caller's own logs. Never show it to the holder. */
   | { readonly status: "wrong-email"; readonly invitedEmail: string }
-  | { readonly status: "unknown-token" };
+  | { readonly status: "unknown-token" }
+  /** `beforeConsume` said no (seats full, company suspended). Nothing was consumed. */
+  | { readonly status: "refused"; readonly reason: string; readonly message: string; readonly tenantId: string };
 
 export interface InvitationSummary {
   readonly id: string;
@@ -239,8 +281,23 @@ export interface InvitationService {
    * racing for one address.
    */
   send(input: SendInvitationInput): Promise<SentInvitation>;
-  /** Redeem a token. Answers with an outcome; does not throw for a refusal. */
-  accept(token: string, userId: string): Promise<AcceptResult>;
+  /**
+   * Redeem a token. Answers with an outcome; does not throw for a refusal.
+   * `verifiedEmails`: the accepting account's other VERIFIED addresses, from
+   * the identity provider on the server (never the browser). An invitation
+   * sent to any of them is theirs, not only one sent to the mirrored primary
+   * address (review R2 TB2-10).
+   */
+  accept(token: string, userId: string, options?: { readonly verifiedEmails?: readonly string[] }): Promise<AcceptResult>;
+  /**
+   * Join by a VERIFIED address instead of the mailed link (D19): the
+   * onboarding page lists open invitations addressed to the person's verified
+   * addresses. The identity check is "the invited address is one of
+   * `verifiedEmails`" (which the host takes from the identity provider on the
+   * server, never from the browser); from the state checks onward it is the
+   * exact consume path `accept` uses.
+   */
+  acceptForVerifiedEmail(invitationId: string, userId: string, verifiedEmails: readonly string[]): Promise<AcceptResult>;
   /** Withdraw one. Idempotent — the first withdrawal keeps its timestamp. */
   revoke(id: string, byUserId: string): Promise<void>;
   /** Every invitation this tenant has ever issued, newest first. */
@@ -314,6 +371,20 @@ async function query(db: InvitationDb, statement: SQL): Promise<readonly Row[]> 
 
 function text(value: unknown): string {
   return typeof value === "string" ? value : String(value ?? "");
+}
+
+/**
+ * A text[] as the driver hands it back: an array (node-postgres, PGlite), or
+ * Postgres's literal `{a,b}` from a driver with no array parser. Hashes are
+ * base64url, so they never need quoting inside the literal.
+ */
+function textArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter((v): v is string => typeof v === "string");
+  if (typeof value === "string" && value.startsWith("{") && value.endsWith("}")) {
+    const inner = value.slice(1, -1);
+    return inner === "" ? [] : inner.split(",").map((v) => v.replace(/^"|"$/g, ""));
+  }
+  return [];
 }
 
 /**
@@ -428,6 +499,12 @@ export function createInvitationService(
       // an index predicate to be IMMUTABLE, so a plain insert against an address
       // holding a dead invitation would fail on a unique violation rather than
       // replace it.
+      //
+      // The rotated-out hash joins `earlier_token_hashes`, so the links in the
+      // earlier emails keep working until the row is accepted, revoked or
+      // expires (see the column's comment; review T1-06, R2 T1BO-02). Past
+      // EARLIER_LINKS_KEPT the second-oldest goes: the FIRST email's link (the
+      // one most likely to be found) always stays.
       const rows = await query(
         db,
         sql`/* adminigloo:invitations/upsert */
@@ -439,6 +516,13 @@ export function createInvitationService(
           on conflict (tenant_id, email)
             where accepted_at is null and revoked_at is null
           do update set
+            earlier_token_hashes = case
+              when cardinality(tenant_invitations.earlier_token_hashes) >= ${sql.raw(String(EARLIER_LINKS_KEPT - 1))}
+                then tenant_invitations.earlier_token_hashes[1:1]
+                     || tenant_invitations.earlier_token_hashes[3:${sql.raw(String(EARLIER_LINKS_KEPT - 1))}]
+                     || tenant_invitations.token_hash
+              else tenant_invitations.earlier_token_hashes || tenant_invitations.token_hash
+            end,
             token_hash = excluded.token_hash,
             template_id = excluded.template_id,
             expires_at = excluded.expires_at,
@@ -460,9 +544,10 @@ export function createInvitationService(
       return { id: written, token, expiresAt };
     },
 
-    async accept(token: string, userId: string): Promise<AcceptResult> {
+    async accept(token: string, userId: string, options?: { readonly verifiedEmails?: readonly string[] }): Promise<AcceptResult> {
       const tokenHash = hashInvitationToken(token);
       const now = clock();
+      const verified = new Set((options?.verifiedEmails ?? []).map(normaliseInviteEmail).filter((e) => e.length > 0));
 
       return db.transaction(async (tx) => {
         // FOR UPDATE, and everything below happens while that lock is held.
@@ -472,13 +557,17 @@ export function createInvitationService(
         // Without the lock both would insert, and the second would either
         // duplicate the grant or die on a primary key from inside a handler that
         // has already told the first invitee they are in.
+        //
+        // An earlier link (from before a re-send) resolves to the same row:
+        // the earlier emails keep working (review T1-06, R2 T1BO-02).
         const found = await query(
           tx,
           sql`/* adminigloo:invitations/lock-by-token */
-            select id, tenant_id, email, template_id, token_hash,
-                   expires_at, revoked_at, accepted_at
+            select id, tenant_id, email, template_id, token_hash, earlier_token_hashes,
+                   expires_at, revoked_at, accepted_at, invited_by
             from tenant_invitations
-            where token_hash = ${tokenHash}
+            where token_hash = ${tokenHash} or earlier_token_hashes @> array[${tokenHash}]::text[]
+            limit 1
             for update`,
         );
 
@@ -492,11 +581,14 @@ export function createInvitationService(
         // refuses a row whose stored hash is truncated or garbled, which an
         // equality test in the database would happily match against whatever it
         // managed to decode.
-        if (!verifyInvitationToken(token, text(row["token_hash"]))) {
+        const earlier = textArray(row["earlier_token_hashes"]);
+        if (
+          !verifyInvitationToken(token, text(row["token_hash"])) &&
+          !earlier.some((hash) => verifyInvitationToken(token, hash))
+        ) {
           return { status: "unknown-token" };
         }
 
-        const tenantId = text(row["tenant_id"]);
         const invitedEmail = normaliseInviteEmail(text(row["email"]));
 
         // THE IDENTITY GATE COMES FIRST, before the state of the invitation is
@@ -504,90 +596,44 @@ export function createInvitationService(
         // was not sent to would confirm that a token like theirs exists and
         // which organisation it belongs to. Whoever fails this check learns one
         // thing only: it was not for them.
-        if (requireMatchingEmail) {
+        if (requireMatchingEmail && !verified.has(invitedEmail)) {
           const accepterEmail = await resolveAccepterEmail(tx, userId);
           if (accepterEmail === null || accepterEmail !== invitedEmail) {
             return { status: "wrong-email", invitedEmail };
           }
         }
 
-        const state = invitationState(
-          {
-            expiresAt: readDate(row["expires_at"]),
-            revokedAt: readDate(row["revoked_at"]),
-            acceptedAt: readDate(row["accepted_at"]),
-          },
-          now,
-        );
+        return consumeLocked(tx, row, userId, now);
+      });
+    },
 
-        if (state === "revoked") return { status: "revoked" };
-        if (state === "expired") return { status: "expired" };
-        if (state === "accepted") {
-          // Spent. If it was spent by THIS account the honest answer is that
-          // they are in — which is also what the loser of a double-click sees.
-          // If somebody else spent it, the link is simply unusable and says
-          // nothing further.
-          return (await isMember(tx, tenantId, userId))
-            ? { status: "already-a-member", tenantId }
-            : { status: "unknown-token" };
-        }
-
-        // Already inside, invitation still open. Nothing is consumed and no role
-        // is touched: an invitation must never quietly overwrite access somebody
-        // already has, and leaving the row pending keeps it visible to whoever
-        // sent it, who can then withdraw it or change the role directly.
-        if (await isMember(tx, tenantId, userId)) {
-          return { status: "already-a-member", tenantId };
-        }
-
-        // FROM HERE TO THE END OF THE CALLBACK IS THE ATOMIC PART. Consume, add
-        // the member, assign the role. A failure anywhere in it rolls the whole
-        // thing back, so the token stays live and the invitee can press the
-        // button again.
-        const consumed = await query(
+    async acceptForVerifiedEmail(
+      invitationId: string,
+      userId: string,
+      verifiedEmails: readonly string[],
+    ): Promise<AcceptResult> {
+      const now = clock();
+      const verified = new Set(verifiedEmails.map(normaliseInviteEmail).filter((e) => e.length > 0));
+      return db.transaction(async (tx) => {
+        const found = await query(
           tx,
-          sql`/* adminigloo:invitations/consume */
-            update tenant_invitations
-            set accepted_at = ${now}
-            where id = ${text(row["id"])}
-              and accepted_at is null
-              and revoked_at is null
-            returning id`,
+          sql`/* adminigloo:invitations/lock-by-id */
+            select id, tenant_id, email, template_id, token_hash,
+                   expires_at, revoked_at, accepted_at, invited_by
+            from tenant_invitations
+            where id = ${invitationId}
+            for update`,
         );
-        if (consumed.length === 0) {
-          // Unreachable while the lock is held. Kept because the alternative to
-          // reading it is a membership granted by a statement that updated
-          // nothing.
-          return { status: "unknown-token" };
-        }
+        const row = found[0];
+        if (row === undefined) return { status: "unknown-token" };
 
-        await tx.execute(
-          sql`/* adminigloo:invitations/add-member */
-            insert into tenant_members (tenant_id, user_id, status)
-            values (${tenantId}, ${userId}, 'active')
-            on conflict (tenant_id, user_id) do nothing`,
-        );
+        // The identity gate, by verified address instead of by link: the
+        // invited address must be one the identity provider verified for this
+        // account. As with the link, failing it reveals nothing else.
+        const invitedEmail = normaliseInviteEmail(text(row["email"]));
+        if (!verified.has(invitedEmail)) return { status: "wrong-email", invitedEmail };
 
-        const templateId = row["template_id"];
-        if (typeof templateId === "string" && templateId.length > 0) {
-          // DO NOTHING rather than DO UPDATE. One template per person per tenant
-          // is a primary key, and an invitation arriving for somebody who
-          // somehow already holds a role must not silently move them — in either
-          // direction.
-          await tx.execute(
-            sql`/* adminigloo:invitations/assign-role */
-              insert into principal_role (principal_id, scope, tenant_id, template_id)
-              values (${userId}, 'tenant', ${tenantId}, ${templateId})
-              on conflict (principal_id, scope, tenant_id) do nothing`,
-          );
-        }
-        // A null template_id means the role this invitation named has been
-        // deleted since it was sent. The membership still stands: a member with
-        // no role is a real, renderable state, and refusing the whole acceptance
-        // over a deleted template would strand the invitee with a spent link and
-        // nothing to show for it.
-
-        return { status: "accepted", tenantId };
+        return consumeLocked(tx, row, userId, now);
       });
     },
 
@@ -607,36 +653,177 @@ export function createInvitationService(
     },
 
     async listForTenant(tenantId: string): Promise<InvitationSummary[]> {
-      const now = clock();
-      const rows = await query(
-        db,
-        sql`/* adminigloo:invitations/list-for-tenant */
-          select i.id, i.email, i.expires_at, i.revoked_at, i.accepted_at,
-                 i.created_at, t.key as role_template_key
-          from tenant_invitations i
-          left join role_template t on t.id = i.template_id
-          where i.tenant_id = ${tenantId}
-          order by i.created_at desc, i.id desc`,
-      );
-
-      return rows.map((row) => ({
-        id: text(row["id"]),
-        email: text(row["email"]),
-        roleTemplateKey:
-          typeof row["role_template_key"] === "string" ? row["role_template_key"] : "",
-        state: invitationState(
-          {
-            expiresAt: readDate(row["expires_at"]),
-            revokedAt: readDate(row["revoked_at"]),
-            acceptedAt: readDate(row["accepted_at"]),
-          },
-          now,
-        ),
-        expiresAt: readDate(row["expires_at"]),
-        createdAt: readRequiredDate(row["created_at"], "tenant_invitations.created_at"),
-      }));
+      return listForTenant(tenantId);
     },
   };
+
+  /**
+   * Everything after the identity gate, shared by the link and the
+   * verified-address paths: the state checks, the host's last word
+   * (`beforeConsume`), then the atomic consume. The caller holds the
+   * invitation row lock.
+   */
+  async function consumeLocked(
+    tx: InvitationDb,
+    row: Row,
+    userId: string,
+    now: Date,
+  ): Promise<AcceptResult> {
+    const tenantId = text(row["tenant_id"]);
+    const state = invitationState(
+      {
+        expiresAt: readDate(row["expires_at"]),
+        revokedAt: readDate(row["revoked_at"]),
+        acceptedAt: readDate(row["accepted_at"]),
+      },
+      now,
+    );
+
+    if (state === "revoked") return { status: "revoked" };
+    if (state === "expired") return { status: "expired" };
+    if (state === "accepted") {
+      // Spent. If it was spent by THIS account the honest answer is that
+      // they are in — which is also what the loser of a double-click sees.
+      // If somebody else spent it, the link is simply unusable and says
+      // nothing further.
+      return (await isMember(tx, tenantId, userId))
+        ? { status: "already-a-member", tenantId }
+        : { status: "unknown-token" };
+    }
+
+    // Already inside, invitation still open. Nothing is consumed and no role
+    // is touched: an invitation must never quietly overwrite access somebody
+    // already has, and leaving the row pending keeps it visible to whoever
+    // sent it, who can then withdraw it or change the role directly.
+    if (await isMember(tx, tenantId, userId)) {
+      return { status: "already-a-member", tenantId };
+    }
+
+    // The host's last word, under the locks it already holds: the seat
+    // limit, a suspended company. A refusal consumes nothing.
+    if (deps.beforeConsume) {
+      const invitedBy = row["invited_by"];
+      const verdict = await deps.beforeConsume(tx, {
+        tenantId,
+        userId,
+        invitationId: text(row["id"]),
+        invitedBy: typeof invitedBy === "string" && invitedBy.length > 0 ? invitedBy : null,
+      });
+      if (verdict) return { status: "refused", reason: verdict.refuse, message: verdict.message, tenantId };
+    }
+
+    // FROM HERE TO THE END OF THE FUNCTION IS THE ATOMIC PART. Consume, add
+    // the member, assign the role. A failure anywhere in it rolls the whole
+    // transaction back, so the token stays live and the invitee can press
+    // the button again.
+    const consumed = await query(
+      tx,
+      sql`/* adminigloo:invitations/consume */
+        update tenant_invitations
+        set accepted_at = ${now}
+        where id = ${text(row["id"])}
+          and accepted_at is null
+          and revoked_at is null
+        returning id`,
+    );
+    if (consumed.length === 0) {
+      // Unreachable while the lock is held. Kept because the alternative to
+      // reading it is a membership granted by a statement that updated
+      // nothing.
+      return { status: "unknown-token" };
+    }
+
+    await tx.execute(
+      sql`/* adminigloo:invitations/add-member */
+        insert into tenant_members (tenant_id, user_id, status)
+        values (${tenantId}, ${userId}, 'active')
+        on conflict (tenant_id, user_id) do nothing`,
+    );
+
+    // JOINING STARTS CLEAN (decision D11; review R2 SEC-T1-E, F3). Everyone
+    // reaching this line was NOT a member a moment ago (checked above, under
+    // the lock), so a role or a per-person override they hold in this tenant
+    // is a leftover: a membership row deleted out of band (support, an import,
+    // a data fix), or a staff override written after a removal. The membership
+    // gate ignored those rows while they were outside; joining used to switch
+    // them back on, so someone deliberately re-invited as a Viewer came back
+    // an Admin. Now the overrides go and the role becomes the invitation's.
+    // (An invitation still never moves someone who IS a member: that answer
+    // is already-a-member, above, and touches nothing.)
+    const cleared = await query(
+      tx,
+      sql`/* adminigloo:invitations/clear-stray-overrides */
+        delete from principal_override
+        where principal_id = ${userId} and scope = 'tenant' and tenant_id = ${tenantId}
+        returning permission`,
+    );
+    const stray = await query(
+      tx,
+      sql`/* adminigloo:invitations/stray-role */
+        select t.key from principal_role pr left join role_template t on t.id = pr.template_id
+        where pr.principal_id = ${userId} and pr.scope = 'tenant' and pr.tenant_id = ${tenantId}`,
+    );
+    const templateId = row["template_id"];
+    if (typeof templateId === "string" && templateId.length > 0) {
+      await tx.execute(
+        sql`/* adminigloo:invitations/assign-role */
+          insert into principal_role (principal_id, scope, tenant_id, template_id)
+          values (${userId}, 'tenant', ${tenantId}, ${templateId})
+          on conflict (principal_id, scope, tenant_id) do update set template_id = excluded.template_id`,
+      );
+    } else if (stray.length > 0) {
+      // The invitation's role was deleted since it was sent: the member stands
+      // with no role (below), never with the leftover one.
+      await tx.execute(
+        sql`/* adminigloo:invitations/drop-stray-role */
+          delete from principal_role where principal_id = ${userId} and scope = 'tenant' and tenant_id = ${tenantId}`,
+      );
+    }
+    // A null template_id means the role this invitation named has been
+    // deleted since it was sent. The membership still stands: a member with
+    // no role is a real, renderable state, and refusing the whole acceptance
+    // over a deleted template would strand the invitee with a spent link and
+    // nothing to show for it.
+
+    const strayKey = stray[0]?.["key"];
+    return {
+      status: "accepted",
+      tenantId,
+      replacedRole: stray.length > 0 ? (typeof strayKey === "string" ? strayKey : "") : null,
+      clearedOverrides: cleared.map((r) => text(r["permission"])).sort(),
+    };
+  }
+
+  async function listForTenant(tenantId: string): Promise<InvitationSummary[]> {
+    const now = clock();
+    const rows = await query(
+      db,
+      sql`/* adminigloo:invitations/list-for-tenant */
+        select i.id, i.email, i.expires_at, i.revoked_at, i.accepted_at,
+               i.created_at, t.key as role_template_key
+        from tenant_invitations i
+        left join role_template t on t.id = i.template_id
+        where i.tenant_id = ${tenantId}
+        order by i.created_at desc, i.id desc`,
+    );
+
+    return rows.map((row) => ({
+      id: text(row["id"]),
+      email: text(row["email"]),
+      roleTemplateKey:
+        typeof row["role_template_key"] === "string" ? row["role_template_key"] : "",
+      state: invitationState(
+        {
+          expiresAt: readDate(row["expires_at"]),
+          revokedAt: readDate(row["revoked_at"]),
+          acceptedAt: readDate(row["accepted_at"]),
+        },
+        now,
+      ),
+      expiresAt: readDate(row["expires_at"]),
+      createdAt: readRequiredDate(row["created_at"], "tenant_invitations.created_at"),
+    }));
+  }
 }
 
 /**

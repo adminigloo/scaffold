@@ -1,118 +1,28 @@
-import { and, eq } from "drizzle-orm";
-import {
-  createPermissionSet,
-  FIRM_WIDE,
-  resolvePermissionSet,
-  type PermissionSet,
-} from "__SCOPE__/permissions";
-import {
-  principalOverride,
-  principalRole,
-  roleTemplateGrant,
-} from "__SCOPE__/permissions/schema";
-import { tenantMembers } from "__SCOPE__/tenancy/schema";
-import type { Principal } from "__SCOPE__/auth";
+import { createDrizzlePermissionLoaders } from "__SCOPE__/permissions/server";
+import { tenancyMembershipGate } from "__SCOPE__/tenancy/server";
 import { db } from "@/db";
 
 /**
- * Resolve a principal's grants in a tenant, or NULL if they are not a member.
+ * The two permission loaders the procedure ladder and every page read, and
+ * the explanation a refused tenant call gets.
  *
- * THE NULL MATTERS. Returning an empty set for a tenant the caller has nothing
- * to do with is indistinguishable from "a member who has been granted
- * nothing", and the tenant rung would then admit any signed-in user to any
- * tenant id they typed. Membership is checked first, separately.
- */
-export async function loadTenantPermissions(input: {
-  principal: Principal;
-  tenantId: string;
-}): Promise<PermissionSet | null> {
-  const membership = await db.query.tenantMembers.findFirst({
-    where: and(
-      eq(tenantMembers.tenantId, input.tenantId),
-      eq(tenantMembers.userId, input.principal.userId),
-      eq(tenantMembers.status, "active"),
-    ),
-  });
-  if (!membership) return null;
-
-  return resolveFor(input.principal.userId, "tenant", input.tenantId);
-}
-
-/**
- * Resolve staff grants, or NULL if this principal holds no FIRM-WIDE staff role.
+ *   loadTenantPermissions({ principal, tenantId })  NULL when not a member
+ *   loadStaffPermissions({ principal })             NULL when not staff
+ *   explainTenantDenial({ principal, tenantId })    "company-suspended" or "not-a-member"
  *
- * The qualifier is the whole of it. NULL means "not staff" and every caller
- * reads it that way — `staffProcedure` throws `notStaff()`, the admin layout
- * renders "you are not staff" — while a non-null set is admission to the panel,
- * empty or not. So the question this asks has to be the same question
- * `resolveFor` answers, or a row that can grant nothing still opens the door.
+ * A FEW LINES, ON PURPOSE (Tenancy 1). The rules that used to be written out
+ * here — membership checked FIRST and separately, so a stray role row can't
+ * admit a stranger; null for "not a member" rather than an empty set, which
+ * would read as "a member granted nothing"; overrides layered on the
+ * template — now live in @__SCOPE_NAME__/permissions/server, where a fix
+ * reaches this project by `npm update`. The why-comments moved with them.
+ *
+ * THE MEMBERSHIP GATE is @__SCOPE_NAME__/tenancy's, and it is where a
+ * suspended company is enforced: one place, for the loaders, the company
+ * routes and the pages. Everyone in a suspended company gets "Access to this
+ * account is suspended" from the tenant rung instead of "not a member".
+ * Imported from the package directly rather than through src/server/tenancy.ts,
+ * so this module never joins the import cycle that one sits in.
  */
-export async function loadStaffPermissions(input: {
-  principal: Principal;
-}): Promise<PermissionSet | null> {
-  // The tenant predicate is NOT optional here, even though staff rows are
-  // supposed to live at FIRM_WIDE.
-  //
-  // Without it this gate and `resolveFor` disagree: the gate matched any staff
-  // row, `resolveFor` re-queried pinned to '*', and a staff row written with a
-  // real tenant id — the column is plain text, nothing stops it — passed the
-  // gate and then resolved to an EMPTY SET. The caller was told "staff who
-  // holds no permissions" when the truth is "not staff at all", and those two
-  // answers take different branches everywhere: one shows an empty admin panel,
-  // the other sends you away. Asking the same question twice, two ways, is how
-  // that gap opens.
-  const assignment = await db.query.principalRole.findFirst({
-    where: and(
-      eq(principalRole.principalId, input.principal.userId),
-      eq(principalRole.scope, "staff"),
-      eq(principalRole.tenantId, FIRM_WIDE),
-    ),
-  });
-  if (!assignment) return null;
-
-  return resolveFor(input.principal.userId, "staff", FIRM_WIDE);
-}
-
-/**
- * Two queries, merged in memory. Never a round trip per permission check — the
- * tRPC layer resolves once per request and hands the set down.
- */
-async function resolveFor(
-  principalId: string,
-  scope: "staff" | "tenant",
-  tenantId: string,
-): Promise<PermissionSet> {
-  const assignment = await db.query.principalRole.findFirst({
-    where: and(
-      eq(principalRole.principalId, principalId),
-      eq(principalRole.scope, scope),
-      eq(principalRole.tenantId, tenantId),
-    ),
-  });
-
-  const templateGrants = assignment
-    ? await db
-        .select({
-          permission: roleTemplateGrant.permission,
-          effect: roleTemplateGrant.effect,
-        })
-        .from(roleTemplateGrant)
-        .where(eq(roleTemplateGrant.templateId, assignment.templateId))
-    : [];
-
-  const overrides = await db
-    .select({
-      permission: principalOverride.permission,
-      effect: principalOverride.effect,
-    })
-    .from(principalOverride)
-    .where(
-      and(
-        eq(principalOverride.principalId, principalId),
-        eq(principalOverride.scope, scope),
-        eq(principalOverride.tenantId, tenantId),
-      ),
-    );
-
-  return createPermissionSet(resolvePermissionSet({ templateGrants, overrides }));
-}
+export const { loadTenantPermissions, loadStaffPermissions, explainTenantDenial } =
+  createDrizzlePermissionLoaders(db, { membership: tenancyMembershipGate });

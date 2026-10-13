@@ -256,7 +256,18 @@ export function RoleEditor({ canManage }: RoleEditorProps) {
             </p>
           )}
 
-          {permissions.data && (
+          {/* NO STAFF ROLE, NO CHECKLIST (PC-04). A per-person change sits on
+              top of a role; for someone holding none there is no staff
+              permission set for it to change, so every tick would save and do
+              nothing at all. Say so, and say where roles are given. */}
+          {permissions.data && template === null && (
+            <Notice tone="info" title="No staff role">
+              {(rows.find((person) => person.id === selected)?.email ?? "This person") +
+                " has no staff role. Give them one on People first; per-person changes only apply on top of a role."}
+            </Notice>
+          )}
+
+          {permissions.data && template !== null && (
             <>
               {!canManage && (
                 <Notice tone="info" title="Read-only">
@@ -266,7 +277,7 @@ export function RoleEditor({ canManage }: RoleEditorProps) {
               )}
               <PermissionChecklist
                 rows={permissions.data.rows}
-                templateName={template?.name ?? "No template assigned"}
+                templateName={template.name}
                 disabled={!canManage}
                 onChange={handleChange}
               />

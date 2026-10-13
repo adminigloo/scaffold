@@ -36,6 +36,11 @@ const ALLOWED = new Set([
   // A UUID v7 in pure JavaScript. Deliberately not `newId` from
   // @adminigloo/db, which would bring the Neon driver with it.
   "uuidv7",
+  // The settings registry (Tenancy 1): fragments are zod schemas, and the
+  // company fragment validates a time zone and a contact email in the browser
+  // and on the server with one definition. zod is isomorphic and already a
+  // peer of every package that takes input.
+  "zod",
 ]);
 
 /**

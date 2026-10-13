@@ -1,6 +1,9 @@
-import { describeEnv } from "__SCOPE__/env";
+import { notFound } from "next/navigation";
+import { describeEnv, resolveAppEnv } from "__SCOPE__/env";
 import { envDescription } from "@/env";
 import { Card, Notice, PageHeader } from "@/components/ui";
+import { currentPrincipal } from "@/server/auth";
+import { loadStaffPermissions } from "@/server/permissions";
 
 /**
  * What is configured, what is not, and what each missing thing switches off.
@@ -22,7 +25,7 @@ const WHAT_IT_UNLOCKS: Record<string, string> = {
   CLERK_SECRET_KEY: "Signing in, and every permission check.",
   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "The sign-in and sign-up UI.",
   CLERK_WEBHOOK_SIGNING_SECRET:
-    "Keeping the local user row in step with Clerk. Not needed on localhost.",
+    "Keeping the local user row in step with Clerk — and taking access away when somebody's account is deleted there. Without it, deletions never reach this app. Not needed on localhost.",
   STRIPE_SECRET_KEY: "Checkout, subscriptions and the webhook ledger.",
   STRIPE_WEBHOOK_SECRET:
     "Verifying Stripe webhooks. Printed by `stripe listen` on its first line.",
@@ -59,7 +62,32 @@ const WHERE_TO_GET_IT: Record<string, string> = {
   UPSTASH_REDIS_REST_TOKEN: "console.upstash.com → the same panel → REST token",
 };
 
-export default function SetupPage() {
+/**
+ * Is the person looking at this page on the platform owner's staff?
+ *
+ * Only asked on production. Any failure — no Clerk, no database — answers
+ * "no", because the question is whether to SHOW a diagnostics page, and a
+ * production site that can't answer it shouldn't show it.
+ */
+async function viewerIsStaff(): Promise<boolean> {
+  try {
+    const principal = await currentPrincipal();
+    if (!principal) return false;
+    return (await loadStaffPermissions({ principal })) !== null;
+  } catch {
+    return false;
+  }
+}
+
+export default async function SetupPage() {
+  // NOT ON A PRODUCTION SITE, unless you're staff (CA-18). This page lists
+  // which credentials are set and which are missing: exactly right on a laptop
+  // or a staging deployment, and exactly wrong for a business owner's
+  // customers to stumble on. The footer leaves the link out on production
+  // too; this is the half that holds when someone types the address. A
+  // runtime environment check, the same one the bootstrap grant makes.
+  if (resolveAppEnv() === "production" && !(await viewerIsStaff())) notFound();
+
   const report = describeEnv(envDescription);
 
   // NOT `report.ok`. That means "valid for the environment you are in", and

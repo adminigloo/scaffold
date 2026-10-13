@@ -19,29 +19,36 @@ export interface TenantRoleTemplate {
  * catalog's `defaultFor`, so a package that adds a permission also decides which
  * templates receive it, in one place, instead of here.
  */
+/*
+ * THE DESCRIPTIONS SAY ONLY WHAT IS TRUE TODAY, in words with no noun in
+ * them (review T1-10). They are read on the team page by an owner choosing a
+ * role, in a project that may call its tenants companies, shops or clinics;
+ * and an earlier draft promised "billing" control that no screen offers yet.
+ * When billing lands it updates these lines in the same release.
+ */
 export const TENANT_ROLE_TEMPLATES = [
   {
     key: "owner",
     name: "Owner",
-    description: "Full control, including billing and ownership transfer.",
+    description: "Full control, including handing ownership to someone else.",
     rank: 40,
   },
   {
     key: "admin",
     name: "Admin",
-    description: "Runs the organisation day to day. Cannot transfer ownership.",
+    description: "Runs things day to day: the team and the settings. Can't hand over ownership.",
     rank: 30,
   },
   {
     key: "member",
     name: "Member",
-    description: "Does the work. No access to billing or member management.",
+    description: "Does the work. Can't change the team or the settings.",
     rank: 20,
   },
   {
     key: "viewer",
     name: "Viewer",
-    description: "Read-only access.",
+    description: "Can see everything here but change nothing.",
     rank: 10,
   },
 ] as const satisfies readonly TenantRoleTemplate[];

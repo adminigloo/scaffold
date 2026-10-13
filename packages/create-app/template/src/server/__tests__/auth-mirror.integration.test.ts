@@ -1,8 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { and, eq, sql } from "drizzle-orm";
 import { users } from "__SCOPE__/auth/schema";
-import { personalWorkspaceId, personalWorkspaceSlug } from "__SCOPE__/tenancy";
-import { tenantMembers, tenants } from "__SCOPE__/tenancy/schema";
 import { deterministicId } from "__SCOPE__/testing";
 import {
   db,
@@ -67,8 +65,12 @@ vi.mock("@/env", async (importOriginal) => {
  * real database.
  */
 interface ClerkUserStub {
-  readonly primaryEmailAddress: { readonly emailAddress: string } | null;
-  readonly emailAddresses: readonly { readonly emailAddress: string }[];
+  readonly primaryEmailAddressId: string | null;
+  readonly emailAddresses: readonly {
+    readonly id: string;
+    readonly emailAddress: string;
+    readonly verification: { readonly status: string } | null;
+  }[];
   readonly firstName: string | null;
   readonly lastName: string | null;
   readonly imageUrl: string;
@@ -118,8 +120,10 @@ const ids = {
 
 function clerkUser(overrides: Partial<ClerkUserStub> = {}): ClerkUserStub {
   return {
-    primaryEmailAddress: { emailAddress: "Ada@Example.COM" },
-    emailAddresses: [{ emailAddress: "Ada@Example.COM" }],
+    primaryEmailAddressId: "idn_ada",
+    emailAddresses: [
+      { id: "idn_ada", emailAddress: "Ada@Example.COM", verification: { status: "verified" } },
+    ],
     firstName: "Ada",
     lastName: "Lovelace",
     imageUrl: "https://img.clerk.com/itest",
@@ -134,7 +138,7 @@ afterEach(() => {
 });
 
 describeIntegration("the lazy user mirror", () => {
-  it("creates the local row and the personal workspace on first sight", async () => {
+  it("creates the local row on first sight, and sets the person up", async () => {
     clerk.externalId = EXTERNAL_ID;
     clerk.user = clerkUser();
 
@@ -159,21 +163,31 @@ describeIntegration("the lazy user mirror", () => {
       // genuinely newer webhook look stale and be discarded.
       expect(row?.providerUpdatedAt).toBeNull();
 
-      const workspaceId = personalWorkspaceId(principal?.userId ?? "");
-      const [workspace] = await tx
-        .select()
-        .from(tenants)
-        .where(eq(tenants.id, workspaceId));
-      expect(workspace?.kind).toBe("personal");
-      expect(workspace?.slug).toBe(personalWorkspaceSlug(principal?.userId ?? ""));
-      expect(workspace?.ownerUserId).toBe(principal?.userId);
+      // SET UP, not just mirrored (Tenancy 1): the stamp says provisioning
+      // finished. What it created depends on the mode — a personal workspace
+      // in a single-business project, nothing yet in a companies one (the
+      // person names their company in onboarding) — and the PGlite suite in
+      // src/server/__tests__/provisioning.test.ts proves each mode's half.
+      expect(row?.provisionedAt).not.toBeNull();
+    });
+  });
 
-      const membership = await tx
-        .select()
-        .from(tenantMembers)
-        .where(eq(tenantMembers.tenantId, workspaceId));
-      expect(membership).toHaveLength(1);
-      expect(membership[0]?.status).toBe("active");
+  it("never mirrors an address Clerk hasn't verified", async () => {
+    // Review T1-02: users.email decides who becomes the first administrator
+    // and whom an invitation is for. An address somebody merely typed into
+    // their profile must not land there.
+    clerk.externalId = EXTERNAL_ID;
+    clerk.user = clerkUser({
+      primaryEmailAddressId: "idn_typed",
+      emailAddresses: [
+        { id: "idn_typed", emailAddress: "founder@site.test", verification: { status: "unverified" } },
+      ],
+    });
+
+    await withAppDb(async () => {
+      const principal = await currentPrincipal();
+      expect(principal).not.toBeNull();
+      expect(principal?.email).toBeNull();
     });
   });
 
@@ -193,11 +207,11 @@ describeIntegration("the lazy user mirror", () => {
         .where(eq(users.externalId, EXTERNAL_ID));
       expect(rows).toHaveLength(1);
 
-      const workspaces = await tx
-        .select({ id: tenants.id })
-        .from(tenants)
-        .where(eq(tenants.id, personalWorkspaceId(first?.userId ?? "")));
-      expect(workspaces).toHaveLength(1);
+      const [row] = await tx
+        .select({ provisionedAt: users.provisionedAt })
+        .from(users)
+        .where(eq(users.externalId, EXTERNAL_ID));
+      expect(row?.provisionedAt).not.toBeNull();
     });
   });
 });
@@ -252,54 +266,32 @@ describeIntegration("racing the webhook", () => {
     });
   });
 
-  it("re-running the personal workspace against rows that already exist is a no-op", async () => {
-    // The path the previous test takes, one step further. The mirror lost the
-    // insert but still calls `ensurePersonalWorkspace` for the adopted row, so
-    // both of its writes land on rows that are already there. Bare
-    // `onConflictDoNothing()` — no target — is what absorbs that, and it has to
-    // absorb BOTH the primary key and the unique slug index: the tenant id and
-    // the slug are each derived from the user id, so a target naming only the
-    // primary key would still raise 23505 on `tenants_slug_idx`.
+  it("does not set up again someone the webhook already set up", async () => {
+    // The webhook won the race AND finished provisioning: its row carries the
+    // stamp. The page path adopts the row and must leave the stamp alone —
+    // provisioning twice is how a person would end up with two workspaces.
     clerk.externalId = EXTERNAL_ID;
     clerk.user = clerkUser();
+    const stamped = new Date("2026-01-02T03:04:05.000Z");
 
     await withAppDb(async (tx) => {
-      const workspaceId = personalWorkspaceId(ids.webhookWinner);
-
-      // A concurrent first sign-in that got all the way through: user row,
-      // workspace, membership. Ours then loses the insert and runs
-      // `ensurePersonalWorkspace` over the top of all three.
       clerk.duringCurrentUser = async () => {
         await tx.insert(users).values({
           id: ids.webhookWinner,
           externalId: EXTERNAL_ID,
           email: "ada@example.com",
+          provisionedAt: stamped,
         });
-        await tx.insert(tenants).values({
-          id: workspaceId,
-          kind: "personal",
-          slug: personalWorkspaceSlug(ids.webhookWinner),
-          name: "Personal",
-          ownerUserId: ids.webhookWinner,
-        });
-        await tx
-          .insert(tenantMembers)
-          .values({ tenantId: workspaceId, userId: ids.webhookWinner, status: "active" });
       };
 
       const principal = await currentPrincipal();
 
       expect(principal?.userId).toBe(ids.webhookWinner);
-      const workspaces = await tx
-        .select({ id: tenants.id })
-        .from(tenants)
-        .where(eq(tenants.id, workspaceId));
-      expect(workspaces).toHaveLength(1);
-      const membership = await tx
-        .select({ userId: tenantMembers.userId })
-        .from(tenantMembers)
-        .where(eq(tenantMembers.tenantId, workspaceId));
-      expect(membership).toHaveLength(1);
+      const [row] = await tx
+        .select({ provisionedAt: users.provisionedAt })
+        .from(users)
+        .where(eq(users.id, ids.webhookWinner));
+      expect(row?.provisionedAt?.toISOString()).toBe(stamped.toISOString());
     });
   });
 });
@@ -442,11 +434,14 @@ describeIntegration("a signed-in stranger", () => {
     });
   });
 
-  it("falls back to the first email address when there is no primary", async () => {
+  it("falls back to the first VERIFIED address when the primary isn't verified", async () => {
     clerk.externalId = EXTERNAL_ID;
     clerk.user = clerkUser({
-      primaryEmailAddress: null,
-      emailAddresses: [{ emailAddress: "Fallback@Example.com" }],
+      primaryEmailAddressId: "idn_primary",
+      emailAddresses: [
+        { id: "idn_primary", emailAddress: "Typed@Example.com", verification: { status: "unverified" } },
+        { id: "idn_fallback", emailAddress: "Fallback@Example.com", verification: { status: "verified" } },
+      ],
     });
 
     await withAppDb(async (tx) => {

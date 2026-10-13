@@ -272,6 +272,12 @@ export function packagesFor(answers: Answers): readonly string[] {
     "permissions",
     "trpc",
     "observability",
+    // THE COMPANY SCREENS, in every project (Tenancy 1). The team page is in
+    // both modes — a single-business project still invites its staff — and the
+    // operator console lists every company or workspace. They ship as package
+    // components so a fix to who may remove whom reaches a project by
+    // `npm update` instead of being frozen into a copied page.
+    "tenancy-widget",
   ];
   const optional: string[] = [];
 
@@ -382,6 +388,29 @@ export function requiredEnvFor(answers: Answers): readonly string[] {
  * something to go and find — listing it would put a line in the example file
  * that changes nothing when filled in.
  */
+/**
+ * The variables a DEPLOYMENT refuses to start without, and a laptop doesn't
+ * need yet — the env module's `optionalUntilDeployed` list, by name.
+ *
+ * ONE LIST, read by both: renderEnvModule writes it into src/env.ts, and the
+ * CLI's next steps print it as "a deployment refuses to start without". They
+ * used to be two hand-written lists, and the printed one said "the app will
+ * not boot until these are set" about keys that never stopped a laptop
+ * (TB-DEPLOY-14).
+ */
+export function deferredUntilDeployedFor(answers: Answers): readonly string[] {
+  const vars = [
+    // DB_OPTIONAL_UNTIL_DEPLOYED, from __SCOPE__/db (the env module spreads
+    // the package's constant; a generator test holds the two together).
+    "DATABASE_URL",
+    "DATABASE_URL_UNPOOLED",
+    "CLERK_SECRET_KEY",
+    "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
+  ];
+  if (answers.includeEmail) vars.push("EMAIL_FROM");
+  return vars;
+}
+
 export function optionalEnvFor(answers: Answers): readonly string[] {
   const vars = [
     // Which environment this is, on a host that is not Vercel.
@@ -399,6 +428,10 @@ export function optionalEnvFor(answers: Answers): readonly string[] {
     // Who becomes the first administrator on a DEPLOYED environment. Optional,
     // and unset means a deployment grants nobody automatically.
     "BOOTSTRAP_ADMIN_EMAIL",
+    // Where a suspended company is told to write (Tenancy 1). Optional: without
+    // it — and without BOOTSTRAP_ADMIN_EMAIL, which the suspended screen falls
+    // back to — the screen says "contact support" with no address to write to.
+    "SUPPORT_EMAIL",
     // Observability is in the base package set, so these are in every project.
     "SENTRY_DSN",
     "UPSTASH_REDIS_REST_URL",
@@ -516,6 +549,15 @@ export function overlayNamesFor(answers: Answers): readonly string[] {
 
   if (answers.adminShell === "minimal") names.push("admin-minimal");
   if (answers.adminShell === "full") names.push("admin-minimal", "admin-full");
+
+  // THE COMPANY PAGES (Tenancy 1): onboarding ("What's your company
+  // called?"), the company dashboard with its setup checklist, company
+  // settings and the reserved public face at /t/[slug]. Only when the
+  // customer is a company somebody names; a single-business project
+  // (`--tenant-noun none`) has one invisible workspace per person and none of
+  // these pages — the overlay is the switch, so no emitted file asks which
+  // mode it is in.
+  if (answers.tenantNoun !== "none") names.push("companies");
 
   // The Stripe webhook route and client only exist for projects that take
   // money. Copying them into a project without Stripe would leave a route that
@@ -713,7 +755,18 @@ export function capabilitiesFor(answers: Answers): readonly string[] {
       : "tenancy.organizations",
   );
 
+  // TENANCY 1, in every project: the permission catalog is seeded on every
+  // deploy and the first administrator can always be recovered (first-run),
+  // and the generated project proves its own company isolation and procedure
+  // scopes in its unit suite (isolation-proof). Base keys because neither is a
+  // feature somebody opts into — they are what makes the rest trustworthy.
+  keys.push("tenancy.first-run", "tenancy.isolation-proof");
+
   if (answers.adminShell !== "none") keys.push("admin.shell");
+  // The platform owner's view of every company — list, detail, suspend,
+  // reassign an owner — and People, where staff roles are given. Both are
+  // pages, so they need a shell to live in.
+  if (answers.adminShell !== "none") keys.push("admin.operator-console");
   if (answers.adminShell === "full") keys.push("admin.support-tools");
   if (takesMoney && answers.adminShell !== "none") {
     keys.push("admin.product-builder");

@@ -104,6 +104,8 @@ export interface BuiltProcedureLike {
   readonly _def?: {
     readonly middlewares?: readonly unknown[];
     readonly meta?: unknown;
+    /** The `.input()` parsers, in order (the rung's own first). Read by `inputFieldsOf`. */
+    readonly inputs?: readonly unknown[];
   };
 }
 
@@ -164,7 +166,12 @@ export function auditBuiltProcedures(
 
   for (const entry of entries) {
     const derived = scopeOfProcedure(entry.procedure);
-    const want = expected[entry.router];
+    // THE FULL PATH WINS OVER THE ROUTER NAME (Tenancy 1). A mixed router
+    // declares its exceptions: `invoicing: "staff"` beside
+    // `"invoicing.byToken": "public"`. Without this, one public procedure in a
+    // staff router forced the whole router to be registered as public, which
+    // let every other procedure in it be weakened unnoticed.
+    const want = expected[entry.path] ?? expected[entry.router];
 
     if (want === undefined) {
       violations.push({
@@ -190,4 +197,201 @@ export function auditBuiltProcedures(
   }
 
   return { ok: violations.length === 0, violations };
+}
+
+/** The part of a built tRPC router that `inventoryOf` reads. */
+export interface RouterLike {
+  readonly _def: { readonly procedures: Readonly<Record<string, unknown>> };
+}
+
+function isScope(value: unknown): value is ProcedureScope {
+  return value === "public" || value === "authenticated" || value === "tenant" || value === "staff";
+}
+
+/**
+ * Every procedure of a built router, flattened, ready for
+ * `auditBuiltProcedures` (PC-19: the scope audit existed but nothing fed it).
+ *
+ * tRPC 11's `router._def.procedures` is already flat and keyed by dotted path
+ * (verified against @trpc/server 11.18: `["a", "b.c", "b.d.e"]`), so this is a
+ * map, not a walk. `router` is the first path segment ("" for a root-level
+ * procedure); `declared` is the author's `.meta({ scope })` when it is a valid
+ * scope, so the audit can also catch a label that disagrees with the rung.
+ *
+ *   const result = auditBuiltProcedures(inventoryOf(appRouter), EXPECTED_SCOPES);
+ */
+export function inventoryOf(router: RouterLike): DerivedEntry[] {
+  return Object.entries(router._def.procedures).map(([path, procedure]) => {
+    const dot = path.indexOf(".");
+    const built = procedure as BuiltProcedureLike;
+    const meta = built._def?.meta as { scope?: unknown } | undefined;
+    return {
+      path,
+      router: dot < 0 ? "" : path.slice(0, dot),
+      procedure: built,
+      ...(isScope(meta?.scope) ? { declared: meta.scope } : {}),
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// What a procedure takes, for the isolation proof
+// ---------------------------------------------------------------------------
+
+/** One leaf of a procedure's input, as `inputFieldsOf` reports it. */
+export interface InputField {
+  /** Dotted, with `[]` for an array element: `"filter.memberIds[]"`. */
+  readonly path: string;
+  /** The same path as segments (`["filter", "memberIds", "[]"]`), for building an input that sets it. */
+  readonly segments: readonly string[];
+  /** The last named key on the path (`"memberIds"`). */
+  readonly key: string;
+  /** The leaf's type, lowercased: "string", "number", "enum", "boolean", … */
+  readonly kind: string;
+  /** It, or something it sits inside, may be left out (optional, nullish, or has a default). */
+  readonly optional: boolean;
+  /** It sits inside an array. */
+  readonly inArray: boolean;
+}
+
+interface SchemaWalk {
+  readonly out: Map<string, InputField>;
+  readonly seen: Set<unknown>;
+}
+
+/** zod 4 keeps the definition on `_zod.def` (and `_def`), with `type`; zod 3 on `_def`, with `typeName`. */
+function definitionOf(schema: unknown): { readonly kind: string; readonly def: Record<string, unknown> } | null {
+  if (typeof schema !== "object" || schema === null) return null;
+  const s = schema as { _zod?: { def?: unknown }; _def?: unknown };
+  const def = (s._zod?.def ?? s._def) as Record<string, unknown> | undefined;
+  if (typeof def !== "object" || def === null) return null;
+  if (typeof def["type"] === "string") return { kind: def["type"], def };
+  if (typeof def["typeName"] === "string") return { kind: def["typeName"].replace(/^Zod/, "").toLowerCase(), def };
+  return null;
+}
+
+function shapeOf(schema: unknown, def: Record<string, unknown>): Record<string, unknown> {
+  const fromDef = typeof def["shape"] === "function" ? (def["shape"] as () => unknown)() : def["shape"];
+  const shape = fromDef ?? (schema as { shape?: unknown }).shape;
+  return typeof shape === "object" && shape !== null ? (shape as Record<string, unknown>) : {};
+}
+
+function walkSchema(
+  walk: SchemaWalk,
+  schema: unknown,
+  segments: readonly string[],
+  optional: boolean,
+  inArray: boolean,
+): void {
+  // A recursive schema (z.lazy) would walk forever; a schema already on this
+  // path is reported once, where it was first met.
+  if (segments.length > 12 || walk.seen.has(schema)) return;
+  const found = definitionOf(schema);
+  if (!found) return;
+  const { kind, def } = found;
+  walk.seen.add(schema);
+  try {
+    switch (kind) {
+      case "object":
+        for (const [key, child] of Object.entries(shapeOf(schema, def))) walkSchema(walk, child, [...segments, key], optional, inArray);
+        return;
+      case "optional":
+      case "nullable":
+      case "nullish":
+      case "default":
+      case "prefault":
+      case "catch":
+        walkSchema(walk, def["innerType"], segments, true, inArray);
+        return;
+      case "readonly":
+      case "nonoptional":
+        walkSchema(walk, def["innerType"], segments, optional, inArray);
+        return;
+      case "branded":
+        walkSchema(walk, def["type"], segments, optional, inArray);
+        return;
+      case "array":
+        // zod 4: def.element; zod 3: def.type.
+        walkSchema(walk, def["element"] ?? def["type"], [...segments, "[]"], optional, true);
+        return;
+      case "set":
+        walkSchema(walk, def["valueType"], [...segments, "[]"], optional, true);
+        return;
+      case "tuple":
+        for (const item of (def["items"] as unknown[] | undefined) ?? []) walkSchema(walk, item, [...segments, "[]"], optional, true);
+        return;
+      case "union":
+      case "discriminatedunion": {
+        const options = def["options"];
+        for (const option of Array.isArray(options) ? options : options instanceof Map ? [...options.values()] : []) {
+          walkSchema(walk, option, segments, optional, inArray);
+        }
+        return;
+      }
+      case "intersection":
+        walkSchema(walk, def["left"], segments, optional, inArray);
+        walkSchema(walk, def["right"], segments, optional, inArray);
+        return;
+      case "pipe":
+      case "pipeline":
+        walkSchema(walk, def["in"], segments, optional, inArray);
+        return;
+      case "effects":
+        walkSchema(walk, def["schema"], segments, optional, inArray);
+        return;
+      case "lazy":
+        if (typeof def["getter"] === "function") walkSchema(walk, (def["getter"] as () => unknown)(), segments, optional, inArray);
+        return;
+      case "record":
+        walkSchema(walk, def["valueType"], [...segments, "*"], true, inArray);
+        return;
+      default: {
+        if (segments.length === 0) return;
+        const path = segments.join(".").replace(/\.\[\]/g, "[]");
+        const key = [...segments].reverse().find((s) => s !== "[]" && s !== "*") ?? "";
+        const previous = walk.out.get(path);
+        walk.out.set(path, {
+          path,
+          segments,
+          key,
+          kind: previous && previous.kind !== kind ? "union" : kind,
+          optional: optional || (previous?.optional ?? false),
+          inArray,
+        });
+      }
+    }
+  } finally {
+    walk.seen.delete(schema);
+  }
+}
+
+/**
+ * Every leaf field a procedure's input parsers declare — required, OPTIONAL,
+ * nested in objects and inside arrays — read off the zod schemas themselves
+ * (zod 3 and 4), without running anything.
+ *
+ * WHY (review R3 TB2-01): the isolation proof checked a "tenant-only"
+ * procedure by parsing B's company id alone. A required second id failed that
+ * parse and was caught; an OPTIONAL one (`userId: z.string().optional()`)
+ * parsed fine, the proof never sent it, and a procedure that read a member of
+ * ANY company by that id passed as isolated. Walking the declared shape is
+ * what lets the proof find every id a procedure can be handed, not only the
+ * ones it insists on.
+ *
+ * Fields are merged across `.input()` calls; the rung's own `tenantId` is
+ * among them. A parser that isn't zod contributes nothing.
+ */
+export function inputFieldsOf(procedure: BuiltProcedureLike): InputField[] {
+  const walk: SchemaWalk = { out: new Map(), seen: new Set() };
+  for (const parser of procedure._def?.inputs ?? []) walkSchema(walk, parser, [], false, false);
+  return [...walk.out.values()];
+}
+
+/**
+ * Does this input name read as a row's id? `id`, `ids`, `userId`,
+ * `memberIds`, `orderID`, `visit_id` — the names a procedure gives the id of
+ * something a company owns. `paid`, `valid` and `tierKey` are not.
+ */
+export function looksLikeAnId(key: string): boolean {
+  return /^(id|ids|uuid|uuids)$/i.test(key) || /[a-z0-9](Id|Ids|ID|IDs)$/.test(key) || /[a-z0-9]_ids?$/i.test(key);
 }

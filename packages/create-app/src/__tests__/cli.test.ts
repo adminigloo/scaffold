@@ -108,6 +108,9 @@ describe("packagesFor — the only structural branch", () => {
       "@adminigloo/billing",
       "@adminigloo/ai",
       "@adminigloo/email",
+      // Released with Tenancy 1, in the same changeset run as the tenancy 0.4
+      // it talks to (versions.test.ts holds the two together).
+      "@adminigloo/tenancy-widget",
     ]);
     for (const model of ["none", "one-time", "subscription", "both"] as const) {
       for (const pkg of packagesFor(answers({ businessModel: model }))) {
@@ -412,8 +415,10 @@ describe("renderScaffoldRecord", () => {
   });
 
   it("says so plainly when no overlay was applied", () => {
+    // `--tenant-noun none`: the companies overlay is the one a single-business
+    // project doesn't get, so this is the emptiest project there is.
     const out = renderScaffoldRecord(
-      manifest({ adminShell: "none", businessModel: "none" }),
+      manifest({ adminShell: "none", businessModel: "none", tenantNoun: "none" }),
     );
     expect(out).toMatch(/this project is the base template only/);
   });
@@ -520,6 +525,7 @@ describe("adminigloo.json — the project manifest", () => {
     expect(parsed.overlays).toEqual([
       "admin-minimal",
       "admin-full",
+      "companies",
       "stripe",
       "catalog-admin",
       "account",
@@ -540,6 +546,7 @@ describe("adminigloo.json — the project manifest", () => {
     expect(parsed.overlays).toEqual([
       "admin-minimal",
       "admin-full",
+      "companies",
       "stripe",
       "catalog-admin",
       "account",
@@ -559,14 +566,14 @@ describe("adminigloo.json — the project manifest", () => {
     const parsedUnpriced = JSON.parse(
       unpriced.files.get(MANIFEST_FILENAME) ?? "",
     ) as { overlays: string[] };
-    expect(parsedUnpriced.overlays).toEqual(["legal", "marketing"]);
+    expect(parsedUnpriced.overlays).toEqual(["companies", "legal", "marketing"]);
   });
 
   it("records no overlay for the emptiest project there is", async () => {
     const plan = await planEmit(
       TEMPLATE_DIR,
       "/out",
-      answers({ adminShell: "none", businessModel: "none" }),
+      answers({ adminShell: "none", businessModel: "none", tenantNoun: "none" }),
     );
     const parsed = JSON.parse(plan.files.get(MANIFEST_FILENAME) ?? "") as {
       overlays: string[];
@@ -708,7 +715,13 @@ describe("overlayNamesFor", () => {
     expect(overlayNamesFor(answers({ adminShell: "full" }))).toEqual([
       "admin-minimal",
       "admin-full",
+      "companies",
     ]);
+  });
+
+  it("adds the companies pages only when the customer is a company somebody names", () => {
+    expect(overlayNamesFor(answers({ adminShell: "none", tenantNoun: "Company" }))).toEqual(["companies"]);
+    expect(overlayNamesFor(answers({ adminShell: "none", tenantNoun: "none" }))).toEqual([]);
   });
 });
 
@@ -1328,7 +1341,7 @@ describe("nothing links to the shop — end to end", () => {
     expect(header.match(/<SiteLinks \/>/g)).toHaveLength(3);
 
     // Before the signed-in destinations, not after them.
-    expect(header.indexOf("<SiteLinks />")).toBeLessThan(header.indexOf("<AppLinks />"));
+    expect(header.lastIndexOf("<SiteLinks />")).toBeLessThan(header.indexOf("<AppLinks "));
   });
 
   it("keeps the Clerk Core 3 warning, and does not do the thing it warns about", async () => {
@@ -1355,9 +1368,9 @@ describe("nothing links to the shop — end to end", () => {
 const ADMIN_SHELLS = ["minimal", "full"] as const;
 
 describe("the signed-in nav", () => {
-  it.each(ADMIN_SHELLS)("carries /admin for --admin %s", (adminShell) => {
+  it.each(ADMIN_SHELLS)("carries /admin for --admin %s, drawn for staff only", (adminShell) => {
     const nav = renderSiteNav(answers({ adminShell }));
-    expect(nav).toContain(`{ href: "/admin", label: "Admin" }`);
+    expect(nav).toContain(`{ href: "/admin", label: "Admin", audience: "staff" }`);
   });
 
   it("drops /admin, and only /admin, when no admin shell was generated", () => {
@@ -1370,25 +1383,32 @@ describe("the signed-in nav", () => {
     // the property worth pinning moved: the panel that was declined is absent
     // and the page that always exists is not.
     const nav = renderSiteNav(answers({ adminShell: "none" }));
-    expect(nav).toContain('{ href: "/members", label: "Members" }');
+    expect(nav).toContain('{ href: "/settings/team", label: "Team" }');
     expect(nav).not.toContain('label: "Admin"');
     expect(nav).not.toContain('"/admin"');
   });
 
-  it("carries /members in every configuration, tenant noun included", () => {
-    // A personal workspace is a tenant like any other, so a consumer-shaped
-    // project gets the same member list. Branching this on `--tenant none`
-    // would put back the is-there-an-organisation-yet fork that personal
-    // workspaces exist to delete — and it would leave app/(site)/members with
-    // nothing linking to it, which is the bug this whole file is about.
+  it("carries the team page in every configuration, tenant noun included (Tenancy 1)", () => {
+    // A personal workspace is a tenant like any other, so a single-business
+    // project gets the same team page — a business still invites its staff.
+    // /members redirects there now, so it is not listed twice.
     for (const tenantNoun of ["Organization", "Team", "none"] as const) {
       for (const adminShell of [...ADMIN_SHELLS, "none"] as const) {
         const nav = renderSiteNav(answers({ tenantNoun, adminShell }));
-        expect(nav, `--tenant ${tenantNoun} --admin ${adminShell}`).toContain(
-          '{ href: "/members", label: "Members" }',
-        );
+        const label = `--tenant ${tenantNoun} --admin ${adminShell}`;
+        expect(nav, label).toContain('{ href: "/settings/team", label: "Team" }');
+        expect(nav, label).not.toContain('"/members"');
       }
     }
+  });
+
+  it("gives a companies project its dashboard and settings, and a single business neither", () => {
+    const companies = renderSiteNav(answers({ tenantNoun: "Company" }));
+    expect(companies).toContain('{ href: "/dashboard", label: "Dashboard" }');
+    expect(companies).toContain('{ href: "/settings/company", label: "Settings" }');
+    const single = renderSiteNav(answers({ tenantNoun: "none" }));
+    expect(single).not.toContain('"/dashboard"');
+    expect(single).not.toContain('"/settings/company"');
   });
 
   it("always exports the same shape, so no consumer tests for null", () => {
@@ -1420,10 +1440,11 @@ describe("the signed-in nav", () => {
     const plan = await planEmit(TEMPLATE_DIR, "/out", answers({ adminShell: "full" }));
     const header = plan.files.get(join("src", "components", "AuthHeader.tsx")) ?? "";
     expect(header).toContain("SITE_LINKS.map");
-    expect(header).toContain("APP_LINKS.map");
+    // The signed-in links, filtered for this viewer: Admin only for staff.
+    expect(header).toContain('APP_LINKS.filter((link) => link.audience !== "staff" || isStaff)');
     // Three public renders, one signed-in render.
     expect(header.match(/<SiteLinks \/>/g)).toHaveLength(3);
-    expect(header.match(/<AppLinks \/>/g)).toHaveLength(1);
+    expect(header.match(/<AppLinks /g)).toHaveLength(1);
   });
 
   it("has no hardcoded admin link left in the header", async () => {
@@ -2025,54 +2046,58 @@ describe("renderAdminDashboard", () => {
  * nobody generates. The fourth — the token reaching a log — is silent until it
  * is not.
  */
-describe("the invitations router", () => {
-  const INVITATIONS = join("src", "server", "routers", "invitations.ts");
+describe("the company routes (Tenancy 1)", () => {
+  const ROUTE = join("app", "api", "tenancy", "[...path]", "route.ts");
+  const OPERATOR_ROUTE = join("app", "api", "admin", "tenancy", "[...path]", "route.ts");
+  const HANDLERS = join("src", "server", "tenancy-handlers.ts");
 
-  it.each(ALL_CONFIGURATIONS)("is emitted and mounted for %s", async (_label, o) => {
-    // Tenancy is in the base package set, so there is no configuration in which
-    // this feature is absent. A project generated without `--email` still
-    // issues invitations; it hands the link back instead of posting it.
+  it.each(ALL_CONFIGURATIONS)("serves invitations and the team from the package for %s", async (_label, o) => {
+    // Inviting, resending, withdrawing and accepting moved off the 0.21 tRPC
+    // router onto @adminigloo/tenancy's handlers, which hold the company lock
+    // and the rank rules. Mounted in every configuration: tenancy is in the
+    // base package set.
     const plan = await planEmit(TEMPLATE_DIR, "/out", answers(o));
-    expect(plan.files.has(INVITATIONS)).toBe(true);
+    expect(plan.files.get(ROUTE) ?? "").toContain("buildTenancyHandlers()");
+    expect(plan.files.get(OPERATOR_ROUTE) ?? "").toContain("buildTenancyOperatorHandlers()");
+    expect(plan.files.get(HANDLERS) ?? "").toContain("createTenancyHandlers(");
     const root = plan.files.get(join("src", "server", "routers", "_app.ts")) ?? "";
-    expect(root).toContain("invitations: invitationsRouter");
-    expect(root).toContain('from "./invitations"');
+    expect(withoutComments(root)).not.toContain("invitations");
   });
 
-  it("is mounted exactly where the tenancy package is", async () => {
-    // The router is the app half of the tenancy package. If one is ever made
-    // conditional the other has to be, and this is what notices.
-    for (const [, overrides] of ALL_CONFIGURATIONS) {
-      const a = answers(overrides);
-      const plan = await planEmit(TEMPLATE_DIR, "/out", a);
-      const hasTenancy = packagesFor(a).includes(`${a.scope}/tenancy`);
-      const mounted = (
-        plan.files.get(join("src", "server", "routers", "_app.ts")) ?? ""
-      ).includes("invitations: invitationsRouter");
-      expect(mounted).toBe(hasTenancy);
+  it("retires the 0.21 invitation and bootstrap files", async () => {
+    // Two write paths into the same invitation rows would be two places to
+    // keep the rank rules right; the bootstrap logic lives in the permissions
+    // package now and is retried whenever no administrator exists.
+    const plan = await planEmit(TEMPLATE_DIR, "/out", answers({ adminShell: "full", businessModel: "both" }));
+    for (const gone of [
+      join("src", "server", "routers", "invitations.ts"),
+      join("src", "server", "invitations.ts"),
+      join("src", "server", "bootstrap.ts"),
+      join("src", "components", "invitations", "AcceptInvitation.tsx"),
+      join("src", "components", "invitations", "PendingInvitations.tsx"),
+      join("src", "server", "__tests__", "bootstrap.integration.test.ts"),
+      join("src", "server", "__tests__", "invitations.test.ts"),
+    ]) {
+      expect(plan.files.has(gone), gone).toBe(false);
     }
   });
 
-  it("puts inviting on the tenant rung and accepting one rung below it", async () => {
-    // THE SCOPE IS THE WHOLE THING. Inviting somebody into an organisation is
-    // that organisation's business, not the firm's, so it is `requireTenant`
-    // and never `requireStaff` — a key checked on the wrong rung matches
-    // nothing, the control is invisible to everybody including the owner, and
-    // nothing errors anywhere.
-    //
-    // Accepting cannot be tenant-scoped at all: `tenantProcedure` denies
-    // non-members, and an invitee is a non-member by definition. It runs on
-    // `protectedProcedure`, and the token is the authorisation.
-    const plan = await planEmit(TEMPLATE_DIR, "/out", answers());
-    const source = withoutComments(plan.files.get(INVITATIONS) ?? "");
-
-    expect(source).not.toContain("requireStaff");
-    expect(source.match(/requireTenant\("members\.invite"\)/g)).toHaveLength(4);
-    expect(source).toMatch(
-      /accept: protectedProcedure\s*\n\s*\.meta\(\{ scope: "authenticated" \}\)/,
-    );
-    // Every procedure declares one, or the scope audit cannot see it.
-    expect(source.match(/\.meta\(\{ scope: "(tenant|authenticated)" \}\)/g)).toHaveLength(5);
+  it("delivers invitations through the project's own mailer, after the save — and only when it can send mail", async () => {
+    for (const includeEmail of [true, false]) {
+      const plan = await planEmit(TEMPLATE_DIR, "/out", answers({ includeEmail }));
+      const handlers = plan.files.get(HANDLERS) ?? "";
+      expect(handlers).toContain('import { invitationEmailsConfigured, sendInvitationEmail } from "./invitation-mail";');
+      expect(handlers).toContain('const deliverInvitation: NonNullable<CreateTenancyHandlersOptions["deliverInvitation"]> = async (input) =>');
+      // Review R4 SEC-T1-B: a project that can't send is never told it emails, so nothing is ever held.
+      expect(handlers).toContain("...(invitationEmailsConfigured ? { deliverInvitation } : {}),");
+      expect(handlers).not.toContain("    deliverInvitation: async (input) =>");
+      const mail = plan.files.get(join("src", "server", "invitation-mail.ts")) ?? "";
+      expect(mail).toContain(
+        includeEmail
+          ? "export const invitationEmailsConfigured: boolean = sender.configured;"
+          : "export const invitationEmailsConfigured: boolean = false;",
+      );
+    }
   });
 
   it.each(ALL_CONFIGURATIONS)(
@@ -2080,8 +2105,8 @@ describe("the invitations router", () => {
     async (_label, o) => {
       // The key comes from `tenancyPermissions`, which the generated catalog
       // spreads into the tenant scope. Spread into staff instead — the mistake
-      // this repository has already made once — and `requireTenant` resolves it
-      // against a catalog that has never heard of it.
+      // this repository has already made once — and the handlers' permission
+      // check resolves it against a catalog that has never heard of it.
       const catalog = renderPermissionsCatalog(answers(o));
       const tenant = catalog.slice(
         catalog.indexOf("export const tenantCatalog"),
@@ -2092,27 +2117,6 @@ describe("the invitations router", () => {
       expect(staff).not.toContain("tenancyPermissions");
     },
   );
-
-  it("never writes the token to the audit log", async () => {
-    // `metadata` is jsonb in the one table deliberately kept longer than
-    // everything else, and `redactValue` redacts by string SHAPE, not by key
-    // name — an opaque base64url token looks like nothing in particular and
-    // would survive. The only defence is not putting it there.
-    const plan = await planEmit(TEMPLATE_DIR, "/out", answers());
-    const source = withoutComments(plan.files.get(INVITATIONS) ?? "");
-    const metadataBlocks = source.match(/metadata: \{[\s\S]*?\},\n/g) ?? [];
-    expect(metadataBlocks.length).toBeGreaterThan(0);
-    for (const block of metadataBlocks) {
-      expect(block).not.toContain("token");
-      expect(block).not.toContain("url");
-    }
-  });
-
-  it("returns the link only when nothing was posted", async () => {
-    const plan = await planEmit(TEMPLATE_DIR, "/out", answers());
-    const source = withoutComments(plan.files.get(INVITATIONS) ?? "");
-    expect(source).toContain("link: delivery.delivered ? null : url");
-  });
 });
 
 describe("the invitation accept route", () => {
@@ -2135,6 +2139,9 @@ describe("the invitation accept route", () => {
     expect(page).not.toContain("invitations.accept");
     expect(page).not.toContain('from "@/db"');
     expect(page).not.toContain("listForTenant");
+    // Signed out, the page returns before the package's accept screen (which
+    // previews and accepts only when a signed-in person asks) is rendered.
+    expect(page.indexOf("if (!principal)")).toBeLessThan(page.indexOf("<AcceptInvitation"));
   });
 
   it("carries the invitation back through sign-up rather than losing it", async () => {
@@ -2371,10 +2378,12 @@ describe("the audit vocabulary", () => {
     expect(source).toContain("defineAuditedActions(auditedActions, {");
     expect(source).toContain("contributedBy: [");
     expect(source).toContain("adminAuditedActions");
-    expect(source).toContain("invitationAuditedActions");
-    for (const action of ["invitation.sent", "invitation.accepted", "invitation.revoked"]) {
-      expect(source).toContain(action);
-    }
+    // The company lifecycle's vocabulary comes from the tenancy package now
+    // (Tenancy 1); its three invitation keys keep the 0.21 router's names, so
+    // historic rows keep their labels.
+    expect(source).toContain("tenancyAuditedActions");
+    expect(source).toContain(`import { tenancyAuditedActions } from "@adminigloo/tenancy";`);
+    expect(source).not.toContain("invitationAuditedActions");
   });
 
   it("takes in the catalog fragment only where the catalog router exists", async () => {
@@ -2389,20 +2398,15 @@ describe("the audit vocabulary", () => {
   it("marks acceptance sensitive and the send that preceded it not", async () => {
     // Accepting is the instant a stranger becomes a member and the data becomes
     // readable to them, which is where a "who could have seen this" review has
-    // to start. Sending grants nothing. Marking both would put two rows in the
-    // compliance slice for every one that belongs there.
-    const plan = await planEmit(TEMPLATE_DIR, "/out", answers());
-    const source = plan.files.get(AUDIT) ?? "";
-    const sent = source.slice(
-      source.indexOf('"invitation.sent"'),
-      source.indexOf('"invitation.accepted"'),
+    // to start. Sending grants nothing. The keys now come from the tenancy
+    // package, so the flags are asserted on the vocabulary the registry spreads.
+    const vocabulary = await readFile(
+      join(TEMPLATE_DIR, "..", "..", "tenancy", "src", "audit.ts"),
+      "utf8",
     );
-    const accepted = source.slice(
-      source.indexOf('"invitation.accepted"'),
-      source.indexOf('"invitation.revoked"'),
-    );
-    expect(accepted).toContain("sensitive: true");
-    expect(sent).not.toContain("sensitive");
+    const line = (key: string) => vocabulary.split("\n").find((l) => l.includes(`"${key}":`)) ?? "";
+    expect(line("invitation.accepted")).toContain("sensitive: true");
+    expect(line("invitation.sent")).not.toContain("sensitive");
   });
 
   it("leaves no second registry behind in the admin router", async () => {
@@ -2440,6 +2444,23 @@ const UNLINKED_BY_DESIGN: Readonly<Record<string, string>> = {
     "arrives in an email. The URL carries a one-time token, so there is no " +
     "stable href to put in a nav, and a link to it in the header would be a " +
     "link to nobody's invitation.",
+  "/members":
+    "a redirect to /settings/team (Tenancy 1), kept so old links and the " +
+    "invitation emails a 0.21 project sent still land somewhere.",
+  "/onboarding":
+    "where a signed-in person with no company is SENT (by the company gate, " +
+    "the switcher's \"create another\" and the sign-up redirect), not a " +
+    "destination anyone picks from a nav.",
+  "/sign-out":
+    "the invitation screen's \"sign out and use the right address\" link; the " +
+    "header's account menu signs out on its own.",
+  "/t/[slug]":
+    "each company's public address, shown on its settings page and shared by " +
+    "the company itself. A nav entry would need a slug, and whose would it be.",
+  "/admin/tenants":
+    "a redirect to /admin/companies, kept for old links.",
+  "/admin/companies/[id]":
+    "reached by clicking a company in the operator console's list.",
   "/sign-in/[[...sign-in]]":
     "the header's signed-out affordance is a button beside the public links, " +
     "not a nav entry. /sign-up IS in the footer, because nothing else offers it.",
@@ -2740,8 +2761,12 @@ describe("error and loading boundaries", () => {
     // hardcoded list would 404 in whichever configuration declined the feature.
     const plan = await planEmit(TEMPLATE_DIR, "/out", answers({ adminShell: "none" }));
     const source = plan.files.get(join("app", "not-found.tsx")) ?? "";
-    expect(source).toContain('from "@/nav"');
-    expect(source).toContain("SITE_LINKS");
+    // Through the footer's own list, so the 404 and the footer agree about
+    // which links a production visitor sees (no /setup there).
+    expect(source).toContain('import { visibleFooterLinks } from "@/components/SiteFooter";');
+    const footer = plan.files.get(join("src", "components", "SiteFooter.tsx")) ?? "";
+    expect(footer).toContain('from "@/nav"');
+    expect(footer).toContain("[...SITE_LINKS, ...FOOTER_LINKS]");
   });
 });
 

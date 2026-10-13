@@ -1,10 +1,15 @@
 import { UserButton } from "@clerk/nextjs";
 import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
+import { resolveAppEnv } from "__SCOPE__/env";
 import { AdminNav } from "@/components/admin/AdminNav";
-import { AdminUnavailable } from "@/components/admin/AdminUnavailable";
+import {
+  AdminUnavailable,
+  type AdminUnavailableReason,
+} from "@/components/admin/AdminUnavailable";
 import { currentPrincipal } from "@/server/auth";
 import { loadStaffPermissions } from "@/server/permissions";
+import { tenancy } from "@/server/tenancy";
 
 /**
  * The admin shell.
@@ -27,19 +32,40 @@ export default async function AdminLayout({ children }: { children: ReactNode })
   // guard further down cannot save it.
   let principal: Awaited<ReturnType<typeof currentPrincipal>> = null;
   let can: Awaited<ReturnType<typeof loadStaffPermissions>> = null;
+  let refused: AdminUnavailableReason | null = null;
   try {
     principal = await currentPrincipal();
     if (principal) can = await loadStaffPermissions({ principal });
+    if (principal && !can) {
+      // SELF-HEALING FIRST RUN (Tenancy 1). While NO administrator exists, the
+      // person allowed to be the first one (BOOTSTRAP_ADMIN_EMAIL, verified, on
+      // a deployment; anyone on a laptop) becomes one right here — not only at
+      // their very first sign-in. Signing in before the roles were installed
+      // used to lock /admin for good; now the next visit after the seed lets
+      // them in. Once an administrator exists this changes nothing.
+      const healed = await tenancy.ensureBootstrapAdmin({
+        userId: principal.userId,
+        email: principal.email,
+      });
+      if (healed.granted) can = await loadStaffPermissions({ principal });
+      else refused = healed.reason === "templates-missing" ? "not-seeded" : "not-staff";
+    }
   } catch {
-    return <AdminUnavailable reason="database" />;
+    return <AdminUnavailable reason="database" deployed={resolveAppEnv() !== "local"} />;
   }
 
-  if (!principal) redirect("/sign-in");
+  if (!principal) redirect("/sign-in?redirect_url=%2Fadmin");
   // Not staff at all, which is different from staff holding no permissions.
   // An explicit page, NOT a redirect: a nav link that silently bounces you back
   // where you started reads as broken software, and the first thing anyone does
-  // is click it again.
-  if (!can) return <AdminUnavailable reason="not-staff" />;
+  // is click it again. Which recovery it suggests depends on where it runs (a
+  // command on a laptop, a workflow on a deployment) — a runtime environment
+  // check, not a feature switch.
+  if (!can) {
+    return (
+      <AdminUnavailable reason={refused ?? "not-staff"} deployed={resolveAppEnv() !== "local"} />
+    );
+  }
 
   return (
     <div className="flex min-h-dvh flex-col md:flex-row">

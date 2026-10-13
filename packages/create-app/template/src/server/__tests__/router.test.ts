@@ -25,6 +25,9 @@ import type { StaffPermission, TenantPermission } from "@/permissions/catalog";
 const loaders = vi.hoisted(() => ({
   loadTenantPermissions: vi.fn<PermissionLoaders["loadTenantPermissions"]>(),
   loadStaffPermissions: vi.fn<PermissionLoaders["loadStaffPermissions"]>(),
+  // Why a refused tenant call was refused (Tenancy 1). Mocked with the others:
+  // left real, every refusal in this file would reach for the database.
+  explainTenantDenial: vi.fn<NonNullable<PermissionLoaders["explainTenantDenial"]>>(),
 }));
 
 /**
@@ -77,6 +80,7 @@ beforeEach(() => {
   // deleted without a single test noticing.
   loaders.loadTenantPermissions.mockResolvedValue(null);
   loaders.loadStaffPermissions.mockResolvedValue(null);
+  loaders.explainTenantDenial.mockResolvedValue("not-a-member");
 });
 
 describe("public procedures", () => {
@@ -106,6 +110,20 @@ describe("tenant procedures", () => {
     ).rejects.toMatchObject({
       code: "FORBIDDEN",
       message: `Not a member of tenant ${tenantId}`,
+    });
+  });
+
+  it("tells the people in a SUSPENDED company so, instead of 'not a member'", async () => {
+    // They are members; their company is paused. "Not a member of tenant …"
+    // would send them hunting for an invitation that isn't the problem.
+    loaders.loadTenantPermissions.mockResolvedValue(null);
+    loaders.explainTenantDenial.mockResolvedValue("company-suspended");
+
+    await expect(
+      caller(asTenantUser()).members.list({ tenantId }),
+    ).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      message: "Access to this account is suspended. Contact support to restore it.",
     });
   });
 

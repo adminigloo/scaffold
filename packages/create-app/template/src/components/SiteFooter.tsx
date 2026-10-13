@@ -1,5 +1,24 @@
 import Link from "next/link";
-import { FOOTER_LINKS, SITE_LINKS } from "@/nav";
+import { resolveAppEnv } from "__SCOPE__/env";
+import { FOOTER_LINKS, SITE_LINKS, type SiteLink } from "@/nav";
+
+/**
+ * The footer's links for THIS deployment: everything, minus the developer
+ * pages (/setup and friends) on production.
+ *
+ * /setup lists which credentials are set and what each missing one switches
+ * off. On a laptop or a staging deployment that is exactly what the person
+ * reading the footer needs; on the production site a business owner's
+ * customers read it, and a "Setup" link there reads as unfinished software
+ * (CA-18). The page itself also refuses non-staff on production. A runtime
+ * environment check over a generated list — not a feature `if`.
+ */
+export function visibleFooterLinks(): readonly SiteLink[] {
+  const production = resolveAppEnv() === "production";
+  return [...SITE_LINKS, ...FOOTER_LINKS].filter(
+    (link) => !(production && link.audience === "developer"),
+  );
+}
 
 /**
  * Everywhere a visitor can go, on every page.
@@ -34,7 +53,7 @@ export function SiteFooter() {
         </p>
 
         <nav aria-label="Footer" className="flex flex-wrap gap-x-5 gap-y-2">
-          {[...SITE_LINKS, ...FOOTER_LINKS].map((link) => (
+          {visibleFooterLinks().map((link) => (
             <Link
               key={link.href}
               href={link.href}

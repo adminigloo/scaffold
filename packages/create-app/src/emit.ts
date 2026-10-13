@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import {
   assertAnswersCompatible,
+  deferredUntilDeployedFor,
   isPersonalWorkspaceOnly,
   optionalEnvFor,
   overlayNamesFor,
@@ -20,6 +21,24 @@ import {
 } from "./manifest.js";
 import { versionRangeFor } from "./versions.js";
 import { assertCapabilitiesAreProvable } from "./capabilities.js";
+import {
+  renderCompanyGate,
+  renderCompanySwitcherSlot,
+  renderSetupChecklist,
+  renderTenancyConstants,
+  renderTenancyHandlers,
+  renderTenancyLogo,
+  renderTenancyServer,
+  renderTenantSettings,
+} from "./tenancy-emit.js";
+import {
+  renderProcedureScopesTest,
+  renderInviteAcceptRouteTest,
+  renderInviteEmailRouteTest,
+  renderProvisioningTest,
+  renderTenantIsolationTest,
+} from "./tenancy-proofs-emit.js";
+import { renderProjectReadme } from "./readme-emit.js";
 import { assertNoPrerenderedAuthRoutes } from "./prerender.js";
 
 export interface EmitPlan {
@@ -174,6 +193,29 @@ async function walk(dir: string, base = dir): Promise<string[]> {
   return out;
 }
 
+/** Where DEPLOYMENT.md's generated "Vercel needs these" table goes. */
+export const DEPLOY_REQUIRED_ENV_MARKER = "<!-- adminigloo:deploy-required-env -->";
+
+const DEPLOY_ENV_VALUES: Readonly<Record<string, readonly [preview: string, production: string]>> = {
+  DATABASE_URL: ["Neon `staging` branch, pooled string", "Neon `production` branch, pooled string"],
+  DATABASE_URL_UNPOOLED: ["Neon `staging` branch, direct string (no `-pooler`)", "Neon `production` branch, direct string"],
+  CLERK_SECRET_KEY: ["Clerk Development instance, `sk_test_…`", "Clerk Production instance, `sk_live_…`"],
+  NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ["Clerk Development instance, `pk_test_…`", "Clerk Production instance, `pk_live_…`"],
+  EMAIL_FROM: [
+    "an address on your sending domain (needed even before Resend is set up)",
+    "the same",
+  ],
+};
+
+/** The table itself, one row per variable a deployment refuses to start without. */
+export function renderDeployRequiredEnv(answers: Answers): string {
+  const rows = deferredUntilDeployedFor(answers).map((name) => {
+    const [preview, production] = DEPLOY_ENV_VALUES[name] ?? ["staging value", "production value"];
+    return `| \`${name}\` | ${preview} | ${production} |`;
+  });
+  return ["| Variable | Preview scope (staging) | Production scope |", "| --- | --- | --- |", ...rows].join("\n");
+}
+
 /**
  * Build the complete set of files before writing any of them.
  *
@@ -206,6 +248,14 @@ export async function planEmit(
     }
   }
 
+  // DEPLOYMENT.md's "Vercel needs these or the build refuses to start" table,
+  // from the env module's own deferred list (review R2 TB2-02): the only
+  // other place a buyer met it was the generator's terminal output.
+  const deployment = files.get("DEPLOYMENT.md");
+  if (deployment !== undefined) {
+    files.set("DEPLOYMENT.md", deployment.split(DEPLOY_REQUIRED_ENV_MARKER).join(renderDeployRequiredEnv(answers)));
+  }
+
   files.set("package.json", renderPackageJson(answers));
   // Not a template file, unlike every other config in the project root. What
   // Next must be told never to bundle depends on which packages were installed
@@ -234,6 +284,15 @@ export async function planEmit(
     join("src", "server", "invitation-mail.ts"),
     renderInvitationMail(answers),
   );
+  // Only the --email variant talks to a provider and a log table, so only it
+  // has a verdict to keep honest (a sent email stays "sent" when the log write
+  // fails). The no-mail variant is a constant "skipped" with nothing to test.
+  if (answers.includeEmail) {
+    files.set(
+      join("src", "server", "__tests__", "invitation-mail.test.ts"),
+      renderInvitationMailTest(answers),
+    );
+  }
   // THE COMMS SENDERS AND THE COMMS CRON'S HOOKS. Generated, not copied, for
   // the invitation mailer's reason: whether a sender exists depends on
   // `--email`, and what the queue drain has to consult at send time depends
@@ -262,6 +321,45 @@ export async function planEmit(
     files.set(join("src", "server", "estimator-services.ts"), renderEstimatorServices(answers));
     files.set(join("src", "server", "estimator-features.ts"), renderEstimatorFeatures(answers));
   }
+  // COMPANIES (Tenancy 1), in every project. Generated rather than copied
+  // because each file differs by mode (companies or single-business), by the
+  // project's noun, by whether there is file storage for logos, or by which
+  // routers and tenant procedures are installed — and an emitted `if` about
+  // any of those is what the generator refuses to write. See tenancy-emit.ts.
+  files.set(join("src", "tenancy.ts"), renderTenancyConstants(answers));
+  files.set(join("src", "server", "tenant-settings.ts"), renderTenantSettings(answers));
+  files.set(join("src", "server", "setup-checklist.ts"), renderSetupChecklist(answers));
+  files.set(join("src", "server", "tenancy.ts"), renderTenancyServer(answers));
+  files.set(join("src", "server", "tenancy-handlers.ts"), renderTenancyHandlers(answers));
+  files.set(join("src", "server", "tenancy-logo.ts"), renderTenancyLogo(answers));
+  files.set(join("src", "components", "CompanySwitcherSlot.tsx"), renderCompanySwitcherSlot(answers));
+  files.set(join("src", "components", "CompanyGate.tsx"), renderCompanyGate(answers));
+  // The proofs every project runs on itself, in `pnpm test` (PGlite, no
+  // database to set up): procedure scopes, company isolation, provisioning.
+  files.set(
+    join("src", "server", "__tests__", "procedure-scopes.test.ts"),
+    renderProcedureScopesTest(answers),
+  );
+  files.set(
+    join("src", "server", "__tests__", "tenant-isolation.test.ts"),
+    renderTenantIsolationTest(answers),
+  );
+  files.set(
+    join("src", "server", "__tests__", "provisioning.test.ts"),
+    renderProvisioningTest(answers),
+  );
+  // Accepting by the link through the project's own route and Clerk wiring
+  // (review R3 TB2-10): the verified addresses reach the package.
+  files.set(
+    join("src", "server", "__tests__", "invite-accept-route.test.ts"),
+    renderInviteAcceptRouteTest(answers),
+  );
+  // "We emailed" only about an email that went, through the project's own
+  // handlers and mailer, with and without the email package (review R4 SEC-T1-B).
+  files.set(
+    join("src", "server", "__tests__", "invite-email-route.test.ts"),
+    renderInviteEmailRouteTest(answers),
+  );
   // The nav and the landing page that reads it. Generated together and for the
   // same reason: /products exists only in a project that sells something and
   // /admin only in one with an admin shell, so neither the lists nor the page
@@ -357,6 +455,10 @@ export async function planEmit(
   const manifest = buildManifest(answers, await readGeneratorVersion(templateDir));
   files.set(MANIFEST_FILENAME, renderManifest(manifest));
   files.set("SCAFFOLD.md", renderScaffoldRecord(manifest));
+  // What a buyer reads first (CA-10): what this is, the quick start, first run
+  // and recovery, what the companies (or single-business) mode does and does
+  // not include, and the packages. From the manifest, for SCAFFOLD.md's reason.
+  files.set("README.md", renderProjectReadme(manifest));
 
   const plan: EmitPlan = { targetDir, files };
 
@@ -458,6 +560,27 @@ export {
  */
 const STRIPE_DEV_SCRIPT = "tsx scripts/dev.ts";
 
+/**
+ * Third-party versions a generated project pins that a TEST holds to the
+ * workspace, so the two can't drift.
+ *
+ * `pnpm` — the generated package.json's `packageManager` (TB-DEPLOY-02). Every
+ * emitted workflow uses `pnpm/action-setup@v4` with no `version:`, and that
+ * action stops with "No pnpm version is specified" when the project names
+ * none. The scaffold's own root package.json names one, which is why the
+ * scaffold's CI passed and a generated project's failed on its first push:
+ * nothing deployed, nothing migrated, and the deploy-time seed never ran.
+ * Pinned to the workspace root's `packageManager` by a test.
+ *
+ * `pglite` — the in-process Postgres the generated project's own isolation
+ * and provisioning tests run on (src/server/__tests__). A devDependency, never
+ * shipped; pinned to the workspace packages' devDependency by a test.
+ */
+export const THIRD_PARTY_PINS = {
+  pnpm: "10.28.0",
+  pglite: "^0.5.8",
+} as const;
+
 export function renderPackageJson(answers: Answers): string {
   const sells = answers.businessModel !== "none";
   const deps: Record<string, string> = {
@@ -525,6 +648,10 @@ export function renderPackageJson(answers: Answers): string {
   for (const pkg of packagesFor(answers)) deps[pkg] = versionRangeFor(pkg);
 
   const devDeps: Record<string, string> = {
+    // The isolation proof and the provisioning tests run the project's real
+    // schema on an in-process Postgres — no database to set up, so they run in
+    // `pnpm test` on every laptop and in CI.
+    "@electric-sql/pglite": THIRD_PARTY_PINS.pglite,
     "@types/node": "^26.4.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
@@ -550,6 +677,9 @@ export function renderPackageJson(answers: Answers): string {
     version: "0.1.0",
     private: true,
     type: "module",
+    // What `pnpm/action-setup` installs in every emitted workflow — see
+    // THIRD_PARTY_PINS. Corepack reads it locally too.
+    packageManager: `pnpm@${THIRD_PARTY_PINS.pnpm}`,
     scripts: {
       // The Stripe listener runs alongside `next dev` by default. Webhooks that
       // are only exercised in production are webhooks nobody has tested — and
@@ -567,6 +697,14 @@ export function renderPackageJson(answers: Answers): string {
       // touches templates it created, never one you have customised.
       // --env-file because tsx, like drizzle-kit, does not read .env.local.
       "db:seed": "tsx --env-file=.env.local scripts/seed-roles.ts",
+      // THE SAME SEED, FOR A DEPLOYED DATABASE: run by deploy.yml after every
+      // migration (PC-09). No --env-file, for db:migrate:deploy's reason — the
+      // file doesn't exist in CI and Node treats a missing one as fatal.
+      "db:seed:deploy": "tsx scripts/seed-deploy.ts",
+      // The way back in when nobody can open /admin: `pnpm admin:grant
+      // you@example.com`. On a laptop it reaches the database in .env.local;
+      // for production, run the "Admin grant" workflow in GitHub Actions.
+      "admin:grant": "tsx scripts/admin-grant.ts",
       // Local-only demo data: a tenant, members on different templates, an
       // override and a sealed permission, so the checklist shows all three states.
       //
@@ -808,6 +946,7 @@ import type { ReactNode } from "react";
 import { TRPCProvider } from "@/trpc/client";
 import { env } from "@/env";
 import { siteMetadata } from "@/seo";
+import { AFTER_AUTH_PATH } from "@/tenancy";
 import "./globals.css";
 
 /**
@@ -839,10 +978,26 @@ export const metadata: Metadata = siteMetadata;
  * On a deployment this branch is unreachable: \`env.ts\` marks the Clerk keys as
  * required once deployed, so a preview build without them fails at boot rather
  * than quietly rendering an app with no authentication.
+ *
+ * THE SIGN-IN AND SIGN-UP ADDRESSES ARE THIS SITE'S (TB-DEPLOY-11). Without
+ * them, the "Sign up" link inside Clerk's sign-in card goes wherever the Clerk
+ * dashboard's Paths point — by default Clerk's hosted page — and a new owner
+ * then lands on the dashboard's after-sign-up address instead of
+ * AFTER_AUTH_PATH, so they never meet onboarding. Every Clerk component in the
+ * app inherits these.
  */
 function AuthProvider({ children }: { children: ReactNode }) {
   if (!env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) return <>{children}</>;
-  return <ClerkProvider>{children}</ClerkProvider>;
+  return (
+    <ClerkProvider
+      signInUrl="/sign-in"
+      signUpUrl="/sign-up"
+      signInFallbackRedirectUrl={AFTER_AUTH_PATH}
+      signUpFallbackRedirectUrl={AFTER_AUTH_PATH}
+    >
+      {children}
+    </ClerkProvider>
+  );
 }
 
 export default function RootLayout({ children }: { children: ReactNode }) {
@@ -913,9 +1068,15 @@ export function renderEnvLocal(answers: Answers): string {
     "# CLERK_WEBHOOK_SIGNING_SECRET=",
     "",
     "# Who becomes the first administrator once DEPLOYED. On localhost the first",
-    "# person to sign in gets it automatically; on a deployment the sign-up page",
-    "# is public, so it grants nobody unless the email matches this.",
+    "# person to open /admin gets it automatically; on a deployment the sign-up",
+    "# page is public, so it grants nobody unless their VERIFIED email matches",
+    "# this. Keep \"verify email at sign-up\" on in both Clerk instances.",
     "# BOOTSTRAP_ADMIN_EMAIL=",
+    "",
+    "# Where a suspended company is told to write. Without it they're pointed at",
+    "# BOOTSTRAP_ADMIN_EMAIL, and with neither they're told to contact support",
+    "# with no address.",
+    "# SUPPORT_EMAIL=",
     "",
     "# --- Observability ----------------------------------------------------------",
     "# Both optional, and both change behaviour rather than switching a feature",
@@ -952,7 +1113,8 @@ export function renderEnvLocal(answers: Answers): string {
       "",
       "# --- Resend ---------------------------------------------------------------",
       "# Without RESEND_API_KEY, sends are recorded as `skipped` and logged, so you",
-      "# can see exactly what would have gone out.",
+      "# can see exactly what would have gone out. Invitations aren't handed to the",
+      "# mailer at all then: the team page gives the inviter the link to send.",
       "# RESEND_API_KEY=",
       "# EMAIL_FROM=Your Name <hello@yourdomain.com>",
     );
@@ -1036,6 +1198,21 @@ export function renderEnvLocal(answers: Answers): string {
   return `${lines.join("\n")}\n`;
 }
 
+/**
+ * The one-line why for an optional variable whose name doesn't say it. Kept
+ * short: .env.local carries the long form, and /setup the full story.
+ */
+const OPTIONAL_ENV_NOTES: Readonly<Record<string, readonly string[]>> = {
+  SUPPORT_EMAIL: [
+    "Where a suspended company is told to write. Without it they're told to",
+    "contact support with no link (BOOTSTRAP_ADMIN_EMAIL is used if set).",
+  ],
+  BOOTSTRAP_ADMIN_EMAIL: [
+    "Becomes the first administrator on a deployment, once they sign in with",
+    "this address verified. Also set it as a GitHub variable for the deploy seed.",
+  ],
+};
+
 export function renderEnvExample(answers: Answers): string {
   const lines = [
     "# Copy to .env.local and fill in. Every value is validated at boot;",
@@ -1061,7 +1238,11 @@ export function renderEnvExample(answers: Answers): string {
     "# what each one changes. An empty value counts as unset.",
     "",
   );
-  for (const name of optionalEnvFor(answers)) lines.push(`${name}=`);
+  for (const name of optionalEnvFor(answers)) {
+    const note = OPTIONAL_ENV_NOTES[name];
+    if (note !== undefined) lines.push(...note.map((line) => `# ${line}`));
+    lines.push(`${name}=`);
+  }
 
   return `${lines.join("\n")}\n`;
 }
@@ -1084,6 +1265,26 @@ export function renderEnvExample(answers: Answers): string {
  * in this file rather than the manifest precisely so the manifest can stay
  * entirely derived and therefore rebuildable.
  */
+/** The SCAFFOLD.md label for each answer. A missing one falls back to the key. */
+const ANSWER_LABELS: Partial<Record<keyof Answers, string>> = {
+  tenantNoun: "Customer organisation",
+  businessModel: "Business model",
+  adminShell: "Admin shell",
+  includeAi: "AI routes",
+  includeEmail: "Transactional email",
+  includeFeedback: "In-app feedback",
+  includeSeoReports: "SEO & AEO reports",
+  includeNotifications: "In-app notifications",
+  includeStorage: "File storage",
+  includeAssistant: "AI assistant",
+  includeMarketing: "Public marketing site",
+  includeEstimator: "Estimator",
+  includeScheduling: "Scheduling",
+  includeInvoicing: "Invoicing",
+  includeComms: "Customer messages",
+  includeAeo: "AI citation tracking",
+};
+
 export function renderScaffoldRecord(manifest: ProjectManifest): string {
   const answers = manifest.answers;
   return [
@@ -1097,16 +1298,16 @@ export function renderScaffoldRecord(manifest: ProjectManifest): string {
     "",
     "| Answer | Value |",
     "| --- | --- |",
-    `| Customer organisation | ${answers.tenantNoun} |`,
-    `| Business model | ${answers.businessModel} |`,
-    `| Admin shell | ${answers.adminShell} |`,
-    `| AI routes | ${answers.includeAi ? "yes" : "no"} |`,
-    `| Transactional email | ${answers.includeEmail ? "yes" : "no"} |`,
-    `| In-app feedback | ${answers.includeFeedback ? "yes" : "no"} |`,
-    `| SEO & AEO reports | ${answers.includeSeoReports ? "yes" : "no"} |`,
-    `| In-app notifications | ${answers.includeNotifications ? "yes" : "no"} |`,
-    `| File storage | ${answers.includeStorage ? "yes" : "no"} |`,
-    `| Public marketing site | ${answers.includeMarketing ? "yes" : "no"} |`,
+    // EVERY ANSWER, by iterating them (CA-10): the hand-written list stopped at
+    // the marketing site, so a project generated with --estimator or
+    // --scheduling had a record that never said so. A key with no label here
+    // falls back to its own name rather than being left out.
+    ...(Object.keys(answers) as (keyof Answers)[])
+      .filter((key) => key !== "scope" && key !== "projectName")
+      .map((key) => {
+        const value = answers[key];
+        return `| ${ANSWER_LABELS[key] ?? key} | ${typeof value === "boolean" ? (value ? "yes" : "no") : String(value)} |`;
+      }),
     `| Personal-workspace only | ${isPersonalWorkspaceOnly(answers) ? "yes" : "no"} |`,
     "",
     "## Installed packages",
@@ -1187,6 +1388,10 @@ export function renderEnvModule(answers: Answers): string {
     // unset means a deployment grants nobody automatically, which is the safe
     // default when the sign-up page is reachable from the public internet.
     "BOOTSTRAP_ADMIN_EMAIL: z.string().email().optional()",
+    // Where a suspended company is told to write (Tenancy 1). Optional; the
+    // suspended screen falls back to BOOTSTRAP_ADMIN_EMAIL, and with neither
+    // it says "contact support" with no address.
+    "SUPPORT_EMAIL: z.string().email().optional()",
   ];
   const clientSpreads = ["...coreClient()", "...authClient()"];
   const modeBound = ["...AUTH_MODE_BOUND_KEYS"];
@@ -1197,14 +1402,21 @@ export function renderEnvModule(answers: Answers): string {
     "DATABASE_URL_UNPOOLED: process.env.DATABASE_URL_UNPOOLED",
     "CLERK_SECRET_KEY: process.env.CLERK_SECRET_KEY",
     "CLERK_WEBHOOK_SIGNING_SECRET: process.env.CLERK_WEBHOOK_SIGNING_SECRET",
-    // Falls back to the URL Vercel assigns this deployment. A Preview URL is
-    // not known until the deployment exists, so requiring the variable to be
-    // set by hand makes every preview either fail the localhost guard or need
-    // a value nobody can know in advance. VERCEL_URL is injected at build time,
-    // which is when NEXT_PUBLIC_* is inlined, so the two line up.
-    "NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined)",
+    // Falls back to an address Vercel knows. A Preview URL is not known until
+    // the deployment exists, so requiring the variable to be set by hand makes
+    // every preview either fail the localhost guard or need a value nobody can
+    // know in advance. Both are injected at build time, which is when
+    // NEXT_PUBLIC_* is inlined, so the two line up.
+    //
+    // ON PRODUCTION, THE PROJECT'S PRODUCTION DOMAIN — NEVER THE PER-DEPLOYMENT
+    // URL (TB-DEPLOY-05). Invitation links and the company's public address are
+    // built from this, and a *.vercel.app deployment URL is behind Vercel's
+    // login wall by default and changes on every deploy: an invitee would land
+    // on Vercel's sign-in. Set NEXT_PUBLIC_APP_URL to your domain to be sure.
+    "NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL ?? (process.env.VERCEL_ENV === \"production\" && process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined)",
     "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
     "BOOTSTRAP_ADMIN_EMAIL: process.env.BOOTSTRAP_ADMIN_EMAIL",
+    "SUPPORT_EMAIL: process.env.SUPPORT_EMAIL",
     // All three optional. Absent, the logger writes to stdout and the rate
     // limiter counts in one process's memory — both real behaviours rather than
     // disabled ones, which is why none of them is deferred-until-deployed.
@@ -1218,13 +1430,18 @@ export function renderEnvModule(answers: Answers): string {
   // already know it and nothing has to be signed up for.
   const deferred = [
     "...DB_OPTIONAL_UNTIL_DEPLOYED",
-    '"CLERK_SECRET_KEY"',
-    '"NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"',
+    // The rest of the one list (deferredUntilDeployedFor), which the CLI's
+    // next steps print too, so the two can't disagree.
+    ...deferredUntilDeployedFor(answers)
+      .filter((name) => name !== "DATABASE_URL" && name !== "DATABASE_URL_UNPOOLED")
+      .map((name) => `"${name}"`),
   ];
 
   const features = [
     `{ name: "Database", vars: [...DB_OPTIONAL_UNTIL_DEPLOYED], disables: "Anything that reads or writes data." }`,
-    `{ name: "Sign-in", vars: ["CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "CLERK_WEBHOOK_SIGNING_SECRET"], disables: "Signing in, and every permission check." }`,
+    `{ name: "Sign-in", vars: ["CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "CLERK_WEBHOOK_SIGNING_SECRET"], disables: "Signing in, and every permission check. Without the webhook secret alone, sign-in works but deleting someone in Clerk never takes their access away here." }`,
+    `{ name: "First administrator", vars: ["BOOTSTRAP_ADMIN_EMAIL"], disables: "Nothing locally (the first person to open /admin becomes one). On a deployment, nobody is made an administrator automatically — use pnpm admin:grant or the Admin grant workflow." }`,
+    `{ name: "Support address", vars: ["SUPPORT_EMAIL"], disables: "Nothing. Where a suspended company is told to write; without it they're pointed at BOOTSTRAP_ADMIN_EMAIL, and with neither they're told to contact support with no address." }`,
   ];
 
   if (takesMoney) {
@@ -1276,7 +1493,6 @@ export function renderEnvModule(answers: Answers): string {
       "EMAIL_REPLY_TO: process.env.EMAIL_REPLY_TO",
       "RESEND_WEBHOOK_SECRET: process.env.RESEND_WEBHOOK_SECRET",
     );
-    deferred.push('"EMAIL_FROM"');
     features.push(
       `{ name: "Email", vars: ["RESEND_API_KEY", "EMAIL_FROM"], disables: "Sending mail. Sends are recorded as skipped instead." }`,
     );
@@ -1786,6 +2002,20 @@ const appStaffPermissions = {
     category: "${plural}",
     defaultFor: ["admin", "cs_lead", "cs_agent"],
   },
+  // The operator console's two powers over a customer (Tenancy 1). Admin only:
+  // each one changes who can get into a ${label.toLowerCase()} at all.
+  "staff.tenants.suspend": {
+    label: "Suspend and reactivate ${plural.toLowerCase()}",
+    description: "Everyone in a suspended one loses access until it's reactivated. Also releases its old web addresses.",
+    category: "${plural}",
+    defaultFor: ["admin"],
+  },
+  "staff.tenants.transfer": {
+    label: "Give a ${label.toLowerCase()} a new owner",
+    description: "For one whose owner closed their account: hand it to one of its active members.",
+    category: "${plural}",
+    defaultFor: ["admin"],
+  },
   "staff.people.view": {
     label: "View people",
     category: "People",
@@ -1802,6 +2032,11 @@ const appStaffPermissions = {
       "Grants and revokes individual capabilities on top of a role template.",
     category: "Access",
     defaultFor: ["admin"],
+    // SEALED (review T1-05). Whoever holds this decides what everyone else
+    // holds, so an override must never hand it to one person quietly — a
+    // cs_lead given it by override could then give themselves every other
+    // staff key. Only the admin template carries it.
+    sealed: true,
   },
   "staff.audit.view": {
     label: "View the audit log",
@@ -1932,6 +2167,14 @@ export function sendInvitationEmail(
 ): Promise<InvitationMailOutcome> {
   return Promise.resolve({ status: "skipped", delivered: false });
 }
+
+/**
+ * Can this project email an invitation at all? No: there is no mail package.
+ * The team page's handlers are then given no mailer, so the per-address email
+ * limits never hold an invitation back for an email that was never going to
+ * go — the inviter gets the link, every time.
+ */
+export const invitationEmailsConfigured: boolean = false;
 `;
   }
 
@@ -1940,6 +2183,7 @@ import { emailEvents } from "${scope}/email/schema";
 import { db } from "@/db";
 import { renderInvitationEmail } from "@/emails/invitation";
 import { env } from "@/env";
+import { log } from "@/server/logger";
 
 ${contract}
 /** Recorded in \`email_events.template\`, so the log can be filtered by kind. */
@@ -1963,6 +2207,15 @@ const sender = createEmailSender({
   replyTo: env.EMAIL_REPLY_TO,
 });
 
+/**
+ * Can this project email an invitation? Only with RESEND_API_KEY set: without
+ * it every send is "skipped". The team page's handlers are given the mailer
+ * only when this is true, so the per-address email limits never hold an
+ * invitation back for an email that was never going to go — the inviter gets
+ * the link instead.
+ */
+export const invitationEmailsConfigured: boolean = sender.configured;
+
 export async function sendInvitationEmail(
   request: InvitationMailRequest,
 ): Promise<InvitationMailOutcome> {
@@ -1982,8 +2235,9 @@ export async function sendInvitationEmail(
   // is down; it THROWS for a message it refuses to build, which is the case
   // this catch covers — an address that satisfied Zod and not the stricter
   // header parser.
+  let outcome: Awaited<ReturnType<typeof sender.send>>;
   try {
-    const outcome = await sender.send({
+    outcome = await sender.send({
       to: request.to,
       subject: body.subject,
       html: body.html,
@@ -1994,15 +2248,12 @@ export async function sendInvitationEmail(
       // than anything else here; a credential in it outlives the credential.
       metadata: { invitationId: request.invitationId },
     });
-
-    await db.insert(emailEvents).values(outcome.log);
-    return { status: outcome.status, delivered: outcome.status === "sent" };
   } catch (cause) {
     const error = cause instanceof Error ? cause : new Error(String(cause));
     // Written by hand because there is no outcome to take a log row from. The
     // alternative is no row at all, and a delivery log missing exactly the
     // sends that broke is a delivery log that answers the wrong question.
-    await db.insert(emailEvents).values({
+    await recordDelivery({
       messageId: null,
       toAddress: request.to,
       fromAddress: formatSenderAddress(sender.from),
@@ -2015,10 +2266,147 @@ export async function sendInvitationEmail(
     });
     return { status: "failed", delivered: false };
   }
+
+  // THE PROVIDER'S ANSWER IS THE TRUTH ABOUT THE EMAIL; the log row is
+  // bookkeeping. Writing the row used to share the try above, so a provider
+  // that had already accepted the message, followed by a database hiccup on
+  // the log insert, came back "failed": the inviter read "We couldn't email
+  // them", the email wasn't counted, and the next Resend sent a duplicate.
+  await recordDelivery(outcome.log);
+  return { status: outcome.status, delivered: outcome.status === "sent" };
+}
+
+/**
+ * Writes one delivery-log row and never throws. A log that can't be written
+ * is reported to the server log and nothing more: losing a bookkeeping row is
+ * better than telling an inviter something untrue about an email, or losing
+ * the link they're waiting on.
+ */
+async function recordDelivery(row: typeof emailEvents.$inferInsert): Promise<void> {
+  try {
+    await db.insert(emailEvents).values(row);
+  } catch (cause) {
+    log.error(
+      { err: cause, template: INVITATION_TEMPLATE, status: row.status },
+      "invitation email: the delivery log row could not be written",
+    );
+  }
 }
 `;
 }
 
+
+/**
+ * `src/server/__tests__/invitation-mail.test.ts`, emitted only with --email.
+ *
+ * Pins the one promise `sendInvitationEmail` makes to the team page: its
+ * answer is the PROVIDER'S answer. A provider that accepted the message
+ * followed by a failed delivery-log write must still come back "sent" — the
+ * round-4 verifier's probe showed it coming back "failed", which told the
+ * inviter "We couldn't email them" and let the next Resend send a duplicate.
+ * And nothing in it may throw, because the inviter's only copy of the link is
+ * waiting on this call.
+ */
+export function renderInvitationMailTest(answers: Answers): string {
+  const scope = answers.scope;
+  return `import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const state = vi.hoisted(() => ({
+  send: async (): Promise<unknown> => {
+    throw new Error("set per test");
+  },
+  insertFails: false,
+  inserted: [] as unknown[],
+  logged: [] as unknown[],
+}));
+
+vi.mock("${scope}/email", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("${scope}/email")>();
+  return {
+    ...actual,
+    createEmailSender: () => ({
+      configured: true,
+      from: { name: "Lawn Co", email: "invitations@example.invalid" },
+      replyTo: null,
+      send: () => state.send(),
+    }),
+  };
+});
+vi.mock("@/db", () => ({
+  db: {
+    insert: () => ({
+      values: async (row: unknown) => {
+        if (state.insertFails) throw new Error("database hiccup on the log insert");
+        state.inserted.push(row);
+      },
+    }),
+  },
+}));
+vi.mock("@/server/logger", () => ({
+  log: { error: (...args: unknown[]) => state.logged.push(args) },
+}));
+
+import { sendInvitationEmail } from "@/server/invitation-mail";
+
+const REQUEST = {
+  to: "crew@lawnco.test",
+  tenantId: "co_test",
+  tenantName: "Lawn Co",
+  invitedBy: "Ann Owner",
+  roleName: "Member",
+  url: "https://lawnco.test/invite/tok_never_logged",
+  expiresAt: null,
+  invitationId: "inv_1",
+} as const;
+
+const LOG_ROW = {
+  messageId: "msg_1",
+  toAddress: REQUEST.to,
+  fromAddress: "Lawn Co <invitations@example.invalid>",
+  subject: "You're invited",
+  template: "tenant-invitation",
+  tenantId: REQUEST.tenantId,
+  status: "sent",
+  error: null,
+  metadata: { invitationId: REQUEST.invitationId },
+};
+
+beforeEach(() => {
+  state.insertFails = false;
+  state.inserted.length = 0;
+  state.logged.length = 0;
+});
+
+describe("sendInvitationEmail answers with the provider's verdict, and never throws", () => {
+  it("an email the provider accepted stays 'sent' even when the delivery log can't be written", async () => {
+    state.send = async () => ({ status: "sent", messageId: "msg_1", log: LOG_ROW });
+    state.insertFails = true;
+    await expect(sendInvitationEmail(REQUEST)).resolves.toEqual({ status: "sent", delivered: true });
+    // The lost row is reported, and the link (a credential) is not in the report.
+    expect(state.logged).toHaveLength(1);
+    expect(JSON.stringify(state.logged)).not.toContain("tok_never_logged");
+  });
+
+  it("an accepted email with a working log is 'sent' and leaves one row", async () => {
+    state.send = async () => ({ status: "sent", messageId: "msg_1", log: LOG_ROW });
+    await expect(sendInvitationEmail(REQUEST)).resolves.toEqual({ status: "sent", delivered: true });
+    expect(state.inserted).toHaveLength(1);
+  });
+
+  it("a message the sender refuses to build is 'failed' — logged when it can be, never thrown when it can't", async () => {
+    state.send = async () => {
+      throw new Error("header parser refused the address");
+    };
+    await expect(sendInvitationEmail(REQUEST)).resolves.toEqual({ status: "failed", delivered: false });
+    expect(state.inserted).toHaveLength(1);
+
+    state.insertFails = true;
+    await expect(sendInvitationEmail(REQUEST)).resolves.toEqual({ status: "failed", delivered: false });
+    expect(state.logged).toHaveLength(1);
+  });
+});
+`;
+}
 
 /**
  * `src/server/comms-senders.ts` — how a comms message actually leaves.
@@ -3060,8 +3448,13 @@ export function renderAuditRegistry(answers: Answers): string {
   const imports = [
     `import { defineAuditedActions } from "${scope}/observability";`,
     `import type { AuditActionKeyOf } from "${scope}/observability";`,
+    // The company lifecycle's whole vocabulary (Tenancy 1): created, renamed,
+    // suspended, a role changed, a member removed, an invitation sent… The
+    // three \`invitation.*\` keys keep the names the 0.21 router wrote, so
+    // historic rows keep their labels.
+    `import { tenancyAuditedActions } from "${scope}/tenancy";`,
   ];
-  const fragments = ["adminAuditedActions", "invitationAuditedActions"];
+  const fragments = ["adminAuditedActions", "tenancyAuditedActions"];
 
   if (answers.includeScheduling) {
     // Giving a crew member their route (the crew-only staff role) and taking
@@ -3134,40 +3527,6 @@ export const adminAuditedActions = {
   },
 } as const;
 
-/**
- * Joining ${plural}, from both ends.
- *
- * Three keys because three different people do three different things, and an
- * incident review needs to separate them: an admin authorised the access, an
- * invitee took it up, and somebody withdrew it. One \`invitation.changed\` key
- * with the verb in metadata answers none of those without a table scan.
- *
- * Only \`invitation.accepted\` is sensitive, and the line is drawn there
- * deliberately. Sending an invitation grants nothing — it puts a hashed token
- * in a row and a link in somebody's inbox — while accepting one is the instant
- * a stranger becomes a member and the ${label}'s data becomes readable to them.
- * That is the event the "who could have seen this" review has to start from, so
- * that is the one on the partial index. Marking all three sensitive would put
- * two rows in that slice for every one that belongs there, and a slice that is
- * mostly noise is one nobody runs twice.
- *
- * The accepted row is written with the INVITEE as the actor, because they are
- * who acted. Who AUTHORISED it is a separate fact, already recorded on the
- * \`invitation.sent\` row naming the same ${label} — which is why it does not
- * have to be duplicated into the sensitive slice to stay reachable.
- */
-export const invitationAuditedActions = {
-  "invitation.sent": {
-    label: "Invited somebody to join this ${label}",
-  },
-  "invitation.accepted": {
-    label: "Accepted an invitation and joined this ${label}",
-    sensitive: true,
-  },
-  "invitation.revoked": {
-    label: "Revoked an invitation before it was accepted",
-  },
-} as const;
 
 /**
  * The composed vocabulary.
@@ -3205,7 +3564,6 @@ export function renderAppRouter(answers: Answers): string {
 
   const imports = [
     'import { adminRouter } from "./admin";',
-    'import { invitationsRouter } from "./invitations";',
     'import { createTRPCRouter, publicProcedure, requireTenant } from "../trpc";',
   ];
   if (answers.includeAi) imports.splice(1, 0, 'import { aiRouter } from "./ai";');
@@ -3397,13 +3755,11 @@ export const appRouter = createTRPCRouter({
       .query(({ ctx }) => ({ tenantId: ctx.tenantId, granted: ctx.can.toArray() })),
   }),
 
-  // Adding a second person to a tenant. Mounted in EVERY project, because
-  // tenancy is in the base package set and \`members.invite\` is in the tenant
-  // catalog whatever else was installed — a project generated without
-  // \`--email\` still issues invitations, it just hands the link back instead of
-  // posting it. Four of its procedures are tenant-scoped; \`accept\` is one rung
-  // lower, because an invitee is by definition not a member yet.
-  invitations: invitationsRouter,
+  // NO \`invitations\` ROUTER ANY MORE (Tenancy 1). Inviting, resending,
+  // withdrawing and accepting are served by ${answers.scope}/tenancy's handlers
+  // at /api/tenancy (src/server/tenancy-handlers.ts), with the company lock and
+  // the rank rules the old router couldn't see. Two write paths into the same
+  // invitation rows would be two places to keep those rules right.
 
   // The admin panel's pages are copied source that every client restyles; this
   // router is not, and it is where the staff permission checks and the audit
@@ -3526,6 +3882,15 @@ interface GeneratedLink {
   readonly href: string;
   readonly label: string;
   readonly why: string;
+  /**
+   * Who the link is drawn for. "everyone" is the default. "staff" links are
+   * drawn only for someone holding a staff role (the header checks once per
+   * signed-in page view); "developer" links are left out of a production
+   * footer (/setup is a diagnostics page, and a production visitor has no use
+   * for it). A RUNTIME filter over a generated list — which links exist is
+   * settled here, who sees them at request time — never a feature `if`.
+   */
+  readonly audience?: "everyone" | "staff" | "developer";
 }
 
 /** `// ...` lines, wrapped and indented one level into an array literal. */
@@ -3565,7 +3930,7 @@ function renderLinkArray(
           .map(
             (link) =>
               `${indentedComment(link.why)}  ` +
-              `{ href: "${link.href}", label: "${link.label}" },\n`,
+              `{ href: "${link.href}", label: "${link.label}"${link.audience && link.audience !== "everyone" ? `, audience: "${link.audience}"` : ""} },\n`,
           )
           .join("\n")}]`;
   return `${doc}\nexport const ${name}: readonly SiteLink[] = ${body};\n`;
@@ -3680,19 +4045,49 @@ export function renderSiteNav(answers: Answers): string {
     });
   }
 
-  const app: GeneratedLink[] = [
-    {
-      href: "/members",
-      label: "Members",
-      why:
-        `Who is in this ${label} and who has been invited, with the invite ` +
-        "form. In EVERY project, including a consumer-shaped one: tenancy is " +
-        "in the base package set, a personal workspace is a tenant like any " +
-        "other, and branching the nav on the tenant noun would put back the " +
-        "is-there-an-organisation-yet fork that personal workspaces exist to " +
-        "delete. Signed-in only, because a member list is not public.",
-    },
-  ];
+  // WHERE A SIGNED-IN PERSON WORKS (Tenancy 1). Per mode, chosen here so the
+  // header holds no `if` about it: a project whose customers are companies
+  // gets the company dashboard (with its setup checklist), the team page and
+  // the company's settings; a single-business project gets the team page,
+  // because its one workspace has no dashboard or settings of its own.
+  // /members still exists (old links and old invitation emails) and
+  // redirects to /settings/team, so it is not listed twice.
+  const app: GeneratedLink[] =
+    answers.tenantNoun === "none"
+      ? [
+          {
+            href: "/settings/team",
+            label: "Team",
+            why:
+              `Who is in this ${label} and who has been invited, with the ` +
+              "invite form (<TeamManager>, from the tenancy widget). In every " +
+              "project: a single business still invites its staff.",
+          },
+        ]
+      : [
+          {
+            href: "/dashboard",
+            label: "Dashboard",
+            why:
+              `The active ${label}'s home: its setup checklist and where to ` +
+              "go next. A new owner who has no company yet is sent from here " +
+              "to onboarding.",
+          },
+          {
+            href: "/settings/team",
+            label: "Team",
+            why:
+              `Who is in this ${label} and who has been invited: invite, ` +
+              "resend, withdraw, change a role, remove, hand over ownership.",
+          },
+          {
+            href: "/settings/company",
+            label: "Settings",
+            why:
+              `The ${label}'s name, web address, logo, brand colour and ` +
+              "contact details.",
+          },
+        ];
 
   // The customer's own side of the line, from the account overlay. Present on
   // exactly the condition the shop is: something that can be bought needs
@@ -3727,11 +4122,13 @@ export function renderSiteNav(answers: Answers): string {
     app.push({
       href: "/admin",
       label: "Admin",
+      audience: "staff",
       why:
-        "The admin shell, from the admin overlay. Not permission-filtered: " +
-        "reaching it without a staff role renders AdminUnavailable, which " +
-        "says so, and hiding the link would mean loading the permission set " +
-        "on every page view to decide whether to draw it.",
+        "The admin shell, from the admin overlay. Drawn only for someone " +
+        "with a staff role: a business owner's header is about their " +
+        "company, and a link that opens on 'you don't have access' is noise " +
+        "to every customer. The header already loads the signed-in person " +
+        "for the company switcher, so the check is one more query.",
     });
   }
 
@@ -3739,6 +4136,7 @@ export function renderSiteNav(answers: Answers): string {
     {
       href: "/setup",
       label: "Setup",
+      audience: "developer",
       why:
         "Which credentials are set, and what each missing one switches off. " +
         "In every project. In the footer rather than the header because it is " +
@@ -3766,6 +4164,7 @@ export function renderSiteNav(answers: Answers): string {
     footer.push({
       href: "/setup/email",
       label: "Email templates",
+      audience: "developer",
       why:
         "Every message this project can send, rendered from sample data. An " +
         "email template is the one piece of UI with no way to look at it — the " +
@@ -3784,6 +4183,7 @@ export function renderSiteNav(answers: Answers): string {
     footer.push({
       href: "/setup/start",
       label: "Where to start",
+      audience: "developer",
       why:
         "The file map and the health check — what `/` says in a project " +
         "without a marketing site. The landing page owns `/` here, so this is " +
@@ -3878,10 +4278,17 @@ export function renderSiteNav(answers: Answers): string {
  * is signed in, FOOTER_LINKS by everyone but out of the way. Anything that
  * depends on which permissions the viewer holds belongs in a permission-
  * filtered nav instead, next to the pages it gates.
+ *
+ * \`audience\` is the one runtime filter, and absent means everyone: "staff"
+ * links are drawn only for a staff role (the header checks), "developer" links
+ * are left out of the footer in production (/setup is a diagnostics page).
+ * Which links EXIST was settled when this file was generated; who SEES them is
+ * settled per request.
  */
 export interface SiteLink {
   readonly href: string;
   readonly label: string;
+  readonly audience?: "staff" | "developer";
 }
 
 ${arrays.join("\n")}`;
@@ -4259,41 +4666,41 @@ export function renderAdminNav(answers: Answers): string {
 
   const accounts: GeneratedNavItem[] = [
     {
-      href: "/admin/tenants",
+      href: "/admin/companies",
       label: plural,
       permission: "staff.tenants.view",
       why:
-        `Every customer ${tenantLabel(answers).toLowerCase()} the firm can ` +
-        "see, from the admin-minimal overlay. Tenancy is in the base package " +
-        "set, so this route exists wherever the shell does.",
+        `Every customer ${tenantLabel(answers).toLowerCase()}: search, open ` +
+        "one, suspend or reactivate it, give it a new owner (Tenancy 1's " +
+        "operator console, from the admin-minimal overlay). /admin/tenants " +
+        "redirects here for old links.",
+    },
+    {
+      href: "/admin/people",
+      label: "People",
+      permission: "staff.people.view",
+      why:
+        "Everyone with an account, and who holds a staff role — where an " +
+        "administrator hires staff, including another administrator. In " +
+        "EVERY shell now (it moved from admin-full to admin-minimal), because " +
+        "a project whose owner can't add a colleague without a shell command " +
+        "isn't one a business owner can run.",
     },
   ];
 
   if (full) {
-    accounts.push(
-      {
-        href: "/admin/people",
-        label: "People",
-        permission: "staff.people.view",
-        why:
-          "admin-full only. `staff.people.view` is declared and seeded in " +
-          "EVERY project, so this entry cannot be left to the permission " +
-          "filter: on a minimal shell a seeded administrator holds the key " +
-          "and the page is not there. That was the 404.",
-      },
-      {
-        href: "/admin/support",
-        label: "Support",
-        permission: "staff.dashboard.view",
-        why:
-          "admin-full only, and a placeholder on purpose — the scaffold ships " +
-          "no ticket model because every business already has one. Gated on " +
-          "the key that says you may use this shell rather than on a key of " +
-          "its own: the page enforces nothing, and declaring " +
-          '"staff.support.view" here would advertise a control that does not ' +
-          "exist. Give it a real key when you give it a real queue.",
-      },
-    );
+    accounts.push({
+      href: "/admin/support",
+      label: "Support",
+      permission: "staff.dashboard.view",
+      why:
+        "admin-full only, and a placeholder on purpose — the scaffold ships " +
+        "no ticket model because every business already has one. Gated on " +
+        "the key that says you may use this shell rather than on a key of " +
+        "its own: the page enforces nothing, and declaring " +
+        '"staff.support.view" here would advertise a control that does not ' +
+        "exist. Give it a real key when you give it a real queue.",
+    });
   }
 
   groups.push({ heading: "Accounts", items: accounts });
@@ -4528,7 +4935,6 @@ export function renderAdminDashboard(answers: Answers): string {
   const sells = answers.businessModel !== "none";
   const full = answers.adminShell === "full";
   const plural = tenantLabelPlural(answers);
-  const lower = tenantLabel(answers).toLowerCase();
   const lowerPlural = tenantLabelPlural(answers).toLowerCase();
 
   // Every import the panels below need, and none that a panel which was not
@@ -4731,7 +5137,7 @@ const WINDOW_DAYS = 30;
       label: "Errors to triage",
       value: unresolvedErrors,
       permission: "staff.audit.view",
-      hint: "Unresolved rows in error_log, deduplicated by fingerprint.",${
+      hint: "Problems the site recorded that nobody has marked as fixed.",${
         full ? '\n      href: "/admin/errors",' : ""
       }
     }),`,
@@ -4775,7 +5181,7 @@ const WINDOW_DAYS = 30;
       value: customerTenants,
       permission: "staff.tenants.view",
       hint: "Customer ${lowerPlural}. Personal workspaces are not counted.",
-      href: "/admin/tenants",
+      href: "/admin/companies",
     }),`,
     `    tile({
       label: "People",
@@ -4859,10 +5265,6 @@ const WINDOW_DAYS = 30;
         </Notice>
       ) : null`
     : "null";
-
-  const seedHint = sells
-    ? `a ${lower}, five people, an audit trail, an error queue and a small shop`
-    : `a ${lower}, five people, an audit trail and an error queue`;
 
   const helpers = sells
     ? `
@@ -5019,7 +5421,7 @@ ${shapeTiles.join("\n")}
     <>
       <PageHeader
         title="Dashboard"
-        description="Counts of rows this application writes. Copied source — replace it with whatever this business opens first in the morning."
+        description="What's happening across the site. Each number opens the list behind it."
       />
 
       {/*
@@ -5028,10 +5430,8 @@ ${shapeTiles.join("\n")}
       */}
       {nothingHasHappened ? (
         <EmptyState title="Nothing has happened here yet">
-          Every number below is real and every one of them is zero, which on a
-          project this new is the correct answer rather than a broken page. Run{" "}
-          <code className="font-mono">pnpm db:seed:demo</code> to put ${seedHint}{" "}
-          behind them.
+          Every number below is real, and on a site this new every one of them
+          is zero. They fill in as people sign up and use it.
         </EmptyState>
       ) : (
         ${simulatedBanner}
@@ -5115,8 +5515,8 @@ function Tile({ label, value, hint, permission, href }: TileProps) {
         <p className="mt-1 text-xs text-ink-muted">
           {value === null ? (
             <>
-              Hidden — you do not hold{" "}
-              <code className="font-mono">{permission}</code>
+              {/* Plain words (review R2 T1BO-11); the key is in the title for whoever needs it. */}
+              <span title={permission}>Not part of your staff role.</span>
             </>
           ) : (
             hint
@@ -5546,6 +5946,17 @@ export const plans = definePlans({
  * index. A page that needs a canonical sets its own. The same reasoning keeps
  * `openGraph.url` out.
  */
+/**
+ * The project's name as people read it (review R2 T1BO-11): "lawnco" →
+ * "Lawnco", "igloo-back-office" → "Igloo Back Office". It is the header's
+ * wordmark and the product name in invitation emails ("join Green Blade Lawn
+ * Care on Lawnco"), where the npm package name read as a typo.
+ */
+export function displayNameOf(projectName: string): string {
+  const words = projectName.split(/[-_.\s]+/).filter(Boolean);
+  return words.length === 0 ? projectName : words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+
 export function renderSeoModule(answers: Answers): string {
   const scope = answers.scope;
   return `import type { Metadata } from "next";
@@ -5555,12 +5966,16 @@ import { env } from "@/env";
 /**
  * What this site is called and what it says it is.
  *
+ * SITE_NAME starts as the project's name, title-cased. It is the header's
+ * wordmark and the product name in invitation emails: make it the name your
+ * customers know.
+ *
  * SITE_DESCRIPTION is placeholder copy and the only string here you must
  * replace. It is what a search result shows, what a shared link shows, and what
  * an AI crawler quotes — one sentence, written for a person who has never heard
  * of this product, in about 150 characters. Left as it is, it says nothing.
  */
-export const SITE_NAME = "${answers.projectName}";
+export const SITE_NAME = ${JSON.stringify(displayNameOf(answers.projectName))};
 
 export const SITE_DESCRIPTION =
   "One sentence about what ${answers.projectName} does and who it is for. " +
@@ -5668,6 +6083,14 @@ export function renderRobots(answers: Answers): string {
       why: "Signed-in only. A crawler gets the sign-in redirect, which costs it a request and gains it nothing.",
     },
     {
+      path: "/settings",
+      why: "The team page (and, for companies, their settings). Signed-in only.",
+    },
+    {
+      path: "/invite/",
+      why: "An invitation link. The URL is the key to it, and the page says nothing until someone signs in.",
+    },
+    {
       path: "/sign-in",
       why: "An auth screen indexes as a page with no content, and it competes with the real landing page for the brand term.",
     },
@@ -5679,6 +6102,22 @@ export function renderRobots(answers: Answers): string {
       path: "/admin",
       why: "The admin shell, from the admin overlay. Absent in a project generated with --admin none, which is why this list is generated.",
     });
+  }
+  if (answers.tenantNoun !== "none") {
+    disallowed.push(
+      {
+        path: "/onboarding",
+        why: "Naming a new company. Signed-in only, from the companies overlay.",
+      },
+      {
+        path: "/dashboard",
+        why: "A company's own home and setup checklist. Signed-in only.",
+      },
+      {
+        path: "/t/",
+        why: "Each company's reserved public address. Tenancy 1 only shows a contact card there (and marks it noindex); real public pages come later.",
+      },
+    );
   }
   if (answers.includeEstimator) {
     disallowed.push({

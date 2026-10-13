@@ -28,4 +28,12 @@ export type {
 
 export { PermissionDeniedError, requirePermission } from "./errors.js";
 
-export { FIRM_WIDE } from "./schema.js";
+/**
+ * From ./constants, NOT ./schema. Exporting it from the schema module made
+ * this root import `drizzle-orm/pg-core` and `@adminigloo/db` (the Neon
+ * driver) for one string, which every client component paid for.
+ */
+export { FIRM_WIDE } from "./constants.js";
+
+export { STAFF_ROLE_TEMPLATES } from "./roles.js";
+export type { BootstrapPolicy, RoleTemplateSpec, StaffRoleTemplateKey } from "./roles.js";

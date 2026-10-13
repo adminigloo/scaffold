@@ -5,6 +5,15 @@ on:
   push:
     branches: [main, staging]
 
+# THE SAME TOKEN deploy.yml uses (TB-DEPLOY-03). .npmrc reads ${GITHUB_TOKEN}
+# for the __SCOPE__ registry, and the automatic secrets.GITHUB_TOKEN is scoped
+# to THIS repository: it cannot read packages published from another one, so
+# `pnpm install` got a 401 here and — with "ci.yml required to pass" on main —
+# nothing could ever merge. PACKAGES_READ_TOKEN is a token with read:packages.
+env:
+  GITHUB_TOKEN: ${{ secrets.PACKAGES_READ_TOKEN }}
+  NODE_AUTH_TOKEN: ${{ secrets.PACKAGES_READ_TOKEN }}
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -18,8 +27,6 @@ jobs:
           registry-url: https://npm.pkg.github.com
           scope: "__SCOPE__"
       - run: pnpm install --frozen-lockfile
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - run: pnpm typecheck
       - run: pnpm test
       # SKIP_ENV_VALIDATION lets the build run without secrets. It relaxes the

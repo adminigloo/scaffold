@@ -56,6 +56,8 @@ export interface UserRow {
   readonly imageUrl: string | null;
   readonly activeTenantId: string | null;
   readonly providerUpdatedAt: Date | null;
+  /** auth 0.2 (Tenancy 1, D8). Null = the next request provisions them. */
+  readonly provisionedAt: Date | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
   readonly deletedAt: Date | null;
@@ -77,6 +79,7 @@ export function buildUser(
     imageUrl: null,
     activeTenantId: null,
     providerUpdatedAt: fixedTime(),
+    provisionedAt: null,
     createdAt: fixedTime(),
     updatedAt: fixedTime(),
     deletedAt: null,
@@ -95,6 +98,13 @@ export interface TenantRow {
   readonly stripeCustomerId: string | null;
   readonly branding: Readonly<Record<string, unknown>>;
   readonly settings: Readonly<Record<string, unknown>>;
+  // tenancy 0.4 (Tenancy 1). Nulls stay null; setupState defaults to {}.
+  readonly createdBy: string | null;
+  readonly creationKey: string | null;
+  readonly suspendedAt: Date | null;
+  readonly suspendedReason: string | null;
+  readonly suspendedBy: string | null;
+  readonly setupState: Readonly<Record<string, unknown>>;
   readonly createdAt: Date;
   readonly updatedAt: Date;
   readonly deletedAt: Date | null;
@@ -119,6 +129,12 @@ export function buildTenant(
     stripeCustomerId: null,
     branding: {},
     settings: {},
+    createdBy: null,
+    creationKey: null,
+    suspendedAt: null,
+    suspendedReason: null,
+    suspendedBy: null,
+    setupState: {},
     createdAt: fixedTime(),
     updatedAt: fixedTime(),
     deletedAt: null,

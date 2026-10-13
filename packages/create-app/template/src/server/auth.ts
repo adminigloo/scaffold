@@ -2,15 +2,9 @@ import { auth, currentUser } from "@clerk/nextjs/server";
 import { eq } from "drizzle-orm";
 import type { Principal } from "__SCOPE__/auth";
 import { users } from "__SCOPE__/auth/schema";
-import {
-  grantTenantOwnerRole,
-  personalWorkspaceId,
-  personalWorkspaceSlug,
-} from "__SCOPE__/tenancy";
-import { tenantMembers, tenants } from "__SCOPE__/tenancy/schema";
 import { db } from "@/db";
 import { env } from "@/env";
-import { grantBootstrapAdminIfFirst } from "./bootstrap";
+import { tenancy } from "./tenancy";
 
 /**
  * Can anybody sign in to this deployment at all?
@@ -34,11 +28,35 @@ export function isSignInConfigured(): boolean {
 }
 
 /**
- * Who is making this request, as a Principal.
+ * Who is making this request, as a Principal — and, the first time, setting
+ * them up.
  *
  * Clerk gives us a verified external id and nothing else that authorization
  * reads. Roles are NEVER taken from Clerk metadata or a JWT claim: a claim is
  * stale the moment you revoke, and the session token outlives the revocation.
+ *
+ * PROVISIONING IS A STATE MACHINE WITH ONE STAMP (Tenancy 1). A person is set
+ * up exactly once — a personal workspace in a single-business project, the
+ * first-administrator check in every project — and `users.provisioned_at`
+ * records that it finished. TWO PATHS finish it, and either may arrive first:
+ *
+ *   - the Clerk webhook (app/api/webhooks/clerk/route.ts), on user.created;
+ *   - this function, on the person's first page request.
+ *
+ * Whichever gets there first does it; the other finds the stamp and does
+ * nothing. Every step of `tenancy.provisionUser` is idempotent (each write is
+ * "insert … on conflict do nothing"), so the two can race safely, and a crash
+ * halfway leaves the stamp unset so the NEXT request finishes the job.
+ *
+ * This replaced "the webhook only keeps the row fresh", which was the bug: on
+ * a deployed site the webhook usually won the race,
+ * wrote the row, and the page then found the row and skipped setting the
+ * person up — most new sign-ups got no workspace, no role and no first
+ * administrator (PC-01). People that bug left with nothing are repaired here,
+ * on their next visit, because their stamp was never set.
+ *
+ * Every signed-in page view reaches this (the header's company switcher asks
+ * for the principal), which is what makes "the first page provisions" true.
  */
 export async function currentPrincipal(): Promise<Principal | null> {
   // No Clerk yet. `auth()` throws rather than returning an empty session when
@@ -61,7 +79,63 @@ export async function currentPrincipal(): Promise<Principal | null> {
   const row = existing ?? (await mirrorUser(externalId));
   if (!row) return null;
 
+  // Null means "not set up yet" — a brand-new person, one whose webhook
+  // arrived first, or a 0.21 account the race left with nothing.
+  if (row.provisionedAt === null) {
+    await tenancy.provisionUser({ userId: row.id, email: row.email });
+  }
+
   return { userId: row.id, externalId: row.externalId, email: row.email };
+}
+
+/** The slice of a Clerk user this file reads. Structural, so a test can pass a plain object. */
+interface ClerkIdentityLike {
+  readonly primaryEmailAddressId: string | null;
+  readonly emailAddresses: readonly {
+    readonly id: string;
+    readonly emailAddress: string;
+    readonly verification: { readonly status?: string | null } | null;
+  }[];
+}
+
+/**
+ * The addresses Clerk has VERIFIED, lowercased — and the one to mirror.
+ *
+ * ONLY VERIFIED ADDRESSES, EVER (review T1-02, TB-DEPLOY-09). `users.email` is
+ * what decides who becomes the first administrator and whom an invitation is
+ * for, and an address somebody merely typed into their profile can be the
+ * founder's. The mirrored one is the primary address when it is verified,
+ * otherwise the first verified one, otherwise none — the same rule
+ * @__SCOPE_NAME__/auth's webhook applies, so the two paths can't disagree.
+ */
+export function verifiedAddressesOf(user: ClerkIdentityLike): {
+  readonly primary: string | null;
+  readonly all: readonly string[];
+} {
+  const verified = user.emailAddresses.filter(
+    (address) => address.verification?.status === "verified",
+  );
+  const all = verified.map((address) => address.emailAddress.trim().toLowerCase());
+  const primary =
+    verified.find((address) => address.id === user.primaryEmailAddressId) ?? verified[0];
+  return {
+    primary: primary ? primary.emailAddress.trim().toLowerCase() : null,
+    all: [...new Set(all)],
+  };
+}
+
+/**
+ * Every address the signed-in person has verified with Clerk, lowercased.
+ *
+ * What "join with a verified address" (an invitation waiting for this person's
+ * address shows up in onboarding) is decided against. Empty when Clerk isn't
+ * configured or nobody is signed in.
+ */
+export async function verifiedEmails(): Promise<readonly string[]> {
+  if (!isSignInConfigured()) return [];
+  const clerkUser = await currentUser();
+  if (!clerkUser) return [];
+  return verifiedAddressesOf(clerkUser).all;
 }
 
 /**
@@ -80,18 +154,16 @@ export async function currentPrincipal(): Promise<Principal | null> {
  * verified session for is strictly more reliable than waiting to be told about
  * it.
  *
- * The webhook is still what keeps the row FRESH — renames, email changes,
- * deletions. This only guarantees the row EXISTS. The unique index on
- * (identity_provider, external_id) makes the two safe to race.
+ * It only writes the ROW. Setting the person up is `currentPrincipal`'s next
+ * step (provisioning), so the webhook-first and page-first orders end in the
+ * same place. The unique index on (identity_provider, external_id) makes the
+ * two safe to race.
  */
 async function mirrorUser(externalId: string) {
   const clerkUser = await currentUser();
   if (!clerkUser) return null;
 
-  const email =
-    clerkUser.primaryEmailAddress?.emailAddress?.toLowerCase() ??
-    clerkUser.emailAddresses[0]?.emailAddress?.toLowerCase() ??
-    null;
+  const email = verifiedAddressesOf(clerkUser).primary;
 
   const displayName =
     [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" ") || null;
@@ -116,65 +188,7 @@ async function mirrorUser(externalId: string) {
     created ??
     (await db.query.users.findFirst({ where: eq(users.externalId, externalId) }));
 
-  if (row) {
-    await ensurePersonalWorkspace(row.id);
-    // Only ever succeeds for the very first staff user; a no-op forever after.
-    await grantBootstrapAdminIfFirst(row.id, row.email);
-  }
+  // A row the webhook soft-deleted in the gap between our SELECT and INSERT.
+  if (row?.deletedAt) return null;
   return row ?? null;
-}
-
-/**
- * Give a brand-new user somewhere to be, and something to be there.
- *
- * Tenancy is always on, so a user with no membership can reach no tenant-scoped
- * route at all — `tenantProcedure` denies non-members by design. A consumer-shaped
- * project would otherwise sign someone up into a dead end.
- *
- * THREE WRITES, AND THE THIRD IS NOT OPTIONAL. This used to write the tenant
- * and the membership and stop, which put the customer inside a workspace they
- * owned and could do nothing in: permissions are deny-by-default and neither
- * @__SCOPE_NAME__/permissions nor @__SCOPE_NAME__/tenancy grants an owner
- * anything implicitly, so `owner_user_id` pointing at you conferred exactly
- * zero. The visible symptoms were `/account/billing` explaining that the
- * renewal amount is shown to whoever holds `subscriptions.view` — "normally its
- * owner" — to the owner, `account.billingPortal` answering FORBIDDEN, and
- * inviting anybody refused for want of a rank to compare the invitation
- * against. None of it raised an error; the product behaved as though the
- * customer were a stranger in their own account.
- *
- * `grantTenantOwnerRole` writes a real `principal_role` row rather than
- * teaching the resolver to imply one, so what the owner can do stays a thing
- * you can read out of a table — see the block comment on that function for why
- * that trade is worth a backfill script.
- *
- * Idempotent: all three writes conflict-do-nothing, so a concurrent request or
- * a later re-run changes nothing. The role grant also inserts nothing when the
- * templates have not been seeded yet, rather than throwing — a fresh database
- * with no `pnpm db:seed` behind it must not turn a first sign-in into a 500.
- */
-async function ensurePersonalWorkspace(userId: string): Promise<void> {
-  const tenantId = personalWorkspaceId(userId);
-
-  await db
-    .insert(tenants)
-    .values({
-      id: tenantId,
-      kind: "personal",
-      slug: personalWorkspaceSlug(userId),
-      name: "Personal",
-      ownerUserId: userId,
-    })
-    .onConflictDoNothing();
-
-  await db
-    .insert(tenantMembers)
-    .values({ tenantId, userId, status: "active" })
-    .onConflictDoNothing();
-
-  // AFTER the membership, deliberately. A role row for somebody who is not a
-  // member resolves to nothing — `loadTenantPermissions` checks membership
-  // first and returns null — so writing it earlier would be a row that means
-  // nothing until the next statement succeeds.
-  await grantTenantOwnerRole(db, { tenantId, userId });
 }
