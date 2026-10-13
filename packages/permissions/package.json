@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/permissions",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Two-layer permission engine. Catalog declared in code, assignments in the database, one resolver for staff and tenant scopes, server and client.",
   "license": "UNLICENSED",
   "type": "module",

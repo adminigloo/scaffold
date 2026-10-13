@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/trpc",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "The procedure ladder. Every procedure declares its authorization scope, permission checks are middleware rather than handler code, and a CI audit fails the router that forgets.",
   "license": "UNLICENSED",
   "type": "module",

@@ -1,5 +1,13 @@
 # @adminigloo/commerce
 
+## 0.1.5
+
+### Patch Changes
+
+- Updated dependencies [cc16902]
+  - @adminigloo/permissions@0.2.0
+  - @adminigloo/stripe@0.2.1
+
 ## 0.1.4
 
 ### Patch Changes

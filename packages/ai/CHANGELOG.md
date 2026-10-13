@@ -1,5 +1,14 @@
 # @adminigloo/ai
 
+## 0.1.5
+
+### Patch Changes
+
+- Updated dependencies [cc16902]
+- Updated dependencies [cc16902]
+  - @adminigloo/auth@0.2.0
+  - @adminigloo/permissions@0.2.0
+
 ## 0.1.3
 
 ### Patch Changes

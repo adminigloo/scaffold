@@ -75,22 +75,22 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // caret somehow admitted them: the period moved onto the subscription ITEM
   // two API versions ago, and code reading the old field mirrors every
   // subscription with no period at all.
-  stripe: "0.2.0",
+  stripe: "0.2.1",
   // 0.2.0 for the variant- and product-name rules. The product builder refuses
   // to start a save that `validateProduct` cannot clear, so a project resolving
   // 0.1.x gets a validator with no opinion about a blank variant name — which
   // is the hole the form used to fall through: it created the product, had
   // `upsertVariant` refuse it, and left a draft with nothing under it.
-  catalog: "0.2.0",
-  commerce: "0.1.4",
+  catalog: "0.2.1",
+  commerce: "0.1.5",
   // 0.2.0 for the typed plan record. `src/plans.ts` is emitted into every
   // project that sells something and calls `definePlans`, which does not exist
   // in 0.1.x — so a project resolving the old line fails to compile on a file
   // the generator wrote. The same release changed `grantsForPlan` and
   // `planGrantDiff` to take a `PlanTier`, and a caret over 0.1.x would resolve
   // to the signatures nothing here calls.
-  billing: "0.2.0",
-  ai: "0.1.4",
+  billing: "0.2.1",
+  ai: "0.1.5",
   email: "0.2.1",
   // First releases, all three proven on adminigloo.com before they were
   // offered here — the same publish → dogfood → template rhythm feedback
