@@ -1,5 +1,12 @@
 # @adminigloo/testing
 
+## 0.2.1
+
+### Patch Changes
+
+- Updated dependencies [2df95e8]
+  - @adminigloo/tenancy@0.5.0
+
 ## 0.2.0
 
 ### Minor Changes
