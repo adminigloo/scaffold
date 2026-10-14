@@ -1,7 +1,8 @@
 import { useEffect, useId, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { isValidEmail } from "../form.js";
+import { formatMoney, zoneLabel } from "../format.js";
 import type { ClientError } from "../http.js";
-import { describedBy, Field, Loading, WidgetRoot } from "../parts.js";
+import { describedBy, Field, Loading, Notice, WidgetRoot } from "../parts.js";
 import { normalizeHex } from "../styles.js";
 import type { EstimatorAdminTransport } from "./client.js";
 import {
@@ -48,7 +49,20 @@ export type EstimatorSettingsSection = "business" | "quotes" | "pricing" | "aler
 export interface EstimatorSettingsProps extends AdminChromeProps {
   /** Which sections, in this order. Default all six. */
   sections?: EstimatorSettingsSection[];
+  /**
+   * Offer the forms. The server still refuses a save without
+   * `estimator.settings.manage`; false shows every section read-only (and,
+   * before the first save, says who has to make it) instead of offering a
+   * Save that would fail (Tenancy 2a: a company's member reads the quote
+   * rules; its owner and admins set them). Default true.
+   */
+  canManage?: boolean;
 }
+
+/** Above the sections, for someone who may read them but not change them. */
+export const READ_ONLY_SETTINGS = "Only the owner or an admin can change these settings.";
+/** In place of the first-run form, for the same person. */
+export const NOT_SAVED_READ_ONLY = "Your estimate page is closed until the owner or an admin saves these settings.";
 
 const ALL_SECTIONS: EstimatorSettingsSection[] = ["business", "quotes", "pricing", "alerts", "website", "photos"];
 
@@ -56,6 +70,7 @@ export function EstimatorSettings(props: EstimatorSettingsProps) {
   const transport = useAdminTransport(props.transport, props.baseUrl);
   const basics = useAdminBasics(transport);
   const sections = props.sections && props.sections.length > 0 ? props.sections : ALL_SECTIONS;
+  const canManage = props.canManage !== false;
   const settings = basics.settings;
   const saved = (next: EstimatorSettingsWire) => {
     basics.setSettings(next);
@@ -66,28 +81,51 @@ export function EstimatorSettings(props: EstimatorSettingsProps) {
       <h2 className="aiew-admin-title">Estimate settings</h2>
       {basics.settingsError && !settings ? <LoadError error={basics.settingsError} onRetry={basics.refresh} /> : null}
       {!settings && !basics.settingsError ? <Loading label="Loading settings…" /> : null}
-      {settings && !settings.saved ? <GetStartedSection settings={settings} transport={transport} onSaved={saved} /> : null}
-      {settings && settings.saved
-        ? sections.map((section) => {
-            const common = { key: section, settings, transport, onSaved: saved };
-            switch (section) {
-              case "business":
-                return <BusinessSection {...common} />;
-              case "quotes":
-                return <QuotesSection {...common} />;
-              case "pricing":
-                return <PricingSection {...common} />;
-              case "alerts":
-                return <AlertsSection {...common} />;
-              case "website":
-                return <WebsiteSection {...common} />;
-              case "photos":
-                return <PhotosSection {...common} basics={basics} />;
-              default:
-                return null;
-            }
-          })
-        : null}
+      {settings && !settings.saved ? (
+        canManage ? (
+          <GetStartedSection settings={settings} transport={transport} onSaved={saved} />
+        ) : (
+          <Notice tone="info" data="read-only">
+            {NOT_SAVED_READ_ONLY}
+          </Notice>
+        )
+      ) : null}
+      {settings && settings.saved && !canManage ? (
+        <p className="aiew-muted" data-aiew-read-only="">
+          {READ_ONLY_SETTINGS}
+        </p>
+      ) : null}
+      {/* Read-only is a disabled fieldset round every section: each field still
+          shows its value, and nothing in it can be changed or sent. */}
+      <fieldset disabled={!canManage} className="aiew-admin-fields" data-aiew-settings-fields="">
+        {settings && settings.saved
+          ? sections.map((section) => {
+              const common = { key: section, settings, transport, onSaved: saved };
+              switch (section) {
+                case "business":
+                  // Tenancy 2a, D6: a company's name, contact, zone and colour
+                  // are the company's: read-only here, with the way to change them.
+                  return settings.managedByCompany ? (
+                    <ManagedBusinessSection key={section} settings={settings} href={settings.managedByCompany.href} />
+                  ) : (
+                    <BusinessSection {...common} />
+                  );
+                case "quotes":
+                  return <QuotesSection {...common} />;
+                case "pricing":
+                  return <PricingSection {...common} />;
+                case "alerts":
+                  return <AlertsSection {...common} />;
+                case "website":
+                  return <WebsiteSection {...common} />;
+                case "photos":
+                  return <PhotosSection {...common} basics={basics} />;
+                default:
+                  return null;
+              }
+            })
+          : null}
+      </fieldset>
     </AdminFrame>
   );
 }
@@ -156,6 +194,7 @@ function TextInput({
   type = "text",
   inputMode,
   maxLength,
+  max,
   className = "aiew-input",
   autoComplete,
 }: {
@@ -167,6 +206,8 @@ function TextInput({
   type?: string;
   inputMode?: "text" | "email" | "tel" | "decimal" | "numeric";
   maxLength?: number;
+  /** The most it may be (the site's ceiling on photo-reading spend, in dollars). */
+  max?: string;
   className?: string;
   autoComplete?: string;
 }) {
@@ -178,6 +219,7 @@ function TextInput({
       value={value}
       inputMode={inputMode}
       maxLength={maxLength}
+      max={max}
       autoComplete={autoComplete ?? "off"}
       aria-invalid={error ? true : undefined}
       aria-describedby={describedBy(id, Boolean(hint), error)}
@@ -192,6 +234,9 @@ function TextInput({
 
 function GetStartedSection({ settings, transport, onSaved }: SectionProps) {
   const ids = useId();
+  // Tenancy 2a: with the business's basics coming from the company, the
+  // first-run form asks only for what is still the estimator's own.
+  const managed = settings.managedByCompany !== null;
   // Without access to costs the default labor rate is stripped (null): not asked.
   const asksLabor = settings.defaultLaborRateCents !== null;
   const [draft, setDraft] = useState({
@@ -208,16 +253,20 @@ function GetStartedSection({ settings, transport, onSaved }: SectionProps) {
   const set = (key: keyof typeof draft, value: string) => setDraft((d) => ({ ...d, [key]: value }));
 
   const patch = ((): EstimatorSettingsPatch | string => {
-    if (!draft.businessName.trim()) return "Add your business name.";
-    if (draft.contactEmail.trim() && !isValidEmail(draft.contactEmail)) return "The contact email doesn't look right.";
+    if (!managed && !draft.businessName.trim()) return "Add your business name.";
+    if (!managed && draft.contactEmail.trim() && !isValidEmail(draft.contactEmail)) return "The contact email doesn't look right.";
     const tax = parsePercentInput(draft.taxRate);
     if (tax === null || Number.isNaN(tax) || tax < 0 || tax > 3000) return "Enter your sales tax rate, from 0% to 30% (0 if you don't charge tax).";
     const labor = asksLabor ? parseMoneyInput(draft.laborRate) : null;
     if (labor !== null && (Number.isNaN(labor) || labor < 0 || labor > 1_000_000)) return "Enter an hourly rate from $0 to $10,000.";
     return {
-      businessName: draft.businessName.trim(),
-      contactPhone: draft.contactPhone.trim() || null,
-      contactEmail: draft.contactEmail.trim() || null,
+      ...(managed
+        ? {}
+        : {
+            businessName: draft.businessName.trim(),
+            contactPhone: draft.contactPhone.trim() || null,
+            contactEmail: draft.contactEmail.trim() || null,
+          }),
       taxRateBp: tax,
       ...(labor !== null ? { defaultLaborRateCents: labor } : {}),
     };
@@ -244,16 +293,24 @@ function GetStartedSection({ settings, transport, onSaved }: SectionProps) {
       hint="Your estimate page is closed until you save these: customers can't get a price, and quotes can't be sent. Everything else can wait."
     >
       <Form onSubmit={(event) => void save(event)}>
-        <Field id={`${ids}-name`} label="Business name" hint="On your quotes, your emails and the estimate page." error={fields.businessName ?? null}>
-          <TextInput id={`${ids}-name`} hint value={draft.businessName} maxLength={120} error={fields.businessName} onChange={(v) => set("businessName", v)} />
-        </Field>
+        {managed ? (
+          <CompanyNote href={settings.managedByCompany?.href ?? null} />
+        ) : (
+          <Field id={`${ids}-name`} label="Business name" hint="On your quotes, your emails and the estimate page." error={fields.businessName ?? null}>
+            <TextInput id={`${ids}-name`} hint value={draft.businessName} maxLength={120} error={fields.businessName} onChange={(v) => set("businessName", v)} />
+          </Field>
+        )}
         <div className="aiew-grid2">
-          <Field id={`${ids}-phone`} label="Contact phone" optional hint="Shown on quotes, so customers can call." error={fields.contactPhone ?? null}>
-            <TextInput id={`${ids}-phone`} type="tel" inputMode="tel" hint value={draft.contactPhone} maxLength={40} error={fields.contactPhone} onChange={(v) => set("contactPhone", v)} />
-          </Field>
-          <Field id={`${ids}-email`} label="Contact email" optional hint="Customers can reply to it." error={fields.contactEmail ?? null}>
-            <TextInput id={`${ids}-email`} type="email" inputMode="email" hint value={draft.contactEmail} maxLength={320} error={fields.contactEmail} onChange={(v) => set("contactEmail", v)} />
-          </Field>
+          {managed ? null : (
+            <>
+              <Field id={`${ids}-phone`} label="Contact phone" optional hint="Shown on quotes, so customers can call." error={fields.contactPhone ?? null}>
+                <TextInput id={`${ids}-phone`} type="tel" inputMode="tel" hint value={draft.contactPhone} maxLength={40} error={fields.contactPhone} onChange={(v) => set("contactPhone", v)} />
+              </Field>
+              <Field id={`${ids}-email`} label="Contact email" optional hint="Customers can reply to it." error={fields.contactEmail ?? null}>
+                <TextInput id={`${ids}-email`} type="email" inputMode="email" hint value={draft.contactEmail} maxLength={320} error={fields.contactEmail} onChange={(v) => set("contactEmail", v)} />
+              </Field>
+            </>
+          )}
           <Field id={`${ids}-tax`} label="Sales tax (%)" hint="Added on top of every estimate and quote. 0 if you don't charge tax." error={fields.taxRateBp ?? null}>
             <TextInput id={`${ids}-tax`} className="aiew-input aiew-number" inputMode="decimal" hint value={draft.taxRate} error={fields.taxRateBp} onChange={(v) => set("taxRate", v)} />
           </Field>
@@ -393,6 +450,49 @@ function BusinessSection({ settings, transport, onSaved }: SectionProps) {
   );
 }
 
+/** "These come from your company settings." with the way to change them (Tenancy 2a, D6). */
+function CompanyNote({ href }: { href: string | null }) {
+  return (
+    <p className="aiew-hint" data-aiew-company-note="">
+      These come from your company settings. {href ? <a href={href}>Change them in company settings</a> : null}
+    </p>
+  );
+}
+
+/** The business section when the company owns the basics: what customers see, read-only. */
+function ManagedBusinessSection({ settings, href }: { settings: EstimatorSettingsWire; href: string | null }) {
+  const colour = normalizeHex(settings.brandColor);
+  return (
+    <Panel id="business" title="Business" hint="On your quotes, your emails and the estimate page.">
+      <div className="aiew-stack-sm" data-aiew-managed="">
+        <CompanyNote href={href} />
+        <dl className="aiew-facts">
+          <div>
+            <dt>Business name</dt>
+            <dd>{settings.businessName || "Not set yet"}</dd>
+          </div>
+          <div>
+            <dt>Contact email</dt>
+            <dd>{settings.contactEmail ?? "Not set yet"}</dd>
+          </div>
+          <div>
+            <dt>Contact phone</dt>
+            <dd>{settings.contactPhone ?? "Not set yet"}</dd>
+          </div>
+          <div>
+            <dt>Time zone</dt>
+            <dd>{zoneLabel(settings.timeZone)}</dd>
+          </div>
+          <div>
+            <dt>Brand colour</dt>
+            <dd>{colour ?? "Ours (none set)"}</dd>
+          </div>
+        </dl>
+      </div>
+    </Panel>
+  );
+}
+
 /** A primary button and a link in the chosen colour, in light AND dark: both must read well. */
 function BrandSample({ colour }: { colour: string | null }) {
   return (
@@ -500,7 +600,7 @@ function PricingSection({ settings, transport, onSaved }: SectionProps) {
     <Panel id="pricing" title="Pricing" hint="Used by every product unless the product sets its own.">
       <Form onSubmit={(event) => void form.save(event)}>
         <div className="aiew-grid2">
-          <Field id={`${ids}-tax`} label="Sales tax (%)" hint={settings.saved ? "Added on top of every estimate and quote." : "Still the 8.25% default until you save it."} error={fields.taxRateBp ?? null}>
+          <Field id={`${ids}-tax`} label="Sales tax (%)" hint={settings.saved ? "Added on top of every estimate and quote." : "Not set yet: enter the rate you charge. It's added on top of every estimate and quote."} error={fields.taxRateBp ?? null}>
             <TextInput id={`${ids}-tax`} className="aiew-input aiew-number" inputMode="decimal" hint value={draft.taxRate} error={fields.taxRateBp} onChange={(v) => set("taxRate", v)} />
           </Field>
           <Field id={`${ids}-currency`} label="Currency" hint="Shown as set; nothing is converted." error={fields.currency ?? null}>
@@ -572,6 +672,16 @@ function AlertsSection({ settings, transport, onSaved }: SectionProps) {
   return (
     <Panel id="alerts" title="Lead alerts" hint="Who gets an email for a new lead, and when a customer accepts or declines a quote.">
       <Form onSubmit={(event) => void form.save(event)}>
+        {/* An empty list isn't "nobody" (review T2A-BO-14): with a company, the
+            alerts go to its contact email. Said, so nobody types it in twice
+            or thinks the leads are lost. */}
+        {settings.managedByCompany && draft.emails.every((e) => !e.trim()) ? (
+          <p className="aiew-hint" data-aiew-alerts-default="">
+            {settings.contactEmail
+              ? `Leave it empty and alerts go to ${settings.contactEmail}, your company's contact email.`
+              : "Leave it empty and alerts go to your company's owner."}
+          </p>
+        ) : null}
         <ul className="aiew-stack-sm" style={{ listStyle: "none", margin: 0, padding: 0 }}>
           {draft.emails.map((email, i) => (
             <li key={i} className="aiew-inline">
@@ -634,6 +744,7 @@ function WebsiteSection({ settings, transport, onSaved }: SectionProps) {
 
 function PhotosSection({ settings, transport, onSaved, basics }: SectionProps & { basics: AdminBasics }) {
   const ids = useId();
+  const ceiling = settings.aiBudgetCeilingCents;
   const form = useDraft(
     { photos: settings.photosEnabled, budget: centsToInput(settings.aiDailyBudgetCents), perPerson: String(settings.aiPerRequesterDaily) },
     transport,
@@ -641,6 +752,8 @@ function PhotosSection({ settings, transport, onSaved, basics }: SectionProps & 
       const budget = parseMoneyInput(d.budget);
       const perPerson = parseNumberInput(d.perPerson);
       if (budget === null || Number.isNaN(budget) || budget < 0 || budget > 100_000) return "Enter a daily limit from $0 to $1,000.";
+      // The site's ceiling (Tenancy 2a, D14), said in the owner's money before the server has to.
+      if (ceiling !== null && budget > ceiling) return `This site allows up to ${formatMoney(ceiling, settings.currency, settings.locale)} a day of photo reading per business.`;
       if (perPerson === null || !Number.isInteger(perPerson) || perPerson < 0 || perPerson > 100) return "Enter 0 to 100 readings per person.";
       return { photosEnabled: d.photos, aiDailyBudgetCents: budget, aiPerRequesterDaily: perPerson };
     },
@@ -660,7 +773,7 @@ function PhotosSection({ settings, transport, onSaved, basics }: SectionProps & 
     };
   }, [transport, spend]);
   return (
-    <Panel id="photos" title="Photos and AI" hint="Customers can add a photo. For a ramp, the AI counts the steps it can see; your prices do the rest.">
+    <Panel id="photos" title="Photos and AI" hint="Customers can add a photo. The AI only says what it sees (how many steps, windows or items); your prices do the rest.">
       <Form onSubmit={(event) => void form.save(event)}>
         <Switch
           checked={draft.photos}
@@ -669,8 +782,26 @@ function PhotosSection({ settings, transport, onSaved, basics }: SectionProps & 
           hint="Off: no photo button, and nothing is read."
         />
         <div className="aiew-grid2">
-          <Field id={`${ids}-budget`} label="Most photo reading may cost per day ($)" hint="When today's readings reach it, customers enter the count by hand. 0 = reading off." error={fields.aiDailyBudgetCents ?? null}>
-            <TextInput id={`${ids}-budget`} className="aiew-input aiew-number" inputMode="decimal" hint value={draft.budget} error={fields.aiDailyBudgetCents} onChange={(v) => set("budget", v)} />
+          <Field
+            id={`${ids}-budget`}
+            label="Most photo reading may cost per day ($)"
+            hint={
+              ceiling !== null
+                ? `When today's readings reach it, customers enter the count by hand. 0 = reading off. Up to ${formatMoney(ceiling, settings.currency, settings.locale)} a day on this site.`
+                : "When today's readings reach it, customers enter the count by hand. 0 = reading off."
+            }
+            error={fields.aiDailyBudgetCents ?? null}
+          >
+            <TextInput
+              id={`${ids}-budget`}
+              className="aiew-input aiew-number"
+              inputMode="decimal"
+              hint
+              value={draft.budget}
+              error={fields.aiDailyBudgetCents}
+              onChange={(v) => set("budget", v)}
+              {...(ceiling !== null ? { max: centsToInput(ceiling) } : {})}
+            />
           </Field>
           <Field id={`${ids}-per`} label="Photo readings per person per day" hint="Stops one visitor running up the bill. 0 = reading off." error={fields.aiPerRequesterDaily ?? null}>
             <TextInput id={`${ids}-per`} className="aiew-input aiew-number" inputMode="numeric" hint value={draft.perPerson} error={fields.aiPerRequesterDaily} onChange={(v) => set("perPerson", v)} />

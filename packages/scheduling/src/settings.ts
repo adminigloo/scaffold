@@ -58,6 +58,19 @@ export interface SchedulingSettings extends SchedulingSettingsValues {
   /** False: no row yet, every value is a default. */
   saved: boolean;
   updatedAt: Date | null;
+  /**
+   * True when a `company` seam supplied the name, contact and zone (Tenancy
+   * 2a, D5): the settings screen shows them read-only and a save drops them.
+   * Always false from `getSchedulingSettings`; see `resolveSchedulingSettings`.
+   */
+  managedByCompany: boolean;
+  /**
+   * With `managedByCompany`: true when the zone in use IS the company's own,
+   * false while the company hasn't set one and scheduling's stored (starting)
+   * zone stands in (review T2A-BO-07) — the screens then say so, and online
+   * booking waits for the company's zone. Absent outside a company.
+   */
+  zoneFromCompany?: boolean;
 }
 
 export const DEFAULT_SCHEDULING_SETTINGS: Readonly<SchedulingSettingsValues> = Object.freeze({
@@ -194,6 +207,7 @@ function fromRow(row: SettingsRow): SchedulingSettings {
     cancelCutoffHours: row.cancelCutoffHours,
     saved: true,
     updatedAt: row.updatedAt,
+    managedByCompany: false,
   };
 }
 
@@ -205,6 +219,7 @@ function defaultsFor(tenantId: string): SchedulingSettings {
     tenantId,
     saved: false,
     updatedAt: null,
+    managedByCompany: false,
   };
 }
 
@@ -414,8 +429,12 @@ export function publicPolicyFor(
   };
 }
 
-/** Settings → the wire (`SettingsWire`). */
-export function toSettingsWire(settings: SchedulingSettings): SettingsWire {
+/**
+ * Settings → the wire (`SettingsWire`). `companySettingsHref` is where the
+ * owner changes the company-owned fields when `settings.managedByCompany`
+ * (Tenancy 2a, D6); the wire's `managedByCompany` is null otherwise.
+ */
+export function toSettingsWire(settings: SchedulingSettings, options: { readonly companySettingsHref?: string | null } = {}): SettingsWire {
   return {
     timeZone: settings.timeZone,
     businessName: settings.businessName,
@@ -443,5 +462,6 @@ export function toSettingsWire(settings: SchedulingSettings): SettingsWire {
     cancelCutoffHours: settings.cancelCutoffHours,
     saved: settings.saved,
     updatedAt: settings.updatedAt ? settings.updatedAt.toISOString() : null,
+    managedByCompany: settings.managedByCompany ? { href: options.companySettingsHref ?? null } : null,
   };
 }

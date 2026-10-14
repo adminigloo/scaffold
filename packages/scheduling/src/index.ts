@@ -206,10 +206,32 @@ export {
   type CreateSchedulingAdminHandlersOptions,
   type CrewMemberChange,
   type SchedulingAdminHandlers,
+  type SchedulingPerson,
 } from "./admin-handlers.js";
 // What the office should know (the staff screens' banner), for a host that
 // builds its own status page.
-export { adminNotices, adminStatus, runClock, type DeliveryStatus, type ReminderRuns } from "./notices.js";
+export { adminNotices, adminStatus, runClock, type AdminNoticeContext, type DeliveryStatus, type ReminderRuns } from "./notices.js";
 // The refusal codes and statuses a handler answers with, for a host calling
 // the functions from its own server actions or tRPC procedures.
 export { isCrossSiteRequest, toWireError, WIRE_ERROR_STATUS } from "./http.js";
+
+// Tenancy 2a: scheduling inside a company. Structural seams (D4): nothing
+// here imports tenancy. A host passing none of them gets 0.4's behaviour.
+export {
+  resolveSchedulingSettings,
+  SCHEDULING_CREW_ROLE,
+  COMPANY_OWNED_SETTINGS,
+  type ResolveSchedulingSettingsOptions,
+  type SchedulingAdmission,
+  type SchedulingCompany,
+} from "./company.js";
+// The routes as data, for the package's tests and the emitted isolation proof.
+export {
+  SCHEDULING_ADMIN_ROUTES,
+  SCHEDULING_PUBLIC_ROUTES,
+  type SchedulingAdminRouteKind,
+  type SchedulingPublicRouteKind,
+  type SchedulingRoute,
+} from "./routes.js";
+// The items scheduling adds to the company setup checklist.
+export { schedulingChecklistItems, type SchedulingChecklistItem } from "./checklist.js";

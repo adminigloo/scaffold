@@ -98,9 +98,12 @@ describe("TB2-06: companies + field service says who the features are for, up fr
     const a = answers({ tenantNoun: "Company", adminShell: "full", includeScheduling: true, includeEstimator: true, includeEmail: true, includeComms: true });
     const readme = get(await planEmit(TEMPLATE_DIR, "/out", a), "README.md");
     const firstParagraph = readme.split("\n\n")[1] ?? "";
-    expect(firstParagraph).toContain("run for you, the platform owner");
-    expect(firstParagraph).toContain("not with each company");
-    expect(nextSteps(a, "/out/x")).toContain("pages book with YOUR business, not");
+    // Since Tenancy 2a each company runs the features itself, in its own area
+    // and on its own public pages — and the first paragraph says so.
+    expect(firstParagraph).toContain("Each company runs its schedule");
+    expect(firstParagraph).toContain("in its own area (/app)");
+    expect(firstParagraph).toContain("not with each other's, and not with yours");
+    expect(nextSteps(a, "/out/x")).toContain("Each company runs its own schedule, estimates, messages at /app");
   });
 });
 

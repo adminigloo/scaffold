@@ -86,6 +86,23 @@ function externalsFrom(entry: string): Set<string> {
   return externals;
 }
 
+describe("Tenancy 2a exports", () => {
+  it("the root offers the role set, client-safe", async () => {
+    const root = await import("../index.js");
+    expect(typeof root.defineTenantRoles).toBe("function");
+    expect(root.DEFAULT_TENANT_ROLES.keys).toEqual(["owner", "admin", "member", "viewer"]);
+    expect(new root.InvalidTenantRoleError("x").name).toBe("InvalidTenantRoleError");
+  });
+
+  it("./server offers the seams, the cron walker and the public wire helper", async () => {
+    const server = await import("../server.js");
+    expect(typeof server.createCompanyRouteSeams).toBe("function");
+    expect(typeof server.createPublicCompanySeams).toBe("function");
+    expect(typeof server.runForEachCompany).toBe("function");
+    expect(typeof server.publicCompanyToWire).toBe("function");
+  });
+});
+
 describe("the package root", () => {
   it("imports nothing that cannot go into a browser bundle", () => {
     const externals = externalsFrom(resolve(SRC, "index.ts"));

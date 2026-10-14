@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ROLE_KEY_PATTERN } from "../roles.js";
 import { TenancyError } from "./errors.js";
 import {
   codeResponse,
@@ -71,7 +72,14 @@ export interface TenancyHandlers {
 
 // --- bodies (zod at the boundary) ------------------------------------------
 
-const roleKey = z.enum(["owner", "admin", "member", "viewer"]);
+/**
+ * Any well-formed role key (Tenancy 2a, D9): a project may add roles (Crew),
+ * so the wire takes any key the server offers. `knownRole` then holds it to
+ * the project's set; `owner` passes through so the service answers its own
+ * `owner_must_transfer`.
+ */
+const ROLE_ISSUE = "Pick one of the roles listed.";
+const roleKey = z.string().regex(ROLE_KEY_PATTERN, ROLE_ISSUE);
 const createBody = z.object({
   name: z.string().max(200),
   slug: z.string().max(80).optional(),
@@ -86,6 +94,12 @@ const settingsBody = z.object({ values: z.record(z.string(), z.union([z.string()
 const roleBody = z.object({ roleKey });
 const transferBody = z.object({ toUserId: z.string().min(1).max(128), confirmName: z.string().max(200) });
 const inviteBody = z.object({ email: z.string().trim().min(3).max(254), roleKey });
+
+/** A role key the project offers (or `owner`, which the service refuses with its own sentence). */
+function knownRole(tenancy: Pick<TenancyService, "roles">, key: string): string {
+  if (key === "owner" || tenancy.roles.has(key)) return key;
+  throw new TenancyError("invalid", "Check the highlighted fields.", { issues: [{ path: ["roleKey"], message: ROLE_ISSUE }] });
+}
 
 function parse<T>(schema: z.ZodType<T>, body: unknown): T {
   const result = schema.safeParse(body);
@@ -326,7 +340,8 @@ export function createTenancyHandlers(options: CreateTenancyHandlersOptions): Te
         return jsonResponse(200, teamToWire(await tenancy.getTeam(actor)));
       case "member-role": {
         const body = parse(roleBody, await readJson(req));
-        return jsonResponse(200, { member: memberToWire(await tenancy.changeMemberRole({ ...actor, targetUserId: p["userId"]!, roleKey: body.roleKey })) });
+        const role = knownRole(tenancy, body.roleKey);
+        return jsonResponse(200, { member: memberToWire(await tenancy.changeMemberRole({ ...actor, targetUserId: p["userId"]!, roleKey: role })) });
       }
       case "member-remove":
         await readJson(req);
@@ -342,7 +357,8 @@ export function createTenancyHandlers(options: CreateTenancyHandlersOptions): Te
         return jsonResponse(200, { invitations: (await tenancy.listInvitations(actor)).map(invitationToWire) });
       case "invitation-send": {
         const body = parse(inviteBody, await readJson(req));
-        return issued(req, tenantId, await tenancy.sendInvitation({ ...actor, email: body.email, roleKey: body.roleKey, sendsEmail }));
+        const role = knownRole(tenancy, body.roleKey);
+        return issued(req, tenantId, await tenancy.sendInvitation({ ...actor, email: body.email, roleKey: role, sendsEmail }));
       }
       case "invitation-resend":
         await readJson(req);

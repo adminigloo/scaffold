@@ -67,14 +67,16 @@ export function articleFor(word: string): string {
 }
 
 /**
- * `12 March 2026`, in UTC.
+ * `March 12, 2026`, in UTC: the US date style the app uses everywhere else
+ * (review T2A-BO-12: the invitation said "9 November 2026" beside screens that
+ * say "Nov 16, 2026").
  *
  * UTC and not the server's zone: the value is being read off a `timestamptz`
  * and shown to somebody who may be anywhere, and a date that disagrees with the
  * row it came from is worse than one that is a few hours out for the reader.
  */
 export function formatEmailDate(value: Date): string {
-  return value.toLocaleDateString("en-GB", {
+  return value.toLocaleDateString("en-US", {
     day: "numeric",
     month: "long",
     year: "numeric",

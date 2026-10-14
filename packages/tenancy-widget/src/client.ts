@@ -102,13 +102,28 @@ export interface TenancyTransport {
 // Shape checks: only what the widget reads, with safe defaults for the rest
 // ---------------------------------------------------------------------------
 
+/** The core four. A project may offer more (Tenancy 2a: Crew); `roleKeyOrNull` accepts any well-formed key. */
 export const ROLE_KEYS: readonly RoleKey[] = ["owner", "admin", "member", "viewer"];
+/** What a role key looks like (the server's `ROLE_KEY_PATTERN`). */
+const ROLE_KEY_RE = /^[a-z][a-z0-9_]{1,31}$/;
 const STATUSES = ["active", "suspended"] as const;
 const KINDS = ["org", "personal"] as const;
 const TEXT_ON = ["#ffffff", "#111111"] as const;
 
+/**
+ * A role key, or null. Tenancy 2a: any well-formed key the server sends (a
+ * project's Crew), not only the core four: dropping an unknown key would
+ * show someone who HAS a role as "No role", and hide it from the selects.
+ * Names and descriptions come from `TeamWire.roles`, never from here.
+ */
 export function roleKeyOrNull(value: unknown): RoleKey | null {
-  return oneOf(value, ROLE_KEYS);
+  return typeof value === "string" && ROLE_KEY_RE.test(value) ? value : null;
+}
+
+/** A role key with no row in `roles`, readable: "crew" → "Crew", "field_lead" → "Field lead". Never blank. */
+export function humanizeRoleKey(key: string): string {
+  const words = key.replace(/_+/g, " ").trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : key;
 }
 
 export function parseCompany(raw: unknown): CompanyWire | null {

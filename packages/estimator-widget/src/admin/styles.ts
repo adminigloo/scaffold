@@ -15,6 +15,8 @@ const CSS_TEXT = `
 .aiew-root.aiew-admin { width: 100%; background: var(--aiew-ground); font-size: 14.5px; border-radius: var(--aiew-radius); }
 .aiew-admin-inner { padding: 16px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 @media (max-width: 480px) { .aiew-admin-inner { padding: 12px; gap: 12px; } }
+/* The settings sections, inside the fieldset that makes them read-only: laid out as if the fieldset weren't there. */
+.aiew-admin-fields { border: 0; padding: 0; margin: 0; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: inherit; }
 .aiew-admin-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
 .aiew-admin-title { font-size: 21px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.25; color: var(--aiew-ink); }
 .aiew-grow { flex: 1 1 auto; min-width: 0; }
@@ -49,6 +51,16 @@ const CSS_TEXT = `
 .aiew-panel-head { padding: 16px 18px 0; display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }
 .aiew-panel-title { font-size: 16.5px; font-weight: 700; color: var(--aiew-ink); }
 .aiew-panel-hint { flex-basis: 100%; font-size: 13.5px; color: var(--aiew-muted); }
+/* The keyed React snippet, folded away under "For developers" (Tenancy 2a review T2A-BO-02). */
+.aiew-developer { border-top: 1px solid var(--aiew-line); padding-top: 12px; }
+.aiew-developer > * + * { margin-top: 12px; }
+.aiew-developer > summary { cursor: pointer; font-weight: 700; color: var(--aiew-ink); padding: 12px 0; }
+/* Company-owned business details, read-only (Tenancy 2a). */
+.aiew-facts { display: grid; gap: 8px; margin: 0; }
+.aiew-facts > div { display: grid; grid-template-columns: minmax(120px, 180px) minmax(0, 1fr); gap: 4px 12px; }
+.aiew-facts dt { font-size: 13px; font-weight: 700; color: var(--aiew-muted); }
+.aiew-facts dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 480px) { .aiew-facts > div { grid-template-columns: 1fr; } }
 .aiew-panel-body { padding: 14px 18px 18px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
 @media (max-width: 480px) { .aiew-panel-head { padding: 14px 14px 0; } .aiew-panel-body { padding: 12px 14px 16px; } }
 .aiew-grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 14px; }
@@ -159,6 +171,7 @@ const CSS_TEXT = `
 .aiew-key[data-revoked] { background: var(--aiew-ground); color: var(--aiew-muted); }
 
 /* Switches and checks */
+.aiew-fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
 .aiew-check { display: flex; align-items: flex-start; gap: 10px; min-height: 44px; padding: 10px 0; cursor: pointer; }
 .aiew-check input { flex: none; width: 20px; height: 20px; margin: 1px 0 0; accent-color: var(--aiew-accent); }
 .aiew-switch { display: flex; align-items: flex-start; gap: 12px; min-height: 44px; padding: 8px 0; cursor: pointer; }

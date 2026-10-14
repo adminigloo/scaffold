@@ -37,6 +37,13 @@ export { TENANCY_ROUTES, TENANCY_OPERATOR_ROUTES, TENANCY_RATE_LIMITS } from "./
 export type { TenancyRoute, TenancyRouteKind, TenancyOperatorRouteKind, TenancyRateBucket } from "./server/routes.js";
 export { isCrossOriginRequest } from "./server/http.js";
 
+// Tenancy 2a: the seams the feature packages take (scheduling, the
+// estimator, invoicing, comms), the cron walker, and the public face's wire.
+export { createCompanyRouteSeams, createPublicCompanySeams } from "./server/company-seams.js";
+export type { CompanyRouteSeams, PublicCompanySeams } from "./server/company-seams.js";
+export { runForEachCompany } from "./server/company-runs.js";
+export type { CompanyRunOptions, CompanyRunReport } from "./server/company-runs.js";
+
 export { TenancyError, TENANCY_ERROR_STATUS } from "./server/errors.js";
 export type { TenancyErrorCode, TenancyErrorDetails } from "./server/errors.js";
 
@@ -55,6 +62,7 @@ export {
   adminCompanyDetailToWire,
   adminPersonToWire,
   adminPeopleToWire,
+  publicCompanyToWire,
 } from "./server/to-wire.js";
 
 export type {
@@ -68,6 +76,7 @@ export type {
   BootstrapForEmailOutcome,
   ChecklistView,
   CompanyChoice,
+  CompanyProfile,
   CompanyView,
   CreateCompanyResult,
   CreateTenancyServiceOptions,
@@ -78,11 +87,13 @@ export type {
   InvitationView,
   IssuedInvitation,
   LogoStore,
+  MemberPerson,
   MemberView,
   PendingForMe,
   PersonRef,
   ProvisionResult,
   PublicCompany,
+  PublicCompanyLookup,
   RequestFacts,
   RoleKey,
   SeatLimitSource,

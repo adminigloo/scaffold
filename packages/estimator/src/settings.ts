@@ -50,6 +50,12 @@ export interface EstimatorSettings extends EstimatorSettingsValues {
   saved: boolean;
   sampleLoadedAt: Date | null;
   updatedAt: Date | null;
+  /** The company's logo when a company seam supplied the basics (Tenancy 2a); null otherwise. */
+  logoUrl: string | null;
+  /** True when a `company` seam supplied the name, contact, zone and colour (D5). */
+  managedByCompany: boolean;
+  /** The ceiling that applied to aiDailyBudgetCents, when one did (D14). */
+  aiBudgetCeilingCents: number | null;
 }
 
 export const DEFAULT_ESTIMATOR_SETTINGS: Readonly<EstimatorSettingsValues> = Object.freeze({
@@ -191,6 +197,9 @@ function fromRow(row: SettingsRow): EstimatorSettings {
     saved: row.savedAt !== null && row.savedAt !== undefined,
     sampleLoadedAt: row.sampleLoadedAt ?? null,
     updatedAt: row.updatedAt ?? null,
+    logoUrl: null,
+    managedByCompany: false,
+    aiBudgetCeilingCents: null,
   };
 }
 
@@ -202,6 +211,9 @@ export function defaultEstimatorSettings(tenantId: string): EstimatorSettings {
     saved: false,
     sampleLoadedAt: null,
     updatedAt: null,
+    logoUrl: null,
+    managedByCompany: false,
+    aiBudgetCeilingCents: null,
   };
 }
 
@@ -266,7 +278,10 @@ export const SETTINGS_INCOMPLETE_MESSAGE = "Add your business name and tax rate 
  * caller lacks `estimator.costs.view`) the default labor rate is null: it is
  * what an hour of the business's work costs (review ADV-3).
  */
-export function toSettingsWire(settings: EstimatorSettings, options: { includeCosts?: boolean } = {}): EstimatorSettingsWire {
+export function toSettingsWire(
+  settings: EstimatorSettings,
+  options: { includeCosts?: boolean; companySettingsHref?: string | null } = {},
+): EstimatorSettingsWire {
   return {
     businessName: settings.businessName,
     contactEmail: settings.contactEmail,
@@ -289,6 +304,8 @@ export function toSettingsWire(settings: EstimatorSettings, options: { includeCo
     sampleLoadedAt: settings.sampleLoadedAt ? settings.sampleLoadedAt.toISOString() : null,
     saved: settings.saved,
     updatedAt: settings.updatedAt ? settings.updatedAt.toISOString() : null,
+    managedByCompany: settings.managedByCompany ? { href: options.companySettingsHref ?? null } : null,
+    aiBudgetCeilingCents: settings.aiBudgetCeilingCents,
   };
 }
 

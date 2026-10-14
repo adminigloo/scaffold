@@ -6,6 +6,7 @@ import { CameraIcon, ChevronIcon, copyText, CopyField, Dialog, Field, Loading, N
 import { resizePhoto } from "../photo.js";
 import type { CustomerInputs } from "../types.js";
 import type { EstimatorAdminTransport } from "./client.js";
+import { hrefFor } from "./EstimatesQueue.js";
 import { adminErrorText, bpToInput, centsToInput, parseMoneyInput, parsePercentInput, SOURCE_LABEL, statusLabel } from "./helpers.js";
 import type { AdminProduct, EstimateAction, EstimateDetail, EstimateLineWire, EstimateMutationResponse, EstimatePhoto, LinkedInvoice } from "./types.js";
 import { AdminFrame, Check, LoadError, Panel, ToastRegion, useAdminBasics, useAdminTransport, useToasts, type AdminChromeProps } from "./ui.js";
@@ -43,6 +44,22 @@ export interface EstimateEditorProps extends AdminChromeProps {
   onChange?: (estimate: EstimateDetail) => void;
   /** Open another estimate (after "Duplicate"). */
   onOpenEstimate?: (id: string) => void;
+  /**
+   * Where another estimate opens (Tenancy 2a): a pattern with `{id}`
+   * ("/app/estimates/{id}") or a function. Without `onOpenEstimate`, opening
+   * the copy a Duplicate made navigates here.
+   */
+  estimateHref?: string | ((id: string) => string);
+  /**
+   * Default true; false = read-only (Tenancy 2a: a company's viewer, who may
+   * look at estimates but not work them). Everything is shown — the customer,
+   * photos, lines, totals, what's linked — and nothing is offered to change:
+   * no actions, no edits, no photo added or removed, the office notes as
+   * text. The server refuses those changes anyway; this stops offering
+   * buttons that would only be refused. Pass
+   * `can.includes("estimator.estimates.manage")`.
+   */
+  canManage?: boolean;
 }
 
 type DialogKind = null | "send" | "revise" | "yes" | "no" | "convert";
@@ -162,10 +179,14 @@ export function EstimateEditor(props: EstimateEditorProps) {
   }
 
   const money = (cents: number) => formatMoney(cents, estimate.currency, locale);
-  const editable = estimate.actions.includes("edit");
+  // The server says what this estimate's STATE allows; whether this PERSON
+  // may act on it is the page's to say (`canManage`). Read-only offers none.
+  const canManage = props.canManage !== false;
+  const actions: readonly EstimateAction[] = canManage ? estimate.actions : [];
+  const editable = actions.includes("edit");
   const status = statusLabel(estimate);
   const id = estimate.id;
-  const has = (action: EstimateAction) => estimate.actions.includes(action);
+  const has = (action: EstimateAction) => actions.includes(action);
   const sendBlock = !estimate.customerEmail ? "Add the customer's email address to send the quote." : estimate.lines.length === 0 ? "Add at least one line before sending." : null;
   const emailsOff = basics.status ? !basics.status.delivery.emails : false;
 
@@ -185,7 +206,8 @@ export function EstimateEditor(props: EstimateEditorProps) {
     setBusy(null);
     if (!res.ok) return push("error", adminErrorText(res.error));
     push("ok", `Made a copy: ${res.data.estimate.number}.`);
-    props.onOpenEstimate?.(res.data.estimate.id);
+    if (props.onOpenEstimate) props.onOpenEstimate(res.data.estimate.id);
+    else if (props.estimateHref && typeof window !== "undefined") window.location.assign(hrefFor(props.estimateHref, res.data.estimate.id));
   };
 
   const convert = async () => {
@@ -307,10 +329,16 @@ export function EstimateEditor(props: EstimateEditorProps) {
           {estimate.validUntil && (estimate.status === "sent" || estimate.status === "viewed") ? ` · Good until ${formatDate(estimate.validUntil, locale, basics.settings?.timeZone ?? "UTC")}` : ""}
           {estimate.archivedAt ? " · Archived" : ""}
         </p>
-        <div className="aiew-actionbar" data-aiew-actions="">
-          {ACTION_ORDER.filter(has).map(actionButton)}
-        </div>
-        {!editable && (estimate.status === "sent" || estimate.status === "viewed") ? (
+        {canManage ? (
+          <div className="aiew-actionbar" data-aiew-actions="">
+            {ACTION_ORDER.filter(has).map(actionButton)}
+          </div>
+        ) : (
+          <Notice tone="info" data="read-only">
+            You can see this estimate. Your role can&apos;t change it.
+          </Notice>
+        )}
+        {canManage && !editable && (estimate.status === "sent" || estimate.status === "viewed") ? (
           <p className="aiew-hint">This quote has been sent. Revise it to make changes.</p>
         ) : null}
         {link ? <CopyField label="Quote link" value={link} buttonLabel="Copy link" hint="Anyone with this link can see and answer the quote." /> : null}
@@ -330,12 +358,12 @@ export function EstimateEditor(props: EstimateEditorProps) {
         ) : null}
       </header>
 
-      <CustomerPanel estimate={estimate} editable={editable} mutate={mutate} transport={transport} />
+      <CustomerPanel estimate={estimate} editable={editable} canManage={canManage} mutate={mutate} transport={transport} />
 
-      <PhotosPanel estimate={estimate} mutate={mutate} transport={transport} push={push} />
+      <PhotosPanel estimate={estimate} canManage={canManage} mutate={mutate} transport={transport} push={push} />
 
       <Panel id="lines" title="Lines">
-        {estimate.lines.length === 0 ? <p className="aiew-muted">No lines yet. Add one below.</p> : null}
+        {estimate.lines.length === 0 ? <p className="aiew-muted">{editable ? "No lines yet. Add one below." : "No lines yet."}</p> : null}
         {estimate.lines.map((line, i) => (
           <LineCard
             key={line.id}
@@ -496,7 +524,19 @@ function BlurField({
   );
 }
 
-function CustomerPanel({ estimate, editable, mutate, transport }: { estimate: EstimateDetail; editable: boolean; mutate: Mutate; transport: EstimatorAdminTransport }) {
+function CustomerPanel({
+  estimate,
+  editable,
+  canManage,
+  mutate,
+  transport,
+}: {
+  estimate: EstimateDetail;
+  editable: boolean;
+  canManage: boolean;
+  mutate: Mutate;
+  transport: EstimatorAdminTransport;
+}) {
   const ids = useId();
   const save = (patch: Parameters<EstimatorAdminTransport["updateEstimate"]>[1]) => void mutate("customer", () => transport.updateEstimate(estimate.id, patch), "Saved.");
   return (
@@ -513,15 +553,22 @@ function CustomerPanel({ estimate, editable, mutate, transport }: { estimate: Es
           <p style={{ whiteSpace: "pre-wrap" }}>{estimate.notes}</p>
         </div>
       ) : null}
-      <BlurField
-        id={`${ids}-internal`}
-        label="Notes for the office"
-        optional
-        multiline
-        hint="Only staff see these. You can change them any time."
-        value={estimate.internalNotes ?? ""}
-        onSave={(v) => save({ internalNotes: v || null })}
-      />
+      {canManage ? (
+        <BlurField
+          id={`${ids}-internal`}
+          label="Notes for the office"
+          optional
+          multiline
+          hint="Only staff see these. You can change them any time."
+          value={estimate.internalNotes ?? ""}
+          onSave={(v) => save({ internalNotes: v || null })}
+        />
+      ) : estimate.internalNotes ? (
+        <div className="aiew-sub-box" data-aiew-office-notes="">
+          <strong>Notes for the office</strong>
+          <p style={{ whiteSpace: "pre-wrap" }}>{estimate.internalNotes}</p>
+        </div>
+      ) : null}
     </Panel>
   );
 }
@@ -532,11 +579,13 @@ function CustomerPanel({ estimate, editable, mutate, transport }: { estimate: Es
 
 function PhotosPanel({
   estimate,
+  canManage,
   mutate,
   transport,
   push,
 }: {
   estimate: EstimateDetail;
+  canManage: boolean;
   mutate: Mutate;
   transport: EstimatorAdminTransport;
   push: (tone: "ok" | "warn" | "error", text: string) => void;
@@ -567,34 +616,38 @@ function PhotosPanel({
                 <img src={photo.url} alt="" />
               </button>
               <span className="aiew-hint">{photo.source === "staff" ? "Added by staff" : "From the customer"}</span>
-              <button
-                type="button"
-                className="aiew-btn aiew-btn-secondary aiew-btn-sm"
-                onClick={() => void mutate("photo-remove", () => transport.removePhoto(estimate.id, photo.id), "Photo removed.")}
-              >
-                Remove
-              </button>
+              {canManage ? (
+                <button
+                  type="button"
+                  className="aiew-btn aiew-btn-secondary aiew-btn-sm"
+                  onClick={() => void mutate("photo-remove", () => transport.removePhoto(estimate.id, photo.id), "Photo removed.")}
+                >
+                  Remove
+                </button>
+              ) : null}
             </li>
           ))}
         </ul>
       ) : null}
-      <div className="aiew-photo-actions">
-        <input
-          id={`${ids}-file`}
-          className="aiew-file"
-          type="file"
-          accept="image/*"
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            event.target.value = "";
-            if (file) void add(file);
-          }}
-        />
-        <label htmlFor={`${ids}-file`} className="aiew-btn aiew-btn-secondary" aria-busy={adding || undefined}>
-          <CameraIcon />
-          {adding ? "Adding…" : "Add photo"}
-        </label>
-      </div>
+      {canManage ? (
+        <div className="aiew-photo-actions">
+          <input
+            id={`${ids}-file`}
+            className="aiew-file"
+            type="file"
+            accept="image/*"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              if (file) void add(file);
+            }}
+          />
+          <label htmlFor={`${ids}-file`} className="aiew-btn aiew-btn-secondary" aria-busy={adding || undefined}>
+            <CameraIcon />
+            {adding ? "Adding…" : "Add photo"}
+          </label>
+        </div>
+      ) : null}
       {current && open !== null ? (
         <Lightbox photos={photos} index={open} onIndex={setOpen} onClose={() => setOpen(null)} />
       ) : null}

@@ -1,13 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_TAKEOFF_MODEL, TAKEOFF_MODEL_RATES, estimatorPermissions } from "__SCOPE__/estimator";
+import { DEFAULT_TAKEOFF_MODEL, TAKEOFF_MODEL_RATES } from "__SCOPE__/estimator";
 import {
   DEFAULT_ESTIMATOR_TAKEOFF_MODEL,
   DEFAULT_ESTIMATOR_TIME_ZONE,
   ESTIMATOR_FAIL_CLOSED_BUCKETS,
+  ESTIMATOR_AI_CEILING_CENTS,
   ESTIMATOR_RATE_LIMITS,
-  ESTIMATOR_STAFF_KEYS,
-  ESTIMATOR_STAFF_KEY_LIST,
-  ESTIMATOR_TENANT,
   estimatorDeliveryStatus,
   estimatorLinks,
   firstEstimatorTimeZone,
@@ -23,13 +21,6 @@ import {
  */
 
 describe("the business", () => {
-  it("is the one tenant every field-service feature shares", () => {
-    // The estimate emails are comms templates under this tenant, a visit
-    // booked from an accepted quote and the invoice it becomes are found under
-    // it: all four must agree, and they agree on "primary".
-    expect(ESTIMATOR_TENANT).toBe("primary");
-  });
-
   it("starts in a real time zone, never UTC", () => {
     expect(firstEstimatorTimeZone([undefined, undefined])).toBe(DEFAULT_ESTIMATOR_TIME_ZONE);
     expect(DEFAULT_ESTIMATOR_TIME_ZONE).toBe("America/Denver");
@@ -61,6 +52,13 @@ describe("photo reading", () => {
     expect(takeoffModelFor(" claude-sonnet-5 ")).toBe("claude-sonnet-5");
   });
 
+  it("caps one company's day of photo reading at $1 in a companies project (D14)", () => {
+    // Every company's reading spends the platform's AI key; the ceiling is
+    // what an owner's own budget is held under.
+    expect(ESTIMATOR_AI_CEILING_CENTS).toBe(100);
+    expect(Number.isInteger(ESTIMATOR_AI_CEILING_CENTS)).toBe(true);
+  });
+
   it("refuses to read a photo when the throttle's store is down — reading spends money", () => {
     expect([...ESTIMATOR_FAIL_CLOSED_BUCKETS]).toEqual(["takeoff"]);
     // Ten readings an hour from one visitor, on top of the package's own daily
@@ -80,19 +78,6 @@ describe("the public API's throttle", () => {
     expect(ESTIMATOR_RATE_LIMITS.submit).toEqual({ limit: 5, windowMs: 60 * 60 * 1000 });
     // The live price follows every keystroke: plenty.
     expect(ESTIMATOR_RATE_LIMITS.calculate.limit).toBeGreaterThanOrEqual(60);
-  });
-});
-
-describe("who may use the staff screens", () => {
-  it("maps every one of the package's permissions to a staff key of its own job", () => {
-    expect(Object.keys(ESTIMATOR_STAFF_KEYS).sort()).toEqual(Object.keys(estimatorPermissions).sort());
-    for (const key of Object.values(ESTIMATOR_STAFF_KEYS)) expect(key).toMatch(/^staff\.estimates\.[a-z]+$/);
-    // One key per job: seeing costs, changing prices and changing settings are
-    // never the same key as seeing the leads.
-    expect(new Set(Object.values(ESTIMATOR_STAFF_KEYS)).size).toBe(5);
-    expect(ESTIMATOR_STAFF_KEY_LIST).toHaveLength(5);
-    expect(ESTIMATOR_STAFF_KEYS["estimator.costs.view"]).toBe("staff.estimates.costs");
-    expect(ESTIMATOR_STAFF_KEYS["estimator.view"]).toBe("staff.estimates.view");
   });
 });
 

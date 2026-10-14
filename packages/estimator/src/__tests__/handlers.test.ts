@@ -518,6 +518,9 @@ describe("admin: costs only with estimator.costs.view", () => {
     expect(status.notices[0].message).toBe(
       "Your estimate page is closed, and quotes can't be sent, until you save your business name and tax rate in Settings.",
     );
+    // The form shows the rate EMPTY until it is saved, so the notice never
+    // quotes a default the screen doesn't show (review T2A-BO-06).
+    expect(status.notices[2].message).toBe("Your sales tax rate isn't saved yet. Enter it in Estimate settings.");
     await issueClientKey(t.db, { tenantId, label: "site" });
     const withKey = await readJson(await staff(tenantId, { costs: true }, { photoReading: false })("GET", "status"));
     expect(withKey.notices.map((n: { code: string }) => n.code)).toContain("reading_off");

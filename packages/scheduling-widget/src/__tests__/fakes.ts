@@ -202,6 +202,7 @@ export function settingsWire(extra: Partial<SettingsWire> = {}): SettingsWire {
     cancelCutoffHours: 24,
     saved: true,
     updatedAt: "2026-10-01T00:00:00.000Z",
+    managedByCompany: null,
     ...extra,
   };
 }
@@ -259,6 +260,8 @@ export function crewDay(extra: Partial<CrewDayResponse> = {}): CrewDayResponse {
     ],
     totals: { visits: 2, driveMinutes: 30, distanceMiles: 13.2, estimated: false },
     routeUrl: "https://www.google.com/maps/dir/?api=1&origin=1%20Depot%20Rd&destination=9%20Oak%20Ave&travelmode=driving",
+    // A dispatcher's view by default (may page through days); a crew member's is todayOnly.
+    todayOnly: false,
     ...extra,
   };
 }

@@ -1,30 +1,23 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_SCHEDULING_SETTINGS,
-  SCHEDULING_ADMIN_ROUTE_PERMISSIONS,
-  schedulingPermissions,
   settingsToPolicy,
   updateSchedulingSettingsSchema,
 } from "__SCOPE__/scheduling";
 import {
   BOOK_VISIT_PATH,
-  CREW_ROLE,
-  CREW_ROLE_KEYS,
   DEFAULT_SCHEDULING_TIME_ZONE,
   FIRST_SERVICE,
   SCHEDULING_RATE_LIMITS,
-  SCHEDULING_STAFF_KEYS,
-  SCHEDULING_TENANT,
-  crewAccessChange,
   firstSchedulingSettings,
-  schedulingAuditedActions,
   schedulingDeliveryStatus,
   schedulingLinks,
 } from "@/server/scheduling-config";
 
 /**
- * The decisions this project makes about scheduling, checked without a
- * database. The route files are a few lines that pass these to the package's
+ * The decisions this project makes about scheduling in BOTH modes, checked
+ * without a database. (The single-business mode's own — the fixed business,
+ * its staff keys, the crew staff role — are in scheduling-staff.test.ts.) The route files are a few lines that pass these to the package's
  * handlers; what can be wrong is here.
  */
 
@@ -76,48 +69,6 @@ describe("the first settings a business starts with", () => {
     const settings = firstSchedulingSettings({});
     expect(settings.publicBookingEnabled).toBe(false);
     expect(settings.businessName).toBe("");
-  });
-});
-
-describe("who may use the staff screens", () => {
-  it("maps every permission the package can ask for, one staff key per job (BO-02)", () => {
-    // A key the handler asks for and this table lacks would be checked as
-    // `undefined` — denied to everybody, with no error anywhere.
-    const asked = new Set(Object.values(SCHEDULING_ADMIN_ROUTE_PERMISSIONS));
-    for (const permission of asked) {
-      expect(SCHEDULING_STAFF_KEYS[permission], permission).toMatch(/^staff\.schedule\./);
-    }
-    expect(Object.keys(SCHEDULING_STAFF_KEYS).sort()).toEqual(Object.keys(schedulingPermissions).sort());
-    // Not the key that admits somebody to the whole admin shell: a crew
-    // member's route must not need the office's full power.
-    expect(Object.values(SCHEDULING_STAFF_KEYS)).not.toContain("staff.dashboard.view");
-    expect(new Set(Object.values(SCHEDULING_STAFF_KEYS)).size).toBe(4);
-    expect(SCHEDULING_STAFF_KEYS["schedule.route"]).toBe("staff.schedule.route");
-  });
-});
-
-describe("giving a crew member their route (BO-06)", () => {
-  it("grants the crew role only to somebody with no staff role", () => {
-    expect(crewAccessChange({ linked: true, currentRoleKey: null, stillOnAnotherCrew: false })).toBe("grant");
-    // The owner picking themselves for a van is never demoted to crew.
-    expect(crewAccessChange({ linked: true, currentRoleKey: "admin", stillOnAnotherCrew: false })).toBeNull();
-    expect(crewAccessChange({ linked: true, currentRoleKey: CREW_ROLE.key, stillOnAnotherCrew: false })).toBeNull();
-  });
-
-  it("takes the crew role away when no crew names them any more — and only the crew role", () => {
-    expect(crewAccessChange({ linked: false, currentRoleKey: CREW_ROLE.key, stillOnAnotherCrew: false })).toBe("revoke");
-    expect(crewAccessChange({ linked: false, currentRoleKey: CREW_ROLE.key, stillOnAnotherCrew: true })).toBeNull();
-    expect(crewAccessChange({ linked: false, currentRoleKey: "cs_lead", stillOnAnotherCrew: false })).toBeNull();
-    expect(crewAccessChange({ linked: false, currentRoleKey: null, stillOnAnotherCrew: false })).toBeNull();
-  });
-
-  it("holds the crew's own route and nothing else", () => {
-    expect(CREW_ROLE_KEYS).toEqual(["staff.schedule.route"]);
-  });
-
-  it("writes the grant to the audit log as sensitive access", () => {
-    expect(schedulingAuditedActions["scheduling.crew.access.granted"].sensitive).toBe(true);
-    expect(schedulingAuditedActions["scheduling.crew.access.revoked"].label).toBeTruthy();
   });
 });
 
@@ -200,8 +151,4 @@ describe("links on this deployment", () => {
   it("include the sign-in page a new crew member is sent to", () => {
     expect(schedulingLinks("https://acme.example").signIn).toBe("https://acme.example/sign-in");
   });
-});
-
-it("schedules for the comms tenant, so the visit emails show up in /admin/comms", () => {
-  expect(SCHEDULING_TENANT).toBe("primary");
 });

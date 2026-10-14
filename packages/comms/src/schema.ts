@@ -84,6 +84,18 @@ export const commsMessages = pgTable(
      * must not be coupled to the queue's lifecycle.
      */
     scheduledId: text("scheduled_id"),
+    /**
+     * The From display name this email went out under (Tenancy 2a, D8): the
+     * company's name on the platform's address. null = the sender's default,
+     * or not an email. Recorded from the identity actually handed to the
+     * sender, so the owner can see in Messages what their customers saw.
+     *
+     * Upgrading from 0.2: `alter table comms_messages add column if not exists
+     * from_name text, add column if not exists reply_to text;`
+     */
+    fromName: text("from_name"),
+    /** The Reply-To it carried; null = the sender's default. */
+    replyTo: text("reply_to"),
     createdAt: createdAt(),
   },
   (t) => [

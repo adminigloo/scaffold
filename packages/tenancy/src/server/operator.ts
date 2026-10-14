@@ -138,7 +138,7 @@ export async function listCompanies(
 }
 
 async function detailOf(ctx: Ctx, db: TenancyDb, company: CompanyRow, can: ReadonlySet<string>): Promise<AdminCompanyDetail> {
-  const options = await roleOptions(db, company.id);
+  const options = await roleOptions(db, company.id, ctx.roles);
   const people = await q(
     db,
     sql`/* adminigloo:tenancy/admin-people-refs */
@@ -571,10 +571,28 @@ export async function setStaffRole(
 }
 
 /** `/t/{slug}`: the public face (no permission). Suspended and deleted companies don't resolve; a retired address follows to its company. */
+/**
+ * An ACTIVE company by its web address: Tenancy 1's public lookup, now
+ * `resolvePublicCompany` filtered to active (Tenancy 2a, 4.2). Its behaviour
+ * is unchanged: a suspended company is null here.
+ */
 export async function resolveCompanyBySlug(
   ctx: Ctx,
   slug: string,
 ): Promise<{ company: import("./types.js").PublicCompany; retiredSlug: string | null } | null> {
+  const found = await resolvePublicCompany(ctx, slug);
+  if (!found || found.status !== "active") return null;
+  return { company: found.company, retiredSlug: found.retiredSlug };
+}
+
+/**
+ * A company by its web address (current or retired), WITH its status
+ * (Tenancy 2a, D7): a suspended company is returned as "suspended", so its
+ * public pages can say plainly that it isn't taking requests instead of a
+ * 404. Unknown, deleted, or a personal workspace → null. One query for a
+ * current address; a second only for a retired one.
+ */
+export async function resolvePublicCompany(ctx: Ctx, slug: string): Promise<import("./types.js").PublicCompanyLookup | null> {
   const wanted = slug.trim().toLowerCase();
   if (!wanted || wanted.length > 64) return null;
   let rows = await q(
@@ -594,7 +612,7 @@ export async function resolveCompanyBySlug(
   }
   if (!rows[0]) return null;
   const company = companyRow(rows[0]);
-  if (company.deletedAt !== null || company.suspendedAt !== null) return null;
+  if (company.deletedAt !== null) return null;
   const fragment = ctx.settings.get("company");
   const details = fragment ? parseFragment(fragment, (company.settings as Record<string, unknown> | null)?.["company"]).value : {};
   return {
@@ -607,7 +625,9 @@ export async function resolveCompanyBySlug(
       onBrandColor: company.branding.onBrandColor ?? null,
       contactEmail: strOrNull(details["contactEmail"]),
       contactPhone: strOrNull(details["contactPhone"]),
+      timeZone: strOrNull(details["timeZone"]),
     },
     retiredSlug,
+    status: company.suspendedAt === null ? "active" : "suspended",
   };
 }

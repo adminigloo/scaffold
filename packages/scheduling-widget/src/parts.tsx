@@ -8,7 +8,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { injectSchedulingStyles } from "./styles.js";
+import { brandStyle, injectSchedulingStyles, normalizeHex } from "./styles.js";
 import { useHostTheme, useStyles, type ThemeChoice } from "./theme.js";
 import { formatClock, formatDayTile, formatLongDate, groupByPartOfDay } from "./time.js";
 import type { DateString, PublicSlot } from "./types.js";
@@ -48,6 +48,7 @@ export function WidgetRoot({
   extraStyles,
   children,
   data,
+  accent,
 }: {
   theme?: ThemeChoice;
   nonce?: string;
@@ -58,6 +59,12 @@ export function WidgetRoot({
   children: ReactNode;
   /** `data-*` attributes for the root (tests and host CSS hooks). */
   data?: Record<string, string | undefined>;
+  /**
+   * The business's own colour (Tenancy 2a): a `#rrggbb` brands the root
+   * (`data-brand` and both themes' accent tokens inline); null or anything
+   * else keeps the stylesheet's accent.
+   */
+  accent?: string | null;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const inject = useCallback(() => {
@@ -66,14 +73,16 @@ export function WidgetRoot({
   }, [nonce, extraStyles]);
   useStyles(inject);
   const resolved = useHostTheme(ref, theme);
+  const colour = normalizeHex(accent);
   const dataAttrs: Record<string, string> = {};
   for (const [key, value] of Object.entries(data ?? {})) if (value !== undefined) dataAttrs[`data-${key}`] = value;
   return (
     <div
       ref={ref}
       className={`aisw-root${extraClass ? ` ${extraClass}` : ""}${className ? ` ${className}` : ""}`}
-      style={style}
+      style={colour ? ({ ...brandStyle(colour), ...(style ?? {}) } as CSSProperties) : style}
       data-theme={resolved}
+      {...(colour ? { "data-brand": "" } : {})}
       {...dataAttrs}
     >
       {children}

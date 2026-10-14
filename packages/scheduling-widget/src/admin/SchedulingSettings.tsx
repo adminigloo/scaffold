@@ -69,9 +69,19 @@ export interface SchedulingSettingsProps extends ChromeProps {
   bookingPageUrl?: string;
   /** Where a new crew member signs in once, so they can be picked for their crew. Shown beside the picker. */
   signInUrl?: string;
+  /**
+   * Where the owner invites people (Tenancy 2a, a company's Team page). When
+   * given, the crew-person picker's hint is "Not listed? Invite them on the
+   * Team page." linking here, in place of the sign-in hint: in a company the
+   * picker lists the company's own people, and the way in is an invitation.
+   */
+  inviteHref?: string | null;
 }
 
 const ALL_SECTIONS: SettingsSection[] = ["business", "booking", "messages", "crews", "hours"];
+
+/** The cards a link can open on (the setup checklist links "#booking" and "#crews"). */
+const DEEP_LINKS: ReadonlySet<string> = new Set(["booking", "crews", "hours", "business", "messages"]);
 
 export function SchedulingSettings(props: SchedulingSettingsProps) {
   const locale = props.locale ?? "en-US";
@@ -120,6 +130,25 @@ export function SchedulingSettings(props: SchedulingSettingsProps) {
       alive = false;
     };
   }, [transport, reload]);
+
+  // Deep links (the setup checklist's "#booking", "#crews", "#hours"): once
+  // the cards are on the page, scroll to that card and put focus on its
+  // heading, so a keyboard or screen-reader user lands where the link said.
+  const cardsReady = Boolean(settings && resources);
+  useEffect(() => {
+    if (!cardsReady || typeof window === "undefined") return;
+    const focusHash = () => {
+      const hash = window.location.hash.replace(/^#/, "");
+      if (!DEEP_LINKS.has(hash)) return;
+      const heading = document.querySelector<HTMLElement>(`[data-aisw-card="${hash}"] .aisw-card-title`);
+      if (!heading) return;
+      if (typeof heading.scrollIntoView === "function") heading.scrollIntoView({ block: "start" });
+      heading.focus();
+    };
+    focusHash();
+    window.addEventListener("hashchange", focusHash);
+    return () => window.removeEventListener("hashchange", focusHash);
+  }, [cardsReady]);
 
   const replaceResource = useCallback((next: AdminResource) => {
     setResources((list) => {
@@ -172,6 +201,7 @@ export function SchedulingSettings(props: SchedulingSettingsProps) {
                       locale={locale}
                       people={people}
                       signInUrl={props.signInUrl}
+                      inviteHref={props.inviteHref ?? null}
                       onChanged={replaceResource}
                     />
                   ) : null;
@@ -203,9 +233,11 @@ export function SchedulingSettings(props: SchedulingSettingsProps) {
 function Card({ id, title, hint, children }: { id: string; title: string; hint?: string; children: ReactNode }) {
   const headingId = useId();
   return (
-    <section className="aisw-card" aria-labelledby={headingId} data-aisw-card={id}>
+    // `id` is the card's plain name, so "#booking" in a link scrolls here
+    // natively too; the heading takes focus (tabIndex -1) for deep links.
+    <section className="aisw-card" aria-labelledby={headingId} data-aisw-card={id} id={id}>
       <div className="aisw-card-head">
-        <h3 className="aisw-card-title" id={headingId}>
+        <h3 className="aisw-card-title" id={headingId} tabIndex={-1}>
           {title}
         </h3>
         {hint ? <p className="aisw-card-hint">{hint}</p> : null}
@@ -324,18 +356,25 @@ function BusinessCard({
     contactEmail: settings.contactEmail ?? "",
     staffNotifyEmails: settings.staffNotifyEmails.length > 0 ? [...settings.staffNotifyEmails] : [""],
   };
+  // Tenancy 2a, D6: the name, zone and contact belong to the company. They
+  // are shown read-only and a save sends none of them (the server would
+  // drop them anyway); the office alert addresses stay scheduling's own.
+  const managed = settings.managedByCompany;
   const form = useSettingsDraft(
     initial,
     transport,
-    (d) => ({
-      businessName: d.businessName.trim(),
-      timeZone: d.timeZone,
-      contactPhone: d.contactPhone.trim() || null,
-      contactEmail: d.contactEmail.trim() || null,
-      staffNotifyEmails: d.staffNotifyEmails.map((e) => e.trim()).filter(Boolean),
-    }),
+    (d) =>
+      managed
+        ? { staffNotifyEmails: d.staffNotifyEmails.map((e) => e.trim()).filter(Boolean) }
+        : {
+            businessName: d.businessName.trim(),
+            timeZone: d.timeZone,
+            contactPhone: d.contactPhone.trim() || null,
+            contactEmail: d.contactEmail.trim() || null,
+            staffNotifyEmails: d.staffNotifyEmails.map((e) => e.trim()).filter(Boolean),
+          },
     onSaved,
-    () => (tellCustomers ? { notifyCustomers: true } : {}),
+    () => (tellCustomers && !managed ? { notifyCustomers: true } : {}),
   );
   const { draft, set, fields } = form;
   const upcoming = status?.upcomingVisits ?? 0;
@@ -355,6 +394,34 @@ function BusinessCard({
     <Card id="business" title="Business" hint="Shown to customers on the booking page and in every email.">
       <form className="aisw-stack" onSubmit={(event) => void form.save(event)} noValidate>
         <fieldset disabled={!canManage} className="aisw-stack" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+          {managed ? (
+            <div className="aisw-stack-sm" data-aisw-managed="">
+              <p className="aisw-hint">
+                These come from your company settings.{" "}
+                {managed.href ? <a href={managed.href}>Change them in company settings</a> : null}
+              </p>
+              <dl className="aisw-facts">
+                <div className="aisw-fact">
+                  <dt>Business name</dt>
+                  <dd>{settings.businessName || "Not set yet"}</dd>
+                </div>
+                <div className="aisw-fact">
+                  <dt>Time zone</dt>
+                  <dd>{zoneLabel(settings.timeZone, null)}</dd>
+                </div>
+                <div className="aisw-fact">
+                  <dt>Contact email</dt>
+                  <dd>{settings.contactEmail ?? "Not set yet"}</dd>
+                </div>
+                <div className="aisw-fact">
+                  <dt>Contact phone</dt>
+                  <dd>{settings.contactPhone ?? "Not set yet"}</dd>
+                </div>
+              </dl>
+            </div>
+          ) : null}
+          {managed ? null : (
+          <>
           <Field id={`${ids}-name`} label="Business name" error={fields.businessName ?? null}>
             <input
               id={`${ids}-name`}
@@ -427,9 +494,20 @@ function BusinessCard({
               <input id={`${ids}-email`} className="aisw-input" type="email" value={draft.contactEmail} maxLength={320} onChange={(event) => set("contactEmail", event.target.value)} />
             </Field>
           </div>
+          </>
+          )}
           <fieldset className="aisw-stack-sm" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
             <legend className="aisw-label">Send new-request alerts to</legend>
             <p className="aisw-hint">Up to 5 addresses. They also hear when a customer moves or cancels online.</p>
+            {/* Empty isn't "nobody" (review T2A-BO-14): with a company, the
+                alerts go to its contact email, else its owner. */}
+            {managed && draft.staffNotifyEmails.every((e) => !e.trim()) ? (
+              <p className="aisw-hint" data-aisw-alerts-default="">
+                {settings.contactEmail
+                  ? `Leave it empty and alerts go to ${settings.contactEmail}, your company's contact email.`
+                  : "Leave it empty and alerts go to your company's owner."}
+              </p>
+            ) : null}
             {draft.staffNotifyEmails.map((email, index) => (
               <div key={index} className="aisw-row">
                 <input
@@ -907,6 +985,7 @@ function CrewForm({
   locale,
   people,
   signInUrl,
+  inviteHref,
   onSubmit,
   onCancel,
 }: {
@@ -917,6 +996,7 @@ function CrewForm({
   /** Who can be picked to open this crew's route; null: type the login instead; undefined: still loading. */
   people: PersonOption[] | null | undefined;
   signInUrl?: string | undefined;
+  inviteHref?: string | null | undefined;
   onSubmit: (input: ResourceInput) => Promise<ClientError | null>;
   onCancel?: () => void;
 }) {
@@ -999,7 +1079,16 @@ function CrewForm({
             id={`${ids}-user`}
             label="Who opens this crew's route"
             optional
-            hint={`Picking someone lets them open Today's route on their phone with their own sign-in — their stops only. Not in the list? Ask them to sign in once${signInUrl ? ` at ${signInUrl}` : ""}, then pick them here.`}
+            hint={
+              inviteHref ? (
+                <>
+                  Picking someone lets them open Today's route on their phone with their own sign-in — their stops only. Not listed?{" "}
+                  <a href={inviteHref}>Invite them on the Team page.</a>
+                </>
+              ) : (
+                `Picking someone lets them open Today's route on their phone with their own sign-in — their stops only. Not in the list? Ask them to sign in once${signInUrl ? ` at ${signInUrl}` : ""}, then pick them here.`
+              )
+            }
             error={fields.userId ?? null}
           >
             <select id={`${ids}-user`} className="aisw-input" value={draft.userId} onChange={(event) => set("userId", event.target.value)}>
@@ -1049,6 +1138,7 @@ function CrewsCard({
   locale,
   people,
   signInUrl,
+  inviteHref,
   onChanged,
 }: {
   resources: AdminResource[];
@@ -1057,6 +1147,7 @@ function CrewsCard({
   locale: string;
   people: PersonOption[] | null | undefined;
   signInUrl?: string | undefined;
+  inviteHref?: string | null | undefined;
   onChanged: (resource: AdminResource) => void;
 }) {
   const [editing, setEditing] = useState<string | null>(null);
@@ -1109,6 +1200,7 @@ function CrewsCard({
                   locale={locale}
                   people={people}
                   signInUrl={signInUrl}
+                  inviteHref={inviteHref}
                   onCancel={() => setEditing(null)}
                   onSubmit={async (input) => {
                     const res = await transport.updateResource(r.id, input);
@@ -1149,6 +1241,7 @@ function CrewsCard({
               locale={locale}
               people={people}
               signInUrl={signInUrl}
+                  inviteHref={inviteHref}
               onCancel={() => setAdding(false)}
               onSubmit={async (input) => {
                 const res = await transport.createResource(input);

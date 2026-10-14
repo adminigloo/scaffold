@@ -21,7 +21,12 @@ export type TenancyErrorCode =
   | "logo_storage_off" | "logo_invalid" | "rate_limited" | "internal";
 
 export type Instant = string;           // ISO 8601, UTC ("2026-10-12T15:04:05.000Z")
-export type RoleKey = "owner" | "admin" | "member" | "viewer";
+/**
+ * A role's key. The core four always exist; a project may add more (Crew,
+ * with scheduling), so any lowercase key is valid on the wire. The server
+ * sends each role's name, description and rank (TeamWire.roles).
+ */
+export type RoleKey = "owner" | "admin" | "member" | "viewer" | (string & {});
 export type CompanyStatus = "active" | "suspended";
 export type CompanyKind = "org" | "personal";
 
@@ -210,4 +215,10 @@ export interface AdminPeopleWire {
   you: { userId: string; roleKey: string | null };
 }
 export interface StaffRoleBody { templateKey: string | null }
+export interface PublicCompanyWire {
+  name: string; slug: string; publicPath: string;
+  logoUrl: string | null; brandColor: string | null; onBrandColor: "#ffffff" | "#111111" | null;
+  contactEmail: string | null; contactPhone: string | null;
+  status: "active" | "suspended";
+}
 // WIRE:END

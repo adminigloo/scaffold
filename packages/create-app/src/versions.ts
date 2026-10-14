@@ -56,7 +56,12 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // the emitted code calls the export that does it. Owning a tenant conferred
   // nothing before that, so a project on 0.2.x compiles and grants nobody
   // anything.
-  tenancy: "0.4.0",
+  // 0.5.0 (Tenancy 2a): the companies project's feature glue builds its routes
+  // on createCompanyRouteSeams / createPublicCompanySeams, reads every company's
+  // basics through companyProfile, runs the crons through runForEachCompany
+  // over activeCompanyIds, composes its roles with defineTenantRoles (Crew) and
+  // renders public pages through resolvePublicCompany. None exist in 0.4.x.
+  tenancy: "0.5.0",
   permissions: "0.2.0",
   // 0.2.0 rather than 0.1.x because `requireTenant(...).input(...)` did not
   // compile before it. `^0.1.0` would resolve to a build a generated project
@@ -91,7 +96,9 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // to the signatures nothing here calls.
   billing: "0.2.1",
   ai: "0.1.5",
-  email: "0.2.1",
+  // 0.3.0 (Tenancy 2a, D8): a per-message From name and Reply-To, so a
+  // company's email carries its name on the platform's verified address.
+  email: "0.3.0",
   // First releases, all three proven on adminigloo.com before they were
   // offered here — the same publish → dogfood → template rhythm feedback
   // followed. The emitted routers import from each unconditionally, so a
@@ -155,12 +162,16 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // ./anthropic, the cron calls expireQuotes and purgeOrphanPhotos, and the
   // glue calls markEstimateConverted, getEstimate and the estimator_settings
   // table — none of which exist (or have these shapes) in 0.2.x.
-  estimator: "0.3.0",
+  // 0.4.0 (Tenancy 2a): company, admit on both paths, the AI ceiling, async
+  // links and inbox, checklist items, route tables. None exist in 0.3.
+  estimator: "0.4.0",
   // 0.2.0: the estimate page, the quote page and the four staff pages render
   // its components (EstimateTool, QuoteView, EstimatesQueue, EstimateEditor,
   // PriceBook, EstimatorSettings, EmbedKeys). It speaks 0.3's wire, so it
   // moves with estimator 0.3 and never with 0.2; 0.1.x had only the modal.
-  "estimator-widget": "0.2.0",
+  // 0.3.0: pattern hrefs a server page can pass ("/app/estimates/{id}"), the
+  // closed-by-the-business message, the logo, the ceiling hint, #embed.
+  "estimator-widget": "0.3.0",
   // 0.3.0: the emitted public procedures call findPublicSlots (PublicSlots only —
   // 0.2's slots route returned the previous customer's street address) and
   // requestPublicBooking with a requesterKey (server-derived times and crew,
@@ -180,24 +191,45 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // updateSchedulingSettings and runs backfillVisitInstants, and the maps
   // provider is createGoogleMapsProvider behind createCachedMapsProvider —
   // none of which exist in 0.3.x.
-  scheduling: "0.4.0",
+  // 0.5.0 (Tenancy 2a): the companies glue passes the company, admit,
+  // async links and the company inbox, reads settings through
+  // resolveSchedulingSettings (the zone convergence), seeds Crew from
+  // SCHEDULING_CREW_ROLE, lists the checklist items and the isolation proof
+  // drives SCHEDULING_ADMIN_ROUTES / _PUBLIC_ROUTES — none of which exist in 0.4.
+  scheduling: "0.5.0",
   // First release. The booking page, the manage page and the three staff
   // pages render its components; it speaks 0.4's wire, so it moves with
   // scheduling 0.4 and never with 0.3.
-  "scheduling-widget": "0.1.0",
+  // 0.2.0: the company pages pass accentColor and inviteHref, and the settings
+  // screen shows the company-owned fields read-only — none of it in 0.1.
+  "scheduling-widget": "0.2.0",
   // Tenancy 1's screens (onboarding, the switcher, the team page, company
   // settings, the operator console). In the BASE set: the team page is in
   // every project, single-business ones included.
-  "tenancy-widget": "0.1.0",
+  // 0.2.0 (Tenancy 2a): CompanyBrandBar and CompanyUnavailable on every
+  // company's public pages, and any role the server offers (Crew).
+  "tenancy-widget": "0.2.0",
   // 0.2.0 (sweep): line items after creation, atomic idempotent payments,
   // reversals, a status transition table and tenant-scoped reads — the emitted
   // admin page and router call addInvoiceItem/reversePayment/markInvoiceViewed
   // and the {tenantId} signatures, none of which exist in 0.1.x.
-  invoicing: "0.2.0",
+  // 0.3.0 (Tenancy 2a, D3): the ledger is the package's HTTP handlers
+  // (createInvoicingAdminHandlers, createInvoicingHandlers) behind the widget,
+  // token reads scoped to a company, the settings fragment, the invoice email
+  // in ./comms. The 0.2 tRPC router is retired, so nothing older can serve it.
+  invoicing: "0.3.0",
+  // First release (Tenancy 2a): the ledger, one invoice's editor and the
+  // customer's invoice page, over invoicing 0.3's wire.
+  "invoicing-widget": "0.1.0",
   // 0.2.0 (sweep): SMS compliance is required with an SMS sender, the queue is
   // bounded and cancellable, and the emitted router calls setTemplateActive and
   // requireEmailSubject — none exist in 0.1.x.
-  comms: "0.2.2",
+  // 0.3.0 (Tenancy 2a): each company's emails go out under its own name and
+  // reply-to (identity), the drain takes tenantIds, and the Messages console is
+  // the package's createCommsAdminHandlers. The 0.2 tRPC console is retired.
+  comms: "0.3.0",
+  // First release (Tenancy 2a): the Messages console, over comms 0.3's wire.
+  "comms-widget": "0.1.0",
   aeo: "0.1.1",
 };
 

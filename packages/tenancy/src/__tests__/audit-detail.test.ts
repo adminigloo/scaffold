@@ -62,3 +62,20 @@ describe("describeTenancyAuditEntry", () => {
     }
   });
 });
+
+describe("settings changes, in words (review T2A-BO-14)", () => {
+  it("names what changed as an owner would, never a field key", () => {
+    expect(
+      describeTenancyAuditEntry("company.settings.updated", {
+        section: "company",
+        changed: ["timeZone", "contactEmail", "contactPhone", "addressLine1", "city"],
+      }),
+    ).toBe("Business details: time zone, contact email, phone, address");
+    expect(describeTenancyAuditEntry("company.settings.updated", { section: "invoicing", changed: ["paymentInstructions", "dueDays"] })).toBe(
+      "Invoice details: how customers pay, days until due",
+    );
+    expect(describeTenancyAuditEntry("company.settings.updated", { changed: ["timeZone"] })).toBe("Changed: time zone");
+    expect(describeTenancyAuditEntry("company.settings.updated", { section: "crewNotes", changed: ["shiftStartTime"] })).toBe("Crew notes: shift start time");
+    expect(describeTenancyAuditEntry("company.settings.updated", { section: "company", changed: [] })).toBeNull();
+  });
+});

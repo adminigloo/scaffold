@@ -46,7 +46,10 @@ const FULL: Partial<Answers> = {
 };
 
 function answers(overrides: Partial<Answers> = {}): Answers {
-  return { ...DEFAULT_ANSWERS, projectName: "summit-ramps", adminShell: "minimal", includeEstimator: true, ...overrides };
+  // A SINGLE BUSINESS (--tenant-noun none): the estimator this file describes
+  // runs for the one fixed business, at /estimate and /admin/estimates. A
+  // companies project's (each company's own) is tenancy-2a.test.ts's subject.
+  return { ...DEFAULT_ANSWERS, projectName: "summit-ramps", tenantNoun: "none", adminShell: "minimal", includeEstimator: true, ...overrides };
 }
 
 const plan = (overrides: Partial<Answers> = {}) => planEmit(TEMPLATE_DIR, "/out", answers(overrides));
@@ -213,7 +216,8 @@ describe("the pages", () => {
     expect(file(p, "app", "admin", "estimator", "page.tsx")).toContain('<PriceBook baseUrl="/api/admin/estimator" />');
     const settings = file(p, "app", "admin", "estimator", "settings", "page.tsx");
     expect(settings).toContain('<EstimatorSettings baseUrl="/api/admin/estimator" />');
-    expect(settings).toContain('<EmbedKeys baseUrl="/api/admin/estimator" />');
+    // A button and a page frame for any website, and the notices shown once (review T2A-BO-02, T2A-BO-06).
+    expect(settings).toContain('<EmbedKeys baseUrl="/api/admin/estimator" publicPageUrl="/estimate" notices={false} />');
     // A function prop can't cross from the server to the browser: the two
     // pages that pass one are client pages.
     for (const page of [["app", "admin", "estimates", "page.tsx"], ["app", "admin", "estimates", "[id]", "page.tsx"]]) {
@@ -252,7 +256,8 @@ describe("the glue, by what else is installed", () => {
     expect(notify).toContain(`dailyAtUtc: "${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}"`);
     const hooks = code(file(p, "src", "server", "comms-hooks.ts"));
     expect(hooks).toContain('import { estimatorComms } from "@/server/estimator-notify";');
-    expect(hooks).toContain("const PRODUCERS: readonly QueueProducer[] = [schedulingComms, estimatorComms];");
+    // With invoicing too (Tenancy 2a): its invoice-link scrub joins the list.
+    expect(hooks).toContain("const PRODUCERS: readonly QueueProducer[] = [schedulingComms, estimatorComms, invoicingProducer];");
   });
 
   it("names no booking page in an accepted-quote email when there is none", async () => {
@@ -334,11 +339,16 @@ describe("the glue, by what else is installed", () => {
     expect(services).not.toContain("@adminigloo/invoicing");
   });
 
-  it("files invoices under the same business the invoicing router uses", async () => {
+  it("files invoices under the same business the invoicing handlers use", async () => {
+    // The tRPC router is retired (Tenancy 2a, D3): the ledger's handlers are
+    // built in src/server/invoicing.ts, on the same fixed business.
     const p = await plan(FULL);
-    expect(file(p, "src", "server", "routers", "invoicing.ts")).toContain('const INVOICING_TENANT = "primary";');
-    expect(file(p, "src", "server", "estimator-config.ts")).toContain('export const ESTIMATOR_TENANT = "primary";');
+    expect(file(p, "src", "server", "invoicing.ts")).toContain('export const INVOICING_TENANT = "primary";');
+    expect(file(p, "src", "server", "estimator-staff.ts")).toContain('export const ESTIMATOR_TENANT = "primary";');
+    expect(p.files.has(join("src", "server", "routers", "invoicing.ts"))).toBe(false);
     expect(code(file(p, ...SERVICES))).toContain("const INVOICING_TENANT = ESTIMATOR_TENANT;");
+    // An estimate's invoice opens on the ledger's own page, which needs no token.
+    expect(code(file(p, ...SERVICES))).toContain("url: `/admin/invoices/${encodeURIComponent(invoice.id)}`");
   });
 });
 
@@ -352,12 +362,12 @@ describe("answers, packages and the CLI", () => {
     ).rejects.toThrow(IncompatibleAnswersError);
   });
 
-  it("installs the server package and the widget, at the 0.3 / 0.2 lines", () => {
+  it("installs the server package and the widget, at the 0.4 / 0.3 lines (Tenancy 2a)", () => {
     const installed = packagesFor(answers());
     expect(installed).toContain("@adminigloo/estimator");
     expect(installed).toContain("@adminigloo/estimator-widget");
-    expect(versionRangeFor("@adminigloo/estimator")).toBe("^0.3.0");
-    expect(versionRangeFor("@adminigloo/estimator-widget")).toBe("^0.2.0");
+    expect(versionRangeFor("@adminigloo/estimator")).toBe("^0.4.0");
+    expect(versionRangeFor("@adminigloo/estimator-widget")).toBe("^0.3.0");
   });
 
   it("brings comms, storage and email with the estimator unless each is declined", async () => {

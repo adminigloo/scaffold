@@ -35,9 +35,11 @@ import {
   toAdminResource,
   updateResource,
 } from "./resources.js";
+import { COMPANY_OWNED_SETTINGS, SCHEDULING_CREW_ROLE, resolveSchedulingSettings, type SchedulingCompany } from "./company.js";
+import { SCHEDULING_ADMIN_ROUTE_PERMISSIONS, type SchedulingAdminRouteKind } from "./routes.js";
 import { schedulingBookings } from "./schema.js";
 import { findService } from "./services.js";
-import { getSchedulingSettings, toSettingsWire, updateSchedulingSettings, type SchedulingSettings } from "./settings.js";
+import { toSettingsWire, updateSchedulingSettings, type SchedulingSettings } from "./settings.js";
 import { toVisitSnapshot } from "./snapshot.js";
 import { clock12 } from "./words.js";
 import { STAFF_SETTABLE_STATUSES } from "./status.js";
@@ -84,6 +86,15 @@ import { addDays, isValidDateString } from "./zone.js";
  */
 
 export type AuthorizeResult = boolean | { userId?: string | number | null } | Response;
+
+/**
+ * A person `listPeople` returns: the picker's three fields, and — from a host
+ * whose people have company roles — the role's key. Someone holding
+ * SCHEDULING_CREW_ROLE ("crew") who opens no crew's route yet is named in the
+ * schedule's notices, so the owner knows to pick their crew (T2A-BO-04). The
+ * role never reaches the wire.
+ */
+export type SchedulingPerson = PersonOption & { readonly roleKey?: string | null };
 
 /** A crew's linked person changed (Schedule settings → Crews → who opens this crew's route). */
 export interface CrewMemberChange {
@@ -136,7 +147,13 @@ export interface CreateSchedulingAdminHandlersOptions {
    * internal user id they have never seen. Without it the screen falls back to
    * typing the id.
    */
-  listPeople?: (req: Request, tenantId: string) => PersonOption[] | Promise<PersonOption[]>;
+  listPeople?: (req: Request, tenantId: string) => SchedulingPerson[] | Promise<SchedulingPerson[]>;
+  /**
+   * Where Schedule settings is, e.g. "/app/schedule/settings" (Tenancy 2a
+   * review T2A-BO-04): the notice naming a crew member who isn't on a crew
+   * yet links to its Crews section. Default null (the notice has no link).
+   */
+  settingsHref?: string | null;
   /**
    * Told after a crew's linked person changes. The host gives the person what
    * a crew member needs — create-app grants a crew-only staff role (today's
@@ -145,6 +162,22 @@ export interface CreateSchedulingAdminHandlersOptions {
    * crew member on from Schedule settings without a developer.
    */
   onCrewMemberChange?: (change: CrewMemberChange, req: Request) => void | Promise<void>;
+  /**
+   * The business as its customers know it, from the host's company profile
+   * (Tenancy 2a, D5): every route reads settings through
+   * `resolveSchedulingSettings`, so the name, contact and zone are the
+   * company's and the stored zone converges to it. A throw is reported
+   * (`onError`) and that request uses the stored settings.
+   */
+  company?: (tenantId: string) => SchedulingCompany | null | Promise<SchedulingCompany | null>;
+  /**
+   * Where the owner changes the company-owned fields (D6), e.g.
+   * "/settings/company#details". Sent as `managedByCompany.href` when a
+   * company seam supplied the basics. Default null.
+   */
+  companySettingsHref?: string | null;
+  /** Told about an unexpected error (the answer is still a plain 500) and about a company seam that threw. */
+  onError?: (error: unknown, context: { tenantId: string | null; route: string }) => void;
   now?: () => Date;
 }
 
@@ -152,33 +185,7 @@ export interface SchedulingAdminHandlers {
   handle: (req: Request) => Promise<Response>;
 }
 
-type RouteKind =
-  | "calendar"
-  | "crew-day"
-  | "health"
-  | "people"
-  | "progress"
-  | "suggest"
-  | "visit-create"
-  | "visit-get"
-  | "accept"
-  | "decline"
-  | "status"
-  | "reschedule"
-  | "assign"
-  | "details"
-  | "expire"
-  | "settings-get"
-  | "settings-update"
-  | "resources-list"
-  | "resource-create"
-  | "resource-update"
-  | "resource-deactivate"
-  | "resource-reactivate"
-  | "availability-get"
-  | "availability-set"
-  | "time-off-add"
-  | "time-off-remove";
+type RouteKind = SchedulingAdminRouteKind;
 
 interface AdminRoute {
   kind: RouteKind;
@@ -186,40 +193,9 @@ interface AdminRoute {
   exceptionId?: string;
 }
 
-/** The permission each route asks for — the contract's table, as data (the tests read it back). */
-export const SCHEDULING_ADMIN_ROUTE_PERMISSIONS: Readonly<Record<RouteKind, SchedulingPermission>> = {
-  calendar: "schedule.view",
-  // A crew member's own day. Another crew's day ALSO needs schedule.view
-  // (asked in the route), so a crew-only login sees its own stops and no one
-  // else's customers.
-  "crew-day": "schedule.route",
-  health: "schedule.view",
-  people: "schedule.resources.manage",
-  // Start / complete / couldn't-do / undo on a stop of the caller's OWN crew;
-  // any other crew's stop also needs schedule.manage (asked in the route).
-  progress: "schedule.route",
-  suggest: "schedule.view",
-  "visit-create": "schedule.manage",
-  "visit-get": "schedule.view",
-  accept: "schedule.manage",
-  decline: "schedule.manage",
-  status: "schedule.manage",
-  reschedule: "schedule.manage",
-  assign: "schedule.manage",
-  details: "schedule.manage",
-  expire: "schedule.manage",
-  "settings-get": "schedule.view",
-  "settings-update": "schedule.resources.manage",
-  "resources-list": "schedule.view",
-  "resource-create": "schedule.resources.manage",
-  "resource-update": "schedule.resources.manage",
-  "resource-deactivate": "schedule.resources.manage",
-  "resource-reactivate": "schedule.resources.manage",
-  "availability-get": "schedule.view",
-  "availability-set": "schedule.resources.manage",
-  "time-off-add": "schedule.resources.manage",
-  "time-off-remove": "schedule.resources.manage",
-};
+// The permission each route asks for lives in ./routes.ts, beside the route
+// table the isolation proof drives; re-exported here for 0.4's importers.
+export { SCHEDULING_ADMIN_ROUTE_PERMISSIONS };
 
 function route(method: string, pathname: string): AdminRoute | null {
   const path = pathname.replace(/\/+$/, "");
@@ -359,6 +335,13 @@ export function createSchedulingAdminHandlers(options: CreateSchedulingAdminHand
   const maps = options.maps ?? createHaversineMapsProvider();
   const clock = () => options.now?.() ?? new Date();
   const sweep = createThrottle(60_000);
+  const report = (error: unknown, tenantId: string | null, route: string) => {
+    try {
+      options.onError?.(error, { tenantId, route });
+    } catch {
+      /* a broken reporter must not turn an answer into a crash */
+    }
+  };
 
   function json(body: unknown, status = 200): Response {
     return new Response(JSON.stringify(body), {
@@ -380,6 +363,29 @@ export function createSchedulingAdminHandlers(options: CreateSchedulingAdminHand
   }
   async function snapshotOf(tenantId: string, settings: SchedulingSettings, row: BookingRow): Promise<VisitSnapshot> {
     return (await snapshotsOf(tenantId, settings, [row]))[0] as VisitSnapshot;
+  }
+
+  /**
+   * The company's crew members who open no active crew's route yet (T2A-BO-04),
+   * for the schedule's notices. Only from a host whose `listPeople` reports
+   * roles; a listing that fails is reported and leaves the notice out.
+   */
+  async function unlinkedCrew(req: Request, tenantId: string): Promise<{ name: string | null; email: string | null }[]> {
+    if (!options.listPeople) return [];
+    try {
+      const people = await options.listPeople(req, tenantId);
+      const crewPeople = people.filter((person) => person.roleKey === SCHEDULING_CREW_ROLE.key);
+      if (crewPeople.length === 0) return [];
+      const linked = new Set(
+        (await listResources(options.db, tenantId)).flatMap((crew) => (crew.userId === null || crew.userId === undefined ? [] : [String(crew.userId)])),
+      );
+      return crewPeople
+        .filter((person) => !linked.has(String(person.userId)))
+        .map((person) => ({ name: person.name ?? null, email: person.email ?? null }));
+    } catch (error) {
+      report(error, tenantId, "health");
+      return [];
+    }
   }
 
   async function defaultCrew(req: Request, tenantId: string, userId: string | null): Promise<string | null> {
@@ -430,12 +436,19 @@ export function createSchedulingAdminHandlers(options: CreateSchedulingAdminHand
   ): Promise<Response> {
     const db = options.db;
     const now = clock();
-    const settings = await getSchedulingSettings(db, tenantId);
-    const actor: SchedulingActor = { type: "staff", id: userId };
     const events = {
       ...(options.onEvent ? { onEvent: options.onEvent } : {}),
       ...(options.onEventError ? { onEventError: options.onEventError } : {}),
     };
+    const resolve = () =>
+      resolveSchedulingSettings(db, tenantId, {
+        now,
+        ...(options.company ? { company: options.company } : {}),
+        ...events,
+        onError: (error) => report(error, tenantId, matched.kind),
+      });
+    const settings = await resolve();
+    const actor: SchedulingActor = { type: "staff", id: userId };
     const params = new URL(req.url).searchParams;
     const today = todayIn(now, settings.timeZone);
     const id = matched.id ?? "";
@@ -494,16 +507,28 @@ export function createSchedulingAdminHandlers(options: CreateSchedulingAdminHand
         return json(calendar);
       }
       case "crew-day": {
-        const date = params.get("date") || today;
+        // TODAY ONLY for a login that can't see the schedule (review
+        // SEC-2A-05): a crew member — whose one key is `schedule.route` — opens
+        // today's route, never the days before or after, which would hand a
+        // seasonal hire every customer's name, phone and address on the crew's
+        // calendar for as far as they cared to page. Anyone who may see the
+        // schedule (`schedule.view`) can page through days as before.
+        const seesSchedule = await may("schedule.view");
+        const asked = params.get("date");
+        if (!seesSchedule && asked && asked !== today) {
+          throw new HttpError("forbidden", "You can open today's route only.");
+        }
+        const date = seesSchedule ? asked || today : today;
         const own = await defaultCrew(req, tenantId, userId);
         const resource = params.get("resource") || own;
         if (!resource) throw new HttpError("invalid", "Pick a crew.", [{ path: ["resource"], message: "Pick a crew." }]);
-        if (resource !== own && !(await may("schedule.view"))) {
+        if (resource !== own && !seesSchedule) {
           throw new HttpError("forbidden", "You can open your own crew's route only.");
         }
-        const day: CrewDayResponse | null = await listCrewDay(db, tenantId, { resourceId: resource, date }, { maps, now, settings });
+        const day = await listCrewDay(db, tenantId, { resourceId: resource, date }, { maps, now, settings });
         if (!day) throw notFound();
-        return json(day);
+        const body: CrewDayResponse = { ...day, todayOnly: !seesSchedule };
+        return json(body);
       }
       case "suggest": {
         const serviceKey = params.get("service") || null;
@@ -694,7 +719,13 @@ export function createSchedulingAdminHandlers(options: CreateSchedulingAdminHand
         const delivery: DeliveryStatus = options.delivery
           ? await options.delivery(tenantId)
           : { customerEmails: Boolean(options.onEvent), reminders: Boolean(options.onEvent) };
-        return json(adminStatus(settings, delivery, await upcomingVisits(tenantId, now, today), now));
+        return json(
+          adminStatus(settings, delivery, await upcomingVisits(tenantId, now, today), now, {
+            companyHref: options.companySettingsHref ?? null,
+            crewsHref: options.settingsHref ? `${options.settingsHref}#crews` : null,
+            unlinkedCrew: await unlinkedCrew(req, tenantId),
+          }),
+        );
       }
       case "people": {
         const people = options.listPeople ? await options.listPeople(req, tenantId) : null;
@@ -713,19 +744,43 @@ export function createSchedulingAdminHandlers(options: CreateSchedulingAdminHand
         return json({ expired: result.expired } satisfies ExpireResponse);
       }
       case "settings-get":
-        return json({ settings: toSettingsWire(settings) });
+        return json({ settings: toSettingsWire(settings, { companySettingsHref: options.companySettingsHref ?? null }) });
       case "settings-update": {
         const body = await readJsonBody(req);
         // Not a setting: whether to email upcoming visits' customers about a
         // time-zone correction (the settings screen asks when there are any).
         const notifyCustomers = body["notifyCustomers"] === true;
+        const wireOptions = { companySettingsHref: options.companySettingsHref ?? null };
+        if (settings.managedByCompany) {
+          // D6: the company owns the name, zone and contact. They are dropped
+          // from the patch, never refused: the widget doesn't send them, and
+          // a refusal would only break an old client. A body of only those
+          // saves nothing and answers the settings as they are.
+          for (const key of COMPANY_OWNED_SETTINGS) delete body[key];
+          delete body["notifyCustomers"];
+          if (Object.keys(body).length === 0) return json({ settings: toSettingsWire(settings, wireOptions) });
+          // Online booking waits for the company's own time zone (review
+          // T2A-BO-07): until the owner sets it, every slot would be offered
+          // on the starting zone's clock — a New York company taking bookings
+          // in Mountain Time without anybody noticing.
+          if (body["publicBookingEnabled"] === true && !settings.publicBookingEnabled && settings.zoneFromCompany === false) {
+            throw new HttpError("invalid", "Set your company's time zone first.", [
+              {
+                path: ["publicBookingEnabled"],
+                message: "Set your company's time zone in your company settings first, so customers book on your clock.",
+              },
+            ]);
+          }
+          await updateSchedulingSettings(db, tenantId, body, { now, actor, ...events });
+          return json({ settings: toSettingsWire(await resolve(), wireOptions) });
+        }
         const saved = await updateSchedulingSettings(db, tenantId, body, {
           now,
           actor,
           ...events,
           ...(notifyCustomers ? { notify: true } : {}),
         });
-        return json({ settings: toSettingsWire(saved) });
+        return json({ settings: toSettingsWire(saved, wireOptions) });
       }
       case "resources-list": {
         const rows = await listResources(db, tenantId, { includeInactive: params.get("include") === "inactive" });
@@ -803,8 +858,10 @@ export function createSchedulingAdminHandlers(options: CreateSchedulingAdminHand
     }
     const matched = route(req.method, new URL(req.url).pathname);
     if (!matched) return failure(notFound());
+    let resolvedTenant: string | null = null;
     try {
       const tenantId = options.resolveTenant ? await options.resolveTenant(req) : (options.tenantId ?? null);
+      resolvedTenant = tenantId;
       if (!tenantId) return failure(notFound());
       const verdict = await options.authorize(req, SCHEDULING_ADMIN_ROUTE_PERMISSIONS[matched.kind], tenantId);
       if (verdict instanceof Response) return verdict;
@@ -821,6 +878,7 @@ export function createSchedulingAdminHandlers(options: CreateSchedulingAdminHand
       };
       return await dispatch(req, matched, tenantId, userId, may);
     } catch (error) {
+      if (toWireError(error).status >= 500) report(error, resolvedTenant, matched.kind);
       return failure(error, matched.kind === "visit-create" ? CREATE_VISIT_RENAMES : {});
     }
   }

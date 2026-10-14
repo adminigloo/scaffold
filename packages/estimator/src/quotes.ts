@@ -195,6 +195,7 @@ export function toPublicQuote(row: EstimateRow, items: readonly EstimateItemRow[
     taxAmount: row.taxAmount,
     total: row.total,
     canRespond: status === "open" && row.validUntil !== null && row.validUntil.getTime() > now.getTime(),
+    logoUrl: settings.logoUrl ?? null,
   };
 }
 
@@ -608,9 +609,19 @@ export async function declineQuote(
   return answer(db, tenantId, token, "decline", declineQuoteSchema.parse(input ?? {}), options);
 }
 
-/** For the comms listener and tests: an estimate's public quote as it is now (no view recorded). */
-export async function peekQuote(db: EstimatorDb, tenantId: string, id: string, now: Date = new Date()): Promise<PublicQuote | null> {
+/**
+ * For the comms listener and tests: an estimate's public quote as it is now
+ * (no view recorded). `settings` (Tenancy 2a): the settings already read, with
+ * the company's basics; default: read them.
+ */
+export async function peekQuote(
+  db: EstimatorDb,
+  tenantId: string,
+  id: string,
+  now: Date = new Date(),
+  settings?: EstimatorSettings,
+): Promise<PublicQuote | null> {
   const found = await getEstimate(db, tenantId, id);
   if (!found) return null;
-  return toPublicQuote(found.estimate, found.items, await getEstimatorSettings(db, tenantId), now);
+  return toPublicQuote(found.estimate, found.items, settings ?? (await getEstimatorSettings(db, tenantId)), now);
 }

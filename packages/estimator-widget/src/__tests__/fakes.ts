@@ -186,6 +186,7 @@ export const CONFIG: PublicConfig = {
   emailsEnabled: true,
   minFillMs: 0,
   products: [RAMP, PAD, SOMETHING_ELSE],
+  logoUrl: null,
 };
 
 /** "3 steps, height unknown": contract 3.3 / 4.5, word for word and to the cent. */
@@ -259,6 +260,7 @@ export function quote(extra: Partial<PublicQuote> = {}): PublicQuote {
     total: 912_998,
     canRespond: true,
     version: 1,
+    logoUrl: null,
     ...extra,
   };
 }
@@ -276,6 +278,7 @@ export const STATUS: AdminStatus = {
   spend: { readingsToday: 12, costTodayMicros: 12_000, readingsMonth: 214, costMonthMicros: 240_000, dailyBudgetCents: 100 },
   embedBaseUrl: "https://summitramps.test/api/estimator",
   notices: [],
+  aiBudgetCeilingCents: null,
 };
 
 export function settingsWire(extra: Partial<EstimatorSettingsWire> = {}): EstimatorSettingsWire {
@@ -301,6 +304,8 @@ export function settingsWire(extra: Partial<EstimatorSettingsWire> = {}): Estima
     sampleLoadedAt: null,
     saved: true,
     updatedAt: "2026-11-02T15:00:00.000Z",
+    managedByCompany: null,
+    aiBudgetCeilingCents: null,
     ...extra,
   };
 }

@@ -37,8 +37,12 @@ export interface EstimatorSettingsWire {
   aiDailyBudgetCents: Cents; aiPerRequesterDaily: number;
   brandColor: string | null;
   sampleLoadedAt: Instant | null; saved: boolean; updatedAt: Instant | null;
+  /** The name, contact, zone and colour come from the company profile: read-only here, linking to href. null = editable here. */
+  managedByCompany: { href: string | null } | null;
+  /** The most a day of photo reading may cost on this site, in cents; null = no ceiling. */
+  aiBudgetCeilingCents: number | null;
 }
-export type EstimatorSettingsPatch = Partial<Omit<EstimatorSettingsWire, "sampleLoadedAt" | "saved" | "updatedAt" | "defaultLaborRateCents">> & {
+export type EstimatorSettingsPatch = Partial<Omit<EstimatorSettingsWire, "sampleLoadedAt" | "saved" | "updatedAt" | "defaultLaborRateCents" | "managedByCompany" | "aiBudgetCeilingCents">> & {
   defaultLaborRateCents?: Cents;
 };
 
@@ -55,6 +59,8 @@ export interface AdminStatus {
   spend: { readingsToday: number; costTodayMicros: number; readingsMonth: number; costMonthMicros: number; dailyBudgetCents: Cents } | null;   // null without costs.view
   embedBaseUrl: string | null;
   notices: Array<{ code: AdminNoticeCode; message: string }>;
+  /** The most a day of photo reading may cost on this site (Tenancy 2a, D14), in cents; null = no ceiling. */
+  aiBudgetCeilingCents: Cents | null;
 }
 export interface UsageResponse {
   model: string | null;

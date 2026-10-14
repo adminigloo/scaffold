@@ -49,7 +49,8 @@ import { and, eq, gt, inArray, sql } from "drizzle-orm";
 import { getEstimateDetail, getEstimateRow, staffDetailOf, type EstimateStaffDetail } from "./estimates.js";
 import { loadSnapshots, type EstimatorEvent, type EstimatorEventListener } from "./events.js";
 import { insertQuoteToken, issueQuoteToken } from "./quotes.js";
-import { formatMoney, getEstimatorSettings, type EstimatorSettings } from "./settings.js";
+import { resolveEstimatorSettings, type EstimatorCompany } from "./company.js";
+import { formatMoney, type EstimatorSettings } from "./settings.js";
 import { pct } from "./build.js";
 import { assumptionForEmail } from "./recipes.js";
 import { forEmail, greetingName } from "./text.js";
@@ -377,8 +378,13 @@ export function estimatorEmailVars(
     photoLine,
     adminLine: options.adminUrl ? `Open it: ${options.adminUrl}` : "Open it in your estimates.",
     quoteUrl: options.quoteUrl ?? "",
+    // An ACCEPTED quote is not asked about again (review T2A-BO-12): the
+    // customer who just said yes reads where to see or print what they
+    // accepted, never "accept or decline it here".
     quoteLine: options.quoteUrl
-      ? `See the details and accept or decline it here, no account needed:\n${options.quoteUrl}`
+      ? estimate.status === "approved" || estimate.status === "converted"
+        ? `See or print the quote you accepted here, no account needed:\n${options.quoteUrl}`
+        : `See the details and accept or decline it here, no account needed:\n${options.quoteUrl}`
       : LINK_FREE_QUOTE_LINE,
     validUntilText: longDate(estimate.validUntil, settings, locale),
     sentDateText: longDate(estimate.sentAt, settings, locale),
@@ -429,14 +435,25 @@ export interface EstimatorCommsOptions {
   /** The comms tables live in the same database as the estimates. */
   db: EstimatorDb;
   senders: CommsSenders;
-  /** The customer's quote page for a token. */
-  quoteUrl: (token: string, tenantId: string) => string;
-  /** The estimate in the admin, in staff emails. */
-  adminEstimateUrl?: (estimateId: string, tenantId: string) => string;
-  /** The accepted email's next step (scheduling's booking page with the estimate). */
-  bookUrl?: (estimate: EstimateSnapshot, tenantId: string) => string | null;
-  /** Who gets staff emails when the business saved no `leadNotifyEmails`. */
-  staffEmails?: readonly string[];
+  /** The customer's quote page for a token. May be async (Tenancy 2a: the host looks the company's web address up). */
+  quoteUrl: (token: string, tenantId: string) => string | Promise<string>;
+  /** The estimate in the admin, in staff emails. May be async. */
+  adminEstimateUrl?: (estimateId: string, tenantId: string) => string | Promise<string>;
+  /** The accepted email's next step (scheduling's booking page with the estimate). May be async. */
+  bookUrl?: (estimate: EstimateSnapshot, tenantId: string) => string | null | Promise<string | null>;
+  /**
+   * Who gets staff emails when the business saved no `leadNotifyEmails`. A
+   * function answers per tenant (Tenancy 2a, D8: each company's own inbox,
+   * never the platform owner's address), called once per event that sends a
+   * staff email.
+   */
+  staffEmails?: readonly string[] | ((tenantId: string) => readonly string[] | Promise<readonly string[]>);
+  /**
+   * The business as its customers know it, from the host's company profile
+   * (Tenancy 2a, D5): settings are read through `resolveEstimatorSettings`,
+   * so `{{businessName}}`, the contact lines and every date are the company's.
+   */
+  company?: (tenantId: string) => EstimatorCompany | null | Promise<EstimatorCompany | null>;
   /** Default: the settings' locale. */
   locale?: string;
   /** Queue a follow-up after each sent quote. Default true (and `followUpDays` > 0). */
@@ -563,11 +580,57 @@ export function createEstimatorCommsListener(options: EstimatorCommsOptions): Es
       .where(and(eq(commsMessages.tenantId, tenantId), eq(commsMessages.id, messageId)));
   }
 
-  const bookUrlFor = (estimate: EstimateSnapshot, tenantId: string): string | null => {
+  /**
+   * The per-tenant links (Tenancy 2a). A link function that throws is
+   * reported (step "links") and its line folds away; the email still goes.
+   * CONTRACT: null is how a host says "no such page", so only a throw is
+   * reported.
+   */
+  const bookUrlFor = async (estimate: EstimateSnapshot, tenantId: string, eventId?: string): Promise<string | null> => {
+    if (!options.bookUrl) return null;
     try {
-      return options.bookUrl ? options.bookUrl(estimate, tenantId) : null;
-    } catch {
+      const url = await options.bookUrl(estimate, tenantId);
+      return typeof url === "string" && url.trim() !== "" ? url : null;
+    } catch (error) {
+      report(error, { estimateId: estimate.id, ...(eventId ? { eventId } : {}), step: "links" });
       return null;
+    }
+  };
+  const quoteLinkFor = async (token: string, tenantId: string, estimateId: string, eventId?: string): Promise<string | null> => {
+    try {
+      const url = await options.quoteUrl(token, tenantId);
+      return typeof url === "string" && url.trim() !== "" ? url : null;
+    } catch (error) {
+      report(error, { estimateId, ...(eventId ? { eventId } : {}), step: "links" });
+      return null;
+    }
+  };
+  const adminUrlFor = async (event: EstimatorEvent): Promise<string | undefined> => {
+    if (!options.adminEstimateUrl) return undefined;
+    try {
+      const url = await options.adminEstimateUrl(event.estimateId, event.tenantId);
+      return typeof url === "string" && url.trim() !== "" ? url : undefined;
+    } catch (error) {
+      report(error, { estimateId: event.estimateId, eventId: event.id, step: "links" });
+      return undefined;
+    }
+  };
+  /** Settings with the company's basics (Tenancy 2a). */
+  const settingsFor = (tenantId: string, context: { estimateId: string; eventId?: string }): Promise<EstimatorSettings> =>
+    resolveEstimatorSettings(db, tenantId, {
+      ...(options.company ? { company: options.company } : {}),
+      onError: (error) => report(error, { ...context, step: "company" }),
+    });
+  /** The office's addresses: the business's saved ones, else the host's (per tenant when a function). */
+  const staffRecipients = async (event: EstimatorEvent, settings: EstimatorSettings): Promise<string[]> => {
+    if (settings.leadNotifyEmails.length > 0) return [...settings.leadNotifyEmails];
+    const fallback = options.staffEmails;
+    if (typeof fallback !== "function") return [...(fallback ?? [])];
+    try {
+      return [...(await fallback(event.tenantId))].filter((to) => typeof to === "string" && to.trim() !== "");
+    } catch (error) {
+      report(error, { estimateId: event.estimateId, eventId: event.id, step: "staff-emails" });
+      return [];
     }
   };
 
@@ -578,8 +641,8 @@ export function createEstimatorCommsListener(options: EstimatorCommsOptions): Es
       let token: string | null = null;
       if (withLink) token = await issueQuoteToken(db, event.tenantId, estimate.id);
       const vars = estimatorEmailVars(event, settings, {
-        quoteUrl: token ? options.quoteUrl(token, event.tenantId) : null,
-        bookUrl: bookUrlFor(estimate, event.tenantId),
+        quoteUrl: token ? await quoteLinkFor(token, event.tenantId, estimate.id, event.id) : null,
+        bookUrl: await bookUrlFor(estimate, event.tenantId, event.id),
         locale: options.locale,
       });
       const message = await bounded(
@@ -613,11 +676,11 @@ export function createEstimatorCommsListener(options: EstimatorCommsOptions): Es
   async function sendStaff(event: EstimatorEvent, settings: EstimatorSettings, templateKey: EstimatorTemplateKey) {
     if (event.type !== "lead.received" && !staffNoticeKind(event)) return;
     if (event.type === "lead.received" && event.actor.type === "staff") return;
-    const recipients = settings.leadNotifyEmails.length > 0 ? settings.leadNotifyEmails : [...(options.staffEmails ?? [])];
+    const recipients = await staffRecipients(event, settings);
     if (recipients.length === 0) return;
     const vars = estimatorEmailVars(event, settings, {
       quoteUrl: null,
-      adminUrl: options.adminEstimateUrl ? options.adminEstimateUrl(event.estimateId, event.tenantId) : undefined,
+      adminUrl: await adminUrlFor(event),
       locale: options.locale,
       audience: "staff",
       staffDetail: await staffDetail(event),
@@ -636,6 +699,9 @@ export function createEstimatorCommsListener(options: EstimatorCommsOptions): Es
                 templateKey,
                 vars,
                 idempotencyKey: `estimate:${event.estimateId}:${event.id}:staff:${index}`,
+                // Reply on a lead notice reaches the CUSTOMER, not the office's
+                // own address (review T2A-BO-12). No address: the business's.
+                ...(event.data.estimate.customerEmail ? { replyTo: event.data.estimate.customerEmail } : {}),
               },
               options.senders,
             ),
@@ -690,7 +756,7 @@ export function createEstimatorCommsListener(options: EstimatorCommsOptions): Es
     try {
       let settings: EstimatorSettings;
       try {
-        settings = await getEstimatorSettings(db, event.tenantId);
+        settings = await settingsFor(event.tenantId, { estimateId: event.estimateId, eventId: event.id });
       } catch (error) {
         report(error, { estimateId: event.estimateId, eventId: event.id, step: "settings" });
         return;
@@ -766,7 +832,7 @@ export function createEstimatorCommsListener(options: EstimatorCommsOptions): Es
     const now = clock();
     if (!estimate.validUntil || estimate.validUntil.getTime() <= now.getTime()) return { skip: true, reason: "the quote has expired" };
     if (!estimate.customerEmail) return { skip: true, reason: "the quote has no email address any more" };
-    const settings = await getEstimatorSettings(db, row.tenantId);
+    const settings = await settingsFor(row.tenantId, { estimateId: estimate.id });
     const snapshot = (await loadSnapshots(db, row.tenantId, [estimate.id])).get(estimate.id);
     if (!snapshot) return { skip: true, reason: "the estimate no longer exists" };
     const token = await insertQuoteToken(db, row.tenantId, estimate.id, estimate.quoteSequence);
@@ -782,7 +848,7 @@ export function createEstimatorCommsListener(options: EstimatorCommsOptions): Es
         data: { estimate: snapshot, notify: true },
       },
       settings,
-      { quoteUrl: options.quoteUrl(token, row.tenantId), locale: options.locale },
+      { quoteUrl: await quoteLinkFor(token, row.tenantId, estimate.id), locale: options.locale },
     );
     return { to: estimate.customerEmail, vars };
   }

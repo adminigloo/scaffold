@@ -64,8 +64,18 @@ is harmless in an app that never uses Neon.
 - **Deposits and payments.**
 - **A merge with `@adminigloo/booking`** (book-a-call). They are two engines with
   two calendars, so one person on both can be double-booked.
-- **A multi-tenant create-app.** The handlers take `resolveTenant`; the generated
-  app serves one business.
+- **Per-company boards and widgets for feedback, notifications, files, the
+  assistant, analytics, SEO/AEO and book-a-call**: Tenancy 2b. (Scheduling
+  itself is per company since 0.5: see [Companies](#companies-tenancy-2a).)
+- **Payments to companies, plans and billing per company, custom domains,
+  impersonation, per-company SEO.**
+- **Logo and colour inside emails.** Emails carry the company's name and
+  reply-to; their bodies are plain text.
+- **Emailing customers about a time-zone correction** made in company settings.
+  Visits keep their clock times and reminders are re-queued silently.
+- **A scheduling embed** (a script for the company's own website). The booking
+  page's address is shown to copy.
+- **Per-company custom roles.** Crew is a fixed role scheduling adds.
 - **Two-way calendar sync** (Google or Outlook), or a crew `.ics` feed. Each
   customer gets a `.ics` for their own visit.
 - **Route optimisation.** Stops are in time order, with no reordering
@@ -1347,6 +1357,89 @@ member, `schedule.view` is look-only, `schedule.manage` is the dispatcher, and
 `schedule.resources.manage` is the owner. Give a crew member `schedule.route`
 alone: they open their own route and can't see the calendar, other crews'
 customers or the settings.
+
+## Companies (Tenancy 2a)
+
+One deployment books visits for many companies. Everything below is optional:
+without it, 0.5 behaves exactly as 0.4 for one business.
+
+| Option | On | What it does |
+| --- | --- | --- |
+| `company(tenantId)` | both handlers, the comms listener, `resolveSchedulingSettings` | The business's name, time zone, contact details, logo and colour from the host's company profile. They override scheduling's own; the settings screen shows them read-only ("managed in company settings"), with `companySettingsHref`. A throw is reported (`onError`) and treated as no company for that request. |
+| `admit(tenantId, req)` | public handlers | Asked once per request, after the tenant is known and before any other work. `{ open: false, message }` answers 409 `booking_closed` with that sentence (a suspended company). |
+| `manageUrl(token, tenantId)` | public handlers, comms listener | May be async: the link is built from the company's web address. Also `bookUrl` and `adminUrl` on the listener. |
+| `staffEmails` | comms listener | A list, or `(tenantId) => list`: where a company's office notices go. With tenancy: its own inbox, never the platform owner's. |
+| `listPeople(req, tenantId)` | staff handlers | Who may open a crew's route: in companies mode, the company's own people (`tenancy.listMemberPeople`). |
+| `companySettingsHref` | staff handlers | Where "managed in company settings" links — and where the notices about a company's name, phone and time zone point (`AdminNotice.link`), since those are changed there, not in Schedule settings. |
+| `settingsHref` | staff handlers | Where Schedule settings is: a notice naming a crew member who isn't on a crew yet (someone `listPeople` reports with the role `SCHEDULING_CREW_ROLE.key`) links to its Crews. |
+
+A company with no time zone of its own is told so, and online booking can't
+be switched on until it sets one, so nobody books on a clock that isn't the
+business's. A crew member — a login with `schedule.route` but not
+`schedule.view` — opens TODAY's route only: another day is refused ("You can
+open today's route only.") and the route says so (`todayOnly`). An office
+notice replies to the customer it is about.
+
+**The time zone follows the company's.** When the company's time zone changes
+(tenancy's `company.settings.updated` event), call `resolveSchedulingSettings`
+for that company: it writes the new zone into scheduling's own settings
+(re-entrance safe, no notices sent). Visits keep their clock times; reminders
+are re-queued quietly.
+
+**Crew.** `SCHEDULING_CREW_ROLE` goes into the project's company roles
+(`defineTenantRoles([SCHEDULING_CREW_ROLE])`), and `schedule.route` lets a crew
+member open only their own crew's day on a phone: the stops, directions and
+the customer's phone. Nothing else.
+
+**Route tables and checklist items.** `SCHEDULING_ADMIN_ROUTES` and
+`SCHEDULING_PUBLIC_ROUTES` list every route with its permission (path
+placeholders like `{visit}` for a host's own tests: another company's id in
+the path answers 404). `schedulingChecklistItems({ booking, crews })` gives the
+two setup steps ("Choose what customers can book", "Add your crew and their
+hours") for tenancy's checklist.
+
+With `@adminigloo/tenancy`:
+
+```ts
+import { createSchedulingAdminHandlers, createSchedulingHandlers, resolveSchedulingSettings } from "@adminigloo/scheduling";
+import { createSchedulingCommsListener } from "@adminigloo/scheduling/comms";
+import { createCompanyRouteSeams, createPublicCompanySeams } from "@adminigloo/tenancy/server";
+
+const company = (id: string) => tenancy.companyProfile(id);
+const manageUrl = async (token: string, id: string) => `${origin}${(await company(id))?.publicPath}/visit/${token}`;
+const listener = createSchedulingCommsListener({
+  db, senders, manageUrl, company,
+  staffEmails: async (id) => (await company(id))?.inbox ?? [],
+});
+
+const pub = createPublicCompanySeams({ tenancy });               // /api/t/{web address}/schedule/…
+export const publicSchedule = createSchedulingHandlers({
+  db, resolveTenant: pub.resolveTenant, admit: pub.admit, company, manageUrl, onEvent: listener.onEvent,
+});
+
+const seams = createCompanyRouteSeams({ tenancy, principal: (req) => getSignedInUser(req) });   // /api/app/{id}/schedule/…
+export const staffSchedule = createSchedulingAdminHandlers({
+  db, resolveTenant: seams.resolveTenant, authorize: seams.authorize, company,
+  companySettingsHref: "/app/settings#company",
+  listPeople: async (_req, id) => (await tenancy.listMemberPeople(id)).map((p) => ({ userId: p.userId, name: p.name, email: p.email })),
+  onEvent: listener.onEvent,
+});
+
+// tenancy's onEvent: follow the company's time zone.
+onEvent: async (e) => {
+  if (e.type === "company.settings.updated" && e.section === "company" && e.changed.includes("timeZone")) {
+    await resolveSchedulingSettings(db, e.tenantId, { company, onEvent: listener.onEvent });
+  }
+},
+```
+
+The cron walks every company with tenancy's `runForEachCompany`: one
+company's failure is reported and the next one runs.
+
+**A foreign host** passes its own `resolveTenant(req)`,
+`authorize(req, permission, tenantId)` (returning `{ userId }`, `false`, or a
+`Response`), `admit`, `company` and `staffEmails` from its own tables, and
+calls `resolveSchedulingSettings` when its business's zone changes.
 
 ## Upgrading from 0.3
 

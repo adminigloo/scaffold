@@ -2,6 +2,7 @@ import {
   formatSenderAddress,
   InvalidSenderAddressError,
   parseSenderAddress,
+  sanitizeDisplayName,
   type SenderAddress,
 } from "./sender.js";
 // Type-only, and it has to stay that way. `./schema.ts` is a separate tsup
@@ -28,6 +29,27 @@ export interface EmailMessage {
   readonly template?: string | undefined;
   readonly tenantId?: string | undefined;
   readonly metadata?: EmailMetadata | undefined;
+  /**
+   * The display name on THIS message's From. The address stays EMAIL_FROM's:
+   * the verified sending domain is the only one the provider sends from, so a
+   * company on a shared platform gets its NAME on the platform's address,
+   * never an address of its own (Tenancy 2a, D8).
+   *
+   * Cleaned by `sanitizeDisplayName` (control characters out, whitespace
+   * collapsed, cut to 64). Empty after cleaning → the sender's own name, so a
+   * blank company name degrades to the platform's From instead of to a bare
+   * address with no name at all.
+   */
+  readonly fromName?: string | null | undefined;
+  /**
+   * Reply-To for THIS message, in place of EMAIL_REPLY_TO. Bare or named.
+   *
+   * Unparseable → `EmailMessageInvalidError("replyTo")`. Refusing beats
+   * falling back to the default: a customer's "I need to reschedule" sent to
+   * the platform owner instead of the business is a reply that reaches the
+   * wrong person, and a refused send is one the caller logs and can see.
+   */
+  readonly replyTo?: string | null | undefined;
 }
 
 /** A validated message, formatted, as the transport receives it. */
@@ -83,7 +105,7 @@ export type SkipReason = "no-transport";
 export class EmailMessageInvalidError extends Error {
   readonly name = "EmailMessageInvalidError";
   constructor(
-    readonly field: "to" | "subject" | "body",
+    readonly field: "to" | "subject" | "body" | "replyTo",
     reason: string,
   ) {
     super(`Refusing to send: ${field} ${reason}.`);
@@ -204,9 +226,30 @@ export function createEmailSender(options: CreateEmailSenderOptions): EmailSende
         );
       }
 
+      // Per-message identity (D8). Both are resolved BEFORE the transport is
+      // consulted, so an unconfigured deployment's "skipped" row records the
+      // From that would have gone, exactly as a sent one does.
+      const messageFromName = sanitizeDisplayName(message.fromName);
+      const messageFrom =
+        messageFromName === null
+          ? fromAddress
+          : formatSenderAddress({ name: messageFromName, email: from.email }, "fromName");
+      let messageReplyTo = replyToAddress;
+      if (typeof message.replyTo === "string" && message.replyTo.trim().length > 0) {
+        const parsed = parseSenderAddress(message.replyTo);
+        if (parsed === null) {
+          throw new EmailMessageInvalidError(
+            "replyTo",
+            `is not an address a reply can go to: ${JSON.stringify(message.replyTo)}`,
+          );
+        }
+        messageReplyTo = formatSenderAddress(parsed, "replyTo");
+      }
+
       const base = {
         toAddress: formatSenderAddress(to, "to"),
-        fromAddress,
+        // The From actually used, so the log row says what the customer saw.
+        fromAddress: messageFrom,
         subject,
         template: message.template ?? null,
         tenantId: message.tenantId ?? null,
@@ -227,9 +270,9 @@ export function createEmailSender(options: CreateEmailSenderOptions): EmailSende
       let result: TransportResult;
       try {
         result = await transport({
-          from: fromAddress,
+          from: messageFrom,
           to: base.toAddress,
-          replyTo: replyToAddress,
+          replyTo: messageReplyTo,
           subject,
           html,
           text,

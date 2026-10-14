@@ -265,7 +265,12 @@ export const companySettings = defineSettingsFragment({
     country: optionalText(80),
   }),
   fields: [
-    { key: "timeZone", kind: "timezone", label: "Time zone", help: "Dates and times your customers see use this." },
+    {
+      key: "timeZone",
+      kind: "timezone",
+      label: "Time zone",
+      help: "Dates and times your customers see use this. Visits already booked keep their clock times.",
+    },
     { key: "contactEmail", kind: "email", label: "Email customers can reach you at", autoComplete: "email" },
     { key: "contactPhone", kind: "tel", label: "Phone customers can call", autoComplete: "tel" },
     { key: "addressLine1", kind: "text", label: "Street address", autoComplete: "address-line1" },

@@ -218,7 +218,19 @@ const LAST_USED_EVERY_MS = 10 * 60 * 1000;
  * prices on every keystroke, and 0.2 wrote the row each time. The prefix check
  * short-circuits a token meant for another widget.
  */
-export async function verifyClientKey(db: EstimatorDb, key: string, options: { now?: Date } = {}): Promise<VerifiedClientKey | null> {
+export async function verifyClientKey(
+  db: EstimatorDb,
+  key: string,
+  options: {
+    now?: Date;
+    /**
+     * Only a key of THIS tenant counts (Tenancy 2a review SEC-2A-04): another
+     * tenant's key is `null`, exactly like an unknown one, and its "last used"
+     * is left alone — it wasn't used for anything.
+     */
+    tenantId?: string;
+  } = {},
+): Promise<VerifiedClientKey | null> {
   if (typeof key !== "string" || !key.startsWith(ESTIMATOR_KEY_PREFIX) || key.length > 200) return null;
   const keyHash = await hashClientKey(key);
   const [row] = (await db
@@ -229,7 +241,13 @@ export async function verifyClientKey(db: EstimatorDb, key: string, options: { n
       lastUsedAt: estimatorClientKeys.lastUsedAt,
     })
     .from(estimatorClientKeys)
-    .where(and(eq(estimatorClientKeys.keyHash, keyHash), isNull(estimatorClientKeys.revokedAt)))
+    .where(
+      and(
+        eq(estimatorClientKeys.keyHash, keyHash),
+        isNull(estimatorClientKeys.revokedAt),
+        options.tenantId !== undefined ? eq(estimatorClientKeys.tenantId, options.tenantId) : undefined,
+      ),
+    )
     .limit(1)) as Array<{ id: string; tenantId: string; allowedOrigins: unknown; lastUsedAt: Date | null }>;
   if (!row) return null;
   const now = options.now ?? new Date();

@@ -26,7 +26,8 @@ const FULL: Partial<Answers> = {
 };
 
 const plan = (overrides: Partial<Answers> = {}) =>
-  planEmit(TEMPLATE_DIR, "/out", { ...DEFAULT_ANSWERS, projectName: "summit-ramps", adminShell: "minimal", includeEstimator: true, ...overrides });
+  // The single-business estimator these fixes were made to (--tenant-noun none).
+  planEmit(TEMPLATE_DIR, "/out", { ...DEFAULT_ANSWERS, projectName: "summit-ramps", tenantNoun: "none", adminShell: "minimal", includeEstimator: true, ...overrides });
 
 function file(p: EmitPlan, ...segments: string[]): string {
   const contents = p.files.get(join(...segments));

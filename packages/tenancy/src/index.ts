@@ -48,6 +48,12 @@ export {
 } from "./templates.js";
 export type { TenantRoleTemplate, TenantRoleTemplateKey } from "./templates.js";
 
+// Tenancy 2a: the roles a PROJECT offers (the core four plus extras like
+// scheduling's Crew), and a company's public face on the wire. Client-safe.
+export { defineTenantRoles, DEFAULT_TENANT_ROLES, InvalidTenantRoleError } from "./roles.js";
+export type { TenantRoleSet } from "./roles.js";
+export type { PublicCompanyWire } from "./wire.js";
+
 // Tenancy 1 (companies): the client-safe rules. Names and web addresses,
 // brand-colour contrast, the settings registry, the checklist types and the
 // audit vocabulary. Pure — `zod` is the only new import (settings.ts).

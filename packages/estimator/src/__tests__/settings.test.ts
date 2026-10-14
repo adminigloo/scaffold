@@ -97,8 +97,10 @@ describe("estimator settings", () => {
     const tenantId = tenant();
     const saved = await updateEstimatorSettings(t.db, tenantId, { businessName: "Summit", leadNotifyEmails: ["office@summit.test"] });
     const wire = toSettingsWire(saved);
+    // 0.4 (Tenancy 2a, 7.9) adds managedByCompany and aiBudgetCeilingCents.
     expect(Object.keys(wire).sort()).toEqual(
       [
+        "aiBudgetCeilingCents",
         "aiDailyBudgetCents",
         "aiPerRequesterDaily",
         "brandColor",
@@ -112,6 +114,7 @@ describe("estimator settings", () => {
         "instantEstimatesEnabled",
         "leadNotifyEmails",
         "locale",
+        "managedByCompany",
         "photosEnabled",
         "quoteFooter",
         "quoteValidDays",

@@ -25,6 +25,11 @@ export interface TenantRoleTemplate {
  * role, in a project that may call its tenants companies, shops or clinics;
  * and an earlier draft promised "billing" control that no screen offers yet.
  * When billing lands it updates these lines in the same release.
+ *
+ * CORE ONLY (Tenancy 2a). These four, `templateRank` and
+ * `canManageTemplateKey` stay exactly as they were. A project with extra
+ * roles (scheduling's Crew) composes them with `defineTenantRoles` (roles.ts)
+ * and asks its `TenantRoleSet` (`templates`, `rankOf`, `canManage`) instead.
  */
 export const TENANT_ROLE_TEMPLATES = [
   {

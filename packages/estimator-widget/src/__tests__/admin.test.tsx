@@ -45,6 +45,14 @@ describe("<EmbedKeys>", () => {
     expect(modal).toContain("<EstimatorButton />");
     expect(modal).toContain("<EstimatorModal />");
     expect(text(issued.querySelector('[data-aiew-snippet="inline"]'))).toContain('<EstimateTool baseUrl="https://summitramps.test/api/estimator" clientKey="esk_live_secret" />');
+    // Each snippet scrolls sideways on a phone, so each takes keyboard focus
+    // and is named by the line above it (axe: scrollable-region-focusable).
+    for (const kind of ["modal", "inline"]) {
+      const pre = issued.querySelector(`[data-aiew-snippet="${kind}"]`)!;
+      expect(pre.getAttribute("tabindex"), kind).toBe("0");
+      const label = issued.querySelector(`[id="${pre.getAttribute("aria-labelledby")}"]`);
+      expect(text(label), kind).toMatch(kind === "modal" ? /^Paste this into the other site/ : /^Or show it in the page/);
+    }
     expect(text(container)).not.toContain("adminigloo.com");
     await click(button(issued as HTMLElement, "Test this key"));
     expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -249,5 +257,21 @@ describe("<EstimatorAdmin>", () => {
     const root = container.querySelector<HTMLElement>(".aiew-root.aiew-admin")!;
     expect(root.style.getPropertyValue("--aiew-bl-accent")).toBe("#1d4ed8");
     await unmount();
+  });
+});
+
+describe("noCodeSnippets (review T2A-BO-02)", () => {
+  it("a one-line button in the business's colour with readable text, and a page frame; the address is escaped", async () => {
+    const { noCodeSnippets } = await import("../admin/EmbedKeys.js");
+    const dark = noCodeSnippets("https://app.example/t/green-acres/estimate", "#1F7A3A");
+    expect(dark.button).not.toContain("\n");
+    expect(dark.button).toContain("background:#1f7a3a;color:#ffffff");
+    const light = noCodeSnippets("https://app.example/t/x/estimate", "#f5e663");
+    expect(light.button).toContain("color:#111111");
+    expect(noCodeSnippets("https://app.example/e", "not a colour").button).toContain("background:#1f2937");
+    const odd = noCodeSnippets('https://app.example/t/a"b/estimate?x=1&y=2', null);
+    expect(odd.button).toContain('href="https://app.example/t/a&quot;b/estimate?x=1&amp;y=2"');
+    expect(odd.frame).toContain('src="https://app.example/t/a&quot;b/estimate?x=1&amp;y=2"');
+    expect(odd.frame).toContain('title="Instant estimate"');
   });
 });

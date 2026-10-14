@@ -14,8 +14,9 @@ import { instantsOf, todayIn } from "./instants.js";
 import { cancelVisitByToken, getVisitByToken, rescheduleVisitByToken, visitRowByToken } from "./manage.js";
 import { createHaversineMapsProvider, type MapsProvider } from "./maps.js";
 import { publicSlotsFor, requestPublicVisit } from "./offer.js";
+import { resolveSchedulingSettings, type SchedulingAdmission, type SchedulingCompany } from "./company.js";
 import { serviceNameFor } from "./services.js";
-import { getSchedulingSettings, type SchedulingSettings } from "./settings.js";
+import type { SchedulingSettings } from "./settings.js";
 import { effectiveStatus, toPublicVisit } from "./snapshot.js";
 import { publicLine, singleLine } from "./text.js";
 import type { SchedulingEvent, SchedulingEventListener } from "./events.js";
@@ -69,8 +70,31 @@ export interface CreateSchedulingHandlersOptions {
   tenantId?: string;
   /** Per-request tenant (a subdomain, a path segment). null → 404. */
   resolveTenant?: (req: Request) => string | null | Promise<string | null>;
-  /** The customer's manage page for a token, e.g. (t) => `https://acme.com/visit/${t}`. */
-  manageUrl: (token: string, tenantId: string) => string;
+  /**
+   * The customer's manage page for a token, e.g. (t) => `https://acme.com/visit/${t}`.
+   * May be async (Tenancy 2a): a host serving many companies looks the
+   * company's web address up.
+   */
+  manageUrl: (token: string, tenantId: string) => string | Promise<string>;
+  /**
+   * The business as its customers know it, from the host's company profile
+   * (Tenancy 2a, D5). With it, the config's name, contact and zone are the
+   * company's, and the stored zone converges to the company's (see
+   * `resolveSchedulingSettings`). A throw is reported (`onError`) and that
+   * request uses the stored settings.
+   */
+  company?: (tenantId: string) => SchedulingCompany | null | Promise<SchedulingCompany | null>;
+  /**
+   * Is this business taking requests from the public right now? Asked once
+   * per request, after the tenant is known and before the rate limit or any
+   * scheduling query (D7). Closed → `409 booking_closed` with its message,
+   * on EVERY route, the visit-token routes included: a customer with a
+   * booked visit at a suspended business calls them, as the message says.
+   * Default: always open.
+   */
+  admit?: (tenantId: string, req: Request) => SchedulingAdmission | Promise<SchedulingAdmission>;
+  /** Told about an unexpected error (the answer is still a plain 500) and about a company seam that threw. */
+  onError?: (error: unknown, context: { tenantId: string | null; route: string }) => void;
   /** Geocoding and drive checks. Default: keyless Haversine (no geocoding). Use `selectMapsProvider`. */
   maps?: MapsProvider;
   /** After commit, for every visit event (the comms listener's `onEvent`). Awaited and contained. */
@@ -257,6 +281,13 @@ export function createSchedulingHandlers(options: CreateSchedulingHandlersOption
     kind === "request" ? "request" : kind === "reschedule" || kind === "cancel" ? "manage" : "read";
 
   const notFound = () => new HttpError("not_found", NOT_FOUND_MESSAGE);
+  const report = (error: unknown, tenantId: string | null, route: string) => {
+    try {
+      options.onError?.(error, { tenantId, route });
+    } catch {
+      /* a broken reporter must not turn an answer into a crash */
+    }
+  };
 
   async function dispatch(
     req: Request,
@@ -387,7 +418,7 @@ export function createSchedulingHandlers(options: CreateSchedulingHandlersOption
           // there is no token: see `recentRepeat`.
           visit: toPublicVisit(outcome.row, settings, { now }),
           manageToken: token,
-          manageUrl: token ? options.manageUrl(token, tenantId) : null,
+          manageUrl: token ? await options.manageUrl(token, tenantId) : null,
           repeated: outcome.receipt.repeated,
         };
         return json(response, outcome.receipt.repeated ? 200 : 201, false);
@@ -424,7 +455,7 @@ export function createSchedulingHandlers(options: CreateSchedulingHandlersOption
           serviceName: serviceNameFor(settings.services, row.serviceType),
           businessName: settings.businessName,
           address: row.address,
-          manageUrl: options.manageUrl(matched.token, tenantId),
+          manageUrl: await options.manageUrl(matched.token, tenantId),
           uidDomain,
           now,
         });
@@ -457,16 +488,35 @@ export function createSchedulingHandlers(options: CreateSchedulingHandlersOption
       }
     }
     if (!matched) return failure(notFound(), false);
+    let tenantId: string | null = null;
     try {
-      const tenantId = options.resolveTenant ? await options.resolveTenant(req) : (options.tenantId ?? null);
+      tenantId = options.resolveTenant ? await options.resolveTenant(req) : (options.tenantId ?? null);
       if (!tenantId) return failure(notFound(), tokenRoute);
+      // D7: a business that isn't taking requests says so, before the rate
+      // limit and before any scheduling query. 409, not booking_closed's
+      // usual 403: the request was fine, the business is closed.
+      if (options.admit) {
+        const admission = await options.admit(tenantId, req);
+        if (!admission.open) {
+          return json({ error: { code: "booking_closed", message: admission.message } }, 409, tokenRoute);
+        }
+      }
       if (options.rateLimit && !(await options.rateLimit(req, bucketOf(matched.kind)))) {
         return failure(new HttpError("rate_limited", "Too many requests. Please slow down and try again shortly."), tokenRoute);
       }
       const now = clock();
-      const settings = await getSchedulingSettings(options.db, tenantId);
+      const scoped = tenantId;
+      const settings = await resolveSchedulingSettings(options.db, tenantId, {
+        now,
+        ...(options.company ? { company: options.company } : {}),
+        ...(options.onEvent ? { onEvent: options.onEvent } : {}),
+        ...(options.onEventError ? { onEventError: options.onEventError } : {}),
+        onError: (error) => report(error, scoped, matched.kind),
+      });
       return await dispatch(req, matched, tenantId, settings, now, tokenRoute);
     } catch (error) {
+      const wire = toWireError(error);
+      if (wire.status >= 500) report(error, tenantId, matched.kind);
       return failure(error, tokenRoute, matched.kind === "request" ? REQUEST_RENAMES : {});
     }
   }

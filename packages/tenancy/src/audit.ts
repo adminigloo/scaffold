@@ -74,6 +74,43 @@ function record(value: unknown): Readonly<Record<string, unknown>> {
  * then shows the label alone). Tokens and URLs are never in the metadata, so
  * nothing secret can come out of here.
  */
+/** The business details' fields in an owner's words; the address's parts are all "address". */
+const SETTING_WORDS: Readonly<Record<string, string>> = {
+  timeZone: "time zone",
+  contactEmail: "contact email",
+  contactPhone: "phone",
+  addressLine1: "address",
+  addressLine2: "address",
+  city: "address",
+  region: "address",
+  postalCode: "address",
+  country: "address",
+  // Invoicing's fragment (Tenancy 2a), the section most companies add.
+  paymentInstructions: "how customers pay",
+  dueDays: "days until due",
+  footer: "invoice note",
+};
+
+/** Sections by the name the settings page gives them. */
+const SECTION_WORDS: Readonly<Record<string, string>> = { company: "Business details", invoicing: "Invoice details" };
+
+/** "paymentInstructions" → "payment instructions": any other section's key, as words. */
+function humanise(key: string): string {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function capitalise(words: string): string {
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+function settingWords(key: string): string {
+  return SETTING_WORDS[key] ?? humanise(key);
+}
+
 export function describeTenancyAuditEntry(action: string, metadata: unknown): string | null {
   const m = record(metadata);
   switch (action) {
@@ -103,8 +140,14 @@ export function describeTenancyAuditEntry(action: string, metadata: unknown): st
       return null;
     }
     case "company.settings.updated": {
+      // In words, never field keys (review T2A-BO-14): "Business details:
+      // time zone, contact email, phone", not "Changed: timeZone, contactEmail".
       const changed = Array.isArray(m["changed"]) ? m["changed"].filter((k): k is string => typeof k === "string") : [];
-      return changed.length > 0 ? `Changed: ${changed.join(", ")}` : null;
+      if (changed.length === 0) return null;
+      const words = [...new Set(changed.map(settingWords))];
+      const section = text(m["section"]);
+      const heading = section === null ? "Changed" : (SECTION_WORDS[section] ?? capitalise(humanise(section)));
+      return `${heading}: ${words.join(", ")}`;
     }
     case "company.ownership.transferred": {
       if (text(m["via"]) === "operator") return "By platform staff";

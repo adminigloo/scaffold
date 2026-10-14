@@ -33,7 +33,11 @@ export default function EstimateSettingsPage() {
       />
       <EstimatorSettings baseUrl="/api/admin/estimator" />
       <div className="mt-8">
-        <EmbedKeys baseUrl="/api/admin/estimator" />
+        {/* A button and a page frame any website takes, pointing at /estimate
+            (completed with this site's address in the browser); the keyed
+            React snippet under "For developers" (review T2A-BO-02). The
+            notices are shown once, by the settings above (T2A-BO-06). */}
+        <EmbedKeys baseUrl="/api/admin/estimator" publicPageUrl="/estimate" notices={false} />
       </div>
     </>
   );

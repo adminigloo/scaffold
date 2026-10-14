@@ -59,15 +59,45 @@ export function runClock(dailyAtUtc: string, timeZone: string, now: Date): strin
   }
 }
 
+/**
+ * What the notices may point at, and who is waiting to be linked to a crew
+ * (Tenancy 2a review). All optional: a host passing none gets 0.4's notices.
+ */
+export interface AdminNoticeContext {
+  /**
+   * Where the company's own business details are edited (D6), e.g.
+   * "/settings/company#details". With a company, the name, contact and zone
+   * are changed THERE, so a notice about them links there instead of sending
+   * the owner to Schedule settings, where those fields are read-only
+   * (review T2A-BO-07).
+   */
+  readonly companyHref?: string | null;
+  /** Where Schedule settings' crews are, e.g. "/app/schedule/settings#crews", for the crew notice's link. */
+  readonly crewsHref?: string | null;
+  /**
+   * People who hold the company's Crew role but open no crew's route yet
+   * (review T2A-BO-04): an invited crew member's first morning is otherwise a
+   * dead end, and nothing tells the owner why.
+   */
+  readonly unlinkedCrew?: readonly { readonly name: string | null; readonly email: string | null }[];
+}
+
+function personName(person: { readonly name: string | null; readonly email: string | null }): string {
+  return person.name?.trim() || person.email?.trim() || "Someone";
+}
+
 export function adminNotices(
   settings: Pick<
     SchedulingSettingsValues,
     "publicBookingEnabled" | "businessName" | "contactPhone" | "contactEmail" | "timeZone" | "reminderLeadHours"
-  >,
+  > & { readonly managedByCompany?: boolean; readonly zoneFromCompany?: boolean },
   delivery: DeliveryStatus,
   now: Date,
+  context: AdminNoticeContext = {},
 ): AdminNotice[] {
   const notices: AdminNotice[] = [];
+  const company = settings.managedByCompany === true;
+  const companyLink = company && context.companyHref ? { href: context.companyHref, label: "Open company settings" } : null;
   if (!delivery.customerEmails) {
     notices.push({
       code: "emails_off",
@@ -84,34 +114,64 @@ export function adminNotices(
   for (const problem of delivery.problems ?? []) {
     if (problem.trim()) notices.push({ code: "delivery_problem", tone: "warn", message: problem.trim() });
   }
+  for (const person of context.unlinkedCrew ?? []) {
+    notices.push({
+      code: "crew_unlinked",
+      tone: "warn",
+      message: `${personName(person)} joined as a crew member but isn't on a crew yet, so their route won't open. Pick them for their crew in Schedule settings → Crews.`,
+      ...(context.crewsHref ? { link: { href: context.crewsHref, label: "Pick their crew" } } : {}),
+    });
+  }
+  // With a company and no time zone of its own, visits run on the starting
+  // zone — and online booking stays off until the company sets one (the
+  // settings save refuses it), so customers never book on a clock that
+  // isn't the business's (review T2A-BO-07).
+  const companyZoneMissing = company && settings.zoneFromCompany === false;
+  if (companyZoneMissing) {
+    notices.push({
+      code: "setup_zone",
+      tone: "warn",
+      message: `Your company's time zone isn't set yet, so visits are shown in ${zoneName(settings.timeZone)}. Set it in your company settings before you take bookings online.`,
+      ...(companyLink ? { link: companyLink } : {}),
+    });
+  }
   if (!settings.publicBookingEnabled) {
     notices.push({
       code: "booking_off",
       tone: "warn",
-      message:
-        "Online booking is off, so customers can't book on your website. When your business details below are right, turn it on in Schedule settings → Online booking.",
+      message: company
+        ? "Online booking is off, so customers can't book on your website. When your services and crew hours are right, turn it on in Schedule settings → Online booking."
+        : "Online booking is off, so customers can't book on your website. When your business details below are right, turn it on in Schedule settings → Online booking.",
     });
   }
   if (!settings.businessName.trim()) {
     notices.push({
       code: "setup_name",
       tone: "warn",
-      message: "Add your business name in Schedule settings. Customers see it on the booking page and in every email.",
+      message: company
+        ? "Add your business name in your company settings. Customers see it on the booking page and in every email."
+        : "Add your business name in Schedule settings. Customers see it on the booking page and in every email.",
+      ...(companyLink ? { link: companyLink } : {}),
     });
   }
   if (!settings.contactPhone?.trim() && !settings.contactEmail?.trim()) {
     notices.push({
       code: "setup_contact",
       tone: "warn",
-      message:
-        "Add a phone number in Schedule settings. Customers are told to call it when it's too late to change a visit online.",
+      message: company
+        ? "Add a phone number in your company settings. Customers are told to call it when it's too late to change a visit online."
+        : "Add a phone number in Schedule settings. Customers are told to call it when it's too late to change a visit online.",
+      ...(companyLink ? { link: companyLink } : {}),
     });
   }
-  if (!settings.publicBookingEnabled) {
+  if (!settings.publicBookingEnabled && !companyZoneMissing) {
     notices.push({
       code: "setup_zone",
       tone: "info",
-      message: `Visits are in ${zoneName(settings.timeZone)}. If that isn't where you work, change it in Schedule settings before customers book.`,
+      message: company
+        ? `Visits are in ${zoneName(settings.timeZone)}, your company's time zone. If that isn't where you work, change it in your company settings before customers book.`
+        : `Visits are in ${zoneName(settings.timeZone)}. If that isn't where you work, change it in Schedule settings before customers book.`,
+      ...(companyLink ? { link: companyLink } : {}),
     });
   }
   if (delivery.customerEmails && delivery.reminders && settings.reminderLeadHours > 0 && delivery.reminderRuns && "dailyAtUtc" in delivery.reminderRuns) {
@@ -134,11 +194,12 @@ export function adminStatus(
   delivery: DeliveryStatus,
   upcomingVisits: number,
   now: Date,
+  context: AdminNoticeContext = {},
 ): AdminStatus {
   return {
     customerEmails: delivery.customerEmails,
     reminders: delivery.customerEmails && delivery.reminders && settings.reminderLeadHours > 0,
     upcomingVisits,
-    notices: adminNotices(settings, delivery, now),
+    notices: adminNotices(settings, delivery, now, context),
   };
 }

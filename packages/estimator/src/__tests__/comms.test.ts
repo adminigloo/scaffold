@@ -308,3 +308,38 @@ describe("templates and variables", () => {
     expect(estimatorEmailVars(event, settings, { quoteUrl: null, audience: "staff" })["customerPhone"]).toBe("—");
   });
 });
+
+describe("the emails around an answer (review T2A-BO-12)", () => {
+  it("the customer who accepted is offered to see or print the quote, never asked to accept or decline it again", async () => {
+    const b = await business();
+    const id = await b.quote();
+    await sendQuote(t.db, b.tenantId, id, {}, { now: NOW });
+    const token = await insertQuoteToken(t.db, b.tenantId, id);
+    await acceptQuote(t.db, b.tenantId, token, { version: 1, name: "Pat Lee" }, { now: at(1), onEvent: b.listener.onEvent });
+    const thanks = b.mail.to("pat@example.test").at(-1)!;
+    expect(thanks.subject).toMatch(/^Thanks, you've accepted quote/);
+    expect(thanks.body).toContain("See or print the quote you accepted here, no account needed:");
+    expect(thanks.body).toMatch(TOKEN_LINK);
+    expect(thanks.body).not.toMatch(/accept or decline/i);
+  });
+
+  it("Reply on the office's notice reaches the customer it is about; the customer's own email keeps the business's reply-to", async () => {
+    const b = await business();
+    await createPublicEstimate(
+      t.db,
+      { customerName: "Pat Lee", customerEmail: "pat@example.test", items: [{ productId: b.ramp, inputs: { steps: 3 } }] },
+      { tenantId: b.tenantId, onEvent: b.listener.onEvent },
+    );
+    const office = b.mail.to("office@summit.test").at(-1)!;
+    const customer = b.mail.to("pat@example.test").at(-1)!;
+    expect(office.replyTo).toBe("pat@example.test");
+    expect(customer.replyTo ?? null).toBeNull();
+    // No email given: the notice keeps the business's own reply-to.
+    await createPublicEstimate(
+      t.db,
+      { customerName: "Jo", customerPhone: "555-0100", items: [{ productId: b.ramp, inputs: { steps: 2 } }] },
+      { tenantId: b.tenantId, onEvent: b.listener.onEvent },
+    );
+    expect(b.mail.to("office@summit.test").at(-1)!.replyTo ?? null).toBeNull();
+  });
+});

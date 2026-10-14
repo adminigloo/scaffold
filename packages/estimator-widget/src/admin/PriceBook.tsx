@@ -26,16 +26,41 @@ import { AdminFrame, LoadError, Outcome, ToastRegion, useAdminBasics, useAdminTr
 export interface PriceBookProps extends AdminChromeProps {
   /** Which tab to open on. Default "products". */
   initialTab?: "products" | "supplies";
+  /**
+   * Offer the controls that change the price book: add, edit, reorder,
+   * retire and restore products and supplies, and the sample catalog. The
+   * server still refuses a change without `estimator.pricebook.manage`; false
+   * only stops offering buttons that would fail (Tenancy 2a: a company's
+   * member quotes from the price book, its owner and admins keep it).
+   * Default true.
+   */
+  canManage?: boolean;
 }
+
+/** What someone who may read the price book but not change it is told, once, at the top. */
+export const READ_ONLY_PRICE_BOOK = "You can see the price book. Only the owner or an admin can change it.";
 
 /**
  * The sample arrives OFF the website: its made-up prices reach no customer
  * until the owner has changed them and turned each product on (review EST-R01).
  */
 export const SAMPLE_CONFIRM =
-  "This adds 5 sample products and 10 supplies with sample prices. They stay off your website until you turn each one on, so change the prices to yours first.";
+  "This adds sample products and supplies with sample prices. They stay off your website until you turn each one on, so change the prices to yours first.";
+
+/**
+ * The trades a sample price book is offered for, and what each adds (Tenancy
+ * 2a review T2A-BO-10): a lawn or cleaning business is offered its own kind
+ * of work, never a wheelchair-ramp company's. The counts match
+ * @adminigloo/estimator's SAMPLE_CATALOGS (both packages' tests hold them).
+ */
+export const SAMPLE_TRADES: ReadonlyArray<{ readonly key: "lawn" | "cleaning" | "ramps"; readonly label: string; readonly products: number; readonly supplies: number }> = [
+  { key: "lawn", label: "Lawn care and landscaping", products: 5, supplies: 8 },
+  { key: "cleaning", label: "Home cleaning", products: 5, supplies: 5 },
+  { key: "ramps", label: "Wheelchair ramps and accessibility", products: 5, supplies: 10 },
+];
 
 export function PriceBook(props: PriceBookProps) {
+  const canManage = props.canManage !== false;
   const transport = useAdminTransport(props.transport, props.baseUrl);
   const basics = useAdminBasics(transport);
   const mounted = useMounted();
@@ -58,6 +83,9 @@ export function PriceBook(props: PriceBookProps) {
     setEditing(id);
   };
   const [confirmSample, setConfirmSample] = useState(false);
+  // Which trade's sample: asked, never assumed (T2A-BO-10).
+  const [sampleTrade, setSampleTrade] = useState<"lawn" | "cleaning" | "ramps" | null>(null);
+  const sampleIds = useId();
   const [sampleBusy, setSampleBusy] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const { toasts, push, dismiss } = useToasts();
@@ -90,8 +118,9 @@ export function PriceBook(props: PriceBookProps) {
   }, []);
 
   const loadSample = async () => {
+    if (!sampleTrade) return;
     setSampleBusy(true);
-    const res = await transport.loadSampleCatalog();
+    const res = await transport.loadSampleCatalog(sampleTrade);
     if (!mounted.current) return;
     setSampleBusy(false);
     setConfirmSample(false);
@@ -156,6 +185,11 @@ export function PriceBook(props: PriceBookProps) {
           <div className="aiew-admin-head">
             <h2 className="aiew-admin-title">Price book</h2>
           </div>
+          {canManage ? null : (
+            <p className="aiew-muted" data-aiew-read-only="">
+              {READ_ONLY_PRICE_BOOK}
+            </p>
+          )}
           <div className="aiew-tabs" role="tablist" aria-label="Price book">
             {(["products", "supplies"] as const).map((key) => (
               <button
@@ -189,25 +223,33 @@ export function PriceBook(props: PriceBookProps) {
                 <section className="aiew-panel" data-aiew-empty="products">
                   <div className="aiew-panel-body aiew-empty">
                     <p className="aiew-empty-title">No products yet.</p>
-                    <p>Add what you sell, priced from your own supplies and labor. Or start from a sample and change the prices to yours.</p>
-                    <div className="aiew-row">
-                      <button type="button" className="aiew-btn aiew-btn-primary" onClick={() => openEditor("new")}>
-                        Add a product
-                      </button>
-                      <button type="button" className="aiew-btn aiew-btn-secondary" onClick={() => setConfirmSample(true)} data-aiew-load-sample="">
-                        Load a sample catalog
-                      </button>
-                    </div>
+                    {canManage ? (
+                      <>
+                        <p>Add what you sell, priced from your own supplies and labor. Or start from a sample and change the prices to yours.</p>
+                        <div className="aiew-row">
+                          <button type="button" className="aiew-btn aiew-btn-primary" onClick={() => openEditor("new")}>
+                            Add a product
+                          </button>
+                          <button type="button" className="aiew-btn aiew-btn-secondary" onClick={() => setConfirmSample(true)} data-aiew-load-sample="">
+                            Load a sample catalog
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <p>The owner or an admin adds what you sell here.</p>
+                    )}
                   </div>
                 </section>
               ) : null}
               {products && products.length > 0 ? (
                 <>
-                  <div className="aiew-row">
-                    <button type="button" className="aiew-btn aiew-btn-primary" onClick={() => openEditor("new")}>
-                      Add a product
-                    </button>
-                  </div>
+                  {canManage ? (
+                    <div className="aiew-row">
+                      <button type="button" className="aiew-btn aiew-btn-primary" onClick={() => openEditor("new")}>
+                        Add a product
+                      </button>
+                    </div>
+                  ) : null}
                   {listError ? <Notice tone="error">{listError}</Notice> : null}
                   <ul className="aiew-plist" aria-label="Products, in the order customers see them">
                     {active.map((product, i) => (
@@ -225,24 +267,28 @@ export function PriceBook(props: PriceBookProps) {
                             {!product.isEstimatable ? <span className="aiew-tag aiew-tag-warn">Price by quote</span> : null}
                           </span>
                         </div>
-                        <button type="button" className="aiew-btn aiew-btn-secondary aiew-icon-btn" aria-label={`Move ${product.name} up`} disabled={i === 0} onClick={() => void move(i, -1)}>
-                          <ChevronIcon direction="up" />
-                        </button>
-                        <button
-                          type="button"
-                          className="aiew-btn aiew-btn-secondary aiew-icon-btn"
-                          aria-label={`Move ${product.name} down`}
-                          disabled={i === active.length - 1}
-                          onClick={() => void move(i, 1)}
-                        >
-                          <ChevronIcon direction="down" />
-                        </button>
-                        <button type="button" className="aiew-btn aiew-btn-secondary aiew-btn-sm" onClick={() => openEditor(product.id)}>
-                          Edit
-                        </button>
-                        <button type="button" className="aiew-btn aiew-btn-danger-outline aiew-btn-sm" onClick={() => void setActive(product, false)}>
-                          Retire
-                        </button>
+                        {canManage ? (
+                          <>
+                            <button type="button" className="aiew-btn aiew-btn-secondary aiew-icon-btn" aria-label={`Move ${product.name} up`} disabled={i === 0} onClick={() => void move(i, -1)}>
+                              <ChevronIcon direction="up" />
+                            </button>
+                            <button
+                              type="button"
+                              className="aiew-btn aiew-btn-secondary aiew-icon-btn"
+                              aria-label={`Move ${product.name} down`}
+                              disabled={i === active.length - 1}
+                              onClick={() => void move(i, 1)}
+                            >
+                              <ChevronIcon direction="down" />
+                            </button>
+                            <button type="button" className="aiew-btn aiew-btn-secondary aiew-btn-sm" onClick={() => openEditor(product.id)}>
+                              Edit
+                            </button>
+                            <button type="button" className="aiew-btn aiew-btn-danger-outline aiew-btn-sm" onClick={() => void setActive(product, false)}>
+                              Retire
+                            </button>
+                          </>
+                        ) : null}
                       </li>
                     ))}
                   </ul>
@@ -253,9 +299,11 @@ export function PriceBook(props: PriceBookProps) {
                         {retired.map((product) => (
                           <li key={product.id} className="aiew-pitem" data-aiew-retired={product.id}>
                             <span className="aiew-pitem-main">{product.name}</span>
-                            <button type="button" className="aiew-btn aiew-btn-secondary aiew-btn-sm" onClick={() => void setActive(product, true)}>
-                              Restore
-                            </button>
+                            {canManage ? (
+                              <button type="button" className="aiew-btn aiew-btn-secondary aiew-btn-sm" onClick={() => void setActive(product, true)}>
+                                Restore
+                              </button>
+                            ) : null}
                           </li>
                         ))}
                       </ul>
@@ -272,6 +320,7 @@ export function PriceBook(props: PriceBookProps) {
                 currency={currency}
                 locale={locale}
                 transport={transport}
+                canManage={canManage}
                 onChanged={(supply, affected) => {
                   replaceSupply(supply);
                   // A cost moved: the products using it re-read, so their editors show the new numbers.
@@ -285,9 +334,39 @@ export function PriceBook(props: PriceBookProps) {
       )}
       {confirmSample ? (
         <Dialog title="Load a sample catalog?" onClose={() => setConfirmSample(false)} data={{ "aiew-sample-confirm": "" }}>
-          <p>{SAMPLE_CONFIRM}</p>
+          <fieldset className="aiew-fieldset" data-aiew-sample-trade="">
+            <legend className="aiew-label" id={`${sampleIds}-trade`}>
+              What kind of work do you do?
+            </legend>
+            {SAMPLE_TRADES.map((trade) => (
+              <label key={trade.key} className="aiew-check">
+                <input
+                  type="radio"
+                  name={`${sampleIds}-trade`}
+                  value={trade.key}
+                  checked={sampleTrade === trade.key}
+                  onChange={() => setSampleTrade(trade.key)}
+                />
+                <span>{trade.label}</span>
+              </label>
+            ))}
+          </fieldset>
+          <p>
+            {(() => {
+              const picked = SAMPLE_TRADES.find((trade) => trade.key === sampleTrade);
+              return picked
+                ? `This adds ${picked.products} sample products and ${picked.supplies} supplies with sample prices. They stay off your website until you turn each one on, so change the prices to yours first.`
+                : SAMPLE_CONFIRM;
+            })()}
+          </p>
           <div className="aiew-actions">
-            <button type="button" className="aiew-btn aiew-btn-primary" data-autofocus="" disabled={sampleBusy} aria-busy={sampleBusy || undefined} onClick={() => void loadSample()}>
+            <button
+              type="button"
+              className="aiew-btn aiew-btn-primary"
+              disabled={sampleBusy || !sampleTrade}
+              aria-busy={sampleBusy || undefined}
+              onClick={() => void loadSample()}
+            >
               {sampleBusy ? "Loading…" : "Load the sample"}
             </button>
             <button type="button" className="aiew-btn aiew-btn-secondary" onClick={() => setConfirmSample(false)}>
@@ -352,6 +431,7 @@ export function SuppliesLibrary({
   currency,
   locale,
   transport,
+  canManage = true,
   onChanged,
   onRetry,
 }: {
@@ -360,6 +440,8 @@ export function SuppliesLibrary({
   currency: string;
   locale: string;
   transport: EstimatorAdminTransport;
+  /** Offer add, edit, retire and restore (PriceBookProps.canManage). Default true. */
+  canManage?: boolean;
   onChanged: (supply: SupplyWire, affected: Array<{ id: string; name: string }>) => void;
   onRetry: () => void;
 }) {
@@ -395,28 +477,30 @@ export function SuppliesLibrary({
           {message.text}
         </Notice>
       ) : null}
-      <SupplyForm
-        title="Add a supply"
-        initial={draftOf(null)}
-        submitLabel="Add supply"
-        onSubmit={async (draft) => {
-          const cost = parseMoneyInput(draft.cost);
-          if (cost === null || Number.isNaN(cost)) return "Enter what it costs you, like 95.00.";
-          const res = await transport.createSupply({
-            name: draft.name.trim(),
-            unitType: draft.unitType,
-            unitCost: cost,
-            supplier: draft.supplier.trim() || null,
-            sku: draft.sku.trim() || null,
-            note: draft.note.trim() || null,
-          });
-          if (!res.ok) return adminErrorText(res.error);
-          onChanged(res.data.supply, []);
-          setMessage({ tone: "ok", text: `Added ${res.data.supply.name}.` });
-          return null;
-        }}
-        resetOnSave
-      />
+      {canManage ? (
+        <SupplyForm
+          title="Add a supply"
+          initial={draftOf(null)}
+          submitLabel="Add supply"
+          onSubmit={async (draft) => {
+            const cost = parseMoneyInput(draft.cost);
+            if (cost === null || Number.isNaN(cost)) return "Enter what it costs you, like 95.00.";
+            const res = await transport.createSupply({
+              name: draft.name.trim(),
+              unitType: draft.unitType,
+              unitCost: cost,
+              supplier: draft.supplier.trim() || null,
+              sku: draft.sku.trim() || null,
+              note: draft.note.trim() || null,
+            });
+            if (!res.ok) return adminErrorText(res.error);
+            onChanged(res.data.supply, []);
+            setMessage({ tone: "ok", text: `Added ${res.data.supply.name}.` });
+            return null;
+          }}
+          resetOnSave
+        />
+      ) : null}
       {/* Below 600 px each row is a card (the admin stylesheet): name and cost
           on one line, the rest under it, Edit and Retire in reach. Every cell
           carries its column's name for that layout (review EST-R08). */}
@@ -432,9 +516,11 @@ export function SuppliesLibrary({
               </th>
               <th scope="col">Supplier</th>
               <th scope="col">Used by</th>
-              <th scope="col">
-                <span className="aiew-sr">Actions</span>
-              </th>
+              {canManage ? (
+                <th scope="col">
+                  <span className="aiew-sr">Actions</span>
+                </th>
+              ) : null}
             </tr>
           </thead>
           <tbody>
@@ -493,16 +579,18 @@ export function SuppliesLibrary({
                     {supply.usedBy.length === 0 ? "Not used" : `Used by ${supply.usedBy.length}`}
                     {supply.usedBy.length > 0 ? <span className="aiew-hint" style={{ display: "block" }}>{supply.usedBy.map((p) => p.name).join(", ")}</span> : null}
                   </td>
-                  <td data-label="Actions" data-cell="actions">
-                    <span className="aiew-row">
-                      <button type="button" className="aiew-btn aiew-btn-secondary aiew-btn-sm" onClick={() => setEditing(supply.id)}>
-                        Edit
-                      </button>
-                      <button type="button" className="aiew-btn aiew-btn-danger-outline aiew-btn-sm" onClick={() => setRetiring(supply)}>
-                        Retire
-                      </button>
-                    </span>
-                  </td>
+                  {canManage ? (
+                    <td data-label="Actions" data-cell="actions">
+                      <span className="aiew-row">
+                        <button type="button" className="aiew-btn aiew-btn-secondary aiew-btn-sm" onClick={() => setEditing(supply.id)}>
+                          Edit
+                        </button>
+                        <button type="button" className="aiew-btn aiew-btn-danger-outline aiew-btn-sm" onClick={() => setRetiring(supply)}>
+                          Retire
+                        </button>
+                      </span>
+                    </td>
+                  ) : null}
                 </tr>
               ),
             )}
@@ -516,9 +604,11 @@ export function SuppliesLibrary({
             {retired.map((supply) => (
               <li key={supply.id} className="aiew-pitem">
                 <span className="aiew-pitem-main">{supply.name}</span>
-                <button type="button" className="aiew-btn aiew-btn-secondary aiew-btn-sm" onClick={() => void restore(supply)}>
-                  Restore
-                </button>
+                {canManage ? (
+                  <button type="button" className="aiew-btn aiew-btn-secondary aiew-btn-sm" onClick={() => void restore(supply)}>
+                    Restore
+                  </button>
+                ) : null}
               </li>
             ))}
           </ul>

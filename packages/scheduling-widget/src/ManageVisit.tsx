@@ -55,6 +55,8 @@ export interface ManageVisitProps extends ChromeProps {
   bookHref?: string;
   /** After a successful reschedule or cancel, with the updated visit. */
   onChange?: (visit: PublicVisit) => void;
+  /** The business's own colour (Tenancy 2a), as on `<VisitPicker>`. */
+  accentColor?: string | null;
 }
 
 type LoadState =
@@ -247,6 +249,15 @@ export function ManageVisit(props: ManageVisitProps) {
   let body: ReactNode;
   if (load.status === "loading") {
     body = <Loading label="Loading your visit…" />;
+  } else if (load.status === "error" && load.error.code === "booking_closed" && load.error.message && load.error.message !== "booking_closed") {
+    // Closed BY THE BUSINESS (Tenancy 2a, D7): its own sentence, no retry.
+    body = (
+      <section className="aisw-empty" data-aisw-state="closed" aria-labelledby={`${ids}-closed`}>
+        <h2 className="aisw-empty-title" id={`${ids}-closed`}>
+          {load.error.message}
+        </h2>
+      </section>
+    );
   } else if (load.status === "error") {
     body = (
       <Notice tone="error">
@@ -510,7 +521,8 @@ export function ManageVisit(props: ManageVisitProps) {
       nonce={props.nonce}
       className={props.className}
       style={props.style}
-      data={{ "aisw-manage": load.status === "ready" ? mode : load.status }}
+      accent={props.accentColor ?? null}
+      data={{ "aisw-manage": load.status === "ready" ? mode : load.status === "error" && load.error.code === "booking_closed" ? "closed" : load.status }}
     >
       <div className="aisw-body">{body}</div>
     </WidgetRoot>

@@ -8,6 +8,8 @@
  *   <CompanySettings baseUrl="/api/tenancy" tenantId={id} />  name, web address, logo, colour, details
  *   <CompanySuspended companyName="…" />                      the plain "suspended" screen
  *   <AcceptInvitation baseUrl="/api/tenancy" token={t} />     the invitation link's page
+ *   <CompanyBrandBar company={publicCompany} />               a company's public face (Tenancy 2a)
+ *   <CompanyUnavailable company={publicCompany} />            "isn't taking requests online right now"
  *
  * Talks to `@adminigloo/tenancy/server`'s `createTenancyHandlers` (or any
  * object implementing `TenancyTransport`) over the wire contract in
@@ -26,6 +28,8 @@ export { TeamManager, type TeamManagerProps } from "./TeamManager.js";
 export { CompanySettings, formatRatio, sectionAnchor, wireValue, type CompanySettingsProps } from "./CompanySettings.js";
 export { CompanySuspended, type CompanySuspendedProps } from "./CompanySuspended.js";
 export { AcceptInvitation, ACCEPT_REDIRECT_MS, type AcceptInvitationProps } from "./AcceptInvitation.js";
+export { CompanyBrandBar, type CompanyBrandBarProps } from "./CompanyBrandBar.js";
+export { CompanyUnavailable, type CompanyUnavailableProps } from "./CompanyUnavailable.js";
 
 export {
   createTenancyClient,
@@ -41,6 +45,8 @@ export {
   parseSlugCheck,
   parseTeam,
   ROLE_KEYS,
+  humanizeRoleKey,
+  roleKeyOrNull,
   type TenancyTransport,
 } from "./client.js";
 export { joinUrl, toClientError, WIRE_ERROR_CODES, type ClientError, type Result, type TransportOptions } from "./http.js";
@@ -99,6 +105,7 @@ export type {
   PendingForMeWire,
   PersonRefWire,
   ProfileBody,
+  PublicCompanyWire,
   RoleBody,
   RoleKey,
   RoleOptionWire,

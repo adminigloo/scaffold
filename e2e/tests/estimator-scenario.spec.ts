@@ -242,6 +242,8 @@ test("Summit Ramps prices, quotes and wins a ramp job: owner, customer and offic
     await expect(owner.getByText("No products yet.")).toBeVisible();
     await owner.getByRole("button", { name: "Load a sample catalog" }).click();
     const dialog = owner.getByRole("dialog", { name: "Load a sample catalog?" });
+    // The trade is asked, never assumed (Tenancy 2a review T2A-BO-10).
+    await dialog.getByLabel("Wheelchair ramps and accessibility").check();
     await expect(dialog).toContainText("This adds 5 sample products and 10 supplies with sample prices.");
     await expect(dialog).toContainText("They stay off your website until you turn each one on");
     expect(await server.query("select id from estimator_products")).toEqual([]);

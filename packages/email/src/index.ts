@@ -2,6 +2,7 @@ export {
   parseSenderAddress,
   formatSenderAddress,
   InvalidSenderAddressError,
+  sanitizeDisplayName,
 } from "./sender.js";
 export type { SenderAddress } from "./sender.js";
 

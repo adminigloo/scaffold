@@ -464,10 +464,11 @@ describe("staff: permissions", () => {
     const exceptionId = timeOff.timeOff[0].id as string;
     const table: Array<[Request, SchedulingPermission | SchedulingPermission[]]> = [
       [adminRequest("GET", `/calendar?from=${WED}&to=${WED}`), "schedule.view"],
-      // The caller's own crew: schedule.route alone (another crew's route,
-      // and another crew's stop, also ask schedule.view / schedule.manage —
-      // see review-staff.test.ts).
-      [adminRequest("GET", `/crew-day?date=${WED}&resource=${crew.id}`), "schedule.route"],
+      // The caller's own crew: schedule.route, then schedule.view — the second
+      // answer only decides whether the caller may page to another day (a crew
+      // member opens today's route only, review SEC-2A-05) or open another
+      // crew's route (see review-staff.test.ts).
+      [adminRequest("GET", `/crew-day?date=${WED}&resource=${crew.id}`), ["schedule.route", "schedule.view"]],
       [adminRequest("GET", "/status"), "schedule.view"],
       [adminRequest("GET", "/people"), "schedule.resources.manage"],
       [adminRequest("POST", `/visits/${id}/progress`, { status: "in_progress" }), "schedule.route"],

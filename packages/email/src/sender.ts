@@ -103,6 +103,40 @@ export function formatSenderAddress(
   return `"${escaped}" <${address.email}>`;
 }
 
+/**
+ * Clean a display name that came from somewhere other than an env variable
+ * (a company's name as its owner typed it) so it can sit in a `From:` header.
+ *
+ * Control characters are REMOVED rather than refused: `formatSenderAddress`
+ * throws on them because an env value with a newline is a typo to fix, but a
+ * business name pasted with a stray tab must still send. Whitespace runs
+ * collapse to one space, the ends are trimmed, and the result is cut to `max`
+ * characters (default 64) at a code-point boundary, so a cut never splits an
+ * emoji into a lone surrogate. Commas and quotes are left alone:
+ * `formatSenderAddress` quotes them, so `Green Acres, LLC` stays one address.
+ *
+ * null when nothing is left, so the caller falls back to its own name.
+ */
+export function sanitizeDisplayName(
+  value: string | null | undefined,
+  max = 64,
+): string | null {
+  if (typeof value !== "string") return null;
+  let cleaned = "";
+  for (const char of value) {
+    const code = char.codePointAt(0) ?? 0;
+    // C0, DEL and C1 become a space, so a name with a stray newline reads
+    // "Green Acres" instead of "GreenAcres".
+    cleaned += code < 0x20 || (code >= 0x7f && code <= 0x9f) ? " " : char;
+  }
+  cleaned = cleaned.replace(/\s+/g, " ").trim();
+  if (cleaned.length === 0) return null;
+  const limit = Math.max(1, Math.floor(max));
+  const chars = Array.from(cleaned);
+  if (chars.length > limit) cleaned = chars.slice(0, limit).join("").trim();
+  return cleaned.length > 0 ? cleaned : null;
+}
+
 interface DisplayName {
   readonly value: string | null;
 }

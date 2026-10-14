@@ -168,6 +168,8 @@ export interface CrewDayResponse {
   stops: CrewStop[];
   totals: { visits: number; driveMinutes: number; distanceMiles: number; estimated: boolean };
   routeUrl: string | null;
+  /** True for a login that may open today's route only (a crew member): the screen offers no other day. */
+  todayOnly: boolean;
 }
 
 export interface StaffSlot {
@@ -206,8 +208,10 @@ export interface ProgressBody { status: ProgressStatus; note?: string }   // not
 /** What the office should know about this deployment, in plain words (a banner on the calendar and settings). */
 export type AdminNoticeCode =
   | "booking_off" | "setup_name" | "setup_contact" | "setup_zone"
-  | "emails_off" | "reminders_off" | "reminders_daily" | "delivery_problem";
-export interface AdminNotice { code: AdminNoticeCode; tone: "info" | "warn"; message: string }
+  | "emails_off" | "reminders_off" | "reminders_daily" | "delivery_problem"
+  | "crew_unlinked";
+/** link: where to fix it ("Open company settings"), when the host said where. */
+export interface AdminNotice { code: AdminNoticeCode; tone: "info" | "warn"; message: string; link?: { href: string; label: string } | null }
 export interface AdminStatus {
   customerEmails: boolean;          // false: no customer is emailed about anything — the screens say so instead of offering to
   reminders: boolean;               // false: no reminder goes out
@@ -229,8 +233,10 @@ export interface SettingsWire {
   autoConfirm: boolean; publicBookingEnabled: boolean;
   pendingExpiryHours: number; reminderLeadHours: number; cancelCutoffHours: number;
   saved: boolean; updatedAt: Instant | null;
+  /** The name, zone and contact come from the company profile (Tenancy 2a): show them read-only, linking here. null = editable here. */
+  managedByCompany: { href: string | null } | null;
 }
-export type SettingsPatch = Partial<Omit<SettingsWire, "saved" | "updatedAt">> & {
+export type SettingsPatch = Partial<Omit<SettingsWire, "saved" | "updatedAt" | "managedByCompany">> & {
   notifyCustomers?: boolean;        // with a new timeZone: email each upcoming visit's customer the corrected time
 };
 

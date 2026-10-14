@@ -15,6 +15,16 @@ import type { CommsDb } from "../index.js";
  *
  * Anything it does not understand throws, so a new query shape shows up as a
  * test failure rather than a silently-true filter.
+ *
+ * COLUMNS COME FROM THE TABLE DEFINITION, never a hand-kept list: `withDefaults`
+ * and `applyPatch` walk `getTableColumns`. So 0.3's two delivery-log columns
+ * (`from_name`, `reply_to`, Tenancy 2a D8) are stored, defaulted to null and
+ * read back like every other, and a patch naming a column the schema doesn't
+ * have still throws. send.test.ts pins that round trip ("the sender identity on
+ * the log row"), so a fake that lost them would fail there, not pass quietly.
+ * The drain's `tenantIds` filter is an `in (...)`, which the evaluator below
+ * already understands; an empty list never reaches it (runDueMessages skips
+ * the claim loop for an empty list instead of querying `in ()`).
  */
 
 type Row = Record<string, unknown>;

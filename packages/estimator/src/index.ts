@@ -36,6 +36,11 @@ export * from "./takeoff-run.js";
 export * from "./keys.js";
 export * from "./handlers.js";
 export * from "./admin-handlers.js";
+// Tenancy 2a: the estimator inside a company. Structural seams (D4): nothing
+// here imports tenancy, and a host passing none of them gets 0.3's behaviour.
+export * from "./company.js";
+export * from "./routes.js";
+export * from "./checklist.js";
 export { generateToken, hashToken, looksLikeToken } from "./tokens.js";
 export { HttpError, isCrossSiteRequest, WIRE_ERROR_STATUS, wireIssues } from "./http.js";
 export {

@@ -89,6 +89,8 @@ export interface CrewDayResponse {
   stops: CrewStop[];
   totals: { visits: number; driveMinutes: number; distanceMiles: number; estimated: boolean };
   routeUrl: string | null;
+  /** True for a login that may open today's route only (a crew member): the screen offers no other day. */
+  todayOnly: boolean;
 }
 
 export interface StaffSlot {
@@ -181,11 +183,14 @@ export type AdminNoticeCode =
   | "emails_off"
   | "reminders_off"
   | "reminders_daily"
-  | "delivery_problem";
+  | "delivery_problem"
+  | "crew_unlinked";
+/** link: where to fix it ("Open company settings"), when the host said where. */
 export interface AdminNotice {
   code: AdminNoticeCode;
   tone: "info" | "warn";
   message: string;
+  link?: { href: string; label: string } | null;
 }
 export interface AdminStatus {
   customerEmails: boolean; // false: no customer is emailed about anything — the screens say so instead of offering to
@@ -234,8 +239,10 @@ export interface SettingsWire {
   cancelCutoffHours: number;
   saved: boolean;
   updatedAt: Instant | null;
+  /** The name, zone and contact come from the company profile (Tenancy 2a): show them read-only, linking here. null = editable here. */
+  managedByCompany: { href: string | null } | null;
 }
-export type SettingsPatch = Partial<Omit<SettingsWire, "saved" | "updatedAt">> & {
+export type SettingsPatch = Partial<Omit<SettingsWire, "saved" | "updatedAt" | "managedByCompany">> & {
   notifyCustomers?: boolean; // with a new timeZone: email each upcoming visit's customer the corrected time
 };
 

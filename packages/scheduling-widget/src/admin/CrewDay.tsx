@@ -51,20 +51,31 @@ export interface CrewDayProps extends ChromeProps {
 
 /** How long after Complete (or Couldn't do it) the Undo stays. */
 const UNDO_MS = 15 * 60_000;
-const REMEMBER_KEY = "aisw-crew-day-resource";
+const REMEMBER_PREFIX = "aisw-crew-day-resource";
 
-function readRemembered(): string | null {
+/**
+ * The device's remembered crew, PER SCHEDULE (review T2A-BO-03): keyed by the
+ * API the page talks to, which names the company (`/api/app/{id}/schedule`).
+ * One global key let an owner of two companies — or an office tablet two
+ * companies share — carry Green Acres' crew into Summit's route, where it is
+ * "not found" forever.
+ */
+function rememberKey(scope: string): string {
+  return `${REMEMBER_PREFIX}:${scope}`;
+}
+
+function readRemembered(scope: string): string | null {
   try {
-    return typeof localStorage !== "undefined" ? localStorage.getItem(REMEMBER_KEY) : null;
+    return typeof localStorage !== "undefined" ? localStorage.getItem(rememberKey(scope)) : null;
   } catch {
     return null;
   }
 }
 
-function remember(resourceId: string | null): void {
+function remember(scope: string, resourceId: string | null): void {
   try {
-    if (resourceId) localStorage.setItem(REMEMBER_KEY, resourceId);
-    else localStorage.removeItem(REMEMBER_KEY);
+    if (resourceId) localStorage.setItem(rememberKey(scope), resourceId);
+    else localStorage.removeItem(rememberKey(scope));
   } catch {
     /* private mode: the pick lasts for this page only */
   }
@@ -91,6 +102,7 @@ export function CrewDay(props: CrewDayProps) {
   const canManage = props.canManage !== false;
   const pollMs = props.pollMs ?? 120_000;
   const transport = useAdminTransport(props.transport, props.baseUrl);
+  const scope = props.baseUrl ?? "default";
   const ids = useId();
   const [date, setDate] = useState<DateString | null>(props.date ?? null);
   const [resource, setResource] = useState<string | null>(props.resourceId ?? null);
@@ -112,7 +124,7 @@ export function CrewDay(props: CrewDayProps) {
   // The crew picked on this device last time, when the page wasn't told one.
   useEffect(() => {
     if (props.resourceId) return;
-    const remembered = readRemembered();
+    const remembered = readRemembered(scope);
     if (remembered) {
       fromMemory.current = true;
       setResource(remembered);
@@ -152,10 +164,12 @@ export function CrewDay(props: CrewDayProps) {
         // shown from `data.date`, without a second request to ask for it again.
         return;
       }
-      // A crew remembered on this device that this login may not open: forget it.
-      if (res.error.code === "forbidden" && resource && fromMemory.current) {
+      // A crew remembered on this device that this login may not open, or
+      // that isn't there (deleted, or another company's): forget it and show
+      // this login's own route instead of a dead end.
+      if ((res.error.code === "forbidden" || res.error.code === "not_found") && resource && fromMemory.current) {
         fromMemory.current = false;
-        remember(null);
+        remember(scope, null);
         setResource(null);
         return;
       }
@@ -206,7 +220,7 @@ export function CrewDay(props: CrewDayProps) {
 
   const pickCrew = (id: string) => {
     fromMemory.current = false;
-    remember(id);
+    remember(scope, id);
     setResource(id);
   };
 
@@ -338,28 +352,39 @@ export function CrewDay(props: CrewDayProps) {
           ) : (
             <h2 className="aisw-admin-title">{data.resource.name}</h2>
           )}
-          <div className="aisw-route-nav">
-            <button
-              type="button"
-              className="aisw-btn aisw-btn-secondary aisw-icon-btn"
-              aria-label="Previous day"
-              onClick={() => shownDate && setDate(addDays(shownDate, -1))}
-            >
-              <ChevronIcon direction="left" />
-            </button>
-            <p className="aisw-route-date" aria-live="polite">
-              {formatLongDate(data.date, locale)}
-              {data.date === data.today ? " (today)" : ""}
-            </p>
-            <button
-              type="button"
-              className="aisw-btn aisw-btn-secondary aisw-icon-btn"
-              aria-label="Next day"
-              onClick={() => shownDate && setDate(addDays(shownDate, 1))}
-            >
-              <ChevronIcon direction="right" />
-            </button>
-          </div>
+          {data.todayOnly ? (
+            // A crew member opens today's route only (the server refuses any
+            // other day), so there is no day to page to.
+            <div className="aisw-route-nav" data-aisw-today-only="">
+              <p className="aisw-route-date">
+                {formatLongDate(data.date, locale)}
+                {data.date === data.today ? " (today)" : ""}
+              </p>
+            </div>
+          ) : (
+            <div className="aisw-route-nav">
+              <button
+                type="button"
+                className="aisw-btn aisw-btn-secondary aisw-icon-btn"
+                aria-label="Previous day"
+                onClick={() => shownDate && setDate(addDays(shownDate, -1))}
+              >
+                <ChevronIcon direction="left" />
+              </button>
+              <p className="aisw-route-date" aria-live="polite">
+                {formatLongDate(data.date, locale)}
+                {data.date === data.today ? " (today)" : ""}
+              </p>
+              <button
+                type="button"
+                className="aisw-btn aisw-btn-secondary aisw-icon-btn"
+                aria-label="Next day"
+                onClick={() => shownDate && setDate(addDays(shownDate, 1))}
+              >
+                <ChevronIcon direction="right" />
+              </button>
+            </div>
+          )}
           {totals ? (
             <p className="aisw-route-totals" data-aisw-totals="">
               {totals.visits} stop{totals.visits === 1 ? "" : "s"} · {formatDurationShort(totals.driveMinutes)} driving
@@ -530,6 +555,27 @@ export function CrewDay(props: CrewDayProps) {
           </ol>
         )}
       </>
+    );
+  } else if (error && error.code === "not_found" && error.status !== 401) {
+    // The crew asked for isn't there (deleted, or not this company's): no
+    // calendar was refreshed, and trying the same crew again can't help. Go
+    // back to this login's own route.
+    body = (
+      <Notice tone="error">
+        That crew isn't there any more.{" "}
+        <button
+          type="button"
+          className="aisw-btn aisw-btn-link"
+          onClick={() => {
+            fromMemory.current = false;
+            remember(scope, null);
+            setResource(null);
+            setError(null);
+          }}
+        >
+          Show my route
+        </button>
+      </Notice>
     );
   } else if (error) {
     body = (

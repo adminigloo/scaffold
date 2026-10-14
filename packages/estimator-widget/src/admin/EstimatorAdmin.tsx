@@ -25,7 +25,7 @@ export interface EstimatorAdminProps extends AdminChromeProps {
   sections?: EstimatorAdminSection[];
   initialSection?: EstimatorAdminSection;
   /** Links to an estimate's own page instead of opening it in place. */
-  estimateHref?: (id: string) => string;
+  estimateHref?: string | ((id: string) => string);
   /** The public estimator's address for the embed snippet. Default the server's, then `${location.origin}/api/estimator`. */
   embedBaseUrl?: string;
 }

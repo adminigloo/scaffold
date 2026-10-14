@@ -6,8 +6,9 @@ import { definePermissions, DuplicatePermissionError } from "__SCOPE__/permissio
 import type { Catalog, PermissionRule } from "__SCOPE__/permissions";
 import { assertCatalogConformance } from "__SCOPE__/testing/permissions";
 import type { ConformanceResult } from "__SCOPE__/testing/permissions";
-import { TENANT_ROLE_TEMPLATES, tenancyPermissions } from "__SCOPE__/tenancy";
+import { tenancyPermissions } from "__SCOPE__/tenancy";
 import { staffCatalog, tenantCatalog } from "@/permissions/catalog";
+import { TENANT_ROLES } from "@/permissions/roles";
 
 /**
  * THIS IS THE TEST THAT MAKES RENAMING A PERMISSION SAFE.
@@ -132,7 +133,10 @@ function seededGrants<TKey extends string>(
  * notices.
  */
 const STAFF_TEMPLATE_KEYS = ["admin", "cs_lead", "cs_agent"];
-const TENANT_TEMPLATE_KEYS = TENANT_ROLE_TEMPLATES.map((template) => template.key);
+// The company roles the seed installs (src/permissions/roles.ts): tenancy's
+// four plus any a feature adds, such as scheduling's Crew in a companies
+// project, so a key a package grants only to its own role is not "unseeded".
+const TENANT_TEMPLATE_KEYS = TENANT_ROLES.templates.map((template) => template.key);
 
 /**
  * Keys that intentionally reach nobody until an operator grants them by hand.

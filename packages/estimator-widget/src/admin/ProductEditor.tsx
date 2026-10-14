@@ -105,7 +105,9 @@ export interface ProductForm {
 }
 
 export function formFromProduct(product: AdminProduct | null): ProductForm {
-  const recipe: RecipeKey = product?.recipe ?? "ramp_over_steps";
+  // A new product starts as "a count" — the way most service work is priced
+  // (visits, rooms, windows) — not as a ramp over steps (review T2A-BO-10).
+  const recipe: RecipeKey = product?.recipe ?? "count";
   return {
     name: product?.name ?? "",
     category: product?.category ?? "",

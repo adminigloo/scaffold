@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
-import type { TenancyTransport } from "./client.js";
+import { humanizeRoleKey, type TenancyTransport } from "./client.js";
 import type { ClientError } from "./http.js";
 import {
   ConfirmDialog,
@@ -158,7 +158,7 @@ export function TeamManager(props: TeamManagerProps) {
 
   const roleName = (key: RoleKey | null): string => {
     if (!key) return W.noRole;
-    return data.roles.find((r) => r.key === key)?.name ?? key.charAt(0).toUpperCase() + key.slice(1);
+    return data.roles.find((r) => r.key === key)?.name ?? humanizeRoleKey(key);
   };
   const companyName = data.company.name;
 

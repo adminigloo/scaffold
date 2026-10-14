@@ -84,7 +84,7 @@ describe("renderInvitationEmail", () => {
   });
 
   it("formats the expiry in UTC, matching the row it came from", () => {
-    expect(invitationPlainText(BASE)).toContain("8 March 2026");
+    expect(invitationPlainText(BASE)).toContain("March 8, 2026");
   });
 
   it("names an unknown sender rather than leaving a gap", () => {

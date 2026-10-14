@@ -47,7 +47,8 @@ describe("sendNow — SMS compliance", () => {
       { sms: r.sms, smsCompliance: { senderName: "Acme Plumbing" } },
     );
     const sent = "Acme Plumbing: Hi Sam, see you at 9. Reply STOP to opt out.";
-    expect(r.texts).toEqual([{ to: "+18015551234", body: sent }]);
+    // 0.3: the outbound text names its tenant (Tenancy 2a).
+    expect(r.texts).toEqual([{ tenantId: T, to: "+18015551234", body: sent }]);
     expect(row).toMatchObject({ status: "sent", body: sent, toAddress: "+18015551234", providerId: "SM_1" });
   });
 
@@ -257,5 +258,31 @@ describe("sendNow — subject, kill switch, channel, repeats", () => {
     const row = await sendNow(fake.db, { tenantId: T, to: "sam@example.com", templateKey: "nope" }, {});
     expect(row).toMatchObject({ status: "failed", error: 'no template "nope"' });
     expect(fake.rows("comms_messages")).toHaveLength(1);
+  });
+});
+
+describe("sendNow — the sender identity on the log row (Tenancy 2a, D8)", () => {
+  // The fake keeps every column the schema declares, 0.3's `from_name` and
+  // `reply_to` included (fake-db.ts's header). This pins that round trip, so
+  // the fake-backed suites can assert who a message went out as; the PGlite
+  // suite (identity.test.ts) proves the same against a real Postgres.
+  it("stores the company's name and reply-to on the row it logs, and hands them to the sender", async () => {
+    const fake = withTemplates([{ key: "confirm", body: "Hi" }]);
+    const r = recorder();
+    const row = await sendNow(
+      fake.db,
+      { tenantId: T, to: "sam@example.com", templateKey: "confirm" },
+      { email: r.email, identity: () => ({ name: "Green Acres", replyTo: "gail@greenacres.test" }) },
+    );
+    expect(r.emails[0]).toMatchObject({ tenantId: T, fromName: "Green Acres", replyTo: "gail@greenacres.test" });
+    expect(row).toMatchObject({ status: "sent", fromName: "Green Acres", replyTo: "gail@greenacres.test" });
+    expect(fake.rows("comms_messages")[0]).toMatchObject({ fromName: "Green Acres", replyTo: "gail@greenacres.test" });
+  });
+
+  it("leaves both columns empty with no identity seam, as 0.2 sent", async () => {
+    const fake = withTemplates([{ key: "confirm", body: "Hi" }]);
+    const r = recorder();
+    await sendNow(fake.db, { tenantId: T, to: "sam@example.com", templateKey: "confirm" }, { email: r.email });
+    expect(fake.rows("comms_messages")[0]).toMatchObject({ status: "sent", fromName: null, replyTo: null });
   });
 });

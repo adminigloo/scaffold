@@ -3,12 +3,14 @@ import { auth } from "@clerk/nextjs/server";
 import { headers } from "next/headers";
 import Link from "next/link";
 import type { Principal } from "__SCOPE__/auth";
+import type { SessionState } from "__SCOPE__/tenancy/server";
 import { env } from "@/env";
 import { APP_LINKS, SITE_LINKS, type SiteLink } from "@/nav";
 import { buttonClass } from "@/components/ui";
 import { CompanySwitcherSlot } from "@/components/CompanySwitcherSlot";
 import { currentPrincipal } from "@/server/auth";
-import { loadStaffPermissions } from "@/server/permissions";
+import { loadStaffPermissions, loadTenantPermissions } from "@/server/permissions";
+import { tenancy } from "@/server/tenancy";
 
 /**
  * The public destinations, sign in / out, and whatever a signed-in user gets:
@@ -81,46 +83,70 @@ export async function AuthHeader() {
       {/* THE SWITCHER, before the app's links (Tenancy 1). Renders nothing for
           someone with one workspace in a single-business project, and nothing
           if the database can't answer — the header must never fail a page. */}
-      <CompanySwitcherSlot principal={viewer.principal} />
+      <CompanySwitcherSlot principal={viewer.principal} session={viewer.session} />
       <div className="hidden items-center gap-4 sm:flex">
-        <AppLinks isStaff={viewer.isStaff} />
+        <AppLinks viewer={viewer} />
       </div>
-      <PhoneMenu app={visibleAppLinks(viewer.isStaff)} />
+      <PhoneMenu app={visibleAppLinks(viewer)} />
       <UserButton />
     </div>
   );
 }
 
+/** Who is looking at the header, as much as it needs to know. */
+interface Viewer {
+  readonly principal: Principal | null;
+  /** Resolved ONCE here and handed to the switcher, which used to resolve it again. */
+  readonly session: SessionState | null;
+  readonly isStaff: boolean;
+  /** The permission keys the person holds in their ACTIVE company ([] with none, or suspended). */
+  readonly can: readonly string[];
+}
+
+const NOBODY: Viewer = { principal: null, session: null, isStaff: false, can: [] };
+
 /**
- * The signed-in person, and whether they are on the platform's staff — ONE
- * query more than the switcher already needs, made only for signed-in
- * viewers, inside the same try/catch: a header that throws takes every page
- * with it.
+ * The signed-in person, their session, whether they are on the platform's
+ * staff, and what their role in their active company lets them open (Tenancy
+ * 2a) — made only for signed-in viewers, all inside one try/catch: a header
+ * that throws takes every page with it, so a database that can't answer
+ * draws the header with no company links instead.
  */
-async function signedInViewer(): Promise<{ principal: Principal | null; isStaff: boolean }> {
+async function signedInViewer(): Promise<Viewer> {
   try {
     const principal = await currentPrincipal();
-    if (!principal) return { principal: null, isStaff: false };
-    return { principal, isStaff: (await loadStaffPermissions({ principal })) !== null };
+    if (!principal) return NOBODY;
+    const session = await tenancy.resolveSession({ userId: principal.userId });
+    const isStaff = (await loadStaffPermissions({ principal })) !== null;
+    const can =
+      session.state === "ready"
+        ? ((await loadTenantPermissions({ principal, tenantId: session.company.id }))?.toArray() ?? [])
+        : [];
+    return { principal, session, isStaff, can };
   } catch {
-    return { principal: null, isStaff: false };
+    return NOBODY;
   }
 }
 
 /**
- * APP_LINKS for this viewer: everything, minus the staff-only ones (Admin) for
- * someone who isn't staff.
+ * APP_LINKS for this viewer: the staff-only ones (Admin) only for staff, and
+ * a company's own screens only for someone whose role in their active company
+ * holds the link's key — a crew member's header shows Dashboard and Today's
+ * route, nothing else (Tenancy 2a).
  *
  * A RUNTIME PERMISSION FILTER OVER A GENERATED LIST, not a feature `if`: which
  * links exist was settled when src/nav.ts was generated (no admin shell, no
- * Admin entry); who sees them is settled here, per request. This replaced the
- * old "NOT permission-filtered, on purpose" note. That note was right to avoid
- * an extra query on every page view — and now the switcher loads the person
- * anyway, so the check costs one more query, and a business owner's header no
- * longer offers them a link that opens on "you don't have access".
+ * Admin entry; no scheduling, no Schedule); who sees them is settled here, per
+ * request. The checks cost a query or two per signed-in page view — the
+ * switcher loads the person anyway — and a business owner's header never
+ * offers a link that opens on "you don't have access".
  */
-function visibleAppLinks(isStaff: boolean): readonly SiteLink[] {
-  return APP_LINKS.filter((link) => link.audience !== "staff" || isStaff);
+function visibleAppLinks(viewer: Viewer): readonly SiteLink[] {
+  return APP_LINKS.filter(
+    (link) =>
+      (link.audience !== "staff" || viewer.isStaff) &&
+      (link.permission === undefined || viewer.can.includes(link.permission)),
+  );
 }
 
 /**
@@ -193,10 +219,10 @@ function SiteLinks() {
  * because the audiences are different — these render only once there is a
  * user.
  */
-function AppLinks({ isStaff }: { readonly isStaff: boolean }) {
+function AppLinks({ viewer }: { readonly viewer: Viewer }) {
   return (
     <>
-      {visibleAppLinks(isStaff).map((link) => (
+      {visibleAppLinks(viewer).map((link) => (
         <Link
           key={link.href}
           href={link.href}

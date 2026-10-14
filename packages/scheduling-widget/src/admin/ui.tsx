@@ -257,6 +257,15 @@ export function AdminNotices({ notices }: { notices: readonly AdminNotice[] }) {
       {notices.map((notice) => (
         <div key={`${notice.code}:${notice.message}`} className={`aisw-notice aisw-notice-${notice.tone}`} data-notice={notice.code}>
           {notice.message}
+          {/* Where to fix it, when the server said (company settings, a crew picker). */}
+          {notice.link ? (
+            <>
+              {" "}
+              <a href={notice.link.href}>
+                {notice.link.label}
+              </a>
+            </>
+          ) : null}
         </div>
       ))}
     </div>

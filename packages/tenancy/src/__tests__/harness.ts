@@ -56,7 +56,7 @@ export interface Harness {
   /** A user row as the webhook or the page mirror writes it (verified email), then provisioned. */
   user(email: string, opts?: { name?: string; provision?: boolean }): Promise<string>;
   /** A company owned by `ownerId`, with members at the given roles. */
-  company(ownerId: string, name: string, members?: Record<string, "admin" | "member" | "viewer">): Promise<string>;
+  company(ownerId: string, name: string, members?: Record<string, "admin" | "member" | "viewer" | (string & {})>): Promise<string>;
   /** Give someone a staff role directly (a system act). */
   staff(userId: string, key: "admin" | "cs_lead" | "cs_agent"): Promise<void>;
   close(): Promise<void>;
@@ -94,7 +94,10 @@ let counter = 0;
 
 export async function harness(
   options: Partial<
-    Pick<CreateTenancyServiceOptions, "mode" | "seats" | "invitations" | "onEvent" | "onEventError" | "reservedSlugs" | "checklist" | "settings" | "companiesPerAccount">
+    Pick<
+      CreateTenancyServiceOptions,
+      "mode" | "seats" | "invitations" | "onEvent" | "onEventError" | "reservedSlugs" | "checklist" | "settings" | "companiesPerAccount" | "roles"
+    >
   > & {
     readonly bootstrap?: BootstrapPolicy;
     readonly seed?: boolean;
@@ -121,6 +124,7 @@ export async function harness(
     ...(options.checklist ? { checklist: options.checklist } : {}),
     ...(options.settings ? { settings: options.settings } : {}),
     ...(options.companiesPerAccount !== undefined ? { companiesPerAccount: options.companiesPerAccount } : {}),
+    ...(options.roles ? { roles: options.roles } : {}),
     ...(options.logos === false ? {} : { logos }),
     audit:
       options.audit ??
@@ -139,7 +143,7 @@ export async function harness(
     async seed() {
       await seedPermissionCatalog(t.db, {
         staff: { catalog: staffCatalog, templates: STAFF_ROLE_TEMPLATES },
-        tenant: { catalog: tenantCatalog, templates: TENANT_ROLE_TEMPLATES },
+        tenant: { catalog: tenantCatalog, templates: options.roles?.templates ?? TENANT_ROLE_TEMPLATES },
       });
     },
     async user(email, opts = {}) {

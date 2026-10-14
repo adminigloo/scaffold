@@ -413,6 +413,18 @@ export const SUSPENDED = {
 } as const;
 
 // ---------------------------------------------------------------------------
+// A company's public face (Tenancy 2a, 5.2 and 5.3)
+// ---------------------------------------------------------------------------
+
+export const PUBLIC_FACE = {
+  unavailableHeading: (name: string) => `${name} isn't taking requests online right now`,
+  unavailableBody: "Please get in touch with them directly.",
+  email: (address: string) => `Email ${address}`,
+  call: (phone: string) => `Call ${phone}`,
+  contactLabel: (name: string) => `How to reach ${name}`,
+} as const;
+
+// ---------------------------------------------------------------------------
 // Operator console (8.10–8.12)
 // ---------------------------------------------------------------------------
 

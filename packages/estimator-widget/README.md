@@ -371,6 +371,83 @@ to the button, and stops the page scrolling behind it. Colour is never the only
 signal. Every target is at least 44px, and everything works at 390px without the
 page scrolling sideways. Reordering uses buttons, never a drag.
 
+## Companies (Tenancy 2a)
+
+The same screens serve every company on a site. Point each at its company's
+routes:
+
+```tsx
+// app/t/[slug]/estimate/page.tsx: the company's instant estimate
+const found = await tenancy.resolvePublicCompany(slug);
+if (!found) notFound();
+const company = publicCompanyToWire(found);
+if (company.status === "suspended") return <CompanyUnavailable company={company} />;     // @adminigloo/tenancy-widget
+return <EstimateTool baseUrl={`/api/t/${company.slug}/estimator`} accentColor={company.brandColor} />;
+```
+
+```tsx
+// app/app/estimates/page.tsx: staff (a server page: pass a string, not a function)
+<EstimatorAdmin baseUrl={`/api/app/${company.id}/estimator`} estimateHref="/app/estimates/{id}" />
+```
+
+- **Your website, no code.** Give `<EmbedKeys>` the company's public estimate
+  page (`publicPageUrl`, a path is completed with the page's own address) and
+  its colour (`buttonColor`): it leads with a button and a page frame, each one
+  line of HTML that Wix, Squarespace, WordPress or any site takes in an
+  "Embed" or "Custom code" block — no key, no developer — and folds the keyed
+  React snippet under "For developers", saying it needs a React site and this
+  private package.
+- **Notices once.** `notices={false}` on any staff screen leaves the notices to
+  the screen above it (Estimate settings mounts `<EstimatorSettings>` and then
+  `<EmbedKeys>`).
+- **A sample for the owner's trade.** The price book's "Load a sample catalog"
+  asks which: lawn care, cleaning or wheelchair ramps.
+- **Pattern hrefs.** `estimateHref` on `<EstimatesQueue>`, `<EstimateEditor>`
+  and `<EstimatorAdmin>` takes a function OR a string whose `{id}` is replaced
+  with the encoded id, because a server page can't hand a function to a client
+  component. Without `onOpenEstimate`, opening another estimate from the editor
+  (a duplicate) navigates there.
+- **Company-owned fields read-only.** When the server says the business
+  details come from the company (`managedByCompany`), `<EstimatorSettings>`
+  shows the name, contact details, time zone and brand colour as text under
+  "These come from your company settings." with the link, and the first-run
+  form asks only for what is still the estimator's (tax rate, labor rate).
+- **The site's ceiling.** With a ceiling on photo-reading spend, the daily
+  budget's hint says "Up to $x.xx a day on this site.", the input's `max` is the
+  ceiling, and a budget above it is refused before saving.
+- **The closed message.** When the server answers `estimates_closed`,
+  `<EstimateTool>`, `<EstimatorModal>` and `<QuoteView>` show the server's
+  sentence (with how to reach the business) instead of a fixed one.
+- **The logo.** `<EstimateTool>` and `<QuoteView>` show the business's logo
+  beside its name when the server sends one.
+- **`#embed`** on the admin page scrolls to the website embed keys and focuses
+  their heading (the setup checklist links there).
+- **Read-only for a role that can look but not change.** `<PriceBook>`,
+  `<EstimatorSettings>`, `<EmbedKeys>`, `<EstimatesQueue>` and
+  `<EstimateEditor>` take `canManage` (default `true`). With `false`, the
+  price book shows its products and supplies with no add, edit, reorder,
+  retire, restore or sample button; estimate settings show every value in a
+  disabled form (and, before the first save, say the owner or an admin has to
+  make it); website keys are listed with no way to make, edit or revoke one;
+  the queue lists every estimate with no "New estimate"; and an estimate is
+  shown in full — customer, photos, lines, totals, the office's notes, what's
+  linked — under "You can see this estimate. Your role can't change it.", with
+  no action, no edit and no photo added or removed. The server refuses those
+  changes either way; this only stops offering buttons that would fail. A
+  server page passes the person's permission:
+
+  ```tsx
+  <PriceBook baseUrl={`/api/app/${company.id}/estimator`} canManage={can.includes("estimator.pricebook.manage")} />
+  <EstimatorSettings baseUrl={`/api/app/${company.id}/estimator`} canManage={can.includes("estimator.settings.manage")} />
+  <EstimatesQueue baseUrl={`/api/app/${company.id}/estimator`} estimateHref="/app/estimates/{id}" canManage={can.includes("estimator.estimates.manage")} />
+  <EstimateEditor baseUrl={`/api/app/${company.id}/estimator`} estimateId={id} canManage={can.includes("estimator.estimates.manage")} />
+  ```
+- **The website snippets scroll by keyboard.** Each snippet box (wider than a
+  phone, so it scrolls sideways) takes focus and is named by the line above
+  it, so someone without a mouse can read the whole line they copy.
+
+A foreign host passes the same props from its own business record.
+
 ## Not included
 
 - **A script tag or iframe for sites that aren't React** (WordPress, Wix,
@@ -385,5 +462,8 @@ page scrolling sideways. Reordering uses buttons, never a drag.
 - **SMS.** Staff can copy the quote link and text it themselves.
 - **PDF files.** The quote page prints cleanly ("Print or save as PDF").
 - **Currency conversion.** One currency per business, shown as set.
-- **Several businesses in one admin.** The handlers take a `resolveTenant(req)`
-  seam; these screens show whichever business the server resolves.
+- **Per-company boards and widgets for feedback, notifications, files, the
+  assistant, analytics, SEO/AEO and book-a-call**: Tenancy 2b. (These screens
+  serve each company since 0.3: see [Companies](#companies-tenancy-2a).)
+- **Payments to companies, plans and billing per company, custom domains,
+  impersonation, per-company SEO and search indexing of company pages.**

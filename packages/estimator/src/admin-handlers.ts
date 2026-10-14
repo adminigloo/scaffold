@@ -13,6 +13,7 @@ import {
   detachComponent,
   getComponent,
   getProductDetail,
+  getProductRow,
   listComponents,
   listProducts,
   productIdForAttachment,
@@ -65,7 +66,8 @@ import { exampleInputsFor, inputsSummary } from "./recipes.js";
 import { expireQuotes, issueQuoteToken, resendQuote, reviseQuote, sendQuote } from "./quotes.js";
 import { loadSampleCatalog } from "./sample.js";
 import { estimatorClientKeys, estimatorComponents, estimatorProductComponents, estimatorProducts, estimatorTakeoffs } from "./schema.js";
-import { estimatorReady, getEstimatorSettings, toSettingsWire, updateEstimatorSettings, type EstimatorSettings } from "./settings.js";
+import { COMPANY_OWNED_ESTIMATOR_SETTINGS, resolveEstimatorSettings, validCeiling, type EstimatorCompany } from "./company.js";
+import { estimatorReady, formatMoney, toSettingsWire, updateEstimatorSettings, type EstimatorSettings } from "./settings.js";
 import { utcDayStart } from "./takeoff-run.js";
 import { EstimatorInputError, type EstimatorDb, type ProductRow } from "./types.js";
 import type {
@@ -166,27 +168,77 @@ export interface CreateEstimatorAdminHandlersOptions {
    * owner what to do about each.
    */
   photoReadingOff?: PhotoReadingOffReason;
+  /**
+   * Who reads the notices about the SITE's own setup — no AI key, no file
+   * storage (Tenancy 2a review T2A-BO-05):
+   *
+   *   "developer" (default)  the business owns the deployment, so a notice
+   *                          names the fix ("ANTHROPIC_API_KEY. Ask your
+   *                          developer to add it").
+   *   "company"              one company of many on someone else's site: it
+   *                          can't set an environment variable and has no
+   *                          developer, so it reads only what that means for
+   *                          it ("Photo reading isn't available on this site
+   *                          yet"). The site's operator sees the gaps, with
+   *                          their fixes, on the site's own setup page.
+   */
+  siteNotices?: "developer" | "company";
   /** After a price-book change is saved (a host mirroring the price book). Awaited; a throw is reported to `onError`, never the response. */
   onPriceBookChange?: (change: PriceBookChange) => void | Promise<void>;
   onEvent?: EstimatorEventListener;
   onEventError?: (error: unknown, event: EstimatorEvent) => void;
-  /** Enables "Copy the quote link". */
-  quoteUrl?: (token: string, tenantId: string) => string;
+  /** Enables "Copy the quote link". May be async (Tenancy 2a: the host looks the company's web address up). */
+  quoteUrl?: (token: string, tenantId: string) => string | Promise<string>;
   /** Default `{ emails: Boolean(onEvent), followUps: Boolean(onEvent), note: null }`. */
   delivery?: (tenantId: string) => EstimatorDelivery | Promise<EstimatorDelivery>;
   links?: {
-    bookVisitUrl?: (estimate: EstimateSnapshot, tenantId: string) => string | null;
+    /** May be async (Tenancy 2a). */
+    bookVisitUrl?: (estimate: EstimateSnapshot, tenantId: string) => string | null | Promise<string | null>;
     visits?: (estimateId: string, tenantId: string) => Promise<LinkedVisit[]>;
     invoice?: (estimateId: string, tenantId: string) => Promise<LinkedInvoice | null>;
   };
   /** Turn an approved estimate into an invoice. Owns its transaction and calls markEstimateConverted in it. */
   convertToInvoice?: (input: { tenantId: string; estimateId: string; userId: string | null }) => Promise<LinkedInvoice>;
+  /**
+   * The host's INVOICE permission, asked beside the estimator's own (Tenancy 2a
+   * review SEC-2A-02). "Turn into an invoice" WRITES AN INVOICE, so the
+   * estimator's `estimator.estimates.manage` is not enough on its own: a
+   * person whose role may quote but not bill (a single business's default
+   * "CS agent"; a company member whose invoice rights an owner took away)
+   * used to raise invoices by converting accepted quotes. With this seam:
+   *
+   *   "manage"  asked before converting. Anything but yes is 403 "You can't
+   *             raise invoices"; a Response (a host's 401) is returned as is.
+   *   "view"    asked when an estimate's page is built: without it the linked
+   *             invoice's number, status and link are left off, and "Turn into
+   *             an invoice" isn't offered unless "manage" said yes.
+   *
+   * Same answers as `authorize`. Without it, 0.3's behaviour (the
+   * estimator's own permission decides).
+   */
+  invoiceAccess?: (req: Request, need: "view" | "manage", tenantId: string) => AuthorizeResult | Promise<AuthorizeResult>;
   /** The deployment's public estimator base, for the EmbedKeys snippet. */
   embedBaseUrl?: string;
   /** Default true: the estimates list expires overdue quotes (once a minute per tenant). */
   sweepExpired?: boolean;
   onError?: (error: unknown, context: { tenantId: string | null; route: string }) => void;
   now?: () => Date;
+  /**
+   * The business as its customers know it, from the host's company profile
+   * (Tenancy 2a, D5): every route reads settings through
+   * `resolveEstimatorSettings`, so the name, contact, zone, colour and logo
+   * are the company's. A throw is reported and that request uses the stored
+   * settings.
+   */
+  company?: (tenantId: string) => EstimatorCompany | null | Promise<EstimatorCompany | null>;
+  /** Where the owner changes the company-owned fields (D6), e.g. "/settings/company#details". Default null. */
+  companySettingsHref?: string | null;
+  /**
+   * The most a day of photo reading may cost per business on this site, in
+   * cents (D14). The budget shown and spent is `min(the setting, this)`, and a
+   * save above it is refused with the sentence the owner reads.
+   */
+  aiBudgetCeilingCents?: number;
 }
 
 export interface EstimatorAdminHandlers {
@@ -468,11 +520,17 @@ const attachBodySchema = z.object({
 });
 const photoBodySchema = z.object({ imageBase64: z.string().max(MAX_PHOTO_BODY_CHARS), mediaType: z.string().max(40) });
 const issueKeyBodySchema = z.object({ label: z.string(), allowedOrigins: z.array(z.string()).optional() });
+const sampleBodySchema = z.object({
+  trade: z.enum(["lawn", "cleaning", "ramps"], { message: "Pick lawn care, cleaning or ramps." }).optional(),
+});
 
 const HOUR_MS = 60 * 60 * 1000;
 
-/** The "photo reading is off" notice, in words that say what the owner can do about it. */
-export function readingOffMessage(reason: PhotoReadingOffReason | undefined): string {
+/** The "photo reading is off" notice, in words that say what the owner can do about it — or, for a company on someone else's site, only what it means. */
+export function readingOffMessage(reason: PhotoReadingOffReason | undefined, audience: "developer" | "company" = "developer"): string {
+  if (audience === "company") {
+    return "Photo reading isn't available on this site yet, so customers are asked to count and measure themselves.";
+  }
   switch (reason) {
     case "not_installed":
       return "Photo reading isn't part of this site. Ask your developer to add it (pnpm dlx @adminigloo/create-app add ai).";
@@ -571,7 +629,41 @@ export function createEstimatorAdminHandlers(options: CreateEstimatorAdminHandle
     return out;
   }
 
+  /**
+   * What the caller may do with invoices (SEC-2A-02), asked at most once per
+   * request: an estimate's page and the convert route both read it.
+   */
+  const invoiceRightsMemo = new WeakMap<Request, Promise<{ view: boolean; manage: boolean; refusal: Response | null }>>();
+  function invoiceRights(req: Request, tenantId: string): Promise<{ view: boolean; manage: boolean; refusal: Response | null }> {
+    const access = options.invoiceAccess;
+    if (!access) return Promise.resolve({ view: true, manage: true, refusal: null });
+    const known = invoiceRightsMemo.get(req);
+    if (known) return known;
+    const ask = async (need: "view" | "manage"): Promise<{ yes: boolean; refusal: Response | null }> => {
+      try {
+        const answer = await access(req, need, tenantId);
+        if (answer instanceof Response) return { yes: false, refusal: answer };
+        return { yes: answer === true || (typeof answer === "object" && answer !== null), refusal: null };
+      } catch (error) {
+        try {
+          options.onError?.(error, { tenantId, route: "invoice-access" });
+        } catch {
+          /* contained */
+        }
+        return { yes: false, refusal: null };
+      }
+    };
+    const pending = Promise.all([ask("view"), ask("manage")]).then(([view, manage]) => ({
+      view: view.yes,
+      manage: manage.yes,
+      refusal: manage.refusal,
+    }));
+    invoiceRightsMemo.set(req, pending);
+    return pending;
+  }
+
   async function estimateDetail(
+    req: Request,
     tenantId: string,
     id: string,
     includeCosts: boolean,
@@ -583,18 +675,21 @@ export function createEstimatorAdminHandlers(options: CreateEstimatorAdminHandle
     let bookVisitUrl: string | null = null;
     if (options.links?.bookVisitUrl && (row.status === "approved" || row.status === "converted")) {
       const snapshot = (await loadSnapshots(options.db, tenantId, [id])).get(id);
-      if (snapshot) bookVisitUrl = options.links.bookVisitUrl(snapshot, tenantId);
+      if (snapshot) bookVisitUrl = await options.links.bookVisitUrl(snapshot, tenantId);
     }
+    const rights = await invoiceRights(req, tenantId);
     const detail = await getEstimateDetail(options.db, tenantId, id, {
       includeCosts,
       now,
       locale: settings.locale,
       ...(options.photoStore ? { photoStore: options.photoStore } : {}),
-      seams: { convert: Boolean(options.convertToInvoice), bookVisit: bookVisitUrl !== null, copyLink: Boolean(options.quoteUrl) },
+      // "Turn into an invoice" only for someone who may raise invoices (SEC-2A-02).
+      seams: { convert: Boolean(options.convertToInvoice) && rights.manage, bookVisit: bookVisitUrl !== null, copyLink: Boolean(options.quoteUrl) },
     });
     if (!detail) throw notFound();
     const visits = options.links?.visits ? await options.links.visits(id, tenantId) : [];
-    const invoice = options.links?.invoice ? await options.links.invoice(id, tenantId) : null;
+    // The invoice an estimate became is shown only to someone who may see invoices.
+    const invoice = options.links?.invoice && rights.view ? await options.links.invoice(id, tenantId) : null;
     return { ...detail, links: { bookVisitUrl, visits, invoice } };
   }
 
@@ -704,7 +799,13 @@ export function createEstimatorAdminHandlers(options: CreateEstimatorAdminHandle
       // Not a reminder but a gate (review EST-R02): nothing reaches a customer until this is done.
       notices.push({
         code: "settings_not_saved",
-        message: "Your estimate page is closed, and quotes can't be sent, until you save your business name and tax rate in Settings.",
+        // Tenancy 2a, D6: with the name coming from the company profile there
+        // is no name to save here, and telling an owner to go and find one on
+        // a screen that shows it read-only sends them in a circle. They save
+        // the tax rate; the name is already the company's.
+        message: settings.managedByCompany
+          ? "Your estimate page is closed, and quotes can't be sent, until you save your tax rate in Estimate settings."
+          : "Your estimate page is closed, and quotes can't be sent, until you save your business name and tax rate in Settings.",
       });
     }
     if (active === 0) {
@@ -735,14 +836,23 @@ export function createEstimatorAdminHandlers(options: CreateEstimatorAdminHandle
       });
     }
     if (!settings.saved && settings.taxRateBp === 825) {
-      notices.push({ code: "tax_default", message: "Your tax rate is still the 8.25% default. Check it in Settings." });
+      // Not "still the 8.25% default": the form shows the field EMPTY until it is
+      // saved (the owner types the rate they charge), so quoting a number the
+      // screen doesn't show reads as a contradiction (review T2A-BO-06).
+      notices.push({ code: "tax_default", message: "Your sales tax rate isn't saved yet. Enter it in Estimate settings." });
     }
     if (!sending.emails) notices.push({ code: "emails_off", message: "Customers won't get emails: email sending isn't set up." });
     if (settings.photosEnabled && !options.photoStore) {
-      notices.push({ code: "photos_no_store", message: "Photos can't be kept: no file storage is connected." });
+      notices.push({
+        code: "photos_no_store",
+        message:
+          options.siteNotices === "company"
+            ? "Photos customers send can't be kept on this site yet, so they aren't saved with the estimate."
+            : "Photos can't be kept: no file storage is connected.",
+      });
     }
     if (settings.photosEnabled && options.photoReading !== true) {
-      notices.push({ code: "reading_off", message: readingOffMessage(options.photoReadingOff) });
+      notices.push({ code: "reading_off", message: readingOffMessage(options.photoReadingOff, options.siteNotices ?? "developer") });
     }
     if (withoutOrigins > 0) {
       notices.push({
@@ -764,6 +874,7 @@ export function createEstimatorAdminHandlers(options: CreateEstimatorAdminHandle
       spend,
       embedBaseUrl: options.embedBaseUrl ?? null,
       notices,
+      aiBudgetCeilingCents: settings.aiBudgetCeilingCents,
     };
   }
 
@@ -816,7 +927,19 @@ export function createEstimatorAdminHandlers(options: CreateEstimatorAdminHandle
   ): Promise<Response> {
     const db = options.db;
     const now = clock();
-    const settings = await getEstimatorSettings(db, tenantId);
+    const resolve = () =>
+      resolveEstimatorSettings(db, tenantId, {
+        ...(options.company ? { company: options.company } : {}),
+        ...(options.aiBudgetCeilingCents !== undefined ? { aiBudgetCeilingCents: options.aiBudgetCeilingCents } : {}),
+        onError: (error) => {
+          try {
+            options.onError?.(error, { tenantId, route: matched.kind });
+          } catch {
+            /* contained */
+          }
+        },
+      });
+    const settings = await resolve();
     const actor: EstimatorActor = { type: "staff", id: userId };
     const events = {
       now,
@@ -831,7 +954,7 @@ export function createEstimatorAdminHandlers(options: CreateEstimatorAdminHandle
     const body = async () => (req.method === "POST" ? readJsonBody(req) : {});
     const product = async (productId: string) => json({ product: await adminProduct(tenantId, productId, settings, includeCosts) });
     const mutation = async (estimateId: string, warnings: string[] = [], status = 200) => {
-      const response: EstimateMutationResponse = { estimate: await estimateDetail(tenantId, estimateId, includeCosts, now, settings), warnings };
+      const response: EstimateMutationResponse = { estimate: await estimateDetail(req, tenantId, estimateId, includeCosts, now, settings), warnings };
       return json(response, status);
     };
     const supplyResponse = async (supplyId: string, affected: Array<{ id: string; name: string }>) => {
@@ -858,9 +981,28 @@ export function createEstimatorAdminHandlers(options: CreateEstimatorAdminHandle
         return json(await usage(tenantId, days, now));
       }
       case "settings-get":
-        return json({ settings: toSettingsWire(settings, { includeCosts }) });
-      case "settings-update":
-        return json({ settings: toSettingsWire(await updateEstimatorSettings(db, tenantId, await body(), { now }), { includeCosts }) });
+        return json({ settings: toSettingsWire(settings, { includeCosts, companySettingsHref: options.companySettingsHref ?? null }) });
+      case "settings-update": {
+        const patch = { ...(await body()) } as Record<string, unknown>;
+        const wireOptions = { includeCosts, companySettingsHref: options.companySettingsHref ?? null };
+        if (settings.managedByCompany) {
+          // D6: the company owns the name, contact, zone and colour. Dropped,
+          // never refused: the widget doesn't send them, and a refusal would
+          // only break an old client. A body of only those saves nothing.
+          for (const key of COMPANY_OWNED_ESTIMATOR_SETTINGS) delete patch[key];
+          if (Object.keys(patch).length === 0) return json({ settings: toSettingsWire(settings, wireOptions) });
+        }
+        // D14: the site's ceiling on photo reading per business. Refused on
+        // the field, in the business's money, so the owner sees what's allowed.
+        const ceiling = validCeiling(options.aiBudgetCeilingCents);
+        const asked = patch["aiDailyBudgetCents"];
+        if (ceiling !== null && typeof asked === "number" && asked > ceiling) {
+          const message = `This site allows up to ${formatMoney(ceiling, settings)} a day of photo reading per business.`;
+          throw new HttpError("invalid", message, [{ path: ["aiDailyBudgetCents"], message }]);
+        }
+        await updateEstimatorSettings(db, tenantId, patch, { now });
+        return json({ settings: toSettingsWire(await resolve(), wireOptions) });
+      }
       case "products-list":
         return json({ products: await adminProducts(tenantId, settings, includeCosts, params.get("include") === "inactive") });
       case "product-create": {
@@ -931,6 +1073,11 @@ export function createEstimatorAdminHandlers(options: CreateEstimatorAdminHandle
       }
       case "supply-attach": {
         const parsed = attachBodySchema.parse(await body());
+        // The product in the PATH is the row this route reads (Tenancy 2a,
+        // 3.1): one that isn't in this tenant is 404, like every other
+        // product route, not the 400 attachComponent answers for a product it
+        // can't price.
+        if (!(await getProductRow(db, tenantId, id))) throw notFound();
         await attachComponent(db, tenantId, {
           productId: id,
           componentId: parsed.supplyId,
@@ -954,6 +1101,8 @@ export function createEstimatorAdminHandlers(options: CreateEstimatorAdminHandle
         return product(id);
       }
       case "option-create": {
+        // The product in the path is the row read: another tenant's is 404 (3.1).
+        if (!(await getProductRow(db, tenantId, id))) throw notFound();
         await createOption(db, tenantId, { ...(await body()), productId: id } as Parameters<typeof createOption>[2]);
         return product(id);
       }
@@ -1010,7 +1159,9 @@ export function createEstimatorAdminHandlers(options: CreateEstimatorAdminHandle
       }
       case "sample-catalog": {
         // Loaded OFF the website: the owner turns each product on once its prices are theirs (review EST-R01).
-        const loaded: SampleCatalogResponse = await loadSampleCatalog(db, tenantId, { now });
+        // The body names the trade (T2A-BO-10); none is 0.3's ramps sample.
+        const { trade } = sampleBodySchema.parse(await body());
+        const loaded: SampleCatalogResponse = await loadSampleCatalog(db, tenantId, { now, ...(trade ? { trade } : {}) });
         await announce({ tenantId, kind: "sample", id: null, action: "loaded", userId });
         return json(loaded);
       }
@@ -1053,7 +1204,7 @@ export function createEstimatorAdminHandlers(options: CreateEstimatorAdminHandle
         return mutation(created.id, [], 201);
       }
       case "estimate-get":
-        return json({ estimate: await estimateDetail(tenantId, id, includeCosts, now, settings) });
+        return json({ estimate: await estimateDetail(req, tenantId, id, includeCosts, now, settings) });
       case "estimate-update": {
         const row = await updateEstimate(db, tenantId, id, (await body()) as Parameters<typeof updateEstimate>[3], events);
         if (!row) throw notFound();
@@ -1126,7 +1277,7 @@ export function createEstimatorAdminHandlers(options: CreateEstimatorAdminHandle
         if (!row.sentAt) throw new HttpError("not_changeable", "Send the quote first.");
         const token = await issueQuoteToken(db, tenantId, id);
         if (!token) throw notFound();
-        return json({ url: options.quoteUrl(token, tenantId) } satisfies QuoteLinkResponse);
+        return json({ url: await options.quoteUrl(token, tenantId) } satisfies QuoteLinkResponse);
       }
       case "estimate-archive":
       case "estimate-unarchive": {
@@ -1142,6 +1293,11 @@ export function createEstimatorAdminHandlers(options: CreateEstimatorAdminHandle
       }
       case "estimate-convert": {
         if (!options.convertToInvoice) throw notFound();
+        // Converting writes an invoice: the host's invoice permission must say
+        // yes too, not only the estimator's (SEC-2A-02).
+        const rights = await invoiceRights(req, tenantId);
+        if (rights.refusal) return rights.refusal;
+        if (!rights.manage) throw new HttpError("forbidden", "You can't raise invoices, so this quote can't be turned into one.");
         const row = await getEstimateRow(db, tenantId, id);
         if (!row) throw notFound();
         if (row.status !== "approved") {
@@ -1154,7 +1310,7 @@ export function createEstimatorAdminHandlers(options: CreateEstimatorAdminHandle
         if (after?.status === "converted") {
           await emitEvents(db, tenantId, [{ type: "estimate.converted", estimateId: id, actor }], events);
         }
-        const response: ConvertResponse = { invoice, estimate: await estimateDetail(tenantId, id, includeCosts, now, settings) };
+        const response: ConvertResponse = { invoice, estimate: await estimateDetail(req, tenantId, id, includeCosts, now, settings) };
         return json(response);
       }
       case "expire": {

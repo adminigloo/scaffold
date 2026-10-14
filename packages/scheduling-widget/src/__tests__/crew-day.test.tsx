@@ -97,3 +97,65 @@ describe("<CrewDay>", () => {
     await unmount();
   });
 });
+
+describe("<CrewDay> for a crew member and across companies (Tenancy 2a review)", () => {
+  afterEach(() => {
+    localStorage.clear();
+  });
+
+  it("a today-only route offers no other day (SEC-2A-05)", async () => {
+    const fake = fakeAdmin({ crewDay: () => ok(crewDay({ todayOnly: true })) });
+    const { container, unmount } = await mount(<CrewDay transport={fake.transport} />);
+    expect(container.querySelector("[data-aisw-today-only]")).not.toBeNull();
+    expect(button(container, "Previous day")).toBeNull();
+    expect(button(container, "Next day")).toBeNull();
+    expect(text(container)).toContain("(today)");
+    await unmount();
+  });
+
+  it("remembers the picked crew PER COMPANY: Green Acres' crew never reaches Summit's route (T2A-BO-03)", async () => {
+    const green = fakeAdmin({
+      crewDay: (q) => (q.resource ? ok(crewDay({ resource: { id: q.resource, name: "Green crew", homeBaseAddress: null } })) : fail("invalid", "Pick a crew.", { status: 400 })),
+      listResources: () => ok({ resources: [resource({ id: "green-crew", name: "Green crew" })] }),
+    });
+    const first = await mount(<CrewDay transport={green.transport} baseUrl="/api/app/green/schedule" />);
+    await submit(first.container.querySelector("[data-aisw-crew-pick]"));
+    expect(green.of("crewDay")[1]!.args[0]).toEqual({ resource: "green-crew" });
+    await first.unmount();
+
+    const summit = fakeAdmin({ crewDay: () => ok(crewDay({ resource: { id: "summit-crew", name: "Summit crew", homeBaseAddress: null } })) });
+    const second = await mount(<CrewDay transport={summit.transport} baseUrl="/api/app/summit/schedule" />);
+    // Nothing remembered for Summit: no request of Summit's names Green Acres' crew.
+    expect(summit.of("crewDay").map((c) => c.args[0])).toEqual([{}]);
+    expect(text(second.container)).toContain("Summit crew");
+    await second.unmount();
+  });
+
+  it("a remembered crew that isn't there any more is forgotten and the route loads (T2A-BO-03)", async () => {
+    localStorage.setItem("aisw-crew-day-resource:/api/app/summit/schedule", "gone-crew");
+    const fake = fakeAdmin({
+      crewDay: (q) => (q.resource ? fail("not_found", "Not found.", { status: 404 }) : ok(crewDay({ resource: { id: "summit-crew", name: "Summit crew", homeBaseAddress: null } }))),
+    });
+    const { container, unmount } = await mount(<CrewDay transport={fake.transport} baseUrl="/api/app/summit/schedule" />);
+    // The remembered crew is asked for, refused as not found, forgotten, and the
+    // route loads without it.
+    expect(fake.of("crewDay").map((c) => c.args[0]).slice(-2)).toEqual([{ resource: "gone-crew" }, {}]);
+    expect(text(container)).toContain("Summit crew");
+    expect(text(container)).not.toContain("calendar has been refreshed");
+    expect(localStorage.getItem("aisw-crew-day-resource:/api/app/summit/schedule")).toBeNull();
+    await unmount();
+  });
+
+  it("a crew the page was told that isn't there says so and offers the person's own route, not 'the calendar has been refreshed'", async () => {
+    const fake = fakeAdmin({
+      crewDay: (q) => (q.resource ? fail("not_found", "Not found.", { status: 404 }) : ok(crewDay())),
+    });
+    const { container, unmount } = await mount(<CrewDay transport={fake.transport} resourceId="gone-crew" />);
+    expect(text(container)).toContain("That crew isn't there any more.");
+    expect(text(container)).not.toContain("calendar");
+    await click(button(container, "Show my route"));
+    expect(fake.of("crewDay").at(-1)!.args[0]).toEqual({});
+    expect(text(container)).toContain("Crew A");
+    await unmount();
+  });
+});

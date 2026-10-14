@@ -23,6 +23,8 @@ function answers(overrides: Partial<Answers> = {}): Answers {
   return {
     ...DEFAULT_ANSWERS,
     projectName: "acme-windows",
+    // The single-business scheduling these findings were raised against.
+    tenantNoun: "none",
     adminShell: "minimal",
     includeScheduling: true,
     includeComms: true,
@@ -174,19 +176,19 @@ describe("BO-14: the owner can read the visit emails before the first booking", 
       "await schedulingComms.ensureTemplates(SCHEDULING_TENANT)",
     );
     expect(code(file(p, "src", "server", "comms-hooks.ts"))).toContain("export async function ensureProducerTemplates(");
-    expect(code(file(p, "src", "server", "routers", "comms.ts"))).toContain("await ensureProducerTemplates(COMMS_TENANT)");
+    // Messages lists them through the comms package's handler (Tenancy 2a, D3:
+    // the tRPC router is retired); its ensureTemplates adds every producer's.
+    expect(code(file(p, "src", "server", "comms.ts"))).toContain("await ensureProducerTemplates(tenantId)");
   });
 });
 
 describe("F9: a drain that throws part-way still scrubs the sent links", () => {
   it("runs the scrub in a finally, in the cron and in the console's send-now", async () => {
     const p = await plan();
-    for (const path of [
-      ["app", "api", "cron", "comms", "route.ts"],
-      ["src", "server", "routers", "comms.ts"],
-    ]) {
-      const source = code(file(p, ...path));
-      expect(source, path.join("/")).toMatch(/finally\s*\{\s*await afterCommsRun\(\);\s*\}/);
-    }
+    const cron = code(file(p, "app", "api", "cron", "comms", "route.ts"));
+    expect(cron).toMatch(/finally\s*\{\s*await afterCommsRun\(\);\s*\}/);
+    // The console's send-now is the comms package's handler, which runs
+    // `afterRun` in its own `finally` (Tenancy 2a): the project hands it the scrub.
+    expect(code(file(p, "src", "server", "comms.ts"))).toContain("afterRun: afterCommsRun");
   });
 });

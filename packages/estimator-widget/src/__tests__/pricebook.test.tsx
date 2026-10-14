@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { PriceBook, SAMPLE_CONFIRM } from "../admin/PriceBook.js";
 import type { AdminProduct, PreviewBody, ProductInput, ProductPatch, SupplyPatch } from "../admin/types.js";
 import { AREA_DEFAULTS } from "../admin/helpers.js";
-import { adminRamp, blur, button, choose, click, fail, fakeAdmin, labelled, mount, ok, pass, previewResponse, supply, text, type } from "./fakes.js";
+import { adminRamp, blur, button, checkbox, choose, click, fail, fakeAdmin, labelled, mount, ok, pass, previewResponse, supply, text, type } from "./fakes.js";
 
 /**
  * <PriceBook> driven like an owner (contract 9.7, rule D): load the sample
@@ -43,9 +43,15 @@ describe("<PriceBook>: the sample catalog", () => {
     await click(container.querySelector("[data-aiew-load-sample]"));
     const dialog = container.querySelector("[data-aiew-sample-confirm]")!;
     expect(text(dialog)).toContain(SAMPLE_CONFIRM);
+    // The trade is asked, never assumed (review T2A-BO-10): nothing loads until one is picked.
+    expect(text(dialog)).toContain("What kind of work do you do?");
+    expect((button(dialog as HTMLElement, "Load the sample") as HTMLButtonElement).disabled).toBe(true);
+    await click(checkbox(dialog as HTMLElement, "Wheelchair ramps and accessibility"));
+    expect(text(dialog)).toContain("This adds 5 sample products and 10 supplies with sample prices.");
     expect(fake.of("loadSampleCatalog")).toHaveLength(0);
     await click(button(dialog as HTMLElement, "Load the sample"));
     expect(fake.of("loadSampleCatalog")).toHaveLength(1);
+    expect(fake.of("loadSampleCatalog")[0]!.args).toEqual(["ramps"]);
     expect(text(container)).toContain("Loaded 5 products and 10 supplies, off your website. Change the prices to yours, then turn each one on.");
     expect(fake.of("listProducts")).toHaveLength(2);
     expect(text(container)).toContain("Modular aluminum ramp");
@@ -60,7 +66,9 @@ describe("<PriceBook>: the sample catalog", () => {
     });
     const { container, unmount } = await mount(<PriceBook transport={fake.transport} />);
     await click(container.querySelector("[data-aiew-load-sample]"));
+    await click(checkbox(container, "Lawn care and landscaping"));
     await click(button(container, "Load the sample"));
+    expect(fake.of("loadSampleCatalog")[0]!.args).toEqual(["lawn"]);
     expect(text(container)).toContain("The sample catalog is already loaded.");
     await unmount();
   });
@@ -172,7 +180,8 @@ describe("<PriceBook>: the products", () => {
     await type(labelled(container, "Markup (%)"), "45");
     await click(container.querySelector("[data-aiew-save-product]"));
     const body = fake.of("createProduct")[0]!.args[0] as ProductInput;
-    expect(body).toMatchObject({ name: "Porch ramp", recipe: "ramp_over_steps", markupBp: 4500, rangeMode: "measured", allowMultiple: false });
+    // A new product starts as "a count" (review T2A-BO-10), not a ramp over steps.
+    expect(body).toMatchObject({ name: "Porch ramp", recipe: "count", markupBp: 4500, rangeMode: "measured", allowMultiple: false });
     // Now it's a saved product: its supplies can be added.
     expect(container.querySelector("[data-aiew-add-supply]")).not.toBeNull();
     await unmount();

@@ -428,32 +428,44 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
   },
 
   // FIELD SERVICE. Each server half proven by a load-bearing call in the file
-  // that does the work; each admin half by the staff page under the shell.
+  // that does the work; each staff half by its screen. TWO SHAPES, one per
+  // mode (Tenancy 2a): a single business's routes and pages at the root and
+  // under /admin, and a companies project's under /api/app/{id}, /api/t/{web
+  // address}, /app and /t/{web address}, built in the feature glue. A row
+  // passes on either shape — and only a project that has the feature has
+  // either, so the exclusivity check still bites.
   {
     capability: "estimator.pricing",
     why:
       "The instant estimate: the PUBLIC route mounting the package's handler " +
       "(createEstimatorHandlers — prices from the business's price book, the " +
-      "questions each product asks, never a cost) and /estimate rendering " +
-      "<EstimateTool> against it. Proven by the handler factory being called " +
-      "there and the staff factory being called nowhere in that file: a " +
-      "public route mounting the staff handler would put the price book's " +
-      "costs on the open internet.",
+      "questions each product asks, never a cost) and the estimate page " +
+      "rendering <EstimateTool> against it — /estimate for a single business, " +
+      "each company's /t/{web address}/estimate in a companies project. The " +
+      "staff factory may be called nowhere in a public route file: a public " +
+      "route mounting the staff handler would put the price book's costs on " +
+      "the open internet.",
     provenBy: (plan) =>
-      mentions(plan, ["app", "api", "estimator", "[...path]", "route.ts"], "createEstimatorHandlers(") &&
-      !mentions(plan, ["app", "api", "estimator", "[...path]", "route.ts"], "createEstimatorAdminHandlers(") &&
-      mentions(plan, ["app", "(site)", "estimate", "page.tsx"], "<EstimateTool"),
+      (mentions(plan, ["app", "api", "estimator", "[...path]", "route.ts"], "createEstimatorHandlers(") &&
+        !mentions(plan, ["app", "api", "estimator", "[...path]", "route.ts"], "createEstimatorAdminHandlers(") &&
+        mentions(plan, ["app", "(site)", "estimate", "page.tsx"], "<EstimateTool")) ||
+      (mentions(plan, ["src", "server", "estimator.ts"], "export function buildEstimatorPublicHandlers", "createEstimatorHandlers(") &&
+        mentions(plan, ["app", "api", "t", "[slug]", "estimator", "[...path]", "route.ts"], "buildEstimatorPublicHandlers()") &&
+        !mentions(plan, ["app", "api", "t", "[slug]", "estimator", "[...path]", "route.ts"], "Admin") &&
+        mentions(plan, ["app", "(company)", "t", "[slug]", "estimate", "page.tsx"], "<EstimateTool")),
   },
   {
     capability: "estimator.embed",
     why:
-      "The estimate on the business's OTHER website: the same public handler " +
+      "The estimate on the business's OTHER website: the public handler " +
       "answers a request carrying an embed key (checked against the key's " +
       "allowed websites, with CORS for that page), and the 0.2 embed address " +
       "/api/estimator/embed re-exports it so a widget already pasted keeps " +
-      "working.",
+      "working. In a companies project the embed route is keyed-only " +
+      "(buildEstimatorEmbedHandlers): the key names the company.",
     provenBy: (plan) =>
-      mentions(plan, ["app", "api", "estimator", "[...path]", "route.ts"], "createEstimatorHandlers(") &&
+      (mentions(plan, ["app", "api", "estimator", "[...path]", "route.ts"], "createEstimatorHandlers(") ||
+        mentions(plan, ["app", "api", "estimator", "[...path]", "route.ts"], "buildEstimatorEmbedHandlers()")) &&
       mentions(plan, ["app", "api", "estimator", "embed", "[...path]", "route.ts"], 'from "../../[...path]/route"'),
   },
   {
@@ -461,32 +473,41 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
     why:
       "A quote the customer accepts or declines online: the staff route " +
       "mounting createEstimatorAdminHandlers (where staff edit the estimate " +
-      "and send the quote) with the quote link it emails, and /quote/[token] " +
-      "rendering <QuoteView>.",
+      "and send the quote) with the quote link it emails, and the quote page " +
+      "rendering <QuoteView> — /quote/[token] for a single business, each " +
+      "company's /t/{web address}/quote/[token] in a companies project.",
     provenBy: (plan) =>
-      mentions(plan, ["app", "api", "admin", "estimator", "[...path]", "route.ts"], "createEstimatorAdminHandlers(", "quoteUrl:") &&
-      mentions(plan, ["app", "(site)", "quote", "[token]", "page.tsx"], "<QuoteView"),
+      (mentions(plan, ["app", "api", "admin", "estimator", "[...path]", "route.ts"], "createEstimatorAdminHandlers(", "quoteUrl:") &&
+        mentions(plan, ["app", "(site)", "quote", "[token]", "page.tsx"], "<QuoteView")) ||
+      (mentions(plan, ["src", "server", "estimator.ts"], "createEstimatorAdminHandlers(", "quoteUrl:") &&
+        mentions(plan, ["app", "(company)", "t", "[slug]", "quote", "[token]", "page.tsx"], "<QuoteView")),
   },
   {
     capability: "estimator.builder",
     why:
-      "The staff screens under the shell, from estimator-admin: the price book " +
-      "(<PriceBook>), the leads and quotes queue (<EstimatesQueue>) and one " +
-      "estimate's editor (<EstimateEditor>).",
+      "The staff screens: the price book (<PriceBook>), the leads and quotes " +
+      "queue (<EstimatesQueue>) and one estimate's editor (<EstimateEditor>) " +
+      "— under the shell for a single business (estimator-admin), in each " +
+      "company's own area (/app) in a companies project.",
     provenBy: (plan) =>
-      mentions(plan, ["app", "admin", "estimator", "page.tsx"], "<PriceBook") &&
-      mentions(plan, ["app", "admin", "estimates", "page.tsx"], "<EstimatesQueue") &&
-      mentions(plan, ["app", "admin", "estimates", "[id]", "page.tsx"], "<EstimateEditor"),
+      (mentions(plan, ["app", "admin", "estimator", "page.tsx"], "<PriceBook") &&
+        mentions(plan, ["app", "admin", "estimates", "page.tsx"], "<EstimatesQueue") &&
+        mentions(plan, ["app", "admin", "estimates", "[id]", "page.tsx"], "<EstimateEditor")) ||
+      (mentions(plan, ["app", "(site)", "app", "price-book", "page.tsx"], "<PriceBook") &&
+        mentions(plan, ["app", "(site)", "app", "estimates", "page.tsx"], "<EstimatesQueue") &&
+        mentions(plan, ["app", "(site)", "app", "estimates", "[id]", "page.tsx"], "<EstimateEditor")),
   },
   {
     capability: "estimator.photos",
     why:
       "A customer's photo kept with their estimate: the generated services " +
       "module building the photo store over the storage package's storeFile, " +
-      "handed to both estimator routes.",
+      "handed to the estimator's handlers (in the route, or in the companies " +
+      "glue that builds them).",
     provenBy: (plan) =>
       mentions(plan, ["src", "server", "estimator-services.ts"], "storeFile(db, blobStore") &&
-      mentions(plan, ["app", "api", "estimator", "[...path]", "route.ts"], "photoStore: estimatorPhotoStore"),
+      (mentions(plan, ["app", "api", "estimator", "[...path]", "route.ts"], "photoStore: estimatorPhotoStore") ||
+        mentions(plan, ["src", "server", "estimator.ts"], "photoStore: estimatorPhotoStore")),
   },
   {
     capability: "estimator.photo-reading",
@@ -531,38 +552,53 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
     capability: "scheduling.booking",
     why:
       "The public booking page and the customer's own visit page — a ready-made " +
-      "<VisitPicker> on /book-visit and <ManageVisit> on /visit/[token] — over " +
-      "the route that mounts the package's PUBLIC handler. Proven by the " +
-      "handler factory being called there and the staff finder and staff " +
-      "handler being called nowhere in that file: 0.2's public route returned " +
-      "the previous customer's street address from the staff finder, and a " +
-      "route that merely mentioned the right names proved nothing.",
+      "<VisitPicker> and <ManageVisit> — over the route that mounts the " +
+      "package's PUBLIC handler: /book-visit and /visit/[token] over " +
+      "/api/schedule for a single business, each company's /t/{web " +
+      "address}/book-visit and /visit/[token] over /api/t/{web " +
+      "address}/schedule in a companies project. The staff finder and the " +
+      "staff handler may be called nowhere in a public route file: 0.2's " +
+      "public route returned the previous customer's street address from the " +
+      "staff finder.",
     provenBy: (plan) =>
-      mentions(plan, ["app", "api", "schedule", "[...path]", "route.ts"], "createSchedulingHandlers(") &&
-      !mentions(plan, ["app", "api", "schedule", "[...path]", "route.ts"], "findAvailableSlots(") &&
-      !mentions(plan, ["app", "api", "schedule", "[...path]", "route.ts"], "createSchedulingAdminHandlers(") &&
-      mentions(plan, ["app", "(site)", "book-visit", "page.tsx"], "<VisitPicker") &&
-      mentions(plan, ["app", "(site)", "visit", "[token]", "page.tsx"], "<ManageVisit"),
+      (mentions(plan, ["app", "api", "schedule", "[...path]", "route.ts"], "createSchedulingHandlers(") &&
+        !mentions(plan, ["app", "api", "schedule", "[...path]", "route.ts"], "findAvailableSlots(") &&
+        !mentions(plan, ["app", "api", "schedule", "[...path]", "route.ts"], "createSchedulingAdminHandlers(") &&
+        mentions(plan, ["app", "(site)", "book-visit", "page.tsx"], "<VisitPicker") &&
+        mentions(plan, ["app", "(site)", "visit", "[token]", "page.tsx"], "<ManageVisit")) ||
+      (mentions(plan, ["src", "server", "scheduling.ts"], "export function buildSchedulingPublicHandlers", "createSchedulingHandlers(") &&
+        mentions(plan, ["app", "api", "t", "[slug]", "schedule", "[...path]", "route.ts"], "buildSchedulingPublicHandlers()") &&
+        !mentions(plan, ["app", "api", "t", "[slug]", "schedule", "[...path]", "route.ts"], "Admin") &&
+        !mentions(plan, ["app", "api", "t", "[slug]", "schedule", "[...path]", "route.ts"], "findAvailableSlots(") &&
+        mentions(plan, ["app", "(company)", "t", "[slug]", "book-visit", "page.tsx"], "<VisitPicker") &&
+        mentions(plan, ["app", "(company)", "t", "[slug]", "visit", "[token]", "page.tsx"], "<ManageVisit")),
   },
   {
     capability: "scheduling.calendar",
     why:
-      "The staff calendar under the shell — <ScheduleCalendar> on " +
-      "/admin/schedule, from scheduling-admin — and Schedule settings beside " +
-      "it, over the staff handler that checks this project's permissions on " +
-      "every call.",
+      "The staff calendar — <ScheduleCalendar> — and Schedule settings beside " +
+      "it, over the staff handler that checks permissions on every call: " +
+      "/admin/schedule for a single business (scheduling-admin), each " +
+      "company's /app/schedule in a companies project.",
     provenBy: (plan) =>
-      mentions(plan, ["app", "admin", "schedule", "page.tsx"], "<ScheduleCalendar") &&
-      mentions(plan, ["app", "admin", "schedule", "settings", "page.tsx"], "<SchedulingSettings") &&
-      mentions(plan, ["app", "api", "admin", "schedule", "[...path]", "route.ts"], "createSchedulingAdminHandlers("),
+      (mentions(plan, ["app", "admin", "schedule", "page.tsx"], "<ScheduleCalendar") &&
+        mentions(plan, ["app", "admin", "schedule", "settings", "page.tsx"], "<SchedulingSettings") &&
+        mentions(plan, ["app", "api", "admin", "schedule", "[...path]", "route.ts"], "createSchedulingAdminHandlers(")) ||
+      (mentions(plan, ["app", "(site)", "app", "schedule", "page.tsx"], "<ScheduleCalendar") &&
+        mentions(plan, ["app", "(site)", "app", "schedule", "settings", "page.tsx"], "<SchedulingSettings") &&
+        mentions(plan, ["app", "api", "app", "[tenantId]", "schedule", "[...path]", "route.ts"], "buildSchedulingAdminHandlers()") &&
+        mentions(plan, ["src", "server", "scheduling.ts"], "createSchedulingAdminHandlers(")),
   },
   {
     capability: "scheduling.route",
     why:
-      "Today's route for a crew on a phone — <CrewDay> on " +
-      "/admin/schedule/today, from scheduling-admin: stops in order with " +
-      "directions and Start/Complete.",
-    provenBy: (plan) => mentions(plan, ["app", "admin", "schedule", "today", "page.tsx"], "<CrewDay"),
+      "Today's route for a crew on a phone — <CrewDay>: stops in order with " +
+      "directions and Start/Complete — at /admin/schedule/today for a single " +
+      "business, at each company's /app/schedule/today (the Crew role's one " +
+      "key) in a companies project.",
+    provenBy: (plan) =>
+      mentions(plan, ["app", "admin", "schedule", "today", "page.tsx"], "<CrewDay") ||
+      mentions(plan, ["app", "(site)", "app", "schedule", "today", "page.tsx"], "<CrewDay"),
   },
   {
     capability: "scheduling.reminders",
@@ -580,16 +616,25 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
   {
     capability: "invoicing.invoices",
     why:
-      "The invoicing router plus the public pay-by-token page a customer views " +
-      "without an account. The staff ledger is the other key.",
+      "Invoices on the package's own handlers (Tenancy 2a, D3 — the tRPC " +
+      "router is retired) and the customer's invoice page, opened without an " +
+      "account: /invoice/[token] for a single business, each company's " +
+      "/t/{web address}/invoice/[token] in a companies project. The staff " +
+      "ledger is the other key.",
     provenBy: (plan) =>
-      mentions(plan, ["src", "server", "routers", "invoicing.ts"], "createInvoice") &&
-      exists(plan, "app", "(site)", "invoice", "[token]", "page.tsx"),
+      mentions(plan, ["src", "server", "invoicing.ts"], "createInvoicingAdminHandlers(", "createInvoicingHandlers(") &&
+      (mentions(plan, ["app", "(site)", "invoice", "[token]", "page.tsx"], "<InvoiceView") ||
+        mentions(plan, ["app", "(company)", "t", "[slug]", "invoice", "[token]", "page.tsx"], "<InvoiceView")),
   },
   {
     capability: "invoicing.ledger",
-    why: "The staff invoice ledger page under the shell, from invoicing-admin.",
-    provenBy: (plan) => exists(plan, "app", "admin", "invoices", "page.tsx"),
+    why:
+      "The staff invoice ledger, the invoicing widget's <InvoicesLedger>: " +
+      "/admin/invoices under the shell for a single business " +
+      "(invoicing-admin), each company's /app/invoices in a companies project.",
+    provenBy: (plan) =>
+      mentions(plan, ["app", "admin", "invoices", "page.tsx"], "<InvoicesLedger") ||
+      mentions(plan, ["app", "(site)", "app", "invoices", "page.tsx"], "<InvoicesLedger"),
   },
   {
     capability: "comms.messaging",
@@ -605,8 +650,94 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
   },
   {
     capability: "comms.console",
-    why: "The staff templates/messages console under the shell, from comms-admin.",
-    provenBy: (plan) => exists(plan, "app", "admin", "comms", "page.tsx"),
+    why:
+      "The Messages console, the comms widget's <MessagesConsole>: " +
+      "/admin/comms under the shell for a single business (comms-admin), each " +
+      "company's /app/messages in a companies project.",
+    provenBy: (plan) =>
+      mentions(plan, ["app", "admin", "comms", "page.tsx"], "<MessagesConsole") ||
+      mentions(plan, ["app", "(site)", "app", "messages", "page.tsx"], "<MessagesConsole"),
+  },
+
+  // EACH COMPANY RUNS THE FEATURES ITSELF (Tenancy 2a).
+  {
+    capability: "companies.feature-area",
+    why:
+      "Each company's own screens for the features this project installed, " +
+      "under /app: the schedule (<ScheduleCalendar>), estimates " +
+      "(<EstimatesQueue>), invoices (<InvoicesLedger>) and messages " +
+      "(<MessagesConsole>) — every installed one — each over a route that " +
+      "names the company in its path (/api/app/[tenantId]/…).",
+    provenBy: (plan) => {
+      const pages: Array<[readonly string[], string]> = [
+        [["app", "(site)", "app", "schedule", "page.tsx"], "<ScheduleCalendar"],
+        [["app", "(site)", "app", "estimates", "page.tsx"], "<EstimatesQueue"],
+        [["app", "(site)", "app", "invoices", "page.tsx"], "<InvoicesLedger"],
+        [["app", "(site)", "app", "messages", "page.tsx"], "<MessagesConsole"],
+      ];
+      const present = pages.filter(([path]) => exists(plan, ...path));
+      return (
+        present.length > 0 &&
+        present.every(([path, component]) => mentions(plan, path, component, "/api/app/${company.id}/")) &&
+        mentions(plan, ["src", "server", "company-routes.ts"], "createCompanyRouteSeams(")
+      );
+    },
+  },
+  {
+    capability: "companies.public-pages",
+    why:
+      "Each company's public pages under /t/{web address}, through the " +
+      "emitted PublicCompanyGate (brand bar; a suspended company says it " +
+      "isn't taking requests): its booking page (<VisitPicker>), estimate " +
+      "page (<EstimateTool>) and invoice page (<InvoiceView>) — every one the " +
+      "project's features have.",
+    provenBy: (plan) => {
+      const pages: Array<[readonly string[], string]> = [
+        [["app", "(company)", "t", "[slug]", "book-visit", "page.tsx"], "<VisitPicker"],
+        [["app", "(company)", "t", "[slug]", "estimate", "page.tsx"], "<EstimateTool"],
+        [["app", "(company)", "t", "[slug]", "invoice", "[token]", "page.tsx"], "<InvoiceView"],
+      ];
+      const present = pages.filter(([path]) => exists(plan, ...path));
+      return (
+        present.length > 0 &&
+        present.every(([path, component]) => mentions(plan, path, component, "<PublicCompanyGate")) &&
+        mentions(plan, ["src", "components", "PublicCompanyGate.tsx"], "<CompanyUnavailable", "resolvePublicCompany(")
+      );
+    },
+  },
+  {
+    capability: "companies.feature-isolation-proof",
+    why:
+      "The project proves, in its own unit suite on PGlite, that one company " +
+      "can't reach another's rows through ANY feature route — every private " +
+      "and public route of every installed feature, driven from the " +
+      "packages' own route tables, with a negative control that shows the " +
+      "check bites.",
+    provenBy: (plan) =>
+      mentions(
+        plan,
+        ["src", "server", "__tests__", "feature-isolation.test.ts"],
+        "_ADMIN_ROUTES",
+        "expectIsolated(",
+        "createAppPglite",
+      ) && mentions(plan, ["src", "test", "company-rows.ts"], "export async function plantCompanyRows("),
+  },
+  {
+    capability: "companies.crons",
+    why:
+      "Every daily job serves EVERY active company and skips a suspended one: " +
+      "the scheduling and estimator crons through runForEachCompany (one " +
+      "company's failure never stops the rest), the comms drain over the " +
+      "active companies' ids — each installed one.",
+    provenBy: (plan) => {
+      const crons: Array<[readonly string[], string]> = [
+        [["app", "api", "cron", "scheduling", "route.ts"], "runForEachCompany("],
+        [["app", "api", "cron", "estimator", "route.ts"], "runForEachCompany("],
+        [["app", "api", "cron", "comms", "route.ts"], "tenantIds: await tenancy.activeCompanyIds()"],
+      ];
+      const present = crons.filter(([path]) => exists(plan, ...path));
+      return present.length > 0 && present.every(([path, call]) => mentions(plan, path, call));
+    },
   },
   {
     capability: "aeo.citations",

@@ -47,11 +47,12 @@ import {
   type ScheduledRow,
 } from "@adminigloo/comms";
 import { and, eq, gt, inArray, sql } from "drizzle-orm";
+import { resolveSchedulingSettings, type SchedulingCompany } from "./company.js";
 import { resourceNames, type SchedulingEvent, type SchedulingEventListener } from "./events.js";
 import { instantsOf } from "./instants.js";
 import { getBookingRow } from "./internal.js";
 import type { ReminderRuns } from "./notices.js";
-import { getSchedulingSettings, type SchedulingSettings } from "./settings.js";
+import type { SchedulingSettings } from "./settings.js";
 import { toVisitSnapshot } from "./snapshot.js";
 import { forEmail, greetingName } from "./text.js";
 import type { SchedulingDb } from "./types.js";
@@ -264,6 +265,13 @@ export const SCHEDULING_EMAIL_TEMPLATES: ReadonlyArray<{
 export interface SchedulingEmailVarsOptions {
   /** The customer's manage link for THIS message, or null (a queued reminder, a staff notice). */
   manageUrl: string | null;
+  /**
+   * The message SHOULD have carried a manage link but the host's link
+   * function failed (Tenancy 2a: an async lookup of the company's web
+   * address). The manage line then gives the business's phone instead of
+   * pointing at "the link in your confirmation email", which may be this one.
+   */
+  manageUnavailable?: boolean;
   /** "Pick another time" link (the booking page). Without it, `bookLine` is empty. */
   bookUrl?: string | undefined;
   /** The staff calendar, for staff notices. */
@@ -472,7 +480,11 @@ export function schedulingEmailVars(
     customerPhone: typed(visit.customerPhone) || unknown,
     contactLine: contactLineFor(settings),
     manageUrl: pastDeadline ? "" : (options.manageUrl ?? ""),
-    manageLine: pastDeadline ? lateManageLine(settings) : manageLineFor(options.manageUrl, settings.cancelCutoffHours),
+    manageLine: pastDeadline
+      ? lateManageLine(settings)
+      : options.manageUnavailable && !options.manageUrl
+        ? `Need to change it? ${callUs(settings)}`
+        : manageLineFor(options.manageUrl, settings.cancelCutoffHours),
     bookLine: options.bookUrl ? `If you'd like another time, pick one here: ${options.bookUrl}` : "",
     confirmLine,
     rescheduleLine,
@@ -550,14 +562,33 @@ export interface SchedulingCommsOptions {
   /** The comms tables live in the same database as the visits. */
   db: SchedulingDb;
   senders: CommsSenders;
-  /** The customer's manage page for a token. */
-  manageUrl: (token: string, tenantId: string) => string;
-  /** "Pick another time" link in declined, cancelled and expired emails. Default: no line. */
-  bookUrl?: string;
-  /** The staff calendar, in staff notices. */
-  adminUrl?: string;
-  /** Who gets staff notices when the business saved no `staffNotifyEmails`. */
-  staffEmails?: readonly string[];
+  /**
+   * The customer's manage page for a token. May be async (Tenancy 2a): a
+   * host serving many companies looks the company's web address up.
+   */
+  manageUrl: (token: string, tenantId: string) => string | Promise<string>;
+  /**
+   * "Pick another time" link in declined, cancelled and expired emails.
+   * Default: no line. A function answers per tenant (each company's own
+   * booking page); null → no line.
+   */
+  bookUrl?: string | ((tenantId: string) => string | null | Promise<string | null>);
+  /** The staff calendar, in staff notices. A function answers per tenant. */
+  adminUrl?: string | ((tenantId: string) => string | null | Promise<string | null>);
+  /**
+   * Who gets staff notices when the business saved no `staffNotifyEmails`. A
+   * function answers per tenant (Tenancy 2a, D8: each company's own inbox,
+   * never the platform owner's address), called once per event that sends a
+   * staff notice.
+   */
+  staffEmails?: readonly string[] | ((tenantId: string) => readonly string[] | Promise<readonly string[]>);
+  /**
+   * The business as its customers know it, from the host's company profile
+   * (Tenancy 2a, D5): settings are read through `resolveSchedulingSettings`,
+   * so `{{businessName}}`, the contact lines and every date in the email are
+   * the company's.
+   */
+  company?: (tenantId: string) => SchedulingCompany | null | Promise<SchedulingCompany | null>;
   /** Default "en-US". */
   locale?: string;
   /** Queue a reminder before each confirmed visit. Default true (and `reminderLeadHours` > 0). */
@@ -614,6 +645,12 @@ export const COMMS_TABLES_MISSING =
 function isMissingTable(error: unknown): boolean {
   const text = error instanceof Error ? `${error.message} ${String((error as { cause?: unknown }).cause ?? "")}` : String(error);
   return /comms_(templates|messages|scheduled)/.test(text) && /does not exist|no such table|undefined table/i.test(text);
+}
+
+/** The per-tenant links one event's emails use, resolved once per event. */
+interface Links {
+  bookUrl: string | undefined;
+  adminUrl: string | undefined;
 }
 
 /** A manage token as it appears in a link: 43 base64url characters, alone. */
@@ -715,16 +752,67 @@ export function createSchedulingCommsListener(options: SchedulingCommsOptions): 
       .where(and(eq(commsMessages.tenantId, tenantId), eq(commsMessages.id, messageId)));
   }
 
-  async function sendCustomer(event: SchedulingEvent, settings: SchedulingSettings, templateKey: SchedulingTemplateKey, withLink: boolean) {
+  /**
+   * The per-tenant links (Tenancy 2a): a string as given, a function asked
+   * for this tenant. A function that throws is reported (step "links") and
+   * its line folds away; the email still goes. CONTRACT: 6.5 groups "throws
+   * or answers null"; null is how a host says "no such page" (a company
+   * without online booking), so only a throw is reported.
+   */
+  async function linksFor(tenantId: string, context: { visitId: string; eventId?: string }): Promise<Links> {
+    const one = async (value: SchedulingCommsOptions["bookUrl"]): Promise<string | undefined> => {
+      if (value === undefined) return undefined;
+      if (typeof value === "string") return value;
+      try {
+        const answer = await value(tenantId);
+        return typeof answer === "string" && answer.trim() !== "" ? answer : undefined;
+      } catch (error) {
+        report(error, { ...context, step: "links" });
+        return undefined;
+      }
+    };
+    return { bookUrl: await one(options.bookUrl), adminUrl: await one(options.adminUrl) };
+  }
+
+  /** The manage link for a token, or null when the host's function threw (reported, step "links"). */
+  async function manageLinkFor(token: string, tenantId: string, context: { visitId: string; eventId?: string }): Promise<string | null> {
+    try {
+      const url = await options.manageUrl(token, tenantId);
+      return typeof url === "string" && url.trim() !== "" ? url : null;
+    } catch (error) {
+      report(error, { ...context, step: "links" });
+      return null;
+    }
+  }
+
+  /** Settings with the company's basics (and its zone converged); this listener hears the convergence's own events. */
+  function settingsFor(tenantId: string, context: { visitId: string; eventId?: string }): Promise<SchedulingSettings> {
+    return resolveSchedulingSettings(db, tenantId, {
+      now: clock(),
+      ...(options.company ? { company: options.company } : {}),
+      onEvent: (event) => onEvent(event),
+      onError: (error) => report(error, { ...context, step: "company" }),
+    });
+  }
+
+  async function sendCustomer(
+    event: SchedulingEvent,
+    settings: SchedulingSettings,
+    links: Links,
+    templateKey: SchedulingTemplateKey,
+    withLink: boolean,
+  ) {
     const visit = event.data.visit;
     if (!event.data.notify || !visit.customerEmail) return;
     await step(`send:${templateKey}`, visit.id, event.id, async () => {
       let token: string | null = null;
       if (withLink) token = await issueManageToken(db, event.tenantId, visit.id);
+      const manageUrl = token ? await manageLinkFor(token, event.tenantId, { visitId: visit.id, eventId: event.id }) : null;
       const vars = schedulingEmailVars(event, settings, {
-        manageUrl: token ? options.manageUrl(token, event.tenantId) : null,
-        bookUrl: options.bookUrl,
-        adminUrl: options.adminUrl,
+        manageUrl,
+        manageUnavailable: token !== null && manageUrl === null,
+        bookUrl: links.bookUrl,
+        adminUrl: links.adminUrl,
         locale: options.locale,
       });
       const message = await bounded(
@@ -745,15 +833,28 @@ export function createSchedulingCommsListener(options: SchedulingCommsOptions): 
     });
   }
 
-  async function sendStaff(event: SchedulingEvent, settings: SchedulingSettings) {
+  /** The office's addresses: the business's saved ones, else the host's (per tenant when a function). */
+  async function staffRecipients(event: SchedulingEvent, settings: SchedulingSettings): Promise<string[]> {
+    if (settings.staffNotifyEmails.length > 0) return [...settings.staffNotifyEmails];
+    const fallback = options.staffEmails;
+    if (typeof fallback !== "function") return [...(fallback ?? [])];
+    try {
+      return [...(await fallback(event.tenantId))].filter((to) => typeof to === "string" && to.trim() !== "");
+    } catch (error) {
+      report(error, { visitId: event.visitId, eventId: event.id, step: "staff-emails" });
+      return [];
+    }
+  }
+
+  async function sendStaff(event: SchedulingEvent, settings: SchedulingSettings, links: Links) {
     const kind = staffNoticeKind(event);
     if (!kind) return;
-    const recipients = settings.staffNotifyEmails.length > 0 ? settings.staffNotifyEmails : [...(options.staffEmails ?? [])];
+    const recipients = await staffRecipients(event, settings);
     if (recipients.length === 0) return;
     const vars = schedulingEmailVars(event, settings, {
       manageUrl: null,
-      bookUrl: options.bookUrl,
-      adminUrl: options.adminUrl,
+      bookUrl: links.bookUrl,
+      adminUrl: links.adminUrl,
       locale: options.locale,
       audience: "staff",
     });
@@ -771,6 +872,10 @@ export function createSchedulingCommsListener(options: SchedulingCommsOptions): 
                 templateKey: "visit_staff_notice",
                 vars,
                 idempotencyKey: `visit:${event.visitId}:${event.id}:staff:${index}`,
+                // Reply on "New request: Pat Rivera" reaches Pat, not the
+                // office's own address (review T2A-BO-12). No address: the
+                // business's reply-to.
+                ...(event.data.visit.customerEmail ? { replyTo: event.data.visit.customerEmail } : {}),
               },
               options.senders,
             ),
@@ -794,7 +899,7 @@ export function createSchedulingCommsListener(options: SchedulingCommsOptions): 
    * day, and `beforeSend` renders it again from the visit as it is then. The
    * dedupe key carries the visit's sequence, which `beforeSend` checks.
    */
-  async function queueReminder(event: SchedulingEvent, settings: SchedulingSettings) {
+  async function queueReminder(event: SchedulingEvent, settings: SchedulingSettings, links: Links) {
     const visit = event.data.visit;
     if (options.reminders === false || settings.reminderLeadHours <= 0) return;
     if (visit.status !== "confirmed" || !visit.customerEmail) return;
@@ -810,8 +915,8 @@ export function createSchedulingCommsListener(options: SchedulingCommsOptions): 
         channel: "email",
         vars: schedulingEmailVars(event, settings, {
           manageUrl: null,
-          bookUrl: options.bookUrl,
-          adminUrl: options.adminUrl,
+          bookUrl: links.bookUrl,
+          adminUrl: links.adminUrl,
           locale: options.locale,
         }),
         sendAt,
@@ -827,53 +932,55 @@ export function createSchedulingCommsListener(options: SchedulingCommsOptions): 
 
   async function onEvent(event: SchedulingEvent): Promise<void> {
     try {
+      const context = { visitId: event.visitId, eventId: event.id };
       let settings: SchedulingSettings;
       try {
-        settings = await getSchedulingSettings(db, event.tenantId);
+        settings = await settingsFor(event.tenantId, context);
       } catch (error) {
-        report(error, { visitId: event.visitId, eventId: event.id, step: "settings" });
+        report(error, { ...context, step: "settings" });
         return;
       }
       if (!ensured.has(event.tenantId)) {
         await step("templates", event.visitId, event.id, () => ensureTemplates(event.tenantId));
       }
+      const links = await linksFor(event.tenantId, context);
       const pending = event.data.visit.status === "pending";
       switch (event.type) {
         case "visit.requested":
-          if (pending) await sendCustomer(event, settings, "visit_requested", true);
-          await sendStaff(event, settings);
+          if (pending) await sendCustomer(event, settings, links, "visit_requested", true);
+          await sendStaff(event, settings, links);
           return;
         case "visit.confirmed":
           // A confirmation re-sent to a corrected email address replaces a
           // reminder queued for the old one; for an accept there is nothing
           // to withdraw and this is one cheap query.
           await withdrawReminder(event);
-          await sendCustomer(event, settings, "visit_confirmed", true);
-          await queueReminder(event, settings);
+          await sendCustomer(event, settings, links, "visit_confirmed", true);
+          await queueReminder(event, settings, links);
           return;
         case "visit.declined":
           await withdrawReminder(event);
-          await sendCustomer(event, settings, "visit_declined", false);
+          await sendCustomer(event, settings, links, "visit_declined", false);
           return;
         case "visit.rescheduled":
           await withdrawReminder(event);
-          await sendCustomer(event, settings, "visit_rescheduled", true);
-          await sendStaff(event, settings);
-          await queueReminder(event, settings);
+          await sendCustomer(event, settings, links, "visit_rescheduled", true);
+          await sendStaff(event, settings, links);
+          await queueReminder(event, settings, links);
           return;
         case "visit.reassigned":
           // The reminder stays: the time didn't change, and neither did the sequence.
-          await sendCustomer(event, settings, "visit_reassigned", true);
+          await sendCustomer(event, settings, links, "visit_reassigned", true);
           return;
         case "visit.cancelled":
           await withdrawReminder(event);
-          await sendCustomer(event, settings, "visit_cancelled", false);
-          await sendStaff(event, settings);
+          await sendCustomer(event, settings, links, "visit_cancelled", false);
+          await sendStaff(event, settings, links);
           return;
         case "visit.expired":
           await withdrawReminder(event);
-          await sendCustomer(event, settings, "visit_expired", false);
-          await sendStaff(event, settings);
+          await sendCustomer(event, settings, links, "visit_expired", false);
+          await sendStaff(event, settings, links);
           return;
         case "visit.started":
         case "visit.completed":
@@ -907,7 +1014,7 @@ export function createSchedulingCommsListener(options: SchedulingCommsOptions): 
       return { skip: true, reason: "the visit has moved since this reminder was queued" };
     }
     if (!visit.customerEmail) return { skip: true, reason: "the visit has no email address any more" };
-    const settings = await getSchedulingSettings(db, row.tenantId);
+    const settings = await settingsFor(row.tenantId, { visitId: visit.id });
     if (settings.reminderLeadHours <= 0) return { skip: true, reason: "reminders are switched off" };
     const now = clock();
     const { startsAt } = instantsOf(visit, settings.timeZone);
@@ -916,11 +1023,14 @@ export function createSchedulingCommsListener(options: SchedulingCommsOptions): 
     }
     const changeable = now.getTime() < startsAt.getTime() - settings.cancelCutoffHours * HOUR_MS;
     let manageUrl: string | null = null;
+    let manageUnavailable = false;
     if (changeable) {
       const token = await insertManageToken(db, row.tenantId, visit.id);
-      manageUrl = options.manageUrl(token, row.tenantId);
+      manageUrl = await manageLinkFor(token, row.tenantId, { visitId: visit.id });
+      manageUnavailable = manageUrl === null;
       minted.push({ tenantId: row.tenantId, scheduledId: row.id, token });
     }
+    const links = await linksFor(row.tenantId, { visitId: visit.id });
     let resourceName: string | null = null;
     if (visit.resourceId) {
       try {
@@ -941,7 +1051,7 @@ export function createSchedulingCommsListener(options: SchedulingCommsOptions): 
         data: { visit: snapshot, notify: true },
       },
       settings,
-      { manageUrl, bookUrl: options.bookUrl, adminUrl: options.adminUrl, locale: options.locale, now },
+      { manageUrl, manageUnavailable, bookUrl: links.bookUrl, adminUrl: links.adminUrl, locale: options.locale, now },
     );
     return { to: visit.customerEmail, vars };
   }

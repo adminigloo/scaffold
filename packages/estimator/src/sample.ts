@@ -28,6 +28,9 @@ import { EstimatorInputError, type EstimatorDb, type SettingsRow } from "./types
  * your website" off: made-up prices must not reach a customer the moment the
  * owner clicks "Load the sample". The owner changes the prices to theirs and
  * turns each product on. (`showInEstimator: true` is for a test or a demo.)
+ *
+ * Tenancy 2a: it is now ONE of three — lawn care, cleaning and ramps
+ * (`SAMPLE_CATALOGS`) — and the owner picks the one for their trade.
  */
 
 export type SampleUnitType = "per_linear_ft" | "per_sqft" | "per_unit" | "flat";
@@ -207,6 +210,286 @@ export const SAMPLE_CATALOG: Readonly<SampleCatalog> = Object.freeze({
 }) as SampleCatalog;
 
 /**
+ * The trades a sample price book is offered for (Tenancy 2a review
+ * T2A-BO-10). The 0.3 sample was a wheelchair-ramp company's, which a lawn
+ * or cleaning business read as "this isn't for my kind of business" — and
+ * the two-company scenario's lawn company ended up "selling" a threshold
+ * ramp. The owner now picks the trade the sample is for.
+ */
+export type SampleTrade = "lawn" | "cleaning" | "ramps";
+export const SAMPLE_TRADES: readonly SampleTrade[] = Object.freeze(["lawn", "cleaning", "ramps"]);
+
+const SAMPLE_NOTE = "Sample price: change it to yours.";
+
+/** A lawn and landscape company's: mowing by the visit, aeration by yard size, mulch by the square foot, edging by the foot. */
+const LAWN_SAMPLE: SampleCatalog = {
+  supplier: "Your supplier",
+  note: SAMPLE_NOTE,
+  supplies: [
+    { key: "fuel", name: "Fuel and equipment wear, per visit", unitType: "per_unit", unitCost: 400 },
+    { key: "seed", name: "Grass seed", unitType: "per_sqft", unitCost: 4 },
+    { key: "fertilizer", name: "Starter fertilizer", unitType: "per_sqft", unitCost: 2 },
+    { key: "mulch", name: "Mulch, delivered (3 in deep)", unitType: "per_sqft", unitCost: 90 },
+    { key: "fabric", name: "Weed barrier fabric", unitType: "per_sqft", unitCost: 15 },
+    { key: "edging", name: "Steel landscape edging", unitType: "per_linear_ft", unitCost: 350 },
+    { key: "stake", name: "Edging stake", unitType: "per_unit", unitCost: 150 },
+    { key: "disposal", name: "Green waste disposal", unitType: "flat", unitCost: 3_500 },
+  ],
+  products: [
+    {
+      name: "Lawn mowing",
+      category: "Lawn",
+      description: "Mow, trim and edge, and blow the clippings off hard surfaces. Priced per visit by yard size.",
+      recipe: "count",
+      recipeConfig: { countLabel: "How many visits?", noun: { one: "visit", many: "visits" }, maxCount: 52 },
+      allowMultiple: false,
+      isEstimatable: true,
+      supplies: [{ supply: "fuel", quantityMilli: 1000, per: "item" }],
+      laborHoursPerUnitMilli: 750,
+      laborSetupHoursMilli: 0,
+      laborRateCents: 5_500,
+      wasteBp: 0,
+      markupBp: 3_000,
+      minimumCharge: 4_500,
+      options: [
+        {
+          name: "Yard size",
+          values: [
+            { label: "Small (up to 1/4 acre)", priceModifier: 0, isDefault: true },
+            { label: "Medium (1/4 to 1/2 acre)", priceModifier: 2_500, isDefault: false },
+            { label: "Large (1/2 to 1 acre)", priceModifier: 5_500, isDefault: false },
+          ],
+        },
+      ],
+    },
+    {
+      name: "Aeration and overseeding",
+      category: "Lawn",
+      description: "Core aeration, then seed and starter fertilizer over the whole lawn.",
+      recipe: "area",
+      recipeConfig: {
+        unit: "ft",
+        presets: [
+          { label: "Small yard (50 × 50 ft)", width: 50, length: 50 },
+          { label: "Medium yard (50 × 100 ft)", width: 50, length: 100 },
+          { label: "Large yard (100 × 100 ft)", width: 100, length: 100 },
+        ],
+      },
+      allowMultiple: false,
+      isEstimatable: true,
+      supplies: [
+        { supply: "seed", quantityMilli: 1000, per: "sqFt" },
+        { supply: "fertilizer", quantityMilli: 1000, per: "sqFt" },
+      ],
+      laborHoursPerUnitMilli: 0,
+      laborSetupHoursMilli: 1_500,
+      laborRateCents: 5_500,
+      wasteBp: 500,
+      markupBp: 4_000,
+      minimumCharge: 9_500,
+      options: [],
+    },
+    {
+      name: "Mulch installation",
+      category: "Beds",
+      description: "Weed barrier and fresh mulch in your beds, old debris hauled away.",
+      recipe: "area",
+      recipeConfig: {
+        unit: "ft",
+        presets: [
+          { label: "One bed (10 × 4 ft)", width: 10, length: 4 },
+          { label: "Front beds (30 × 4 ft)", width: 30, length: 4 },
+          { label: "Whole yard (60 × 5 ft)", width: 60, length: 5 },
+        ],
+      },
+      allowMultiple: false,
+      isEstimatable: true,
+      supplies: [
+        { supply: "mulch", quantityMilli: 1000, per: "sqFt" },
+        { supply: "fabric", quantityMilli: 1000, per: "sqFt" },
+        { supply: "disposal", quantityMilli: 1000, per: "job" },
+      ],
+      laborHoursPerUnitMilli: 15,
+      laborSetupHoursMilli: 500,
+      laborRateCents: 5_500,
+      wasteBp: 1_000,
+      markupBp: 3_500,
+      minimumCharge: 15_000,
+      options: [],
+    },
+    {
+      name: "Bed edging",
+      category: "Beds",
+      description: "Steel edging set along your bed lines, staked every three feet.",
+      recipe: "linear",
+      recipeConfig: { lengthLabel: "How many feet of edging?", resultNoun: { one: "edge", many: "edges" } },
+      allowMultiple: false,
+      isEstimatable: true,
+      supplies: [
+        { supply: "edging", quantityMilli: 1000, per: "linearFt" },
+        { supply: "stake", quantityMilli: 333, per: "linearFt" },
+      ],
+      laborHoursPerUnitMilli: 60,
+      laborSetupHoursMilli: 500,
+      laborRateCents: 5_500,
+      wasteBp: 500,
+      markupBp: 4_000,
+      minimumCharge: 20_000,
+      options: [],
+    },
+    {
+      name: "Something else",
+      category: "Lawn",
+      description: "Tree work, drainage, a full redesign or anything unusual: we'll call to talk it through.",
+      recipe: "count",
+      recipeConfig: null,
+      allowMultiple: false,
+      isEstimatable: false,
+      supplies: [],
+      laborHoursPerUnitMilli: 0,
+      laborSetupHoursMilli: 0,
+      laborRateCents: null,
+      wasteBp: 0,
+      markupBp: 0,
+      minimumCharge: 0,
+      options: [],
+    },
+  ],
+};
+
+/** A home cleaning company's: regular cleans by home size, deep cleans by the square foot, windows and carpets by the count. */
+const CLEANING_SAMPLE: SampleCatalog = {
+  supplier: "Your supplier",
+  note: SAMPLE_NOTE,
+  supplies: [
+    { key: "kit", name: "Cleaning supplies, per visit", unitType: "per_unit", unitCost: 800 },
+    { key: "deepSupplies", name: "Deep-clean supplies", unitType: "per_sqft", unitCost: 2 },
+    { key: "windowSupplies", name: "Window cleaning supplies, per window", unitType: "per_unit", unitCost: 50 },
+    { key: "carpetSolution", name: "Carpet cleaning solution, per room", unitType: "per_unit", unitCost: 300 },
+    { key: "trip", name: "Trip charge", unitType: "flat", unitCost: 1_500 },
+  ],
+  products: [
+    {
+      name: "Standard home cleaning",
+      category: "Cleaning",
+      description: "Kitchens, bathrooms, dusting, floors and tidying. Priced per visit by home size.",
+      recipe: "count",
+      recipeConfig: { countLabel: "How many visits?", noun: { one: "visit", many: "visits" }, maxCount: 52 },
+      allowMultiple: false,
+      isEstimatable: true,
+      supplies: [{ supply: "kit", quantityMilli: 1000, per: "item" }],
+      laborHoursPerUnitMilli: 2_500,
+      laborSetupHoursMilli: 0,
+      laborRateCents: 4_000,
+      wasteBp: 0,
+      markupBp: 3_000,
+      minimumCharge: 11_000,
+      options: [
+        {
+          name: "Home size",
+          values: [
+            { label: "1 to 2 bedrooms", priceModifier: 0, isDefault: true },
+            { label: "3 bedrooms", priceModifier: 4_000, isDefault: false },
+            { label: "4 or more bedrooms", priceModifier: 8_500, isDefault: false },
+          ],
+        },
+      ],
+    },
+    {
+      name: "Deep cleaning",
+      category: "Cleaning",
+      description: "Top-to-bottom: inside cabinets and appliances, baseboards, vents and grout.",
+      recipe: "area",
+      recipeConfig: {
+        unit: "ft",
+        presets: [
+          { label: "Apartment (about 800 sq ft)", width: 20, length: 40 },
+          { label: "House (about 1,800 sq ft)", width: 30, length: 60 },
+          { label: "Large house (about 3,000 sq ft)", width: 50, length: 60 },
+        ],
+      },
+      allowMultiple: false,
+      isEstimatable: true,
+      supplies: [
+        { supply: "deepSupplies", quantityMilli: 1000, per: "sqFt" },
+        { supply: "trip", quantityMilli: 1000, per: "job" },
+      ],
+      laborHoursPerUnitMilli: 3,
+      laborSetupHoursMilli: 500,
+      laborRateCents: 4_000,
+      wasteBp: 0,
+      markupBp: 3_500,
+      minimumCharge: 25_000,
+      options: [],
+    },
+    {
+      name: "Window cleaning",
+      category: "Windows",
+      description: "Inside and out, screens and sills wiped.",
+      recipe: "count",
+      recipeConfig: { countLabel: "How many windows?", noun: { one: "window", many: "windows" }, maxCount: 100 },
+      allowMultiple: false,
+      isEstimatable: true,
+      supplies: [
+        { supply: "windowSupplies", quantityMilli: 1000, per: "item" },
+        { supply: "trip", quantityMilli: 1000, per: "job" },
+      ],
+      laborHoursPerUnitMilli: 150,
+      laborSetupHoursMilli: 250,
+      laborRateCents: 4_000,
+      wasteBp: 0,
+      markupBp: 4_000,
+      minimumCharge: 9_000,
+      options: [],
+    },
+    {
+      name: "Carpet cleaning",
+      category: "Carpets",
+      description: "Hot-water extraction, priced by the room.",
+      recipe: "count",
+      recipeConfig: { countLabel: "How many rooms?", noun: { one: "room", many: "rooms" }, maxCount: 20 },
+      allowMultiple: false,
+      isEstimatable: true,
+      supplies: [
+        { supply: "carpetSolution", quantityMilli: 1000, per: "item" },
+        { supply: "trip", quantityMilli: 1000, per: "job" },
+      ],
+      laborHoursPerUnitMilli: 500,
+      laborSetupHoursMilli: 500,
+      laborRateCents: 4_000,
+      wasteBp: 0,
+      markupBp: 4_000,
+      minimumCharge: 12_000,
+      options: [],
+    },
+    {
+      name: "Something else",
+      category: "Cleaning",
+      description: "Move-out, post-construction or anything unusual: we'll call to talk it through.",
+      recipe: "count",
+      recipeConfig: null,
+      allowMultiple: false,
+      isEstimatable: false,
+      supplies: [],
+      laborHoursPerUnitMilli: 0,
+      laborSetupHoursMilli: 0,
+      laborRateCents: null,
+      wasteBp: 0,
+      markupBp: 0,
+      minimumCharge: 0,
+      options: [],
+    },
+  ],
+};
+
+/** Every trade's sample price book. `SAMPLE_CATALOG` (the ramps one) stays for 0.3 callers. */
+export const SAMPLE_CATALOGS: Readonly<Record<SampleTrade, Readonly<SampleCatalog>>> = Object.freeze({
+  lawn: Object.freeze(LAWN_SAMPLE),
+  cleaning: Object.freeze(CLEANING_SAMPLE),
+  ramps: SAMPLE_CATALOG,
+});
+
+/**
  * Load the sample catalog into this tenant's price book, once. In ONE
  * transaction under `pg_advisory_xact_lock(hashtext('estimator-sample:' ||
  * tenant))`, so two clicks can't load it twice: refused
@@ -215,14 +498,19 @@ export const SAMPLE_CATALOG: Readonly<SampleCatalog> = Object.freeze({
  * attachments and options, and `sample_loaded_at` — inserting the settings row
  * if there is none, every other field at its default and `saved_at` left
  * null, so the admin still asks for the business's details.
+ *
+ * `trade` picks whose sample (Tenancy 2a review T2A-BO-10); default "ramps",
+ * 0.3's catalog, for callers that name none.
  */
 export async function loadSampleCatalog(
   db: EstimatorDb,
   tenantId: string,
-  options: { now?: Date; showInEstimator?: boolean } = {},
+  options: { now?: Date; showInEstimator?: boolean; trade?: SampleTrade } = {},
 ): Promise<{ products: number; supplies: number }> {
   const now = options.now ?? new Date();
   const showInEstimator = options.showInEstimator === true;
+  // An unknown trade (plain JS) gets 0.3's ramps sample; the admin route refuses one first.
+  const catalog = SAMPLE_CATALOGS[options.trade ?? "ramps"] ?? SAMPLE_CATALOG;
   return db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`estimator-sample:${tenantId}`}))`);
     const [settings] = (await tx
@@ -235,7 +523,7 @@ export async function loadSampleCatalog(
     }
 
     const supplyIds = new Map<string, string>();
-    for (const supply of SAMPLE_CATALOG.supplies) {
+    for (const supply of catalog.supplies) {
       const [row] = (await tx
         .insert(estimatorComponents)
         .values({
@@ -243,9 +531,9 @@ export async function loadSampleCatalog(
           name: supply.name,
           unitType: supply.unitType,
           unitCost: supply.unitCost,
-          supplier: SAMPLE_CATALOG.supplier,
+          supplier: catalog.supplier,
           sku: null,
-          note: SAMPLE_CATALOG.note,
+          note: catalog.note,
           createdAt: now,
           updatedAt: now,
         })
@@ -253,7 +541,7 @@ export async function loadSampleCatalog(
       supplyIds.set(supply.key, (row as { id: string }).id);
     }
 
-    for (const [index, product] of SAMPLE_CATALOG.products.entries()) {
+    for (const [index, product] of catalog.products.entries()) {
       const [row] = (await tx
         .insert(estimatorProducts)
         .values({
@@ -284,7 +572,7 @@ export async function loadSampleCatalog(
         .returning({ id: estimatorProducts.id })) as Array<{ id: string }>;
       const productId = (row as { id: string }).id;
       for (const [order, use] of product.supplies.entries()) {
-        const supply = SAMPLE_CATALOG.supplies.find((s) => s.key === use.supply);
+        const supply = catalog.supplies.find((s) => s.key === use.supply);
         await tx.insert(estimatorProductComponents).values({
           productId,
           componentId: supplyIds.get(use.supply) as string,
@@ -316,6 +604,6 @@ export async function loadSampleCatalog(
       .values({ tenantId, sampleLoadedAt: now, updatedAt: now })
       .onConflictDoUpdate({ target: estimatorSettings.tenantId, set: { sampleLoadedAt: now, updatedAt: now } });
 
-    return { products: SAMPLE_CATALOG.products.length, supplies: SAMPLE_CATALOG.supplies.length };
+    return { products: catalog.products.length, supplies: catalog.supplies.length };
   });
 }

@@ -7,7 +7,7 @@ import {
 import type { BootstrapPolicy } from "@adminigloo/permissions";
 import { sql } from "drizzle-orm";
 import { grantTenantOwnerRole } from "../ownership.js";
-import { TENANT_ROLE_TEMPLATES } from "../templates.js";
+
 import { personalWorkspaceId, personalWorkspaceSlug } from "../workspace.js";
 import type { Ctx } from "./context.js";
 import { lockCompany, q, str, strOrNull } from "./db.js";
@@ -173,19 +173,27 @@ async function personalWorkspaceName(db: TenancyDb, userId: string, email: strin
 }
 
 /**
- * D10: if the `owner` tenant template is missing, seed the tenant scope from
- * the project's catalog (under the seed's advisory lock, in the caller's
- * transaction). Without this the owner of the first company on a fresh
- * database would hold nothing in it.
+ * D10: if any of the project's tenant templates is missing, seed the tenant
+ * scope from the project's catalog (under the seed's advisory lock, in the
+ * caller's transaction). Without this the owner of the first company on a
+ * fresh database would hold nothing in it.
+ *
+ * Tenancy 2a: the PROJECT's role set (`ctx.roles.templates`: the core four
+ * plus extras like Crew), not the shipped four, and missing means "any of
+ * them": a database seeded before Crew existed gets Crew on the next company
+ * created, instead of an invitation to a role that grants nothing.
  */
 export async function ensureTenantTemplates(ctx: Ctx, tx: TenancyDb): Promise<void> {
+  const keys = ctx.roles.keys;
   const rows = await q(
     tx,
     sql`/* adminigloo:tenancy/owner-template */
-      select 1 from role_template where scope = 'tenant' and tenant_id = ${FIRM_WIDE} and key = 'owner' and deleted_at is null limit 1`,
+      select count(distinct key) as n from role_template
+      where scope = 'tenant' and tenant_id = ${FIRM_WIDE} and deleted_at is null
+        and key in (${sql.join(keys.map((key) => sql`${key}`), sql`, `)})`,
   );
-  if (rows.length > 0) return;
-  await seedPermissionCatalog(tx, { tenant: { catalog: ctx.tenantCatalog, templates: TENANT_ROLE_TEMPLATES } });
+  if (Number(rows[0]?.["n"] ?? 0) >= keys.length) return;
+  await seedPermissionCatalog(tx, { tenant: { catalog: ctx.tenantCatalog, templates: ctx.roles.templates } });
 }
 
 function bootstrapEligible(policy: BootstrapPolicy, email: string | null): BootstrapOutcome | null {

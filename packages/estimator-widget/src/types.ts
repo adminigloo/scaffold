@@ -74,6 +74,8 @@ export interface PublicConfig {
   emailsEnabled: boolean;
   minFillMs: number;
   products: PublicProduct[];
+  /** The business's logo (from its company profile), or null. */
+  logoUrl: string | null;
 }
 
 export interface CalculateBody {
@@ -172,6 +174,8 @@ export interface PublicQuote {
   subtotal: Cents; discount: Cents; taxRateBp: BasisPoints; taxAmount: Cents; total: Cents;
   canRespond: boolean;                  // open and before validUntil
   version: number;                      // the quote's send number: an answer names the version the customer saw
+  /** The business's logo (from its company profile), or null. */
+  logoUrl: string | null;
 }
 export interface QuoteResponse { quote: PublicQuote }
 export interface AcceptQuoteBody { version: number; name?: string; note?: string; website?: string }

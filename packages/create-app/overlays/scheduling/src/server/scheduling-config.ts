@@ -3,7 +3,6 @@ import {
   updateSchedulingSettingsSchema,
   type DeliveryStatus,
   type ReminderRuns,
-  type SchedulingPermission,
   type SchedulingRateLimitBucket,
   type UpdateSchedulingSettingsInput,
 } from "__SCOPE__/scheduling";
@@ -14,26 +13,17 @@ import {
  * (src/server/__tests__/scheduling-config.test.ts) and the route files that
  * use them stay a few lines of wiring.
  *
+ * SHARED BY BOTH MODES (Tenancy 2a). Nothing here names a business: the one
+ * fixed business of a single-business project, its staff keys and its crew
+ * staff role live in src/server/scheduling-staff.ts, which a companies project
+ * never gets — each company's tenant is the company's own id, and its people
+ * hold company roles (Crew among them).
+ *
  * Everything else — the slots, the requests, the manage links, the calendar,
  * the emails — is __SCOPE__/scheduling's, reached through its two HTTP
  * handlers. A fix there reaches this project on `pnpm update`; nothing here
  * re-implements it.
  */
-
-/**
- * The one business this project schedules for.
- *
- * Single-tenant on purpose: the generated app serves one business, so every
- * scheduling call is made for this id, injected on the server and never read
- * from a request. The handlers take a `resolveTenant(req)` seam, which is
- * where a multi-business host would read a subdomain instead.
- *
- * EQUAL TO comms' COMMS_TENANT ("primary") by design, not by accident: the
- * scheduling emails are comms templates stored under the scheduling tenant,
- * so with both the same, the nine visit emails show up — and are edited — in
- * /admin/comms beside every other template.
- */
-export const SCHEDULING_TENANT = "primary";
 
 /**
  * The zone a business starts in when SCHEDULING_TIME_ZONE is unset or not a
@@ -113,86 +103,6 @@ export const SCHEDULING_RATE_LIMITS: Readonly<
 };
 
 /**
- * The staff key each scheduling permission is checked against.
- *
- * ONE KEY PER JOB, not `staff.dashboard.view` for everything. When every
- * scheduling permission mapped to the key that admits somebody to the admin
- * shell, the only way to give a seasonal mower his route was the office's
- * full power: change the time zone, switch online booking off, remove crews,
- * decline and cancel customers (each of which emails them), edit every email
- * template in Messages. Now:
- *
- *   staff.schedule.route     a crew's own route: today's stops, Start,
- *                            Complete, "couldn't do it" — the crew role holds
- *                            only this
- *   staff.schedule.view      the calendar and every crew's day
- *   staff.schedule.manage    book, accept, decline, move, cancel
- *   staff.schedule.settings  the business, online booking, crews and hours
- *
- * The keys are declared in src/permissions/catalog.ts (with the roles that
- * hold them by default) and granted to the seeded staff roles the first time
- * scheduling runs — see `ensureCrewAccess` in src/server/scheduling.ts.
- */
-export const SCHEDULING_STAFF_KEYS: Readonly<Record<SchedulingPermission, string>> = {
-  "schedule.route": "staff.schedule.route",
-  "schedule.view": "staff.schedule.view",
-  "schedule.manage": "staff.schedule.manage",
-  "schedule.resources.manage": "staff.schedule.settings",
-};
-
-/**
- * The staff role a crew member is given when the owner picks them for a crew
- * (Schedule settings → Crews → "Who opens this crew's route"). Its only key is
- * `staff.schedule.route`: their own route, nothing else — no calendar, no
- * settings, no Messages, no other customers. Rank 5, below every seeded staff
- * role, so it can never be used to promote anybody.
- */
-export const CREW_ROLE = { key: "crew", name: "Crew member", rank: 5 } as const;
-
-/** Everything the crew role holds: its own route. */
-export const CREW_ROLE_KEYS: readonly string[] = [SCHEDULING_STAFF_KEYS["schedule.route"]];
-
-/** The scheduling staff keys a staff role template should hold, by role (what the catalog's `defaultFor` says). */
-export const SCHEDULING_STAFF_KEY_LIST: readonly string[] = [...new Set(Object.values(SCHEDULING_STAFF_KEYS))];
-
-/**
- * What the crew-access grant writes to the audit log. Spread into the audit
- * registry (src/server/audit.ts). Granting is SENSITIVE: it is how somebody
- * comes to see customers' names, addresses and phone numbers, and the "who
- * could have seen this" review starts from the grants.
- */
-export const schedulingAuditedActions = {
-  "scheduling.crew.access.granted": {
-    label: "Gave a crew member their route (the crew-only staff role)",
-    sensitive: true,
-  },
-  "scheduling.crew.access.revoked": {
-    label: "Took a crew member's route access away",
-  },
-} as const;
-
-/**
- * Should the person picked for (or unpicked from) a crew gain or lose the crew
- * role? Pure, so the rule is a test:
- *
- *   - picked, and holds no staff role at all → grant the crew role;
- *   - picked, but already staff (the owner linking themselves, an office
- *     member who also drives) → nothing: never DEMOTE anybody to crew;
- *   - unpicked, holds the crew role and no other crew of this business still
- *     names them → revoke it;
- *   - anything else → nothing.
- */
-export function crewAccessChange(input: {
-  readonly linked: boolean;
-  readonly currentRoleKey: string | null;
-  readonly stillOnAnotherCrew: boolean;
-}): "grant" | "revoke" | null {
-  if (input.linked) return input.currentRoleKey === null ? "grant" : null;
-  if (input.currentRoleKey === CREW_ROLE.key && !input.stillOnAnotherCrew) return "revoke";
-  return null;
-}
-
-/**
  * Whether anything the office does reaches a customer — the staff screens'
  * banner, and what decides whether they offer "Email the customer". Pure; the
  * facts come from src/server/scheduling-notify.ts (is the mail sender
@@ -207,7 +117,16 @@ export function schedulingDeliveryStatus(input: {
   readonly overdueReminders: number;
   readonly overdueSince: Date | null;
   readonly timeZone: string;
+  /**
+   * Who reads it (review T2A-BO-05). "owner" (the default): the business owns
+   * this deployment, so a reason names the setting to fix. "company": one
+   * company of many on someone else's site — it can't set an environment
+   * variable, so it reads only what that means for it. The site's operator
+   * sees the same gaps, with their fixes, on /setup.
+   */
+  readonly audience?: "owner" | "company";
 }): DeliveryStatus {
+  const company = input.audience === "company";
   if (!input.commsInstalled) {
     return {
       customerEmails: false,
@@ -224,14 +143,20 @@ export function schedulingDeliveryStatus(input: {
   if (input.overdueReminders > 0 && input.overdueSince) {
     const since = new Intl.DateTimeFormat("en-US", { timeZone: input.timeZone, weekday: "short", month: "short", day: "numeric" }).format(input.overdueSince);
     problems.push(
-      `${input.overdueReminders} reminder${input.overdueReminders === 1 ? " is" : "s are"} waiting to go out: the daily reminder job hasn't run since about ${since}. Ask whoever set up your site to check CRON_SECRET on the deployment.`,
+      company
+        ? `${input.overdueReminders} reminder${input.overdueReminders === 1 ? " is" : "s are"} waiting to go out: this site's reminder job hasn't run since about ${since}. Remind those customers yourself, and contact support if it doesn't clear up by tomorrow.`
+        : `${input.overdueReminders} reminder${input.overdueReminders === 1 ? " is" : "s are"} waiting to go out: the daily reminder job hasn't run since about ${since}. Ask whoever set up your site to check CRON_SECRET on the deployment.`,
     );
   }
   return {
     customerEmails: input.emailConfigured,
-    ...(input.emailConfigured ? {} : { customerEmailsOffReason: "no email service is set up yet (RESEND_API_KEY)" }),
+    ...(input.emailConfigured
+      ? {}
+      : { customerEmailsOffReason: company ? "this site doesn't send email yet" : "no email service is set up yet (RESEND_API_KEY)" }),
     reminders: input.emailConfigured && input.cronSecretSet,
-    ...(input.cronSecretSet ? {} : { remindersOffReason: "the daily reminder job isn't set up yet (CRON_SECRET)" }),
+    ...(input.cronSecretSet
+      ? {}
+      : { remindersOffReason: company ? "reminders aren't switched on for this site yet" : "the daily reminder job isn't set up yet (CRON_SECRET)" }),
     reminderRuns: input.reminderRuns,
     problems,
   };

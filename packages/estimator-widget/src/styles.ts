@@ -289,6 +289,9 @@ const CSS_TEXT = `
 .aiew-body { padding: 20px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
 @media (max-width: 480px) { .aiew-body { padding: 16px; gap: 18px; } }
 .aiew-head { display: grid; gap: 4px; }
+/* The business's logo beside its name (Tenancy 2a): at most 32px high. */
+.aiew-logo { max-height: 32px; max-width: 140px; width: auto; height: auto; object-fit: contain; vertical-align: middle; margin-right: 10px; }
+.aiew-brandline { display: flex; align-items: center; gap: 0; font-weight: 700; color: var(--aiew-ink); }
 .aiew-title { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.3; color: var(--aiew-ink); }
 .aiew-sub { color: var(--aiew-muted); font-size: 14.5px; overflow-wrap: anywhere; }
 .aiew-section { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
@@ -538,7 +541,11 @@ textarea.aiew-input { min-height: 88px; resize: vertical; }
 .aiew-banner-ok { background: var(--aiew-ok-soft); color: var(--aiew-ok); border-color: transparent; }
 .aiew-banner-warn { background: var(--aiew-warn-soft); color: var(--aiew-warn); border-color: transparent; }
 .aiew-banner-danger { background: var(--aiew-danger-soft); color: var(--aiew-danger); border-color: transparent; }
-.aiew-banner a { color: inherit; }
+/* A text link takes the banner's colour; a BUTTON in a banner keeps its own.
+   ".aiew-banner a" alone outranks ".aiew-btn-primary", which painted the
+   accepted quote's "Pick a time for the work" in the banner's green on the
+   accent background (1.15:1, found by the Tenancy 2a browser scenario). */
+.aiew-banner a:not(.aiew-btn) { color: inherit; }
 .aiew-footer { font-size: 13.5px; color: var(--aiew-muted); white-space: pre-wrap; overflow-wrap: anywhere; border-top: 1px solid var(--aiew-line); padding-top: 12px; }
 .aiew-confirm { display: grid; gap: 12px; padding: 16px; border-radius: var(--aiew-radius-sm); border: 2px solid var(--aiew-accent); background: var(--aiew-surface); }
 

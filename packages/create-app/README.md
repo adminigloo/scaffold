@@ -30,6 +30,23 @@ generated app misbehaves.
    pnpm dlx @adminigloo/create-app igloo-back-office --tenant-noun Company --admin full --email
    ```
 
+   For a field-service platform — small service businesses each running their
+   own estimates, schedule, invoices and customer messages — add the features:
+
+   ```
+   pnpm dlx @adminigloo/create-app igloo-back-office --tenant-noun Company --admin full \
+     --estimator --scheduling --invoicing --comms --email --storage --ai
+   ```
+
+   With a `--tenant-noun`, each feature belongs to EACH COMPANY (Tenancy 2a):
+   its own screens at `/app`, its own public pages at `/t/{web address}`
+   (estimate, booking, quote, visit and invoice pages, branded and in its time
+   zone), emails under its own name, its own roles (Crew sees only today's
+   route) and crons that serve every company. The project proves in its own
+   `pnpm test` that one company can't reach another's rows through any feature
+   route. With `--tenant-noun none` the same features run for your one
+   business, at `/admin`.
+
 3. **First run**, in the new folder:
 
    ```
@@ -46,6 +63,49 @@ generated app misbehaves.
    administrator on a deployed site.
 
 `--help` lists every flag.
+
+### Not included (Tenancy 2a)
+
+What a generated project does NOT do yet, so nobody sells it as doing so. The
+generated `README.md` carries the same list (single-business projects leave
+out the items that are only about companies).
+
+- **Per-company boards and widgets for feedback, notifications, files, the
+  assistant, analytics, SEO/AEO and book-a-call (booking)** — Tenancy 2b.
+- **Payments to companies** (Stripe Connect: a customer paying a company's
+  invoice by card). Invoices are paid however the payment instructions say;
+  staff record the payment.
+- **Plans, limits and billing enforcement** per company.
+- **Custom domains and subdomains.** Public pages live at `/t/{web-address}`.
+- **Impersonation** ("view as this company") from the operator console, and
+  platform-wide feature reports (all companies' visits, estimates, invoices)
+  in `/admin`.
+- **Search indexing of company pages**, and per-company SEO.
+- **Logo and colour inside emails.** Emails carry the company's name and
+  reply-to; their bodies are plain text.
+- **Emailing customers about a time-zone correction** made in company
+  settings. Visits keep their clock times and reminders are re-queued silently.
+- **A scheduling embed** (a script for the company's own website). The
+  booking page's address is shown to copy. The estimator gives each company a
+  button and a page frame for its website; its keyed React component needs a
+  React site and access to the private package registry.
+- **Payment instructions and per-feature identity in single-business mode.**
+  A single business's invoices carry the name, contact and time zone saved in
+  its Schedule or Estimate settings (else the site's name); how customers pay
+  is left blank.
+- **Per-company custom roles and per-person permission changes.** Crew is a
+  fixed role scheduling adds.
+- **Moving a pre-2a companies project's feature rows** (written under the
+  fixed `"primary"` business) into a company. The emitted README gives the SQL
+  for one company; nothing does it automatically.
+- **Sending from a company's own domain.** Every company's email leaves from
+  this site's one verified domain, under the company's name, held to a sending
+  allowance (100 an hour and 500 a day; 20 and 100 in its first week).
+- **Rules on what a company may call itself.** Nothing stops a company naming
+  itself after another business; suspend it from the operator console.
+- **A suspended company's customer links.** While a company is suspended, all
+  of its public pages, its customers' invoice, quote and visit links included,
+  say it isn't taking requests online and how to reach it.
 
 ---
 

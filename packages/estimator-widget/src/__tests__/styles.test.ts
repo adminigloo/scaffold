@@ -102,3 +102,20 @@ describe("tokens", () => {
     }
   });
 });
+
+describe("a button inside a banner or a notice keeps its own colours", () => {
+  // The accepted quote's "Pick a time for the work" is an <a class="aiew-btn
+  // aiew-btn-primary"> inside the green "accepted" banner. A bare
+  // ".aiew-banner a { color: inherit }" outranks ".aiew-btn-primary" (one
+  // class and one element beat one class) and painted the button's words in
+  // the banner's green on the accent: 1.15:1 with a business's green colour,
+  // found by the Tenancy 2a browser scenario's axe check.
+  const css = estimatorWidgetCss();
+  it("no rule that recolours links in a banner reaches a button", () => {
+    const rules = css.match(/[^{}]*\.aiew-banner a[^{]*\{[^}]*\}/g) ?? [];
+    expect(rules.length).toBeGreaterThan(0);
+    for (const rule of rules) {
+      if (/color:/.test(rule)) expect(rule, rule).toMatch(/\.aiew-banner a:not\(\.aiew-btn\)/);
+    }
+  });
+});

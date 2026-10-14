@@ -219,8 +219,9 @@ generated `--tenant-noun Company` project wires them
 (`fixtures/tenancy-scenario-server.ts`: the company gate, the admin layout's
 first-administrator self-heal, a fake sign-in that can arrive as the Clerk
 webhook or as the first page request, an outbox for invitation emails, an
-in-memory logo store). The fixture bundles the widgets itself, so `bundle.mjs`
-needs no entry for them.
+in-memory logo store). The fixture bundles its own host page in memory;
+`bundle.mjs`'s `tenancy-widget` entry (Tenancy 2a) only proves the package
+still bundles for a browser on its own.
 
 It walks the steps as the people involved, with an axe check (no serious or
 critical violations) on every screen it lands on:
@@ -292,6 +293,143 @@ handing over ownership are asserted ON SCREEN (`seenOnScreen`: a box larger
 than a pixel), because Playwright counts a clipped screen-reader line as
 "visible" (review R2 T1BO-04).
 
+## What `tenancy-2a-scenario.spec.ts` proves
+
+The business scenario Tenancy 2a is sold on (contract section 14, acceptance
+item 9): two lawn-care companies run their own schedule, estimates, invoices
+and messages on one "Igloo Back Office", and neither can see the other. The
+REAL screens — every widget a companies project mounts, bundled from source by
+`bundle.mjs`'s `tenancy2aScenarioTarget` (`fixtures/tenancy-2a-scenario-host.tsx`)
+— in a real browser, against the REAL backend from the packages' built `dist`
+(`fixtures/tenancy-2a-scenario-server.ts`): `@adminigloo/tenancy` 0.5's service,
+handlers and route seams; scheduling, the estimator, invoicing and comms with
+their private (`/api/app/{company id}/…`), public (`/api/t/{web address}/…`)
+and embed handlers and their comms listeners; the permissions loaders and the
+deploy seed (Crew included); `@adminigloo/email`'s real sender over a
+capturing transport — on PGlite with every one of those packages' tables. It is
+wired the way a generated `--tenant-noun Company --estimator --scheduling
+--invoicing --comms --email` project wires them (contract 11.5: the company
+route seams, first-time company setup, company links, per-company sender
+identity and the three every-company crons); the generator's own shared
+decisions (`scheduling-config.ts`, `estimator-config.ts`) are compiled from
+create-app's source and called as they are.
+
+Gail owns Green Acres (`green-acres`, Mountain Time), Sam owns Summit Lawn
+(`summit-lawn`, Central Time), Pat is Green Acres' customer, Cam its crew
+member, Mia a member, Vic a viewer, Ava the platform owner. An axe check (no serious or
+critical violations) runs on every screen a step lands on.
+
+1. **Two companies set up, each in its own area.** Each signs up and names
+   the company; in `/settings/company` sets the time zone, contact email and
+   phone, brand colour and — in the Invoices section, invoicing's settings
+   fragment — how customers pay. Gail loads the sample price book on purpose
+   — the LAWN CARE one, picked in the dialog, with nothing about ramps in it —
+   and puts one product on her website; Sam adds one by hand. Each saves the
+   estimate settings (the first-run form asks only the tax rate: the name and
+   contact are the company's, shown read-only with the link) and, in schedule
+   settings (the same read-only basics), switches online booking on and adds a
+   crew with its hours. Sam's "Your website" offers a button and a page frame
+   any site takes, in Summit's colour and pointing at Summit's own estimate
+   page; under "For developers" he makes a key: shown once, with both snippets
+   pointing at this deployment's `/api/estimator` and carrying the key, and
+   "Test this key" answers with Summit's one product.
+   Gail invites Cam as Crew (the Team page offers it), Mia as Member and Vic
+   as Viewer; Sam invites one member. Both dashboards' checklists (0 of 9 at
+   the start) reach "You're all set": Gail's with the website embed marked
+   "Not needed", Sam's with it done.
+2. **Public pages.** `/t/green-acres/estimate` carries Green Acres' name and
+   colour and only its product, and its tab says "Instant estimate · Green
+   Acres" (as the generated pages' `publicCompanyMetadata` sets it); `/t/summit-lawn/book-visit` offers times in
+   Central Time and `/t/green-acres/book-visit` in Mountain Time, to a visitor
+   in New York; `/t/green-acres` has a button per public page. The estimator
+   embed called from Summit's own website with Summit's key (no cookie, no web
+   address) answers as Summit: its name, its zone, only its product.
+3. **One customer of Green Acres, end to end.** Pat gets an estimate and sends
+   it, books a visit tied to it, Gail accepts the visit (Pat's manage-visit
+   link opens `/t/green-acres/visit/…`: Green Acres' brand bar, the time in
+   MST whatever Pat's own zone; the same token under `/t/summit-lawn/visit/`
+   opens nothing) and sends the quote,
+   Pat accepts it on `/t/green-acres/quote/…`, Gail turns it into an invoice
+   and sends it, and Pat opens `/t/green-acres/invoice/…` and sees Green
+   Acres' payment instructions. THE OUTBOX: every email to Pat has From name
+   "Green Acres" on the platform's address, Reply-To Green Acres' contact
+   email, and links only under `/t/green-acres/`; every office notice went to
+   Green Acres' address and none to the platform owner; the delivery log rows
+   say the same. Summit's estimates, schedule, invoices and Messages show none
+   of it, and Sam's browser gets `403` for Green Acres' id through every
+   private route tried. A Summit invoice token under `/t/green-acres/invoice/`
+   is "isn't available" (D13) and opens under Summit's own address.
+4. **Roles.** Cam accepts and his header shows only Dashboard and Today's
+   route; joining as Crew of a company with one free crew, he is put on it
+   (Gail's picker shows him picked, and lists only Green Acres' people); on the
+   visit's morning his route lists Pat's visit, offers no other day, and the
+   route refuses another day asked for directly; `/app/estimates`
+   says "You don't have access to this page" and the routes answer 403. Mia
+   creates an estimate and sends its quote, but the price book offers her no
+   add, edit or retire control and estimate settings are read-only (the
+   server refuses her save too). Vic's header shows Dashboard, Schedule,
+   Estimates, Invoices, Messages, Team and Settings; every list shows Green
+   Acres' work, and nothing is offered to change it — no New visit, no New
+   estimate, no action on an estimate (a "your role can't change it" notice
+   instead), no New invoice, no Send or Record payment — while the owner's
+   same screens offer each; his POSTs to every feature's routes answer 403.
+5. **Crons and suspension.** Ava looks into Green Acres in `/admin` (its
+   people) and suspends Summit Lawn; `/t/summit-lawn/book-visit` says "Summit
+   Lawn isn't taking requests online right now" with how to reach it, mounts
+   no widget, and its API answers `409 booking_closed`; its estimator embed,
+   called with Summit's key, answers `409 estimates_closed` with the same
+   sentence. With a request
+   overdue at each company and a third company active, the scheduling cron
+   reports two companies, expires Green Acres' request (its customer emailed
+   as Green Acres) and leaves Summit's untouched; with `failCompany=<Green
+   Acres>` it reports Green Acres in `failed` and still runs the third. The
+   estimator and comms crons walk the same list.
+6. **Phone width (390 px).** `/app/schedule/today`, `/t/green-acres/book-visit`,
+   `/t/green-acres/invoice/…` and `/app/invoices`: nothing scrolls sideways,
+   every widget control is at least 44 px.
+
+**Negative controls** run in the same file, each as a pair on fresh fixtures:
+the assertion once on the fixture as wired (it must pass) and once on a
+deliberately broken FIXTURE with `test.fail()` (it must fail — the packages
+carry no bug switches):
+
+- `break: "shared-identity"` — the comms senders get no `identity`, so every
+  company's email goes out as the platform. Step 3's outbox assertion fails
+  ("Igloo Back Office" where "Green Acres" was expected).
+- `break: "unscoped-invoice-token"` — the public invoicing handler finds the
+  company from the TOKEN's invoice instead of the web address in the URL (the
+  read D13 forbids). Opening a Summit invoice token under
+  `/t/green-acres/invoice/…` then shows Summit's invoice, and the "isn't
+  available" assertion fails.
+
+Both fail, and do, for those reasons.
+
+It needs `packages/tenancy`, `auth`, `permissions`, `observability`, `testing`,
+`email`, `comms`, `scheduling`, `estimator` and `invoicing` built (their
+`dist` is what runs).
+
+### What it does NOT prove
+
+- **One database connection.** PGlite is one connection, so two companies'
+  requests never truly overlap; races are covered as sequential interleavings
+  in the packages' own tests.
+- **Real email delivery.** No Resend: the transport records what the provider
+  would have been handed (From, Reply-To, subject, text). Verifying the sending
+  domain and deliverability are the deployment's.
+- **Real sign-in.** No Clerk: a fake identity sets a cookie, as in the
+  Tenancy 1 scenario. The same caveat as there holds for the pages: the
+  fixture draws its own host pages and gates (`CompanyGate`,
+  `PublicCompanyGate`, `AuthHeader`'s permission filter, the switch route) the
+  way the generated ones do; the generated files themselves are covered by
+  the project's own `tsc`, `next build`, unit proofs (`feature-isolation`,
+  `company-crons`, `company-email`) and `scripts/verify-generated.mjs`'s route
+  sweep.
+- **Photo reading and photo storage.** The fixture connects neither (no AI
+  key, no file storage), so the estimate page asks the customer to count; the
+  estimator scenario covers both.
+- **Real time.** One scenario clock, moved by the test; the browsers get the
+  same time through Playwright's clock.
+
 ## What `estimator-widget.spec.ts` proves
 
 `@adminigloo/estimator-widget` on its own, against a fake server answered with
@@ -315,6 +453,14 @@ runs, the content after it survives, and `JSON.parse` of the block equals the
 graph that was built. Its negative control writes the same payload with plain
 `JSON.stringify` (how trailcards, Riddler Go and the AdminIgloo site wrote it)
 and watches it break out.
+
+`bundle.mjs` also bundles each of the five widgets a companies project mounts
+(`tenancy-widget`, `scheduling-widget`, `estimator-widget`,
+`invoicing-widget`, `comms-widget`) on its own, from source, customer and staff
+entries together: a widget that picks up a server-only import stops bundling
+for a browser, and this names the package. Imported (rather than run), it
+exports `buildTarget` and `tenancy2aScenarioTarget`, which the Tenancy 2a scenario
+fixture uses to build its host page in memory.
 
 To add a browser test for another package, add a target to `bundle.mjs` and a
 spec under `tests/`.

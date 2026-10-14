@@ -28,6 +28,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const widgetTypes = resolve(here, "../types.ts");
 const serverWire = resolve(here, "../../../tenancy/src/wire.ts");
 const contractDoc = resolve(here, "../../../../docs/tenancy-1-contract.md");
+const contract2aDoc = resolve(here, "../../../../docs/tenancy-2a-contract.md");
 
 /** The text between `// WIRE:BEGIN` and `// WIRE:END`, LF line endings; null when the markers aren't there exactly once. */
 export function wireRegion(source: string): string | null {
@@ -54,6 +55,36 @@ function regionFromContract(doc: string): string {
   return ["// WIRE:BEGIN", ...ec, "", ...lines.slice(open + 1, close), "// WIRE:END"].join("\n");
 }
 
+/** The fenced ```ts block that holds `marker`, dedented (a block inside a list item is indented). */
+function blockHolding(doc: string, marker: string): string[] {
+  const lines = doc.replace(/\r\n/g, "\n").split("\n");
+  const at = lines.findIndex((l) => l.trimStart().startsWith(marker));
+  let open = at;
+  while (open >= 0 && !lines[open]!.trimStart().startsWith("```ts")) open -= 1;
+  let close = at;
+  while (close < lines.length && !lines[close]!.trimStart().startsWith("```")) close += 1;
+  const indent = lines[open]!.length - lines[open]!.trimStart().length;
+  return lines.slice(open + 1, close).map((l) => l.slice(Math.min(indent, l.length - l.trimStart().length)));
+}
+
+/**
+ * Tenancy 2a's amendments to 7.3, applied to Tenancy 1's region: the widened
+ * `RoleKey` (2a contract 4.1, with its comment) replaces T1's line, and
+ * `PublicCompanyWire` (4.9) closes the region.
+ */
+function amendFor2a(region: string, doc2a: string): string {
+  const lines = region.split("\n");
+  const roleBlock = blockHolding(doc2a, "export type RoleKey");
+  const roleLine = roleBlock.findIndex((l) => l.startsWith("export type RoleKey"));
+  const roleStart = roleBlock.slice(0, roleLine).map((l) => l.startsWith("/**")).lastIndexOf(true);
+  const roleKey = roleBlock.slice(roleStart, roleLine + 1);
+  const at = lines.findIndex((l) => l.startsWith("export type RoleKey ="));
+  lines.splice(at, 1, ...roleKey);
+  const publicBlock = blockHolding(doc2a, "export interface PublicCompanyWire");
+  lines.splice(lines.length - 1, 0, ...publicBlock);
+  return lines.join("\n");
+}
+
 const mine = wireRegion(readFileSync(widgetTypes, "utf8"));
 
 describe("wire region", () => {
@@ -63,9 +94,9 @@ describe("wire region", () => {
     expect(mine).toContain("export interface AdminPeopleWire");
   });
 
-  if (existsSync(contractDoc)) {
-    it("matches the contract document's blocks verbatim", () => {
-      expect(mine).toBe(regionFromContract(readFileSync(contractDoc, "utf8")));
+  if (existsSync(contractDoc) && existsSync(contract2aDoc)) {
+    it("matches the contract documents' blocks verbatim (Tenancy 1's 7.3, with Tenancy 2a's 4.1 and 4.9)", () => {
+      expect(mine).toBe(amendFor2a(regionFromContract(readFileSync(contractDoc, "utf8")), readFileSync(contract2aDoc, "utf8")));
     });
   } else {
     it.todo("matches the contract document (docs/tenancy-1-contract.md isn't in this checkout)");

@@ -24,10 +24,13 @@ import {
   reactivateCompany,
   releaseRetiredAddresses,
   resolveCompanyBySlug,
+  resolvePublicCompany,
   setStaffRole,
   suspendCompany,
 } from "./operator.js";
+import { rememberCtx } from "./internals.js";
 import { getCompany, removeLogo, setLogo, updateBranding, updateCompanyProfile } from "./profile.js";
+import { activeCompanyIds, companyProfile, listMemberPeople } from "./profile-read.js";
 import {
   deprovisionUser,
   ensureBootstrapAdmin,
@@ -78,6 +81,7 @@ export function createTenancyService(options: CreateTenancyServiceOptions): Tena
     bootstrap: options.bootstrap,
     settings,
     checklist: options.checklist ?? defineSetupChecklist(tenancyChecklistItems({})),
+    ...(options.roles ? { roles: options.roles } : {}),
     ...(options.seats ? { seats: options.seats } : {}),
     ...(options.logos ? { logos: options.logos } : {}),
     ...(options.reservedSlugs ? { reservedSlugs: options.reservedSlugs } : {}),
@@ -89,10 +93,11 @@ export function createTenancyService(options: CreateTenancyServiceOptions): Tena
     ...(options.now ? { now: options.now } : {}),
   });
 
-  return {
+  const service: TenancyService = {
     mode: options.mode,
     noun,
     settings,
+    roles: ctx.roles,
 
     provisionUser: (input) => provisionUser(ctx, input),
     deprovisionUser: (input) => deprovisionUser(ctx, input),
@@ -158,5 +163,13 @@ export function createTenancyService(options: CreateTenancyServiceOptions): Tena
       const row = await readCompany(ctx.db, tenantId);
       return row && row.deletedAt === null ? companyView(row, null) : null;
     },
+
+    // Tenancy 2a: the feature packages' reads (no permission check; see profile-read.ts).
+    resolvePublicCompany: (slug) => resolvePublicCompany(ctx, slug),
+    companyProfile: (tenantId) => companyProfile(ctx, tenantId),
+    listMemberPeople: (tenantId) => listMemberPeople(ctx, tenantId),
+    activeCompanyIds: () => activeCompanyIds(ctx),
   };
+  rememberCtx(service, ctx);
+  return service;
 }

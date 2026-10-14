@@ -31,7 +31,7 @@
  * evidence for what the package intended has been spread away.
  */
 
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -74,7 +74,26 @@ const EVERYTHING: Answers = {
 async function tenantLadder(): Promise<string[]> {
   const source = await readFile(TENANCY_TEMPLATES, "utf8");
   const block = source.slice(source.indexOf("TENANT_ROLE_TEMPLATES"));
-  return [...block.matchAll(/key:\s*"([^"]+)"/g)].flatMap((m) => m[1] ?? []);
+  const core = [...block.matchAll(/key:\s*"([^"]+)"/g)].flatMap((m) => m[1] ?? []);
+  // THE ROLES A PACKAGE CONTRIBUTES (Tenancy 2a, D9): scheduling's Crew joins
+  // the company ladder of a companies project (src/permissions/roles.ts), so
+  // a `defaultFor: [..., "crew"]` names a real tenant template there. Read
+  // from the constant scheduling exports, wherever in its source it lives.
+  return [...core, ...(await contributedRoleKeys("scheduling", "SCHEDULING_CREW_ROLE"))];
+}
+
+/** The `key` of a role a package declares as `export const <name> = { key: "…", … }`. */
+async function contributedRoleKeys(pkg: string, name: string): Promise<string[]> {
+  const dir = join(PACKAGES_DIR, pkg, "src");
+  for (const entry of await readdir(dir)) {
+    if (!entry.endsWith(".ts")) continue;
+    const source = await readFile(join(dir, entry), "utf8");
+    const at = source.indexOf(`export const ${name}`);
+    if (at < 0) continue;
+    const key = /key:\s*"([^"]+)"/.exec(source.slice(at))?.[1];
+    if (key) return [key];
+  }
+  return [];
 }
 
 async function staffLadder(): Promise<string[]> {

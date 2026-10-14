@@ -1383,7 +1383,7 @@ describe("the signed-in nav", () => {
     // the property worth pinning moved: the panel that was declined is absent
     // and the page that always exists is not.
     const nav = renderSiteNav(answers({ adminShell: "none" }));
-    expect(nav).toContain('{ href: "/settings/team", label: "Team" }');
+    expect(nav).toContain('{ href: "/settings/team", label: "Team"');
     expect(nav).not.toContain('label: "Admin"');
     expect(nav).not.toContain('"/admin"');
   });
@@ -1396,7 +1396,7 @@ describe("the signed-in nav", () => {
       for (const adminShell of [...ADMIN_SHELLS, "none"] as const) {
         const nav = renderSiteNav(answers({ tenantNoun, adminShell }));
         const label = `--tenant ${tenantNoun} --admin ${adminShell}`;
-        expect(nav, label).toContain('{ href: "/settings/team", label: "Team" }');
+        expect(nav, label).toContain('{ href: "/settings/team", label: "Team"');
         expect(nav, label).not.toContain('"/members"');
       }
     }
@@ -1405,7 +1405,10 @@ describe("the signed-in nav", () => {
   it("gives a companies project its dashboard and settings, and a single business neither", () => {
     const companies = renderSiteNav(answers({ tenantNoun: "Company" }));
     expect(companies).toContain('{ href: "/dashboard", label: "Dashboard" }');
-    expect(companies).toContain('{ href: "/settings/company", label: "Settings" }');
+    // Each on the company key it needs (Tenancy 2a): the header shows a person
+    // only what their role in their active company opens.
+    expect(companies).toContain('{ href: "/settings/team", label: "Team", permission: "members.view" }');
+    expect(companies).toContain('{ href: "/settings/company", label: "Settings", permission: "tenant.view" }');
     const single = renderSiteNav(answers({ tenantNoun: "none" }));
     expect(single).not.toContain('"/dashboard"');
     expect(single).not.toContain('"/settings/company"');
@@ -1440,8 +1443,10 @@ describe("the signed-in nav", () => {
     const plan = await planEmit(TEMPLATE_DIR, "/out", answers({ adminShell: "full" }));
     const header = plan.files.get(join("src", "components", "AuthHeader.tsx")) ?? "";
     expect(header).toContain("SITE_LINKS.map");
-    // The signed-in links, filtered for this viewer: Admin only for staff.
-    expect(header).toContain('APP_LINKS.filter((link) => link.audience !== "staff" || isStaff)');
+    // The signed-in links, filtered for this viewer: Admin only for staff, and
+    // a company link only for a role that holds its key (Tenancy 2a).
+    expect(header).toContain('(link.audience !== "staff" || viewer.isStaff) &&');
+    expect(header).toContain("(link.permission === undefined || viewer.can.includes(link.permission))");
     // Three public renders, one signed-in render.
     expect(header.match(/<SiteLinks \/>/g)).toHaveLength(3);
     expect(header.match(/<AppLinks /g)).toHaveLength(1);
@@ -2457,6 +2462,13 @@ const UNLINKED_BY_DESIGN: Readonly<Record<string, string>> = {
   "/t/[slug]":
     "each company's public address, shown on its settings page and shared by " +
     "the company itself. A nav entry would need a slug, and whose would it be.",
+  "/app":
+    "a redirect to /dashboard (Tenancy 2a): /app is the company's working " +
+    "area, and its front door is the dashboard, which the nav already links.",
+  "/app/switch/[slug]":
+    "the link in a company's emails to its own screens (Tenancy 2a, D2): it " +
+    "switches the reader to that company and opens the page. It needs a web " +
+    "address and a destination, so it is never a nav entry.",
   "/admin/tenants":
     "a redirect to /admin/companies, kept for old links.",
   "/admin/companies/[id]":

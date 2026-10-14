@@ -17,7 +17,8 @@ import { decodePhoto, keepPublicPhoto, type EstimatorPhotoStore, type PublicPhot
 import { customerInputsSchema, priceProduct, publicMeasurementSchema, toLegacyRange, toPublicPrice } from "./price-product.js";
 import { acceptQuote, declineQuote, getQuoteByToken } from "./quotes.js";
 import { customerFieldsFor, quantityQuestion, recipeReadsPhotos } from "./recipes.js";
-import { effectiveTaxRateBp, getEstimatorSettings, publicEstimatesOpen, type EstimatorSettings } from "./settings.js";
+import { resolveEstimatorSettings, type EstimatorAdmission, type EstimatorCompany } from "./company.js";
+import { effectiveTaxRateBp, publicEstimatesOpen, type EstimatorSettings } from "./settings.js";
 import { runPhotoTakeoff } from "./takeoff-run.js";
 import type { TakeoffModel, TakeoffUsage } from "./takeoff.js";
 import type { EstimatorDb } from "./types.js";
@@ -111,6 +112,33 @@ export interface CreateEstimatorHandlersOptions {
   taxRateBp?: number | ((tenantId: string) => number | Promise<number>);
   /** @deprecated — use onEvent (lead.received). Still called after a public submit. */
   onLead?: (lead: { tenantId: string; estimateId: string; estimateNumber: string }) => void | Promise<void>;
+  /**
+   * The business as its customers know it, from the host's company profile
+   * (Tenancy 2a, D5): the config's and quotes' name, contact, zone, colour
+   * and logo are the company's. A throw is reported (`onError`) and that
+   * request uses the stored settings.
+   */
+  company?: (tenantId: string) => EstimatorCompany | null | Promise<EstimatorCompany | null>;
+  /**
+   * Is this business taking requests from the public right now? Asked once
+   * per request on BOTH paths, after the tenant is known (from the web
+   * address OR from an embed key) and before the route, the rate limit or any
+   * estimator query (D7). Closed → `409 estimates_closed` with its message
+   * (and CORS for a keyed request, so the embed can show it). Default: open.
+   */
+  admit?: (tenantId: string, req: Request) => EstimatorAdmission | Promise<EstimatorAdmission>;
+  /**
+   * The most a day of photo reading may cost per business on this site, in
+   * cents (D14). The budget the reading checks is `min(the business's
+   * setting, this)`. Default: no ceiling.
+   */
+  aiBudgetCeilingCents?: number;
+  /**
+   * The most a day of photo reading may cost across EVERY business this
+   * handler serves, in cents (Tenancy 2a review SEC-2A-07; see
+   * `RunPhotoTakeoffDeps.siteDailyBudgetCents`). Default: no site ceiling.
+   */
+  aiSiteBudgetCents?: number;
 }
 
 /** @deprecated 0.2's name for the options. */
@@ -338,6 +366,7 @@ export function createEstimatorHandlers(options: CreateEstimatorHandlersOptions)
       emailsEnabled,
       minFillMs,
       products,
+      logoUrl: settings.logoUrl ?? null,
     };
   }
 
@@ -432,6 +461,7 @@ export function createEstimatorHandlers(options: CreateEstimatorHandlersOptions)
             ...(options.takeoff?.maxTokens !== undefined ? { maxTokens: options.takeoff.maxTokens } : {}),
             ...(options.photoStore ? { photoStore: options.photoStore } : {}),
             ...(options.photoLimits ? { photoLimits: options.photoLimits } : {}),
+            ...(options.aiSiteBudgetCents !== undefined ? { siteDailyBudgetCents: options.aiSiteBudgetCents } : {}),
             onError: (error, context) => {
               try {
                 options.onError?.(error, { tenantId: context.tenantId, route: `takeoff:${context.step}` });
@@ -545,7 +575,18 @@ export function createEstimatorHandlers(options: CreateEstimatorHandlersOptions)
       // 1. Who is asking.
       if (key !== null) {
         cors = { "access-control-allow-origin": origin ?? "*", vary: "Origin" };
-        const verified = await verifyClientKey(options.db, key, { now: clock() });
+        // A path that NAMES its company (`resolveTenant`: /api/t/{web address}/…)
+        // answers as that company and no other (review SEC-2A-04). A key is a
+        // company's own website's pass, not a way to borrow another company's
+        // address: Green Acres' key under Summit's web address used to answer
+        // as Green Acres under Summit's name, and anything that later trusts
+        // the path's company (its throttle, its branding, its logs) would have
+        // mixed the two up. So the key is checked AS the named company's: any
+        // other is "not found", and its "last used" is left alone.
+        const named = options.resolveTenant ? await options.resolveTenant(req) : undefined;
+        if (named === null) throw new HttpError("not_found", NOT_FOUND_MESSAGE);
+        const verified = await verifyClientKey(options.db, key, { now: clock(), ...(named !== undefined ? { tenantId: named } : {}) });
+        if (!verified && named !== undefined) throw new HttpError("not_found", NOT_FOUND_MESSAGE);
         if (!verified) {
           throw new HttpError("unauthorized", "This estimator key isn't valid. Ask the business for a new one.");
         }
@@ -565,6 +606,16 @@ export function createEstimatorHandlers(options: CreateEstimatorHandlersOptions)
         tenantId = options.resolveTenant ? await options.resolveTenant(req) : (options.tenantId ?? null);
         if (!tenantId) throw new HttpError("not_found", NOT_FOUND_MESSAGE);
       }
+      // 1b. Is the business open (Tenancy 2a, D7)? On BOTH paths — the embed
+      // on a suspended company's own website is refused too — before the
+      // route, the rate limit and any estimator query. 409, not the usual
+      // 403 of estimates_closed: the request was fine, the business is closed.
+      if (options.admit) {
+        const admission = await options.admit(tenantId, req);
+        if (!admission.open) {
+          return respond({ error: { code: "estimates_closed", message: admission.message } }, 409, cors, tokenRoute);
+        }
+      }
       // 2. The route.
       if (!matched) throw new HttpError("not_found", NOT_FOUND_MESSAGE);
       // 3. The rate limit. A throw is a 429 too: every bucket fails closed.
@@ -577,8 +628,20 @@ export function createEstimatorHandlers(options: CreateEstimatorHandlersOptions)
         }
         if (!allowed) throw new HttpError("rate_limited", "Too many requests. Please slow down and try again shortly.");
       }
-      // 4. Settings, once, then the route.
-      const settings = await getEstimatorSettings(options.db, tenantId);
+      // 4. Settings, once (with the company's basics and the site's ceiling
+      // on photo reading), then the route.
+      const scoped = tenantId;
+      const settings = await resolveEstimatorSettings(options.db, tenantId, {
+        ...(options.company ? { company: options.company } : {}),
+        ...(options.aiBudgetCeilingCents !== undefined ? { aiBudgetCeilingCents: options.aiBudgetCeilingCents } : {}),
+        onError: (error) => {
+          try {
+            options.onError?.(error, { tenantId: scoped, route: routeName });
+          } catch {
+            /* contained */
+          }
+        },
+      });
       return await dispatch(req, matched, tenantId, key !== null, settings, clock(), cors);
     } catch (error) {
       return failure(error, cors, tokenRoute, { tenantId, route: routeName }, matched?.kind === "submit" ? SUBMIT_RENAMES : {});

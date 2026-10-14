@@ -108,7 +108,8 @@ export interface EstimatorAdminTransport {
   updateSupply(id: string, patch: SupplyPatch): Promise<Result<SupplyMutationResponse>>;
   deactivateSupply(id: string): Promise<Result<SupplyMutationResponse>>;
   reactivateSupply(id: string): Promise<Result<SupplyMutationResponse>>;
-  loadSampleCatalog(): Promise<Result<SampleCatalogResponse>>;
+  /** `trade`: whose sample — "lawn", "cleaning" or "ramps" (0.3's, and the server's default). */
+  loadSampleCatalog(trade?: "lawn" | "cleaning" | "ramps"): Promise<Result<SampleCatalogResponse>>;
   listEstimates(q?: { filter?: EstimateFilter; q?: string; source?: EstimateSource; cursor?: string | null; limit?: number }): Promise<Result<EstimateListResponse>>;
   createEstimate(body: CreateEstimateBody): Promise<Result<EstimateMutationResponse>>;
   getEstimate(id: string): Promise<Result<{ estimate: EstimateDetail }>>;
@@ -200,6 +201,9 @@ export function parseSettingsWire(raw: unknown): EstimatorSettingsWire | null {
     sampleLoadedAt: strOrNull(raw.sampleLoadedAt),
     saved: isTrue(raw.saved),
     updatedAt: strOrNull(raw.updatedAt),
+    // Tenancy 2a: an older server sends neither; that reads as 0.2's screen.
+    managedByCompany: isObject(raw.managedByCompany) ? { href: strOrNull(raw.managedByCompany.href) } : null,
+    aiBudgetCeilingCents: numOrNull(raw.aiBudgetCeilingCents),
   };
 }
 
@@ -231,6 +235,7 @@ export function parseAdminStatus(raw: unknown): AdminStatus | null {
         }
       : null,
     embedBaseUrl: strOrNull(raw.embedBaseUrl),
+    aiBudgetCeilingCents: numOrNull(raw.aiBudgetCeilingCents),
     notices: listOf(raw.notices, (n) =>
       isObject(n) && isString(n.code) && isString(n.message)
         ? { code: oneOf(n.code, NOTICE_CODES, "settings_not_saved"), message: n.message }
@@ -655,8 +660,10 @@ export function createEstimatorAdminClient(options: EstimatorAdminClientOptions)
     updateSupply: (id, patch) => post(`supplies/${enc(id)}`, patch, supplyMutation),
     deactivateSupply: (id) => post(`supplies/${enc(id)}/deactivate`, {}, supplyMutation),
     reactivateSupply: (id) => post(`supplies/${enc(id)}/reactivate`, {}, supplyMutation),
-    loadSampleCatalog: () =>
-      post("sample-catalog", {}, (b) => (isObject(b) && numOrNull(b.products) !== null ? { products: num(b.products), supplies: num(b.supplies) } : null)),
+    loadSampleCatalog: (trade) =>
+      post("sample-catalog", trade ? { trade } : {}, (b) =>
+        isObject(b) && numOrNull(b.products) !== null ? { products: num(b.products), supplies: num(b.supplies) } : null,
+      ),
     listEstimates: (q) =>
       get(
         `estimates${queryString({ filter: q?.filter, q: q?.q?.trim() || undefined, source: q?.source, cursor: q?.cursor ?? undefined, limit: q?.limit })}`,

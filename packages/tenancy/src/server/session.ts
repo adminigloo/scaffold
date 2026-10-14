@@ -183,7 +183,7 @@ export async function invitationsForMe(ctx: Ctx, input: { readonly verifiedEmail
         and t.deleted_at is null and t.suspended_at is null and t.kind = ${kind}
       order by i.created_at desc, i.id desc`,
   );
-  const options = rows.length > 0 ? await roleOptions(ctx.db, "*") : [];
+  const options = rows.length > 0 ? await roleOptions(ctx.db, "*", ctx.roles) : [];
   return rows.map((row) => {
     const roleKey = asRoleKey(row["role_key"]);
     return {

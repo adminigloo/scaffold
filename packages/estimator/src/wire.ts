@@ -73,6 +73,8 @@ export interface PublicConfig {
   emailsEnabled: boolean;
   minFillMs: number;
   products: PublicProduct[];
+  /** The business's logo (from its company profile), or null. */
+  logoUrl: string | null;
 }
 
 export interface CalculateBody {
@@ -170,6 +172,8 @@ export interface PublicQuote {
   lines: PublicQuoteLine[];
   subtotal: Cents; discount: Cents; taxRateBp: BasisPoints; taxAmount: Cents; total: Cents;
   canRespond: boolean;                  // open and before validUntil
+  /** The business's logo (from its company profile), or null. */
+  logoUrl: string | null;
 }
 export interface QuoteResponse { quote: PublicQuote }
 export interface AcceptQuoteBody { version: number; name?: string; note?: string; website?: string }
@@ -187,8 +191,12 @@ export interface EstimatorSettingsWire {
   aiDailyBudgetCents: Cents; aiPerRequesterDaily: number;
   brandColor: string | null;
   sampleLoadedAt: Instant | null; saved: boolean; updatedAt: Instant | null;
+  /** The name, contact, zone and colour come from the company profile: read-only here, linking to href. null = editable here. */
+  managedByCompany: { href: string | null } | null;
+  /** The most a day of photo reading may cost on this site, in cents; null = no ceiling. */
+  aiBudgetCeilingCents: number | null;
 }
-export type EstimatorSettingsPatch = Partial<Omit<EstimatorSettingsWire, "sampleLoadedAt" | "saved" | "updatedAt" | "defaultLaborRateCents">> & {
+export type EstimatorSettingsPatch = Partial<Omit<EstimatorSettingsWire, "sampleLoadedAt" | "saved" | "updatedAt" | "defaultLaborRateCents" | "managedByCompany" | "aiBudgetCeilingCents">> & {
   defaultLaborRateCents?: Cents;
 };
 
@@ -203,6 +211,8 @@ export interface AdminStatus {
   delivery: EstimatorDelivery;
   photos: { attach: boolean; reading: boolean };
   spend: { readingsToday: number; costTodayMicros: number; readingsMonth: number; costMonthMicros: number; dailyBudgetCents: Cents } | null;   // null without costs.view
+  /** The most a day of photo reading may cost on this site (Tenancy 2a, D14), in cents; null = no ceiling. */
+  aiBudgetCeilingCents: Cents | null;
   embedBaseUrl: string | null;
   notices: Array<{ code: AdminNoticeCode; message: string }>;
 }

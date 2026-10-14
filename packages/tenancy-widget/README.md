@@ -15,18 +15,20 @@ and who on the team is staff at what level.
 <CompanySettings baseUrl="/api/tenancy" tenantId={id} />      name, web address, logo, colour, details
 <CompanySuspended companyName="…" />                          the plain "this company is suspended" screen
 <AcceptInvitation baseUrl="/api/tenancy" token={t} … />       the page behind an invitation email
+<CompanyBrandBar company={c} />                               a company's public face (logo, name, contact)
+<CompanyUnavailable company={c} />                            "isn't taking requests online right now"
 
 <CompaniesConsole baseUrl="/api/admin/tenancy" />                  every company        (./admin)
 <CompanyDetail baseUrl="/api/admin/tenancy" tenantId={id} />       one company          (./admin)
 <StaffPeople baseUrl="/api/admin/tenancy" />                       staff roles          (./admin)
 ```
 
-React (18 or 19) is the only required peer; `@adminigloo/tenancy` ^0.4.0 is an
+React (18 or 19) is the only required peer; `@adminigloo/tenancy` ^0.5.0 is an
 optional peer, so installing the widget beside an older server warns at install
 time instead of failing on every call. Everything styles itself (no Tailwind, no
 CSS import) and follows the host page's light or dark theme.
 
-It talks to `@adminigloo/tenancy` 0.4's HTTP handlers (`createTenancyHandlers` for
+It talks to `@adminigloo/tenancy` 0.5's HTTP handlers (`createTenancyHandlers` for
 the company screens, `createTenancyOperatorHandlers` for the console) over a small
 JSON contract. The contract's types are declared in this package as well; it does
 **not** import the server package at runtime, so a page that only renders the
@@ -279,6 +281,48 @@ invitation is for a different email address. Sign out and sign in with the
 address it was sent to.", and so on. Once in, it moves on after a moment, with
 "Go to Summit Window Co." for anyone who'd rather click.
 
+### `<CompanyBrandBar>` (Tenancy 2a)
+
+`company` (required: a `PublicCompanyWire`, from the server's
+`publicCompanyToWire(await tenancy.resolvePublicCompany(slug))`), `homeHref`
+(where the name links; default the company's public home, `null` for no link),
+`showContact` (default true). The company's public face at the top of its
+booking, estimate and invoice pages: its logo (at most 40 px high) or its
+initials in its colour, its name, and its email and phone as `mailto:` and
+`tel:` links, over a 3 px rule in its colour. The name is a link, not a heading:
+the page owns its `h1`. Here, unlike the company's own screens, the company's
+colour is the point; the initials are drawn in the text colour the server
+worked out for it (white or near-black, whichever reads). Server-renderable:
+no state, no fetch.
+
+```tsx
+const found = await tenancy.resolvePublicCompany(slug);
+if (!found) notFound();
+const company = publicCompanyToWire(found);
+return (
+  <>
+    <CompanyBrandBar company={company} />
+    {company.status === "suspended" ? <CompanyUnavailable company={company} /> : <VisitPicker … accentColor={company.brandColor} />}
+  </>
+);
+```
+
+### `<CompanyUnavailable>` (Tenancy 2a)
+
+`company` (required). What a CUSTOMER sees on a suspended company's public
+page: "Summit Window Co. isn't taking requests online right now" (an `h1`),
+"Please get in touch with them directly.", then "Email …" and "Call …" links
+when the company has them. Nothing about why, and no other actions. (The
+company's own people see `<CompanySuspended>`.)
+
+### Roles the project adds (Tenancy 2a)
+
+`<TeamManager>` shows every role the server offers: a project with Crew gets a
+Crew row, Crew in the invite form and in each member's role select, with the
+name and description the server sends. A role the server names without a row
+reads as words ("field_lead" → "Field lead"), never a blank. `roleKeyOrNull`
+accepts any lowercase role key; `ROLE_KEYS` is still the core four.
+
 ### `<CompaniesConsole>` (admin)
 
 `detailHref` (default `"/admin/companies/{id}"`; a pattern with `{id}`, or a function from a client component: a Next.js server page can't pass a function to a client component), `defaultKind` (default `"org"`: personal workspaces
@@ -407,19 +451,20 @@ on a phone, and everything works at 390px wide.
 
 ## Not included
 
-- **Feature routes are still pinned.** Moving scheduling, estimator,
-  invoicing, comms, aeo, assistant, feedback, files, notifications and SEO off
-  the fixed `"primary"` tenant onto the active company, with a tenant
-  permission set per feature (CA-20, TB-08, SR-16) — **Tenancy 2**.
-- **Public company pages.** The pages under `/t/[slug]` (book, estimate,
-  feedback) — **Tenancy 2**. Tenancy 1 reserves the address, resolves it, and
-  shows a contact card.
+- **Per-company boards and widgets for feedback, notifications, files, the
+  assistant, analytics, SEO/AEO and book-a-call (booking)** — **Tenancy 2b**.
+  (Scheduling, the estimator, invoicing and messages are per company since
+  2a; `<CompanyBrandBar>` heads their public pages.)
+- **Payments to companies** (paying a company's invoice by card).
+- **Search indexing of company pages**, and per-company SEO.
+- **Logo and colour inside emails.**
 - **Plans, billing and entitlements.** The seat hook exists. The billing chunk
   wires it to plans.
 - Viewing as a customer (impersonation). `staff.tenants.impersonate` is declared
   and sealed, and nothing implements it.
 - A custom role editor for companies, and per-person permission changes for
-  company members. The owner/admin/member/viewer roles are fixed.
+  company members. The roles are the project's set; Crew is a fixed role
+  scheduling adds.
 - Custom domains and subdomains.
 - Company deletion, data export, operator notes, and comping a plan.
 - Suspending a single member. You remove them instead. The `suspended` member

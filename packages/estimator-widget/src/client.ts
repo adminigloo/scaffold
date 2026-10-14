@@ -176,6 +176,8 @@ export function parsePublicConfig(body: unknown): PublicConfig | null {
     emailsEnabled: isTrue(body.emailsEnabled),
     minFillMs: Math.max(0, num(body.minFillMs, 0)),
     products: listOf(body.products, parsePublicProduct),
+    // Tenancy 2a: an older server sends none.
+    logoUrl: strOrNull(body.logoUrl),
   };
 }
 
@@ -315,6 +317,7 @@ export function parsePublicQuote(raw: unknown): PublicQuote | null {
     canRespond: isTrue(raw.canRespond),
     // An older server sends no version: 0 there, which that server ignores.
     version: num(raw.version, 0),
+    logoUrl: strOrNull(raw.logoUrl),
   };
 }
 

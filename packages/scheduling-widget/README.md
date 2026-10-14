@@ -452,6 +452,59 @@ a no-show is struck through. Every touch target is at least 44px, and everything
 works at 390px wide without the page scrolling sideways. Every drag has a keyboard
 path (**Move…**).
 
+## Companies (Tenancy 2a)
+
+`<CrewDay>` remembers the crew picked on a device PER SCHEDULE (its
+`baseUrl`, which names the company), forgets a remembered crew that isn't
+there any more and shows the person's own route instead, and offers no other
+day when the server says the route is today-only (a crew member). Notices show
+the server's "where to fix it" link, and an empty office-alerts list says
+where alerts go instead.
+
+The same screens serve every company on a site. Point each at its company's
+routes, and pass what the company page already knows:
+
+```tsx
+// app/t/[slug]/book/page.tsx: the company's booking page
+const found = await tenancy.resolvePublicCompany(slug);
+if (!found) notFound();
+const company = publicCompanyToWire(found);
+if (company.status === "suspended") return <CompanyUnavailable company={company} />;     // @adminigloo/tenancy-widget
+return (
+  <>
+    <CompanyBrandBar company={company} />
+    <VisitPicker baseUrl={`/api/t/${company.slug}/schedule`} accentColor={company.brandColor} />
+  </>
+);
+```
+
+```tsx
+// app/app/schedule/settings/page.tsx: staff
+<SchedulingSettings baseUrl={`/api/app/${company.id}/schedule`} inviteHref="/app/team" />
+```
+
+- **`accentColor`** on `<VisitPicker>` and `<ManageVisit>`: the company's
+  `#rrggbb` becomes the accent, with the text on it, its shades and the focus
+  ring worked out to stay readable (a colour too light to read as text gets a
+  darker shade for links and headings). null or undefined: the stylesheet's
+  accent.
+- **The closed message.** When the server answers `booking_closed` (the
+  company is suspended), the picker and the manage page show the server's
+  sentence ("Summit Window Co. isn't taking requests online right now. Call …")
+  in place of the form, not an error.
+- **Company-owned fields read-only.** When the server says the business
+  details come from the company (`managedByCompany`), `<SchedulingSettings>`
+  shows the name, time zone and contact details as text with a link to company
+  settings, and doesn't send them.
+- **`inviteHref`** on `<SchedulingSettings>`: the crew-person picker's hint
+  becomes "Not listed? Invite them on the Team page." In a company the picker
+  lists the company's own people, and the way in is an invitation.
+- **Deep links**: `#booking`, `#crews`, `#hours`, `#business` and `#messages`
+  on the settings page scroll to that section and focus its heading (the
+  setup checklist links there).
+
+A foreign host passes the same props from its own business record.
+
 ## Not included
 
 - **Recurring visit plans** (weekly cleaning, quarterly service). Book each visit.
@@ -461,8 +514,13 @@ path (**Move…**).
 - **Deposits and payments.**
 - **One calendar with `@adminigloo/booking`.** Booking (calls) and scheduling
   (visits) are separate, so one person on both can be double-booked.
-- **Several businesses in one admin.** The handlers take a `resolveTenant(req)`
-  seam; these screens show whichever business the server resolves.
+- **Per-company boards and widgets for feedback, notifications, files, the
+  assistant, analytics, SEO/AEO and book-a-call**: Tenancy 2b. (These screens
+  serve each company since 0.2: see [Companies](#companies-tenancy-2a).)
+- **A scheduling embed** (a script for the company's own website). The booking
+  page's address is shown to copy.
+- **Payments to companies, plans and billing per company, custom domains,
+  impersonation, per-company SEO.**
 - **Holding a time while the customer types.** The time is checked when the form
   is sent, and a time taken meanwhile recovers with "pick another".
 - **A time-zone picker for customers.** Times are always the business's.

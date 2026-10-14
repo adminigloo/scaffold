@@ -620,6 +620,13 @@ export function EstimateFlow(props: EstimateFlowProps) {
   // ---- render ---------------------------------------------------------------
   const header = props.showHeader ? (
     <header className="aiew-head">
+      {config?.logoUrl ? (
+        // The business's logo beside its name (Tenancy 2a). alt="": the name is right there.
+        <p className="aiew-brandline" data-aiew-brand="">
+          <img className="aiew-logo" src={config.logoUrl} alt="" />
+          <span>{config.businessName}</span>
+        </p>
+      ) : null}
       <h2 className="aiew-title" ref={result ? undefined : (doneRef as Ref<HTMLHeadingElement>)} tabIndex={-1}>
         {title}
       </h2>
@@ -630,6 +637,15 @@ export function EstimateFlow(props: EstimateFlowProps) {
   if (configState.status === "loading") return <Skeleton label="Loading the estimator…" />;
 
   if (configState.status === "error") {
+    if (configState.error.code === "estimates_closed" && configState.error.message && configState.error.message !== "estimates_closed") {
+      // Closed BY THE BUSINESS (Tenancy 2a, D7): its own sentence ("Green
+      // Acres isn't taking requests online right now. Call …"), no retry.
+      return (
+        <section className="aiew-empty" data-aiew-state="closed">
+          <p className="aiew-empty-title">{configState.error.message}</p>
+        </section>
+      );
+    }
     if (phase === "not-set-up") {
       return (
         <section className="aiew-empty" data-aiew-state="not-set-up">

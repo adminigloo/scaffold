@@ -329,8 +329,16 @@ export function packagesFor(answers: Answers): readonly string[] {
   // version independently, and a marketing site that only embeds the picker
   // against a hosted API installs the widget alone.
   if (answers.includeScheduling) optional.push("scheduling", "scheduling-widget");
-  if (answers.includeInvoicing) optional.push("invoicing");
-  if (answers.includeComms) optional.push("comms");
+  // Two packages each since Tenancy 2a (D3), the scheduling split: the server
+  // half (`invoicing`: the ledger's rules, its HTTP handlers, the invoice email;
+  // `comms`: the queue, the log, the Messages console's handlers) and the
+  // screens (`invoicing-widget`: the ledger, one invoice's editor, the
+  // customer's invoice page; `comms-widget`: the Messages console). The
+  // screens used to be pages copied into the project over a tRPC router, so a
+  // fix to the ledger had to be hand-applied to every project; now it reaches
+  // them by `npm update`, in both modes.
+  if (answers.includeInvoicing) optional.push("invoicing", "invoicing-widget");
+  if (answers.includeComms) optional.push("comms", "comms-widget");
   if (answers.includeAeo) optional.push("aeo");
 
   return [...base, ...optional].map((p) => `${answers.scope}/${p}`);
@@ -646,23 +654,45 @@ export function overlayNamesFor(answers: Answers): readonly string[] {
     names.push("assistant-admin");
   }
 
-  // FIELD SERVICE, each on the feedback shape: the server half (router + glue)
-  // on the answer alone, the `-admin` page half gated on a shell to hold it.
-  if (answers.includeEstimator) names.push("estimator");
-  if (answers.includeEstimator && answers.adminShell !== "none") {
-    names.push("estimator-admin");
-  }
-  if (answers.includeScheduling) names.push("scheduling");
-  if (answers.includeScheduling && answers.adminShell !== "none") {
-    names.push("scheduling-admin");
-  }
-  if (answers.includeInvoicing) names.push("invoicing");
-  if (answers.includeInvoicing && answers.adminShell !== "none") {
-    names.push("invoicing-admin");
-  }
-  if (answers.includeComms) names.push("comms");
-  if (answers.includeComms && answers.adminShell !== "none") {
-    names.push("comms-admin");
+  // FIELD SERVICE (Tenancy 2a): each feature cut into up to four overlays,
+  // because its files have four different conditions —
+  //
+  //   <f>            what BOTH modes share: the pure decisions in
+  //                  src/server/<f>-config.ts (first settings, rate limits,
+  //                  delivery wording, paths). Pushed only for a feature that
+  //                  has such a file (scheduling and the estimator); invoicing
+  //                  and comms have none, and an empty overlay is never copied.
+  //   <f>-single     one business (--tenant-noun none): the feature runs for
+  //                  the fixed business at today's paths (/book-visit,
+  //                  /estimate, /api/schedule …) on the staff ladder.
+  //   <f>-admin      single only, and only with a shell: today's staff pages
+  //                  under /admin.
+  //   <f>-companies  companies: each company's own screens under /app, its
+  //                  public pages under /t/{web-address}, its routes under
+  //                  /api/app/{id} and /api/t/{web-address}. No shell
+  //                  condition — a company's area is not the platform's /admin.
+  //
+  // The two modes share no route file and no page. A single-business project
+  // contains nothing of the company area, and a companies project contains no
+  // fixed business: a generator test greps one for "primary" and every fixed
+  // tenant constant (D12), the cheapest guard against the leak 2a closes.
+  const companies = answers.tenantNoun !== "none";
+  const shell = answers.adminShell !== "none";
+  const fieldService: ReadonlyArray<{ readonly name: string; readonly on: boolean; readonly shared: boolean }> = [
+    { name: "estimator", on: answers.includeEstimator, shared: true },
+    { name: "scheduling", on: answers.includeScheduling, shared: true },
+    { name: "invoicing", on: answers.includeInvoicing, shared: false },
+    { name: "comms", on: answers.includeComms, shared: false },
+  ];
+  for (const feature of fieldService) {
+    if (!feature.on) continue;
+    if (feature.shared) names.push(feature.name);
+    if (companies) {
+      names.push(`${feature.name}-companies`);
+    } else {
+      names.push(`${feature.name}-single`);
+      if (shell) names.push(`${feature.name}-admin`);
+    }
   }
   if (answers.includeAeo) names.push("aeo");
   if (answers.includeAeo && answers.adminShell !== "none") {
@@ -833,18 +863,22 @@ export function capabilitiesFor(answers: Answers): readonly string[] {
   }
 
   // Field service. Split the way the other suite features are: the server half
-  // (router/handlers/schema) on the answer, the staff screen on the shell.
+  // (handlers/schema) on the answer, the staff screen where there is one to
+  // hold it — the shell's /admin for a single business, each company's own
+  // area (/app) in a companies project (Tenancy 2a), which needs no shell.
   //
   // The estimator: instant prices on the public page and the embed, quotes a
-  // customer accepts on /quote/[token] (sent from the admin), the staff
-  // screens — and then one key per feature it is GLUED to, because "is a
+  // customer accepts on their quote page (sent from the staff screens), the
+  // staff screens — and then one key per feature it is GLUED to, because "is a
   // customer's photo kept here", "is it read by a model", "does an unanswered
   // quote get a follow-up", "can an accepted quote book the visit" and "can it
   // become an invoice" each have their own answer.
+  const companies = answers.tenantNoun !== "none";
+  const staffScreens = companies || answers.adminShell !== "none";
   if (answers.includeEstimator) {
     keys.push("estimator.pricing", "estimator.embed", "estimator.quotes");
   }
-  if (answers.includeEstimator && answers.adminShell !== "none") {
+  if (answers.includeEstimator && staffScreens) {
     keys.push("estimator.builder");
   }
   if (answers.includeEstimator && answers.includeStorage) keys.push("estimator.photos");
@@ -853,24 +887,43 @@ export function capabilitiesFor(answers: Answers): readonly string[] {
   if (answers.includeEstimator && answers.includeScheduling) keys.push("estimator.book-visit");
   if (answers.includeEstimator && answers.includeInvoicing) keys.push("estimator.invoicing");
   // Scheduling: the public booking and manage pages on the answer; the
-  // calendar and the crew's route under the shell; and the emails —
-  // confirmations, reminders, expiry notices — only where comms is there to
+  // calendar and the crew's route where the staff screens are; and the emails
+  // — confirmations, reminders, expiry notices — only where comms is there to
   // send them, which is a question a consumer asks separately ("does a
   // customer here get reminded?").
   if (answers.includeScheduling) keys.push("scheduling.booking");
-  if (answers.includeScheduling && answers.adminShell !== "none") {
+  if (answers.includeScheduling && staffScreens) {
     keys.push("scheduling.calendar", "scheduling.route");
   }
   if (answers.includeScheduling && answers.includeComms) {
     keys.push("scheduling.reminders");
   }
   if (answers.includeInvoicing) keys.push("invoicing.invoices");
-  if (answers.includeInvoicing && answers.adminShell !== "none") {
+  if (answers.includeInvoicing && staffScreens) {
     keys.push("invoicing.ledger");
   }
   if (answers.includeComms) keys.push("comms.messaging");
-  if (answers.includeComms && answers.adminShell !== "none") {
+  if (answers.includeComms && staffScreens) {
     keys.push("comms.console");
+  }
+
+  // EACH COMPANY RUNS THE FEATURES ITSELF (Tenancy 2a). Four keys, because a
+  // consumer asking "does each company get its own schedule and ledger", "does
+  // each company have public pages", "is it proved that one company can't
+  // reach another's rows through the feature routes" and "do the crons serve
+  // every company" is asking four questions with different answers: invoicing
+  // alone has public pages and no cron; comms alone has a cron and no public
+  // page.
+  const fieldFeature =
+    answers.includeScheduling || answers.includeEstimator || answers.includeInvoicing || answers.includeComms;
+  if (companies && fieldFeature) {
+    keys.push("companies.feature-area", "companies.feature-isolation-proof");
+  }
+  if (companies && (answers.includeScheduling || answers.includeEstimator || answers.includeInvoicing)) {
+    keys.push("companies.public-pages");
+  }
+  if (companies && (answers.includeScheduling || answers.includeEstimator || answers.includeComms)) {
+    keys.push("companies.crons");
   }
   if (answers.includeAeo) keys.push("aeo.citations");
   if (answers.includeAeo && answers.adminShell !== "none") {

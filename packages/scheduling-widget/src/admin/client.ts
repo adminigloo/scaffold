@@ -248,6 +248,9 @@ export function parseCrewDayResponse(body: unknown): CrewDayResponse | null {
       estimated: isTrue(totals.estimated),
     },
     routeUrl: strOrNull(body.routeUrl),
+    // Only an explicit false from the server offers other days: a server that
+    // predates the flag is read as today-only, the safe way round.
+    todayOnly: body.todayOnly !== false,
   };
 }
 
@@ -322,6 +325,9 @@ export function parseSettingsWire(raw: unknown): SettingsWire | null {
     cancelCutoffHours: num(raw.cancelCutoffHours, 24),
     saved: isTrue(raw.saved),
     updatedAt: strOrNull(raw.updatedAt),
+    // Tenancy 2a: an older server sends nothing here, which reads as
+    // "editable here" (null), the 0.1 screen.
+    managedByCompany: isObject(raw.managedByCompany) ? { href: strOrNull(raw.managedByCompany.href) } : null,
   };
 }
 
@@ -400,13 +406,21 @@ const NOTICE_CODES = new Set<string>([
   "reminders_off",
   "reminders_daily",
   "delivery_problem",
+  "crew_unlinked",
 ]);
+
+/** A notice's "where to fix it" link: a path on this site or an http(s) address, never a script URL. */
+function parseNoticeLink(raw: unknown): { href: string; label: string } | null {
+  if (!isObject(raw) || !isString(raw.href) || !isString(raw.label) || !raw.label.trim()) return null;
+  return /^(\/(?!\/)|https?:\/\/)/i.test(raw.href) ? { href: raw.href, label: raw.label } : null;
+}
 
 function parseNotice(raw: unknown): AdminNotice | null {
   if (!isObject(raw) || !isString(raw.message) || !raw.message) return null;
   // An unknown code from a newer server is still a sentence worth showing.
   const code = (isString(raw.code) && NOTICE_CODES.has(raw.code) ? raw.code : "delivery_problem") as AdminNoticeCode;
-  return { code, tone: raw.tone === "warn" ? "warn" : "info", message: raw.message };
+  const link = parseNoticeLink(raw.link);
+  return { code, tone: raw.tone === "warn" ? "warn" : "info", message: raw.message, ...(link ? { link } : {}) };
 }
 
 /**

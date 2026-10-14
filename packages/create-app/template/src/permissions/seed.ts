@@ -3,16 +3,13 @@ import { auditEntry, defineAuditedActions } from "__SCOPE__/observability";
 import { auditLog } from "__SCOPE__/observability/schema";
 import { STAFF_ROLE_TEMPLATES } from "__SCOPE__/permissions";
 import { seedPermissionCatalog, type SeedReport } from "__SCOPE__/permissions/server";
-import {
-  backfillTenantOwnerRoles,
-  TENANT_ROLE_TEMPLATES,
-  tenancyAuditedActions,
-} from "__SCOPE__/tenancy";
+import { backfillTenantOwnerRoles, tenancyAuditedActions } from "__SCOPE__/tenancy";
 import {
   ensureBootstrapAdminForEmail,
   type TenancyAuditSink,
 } from "__SCOPE__/tenancy/server";
 import { staffCatalog, tenantCatalog } from "./catalog";
+import { TENANT_ROLES } from "./roles";
 
 /**
  * Install the roles and what each one may do — the ONE seed, run three ways:
@@ -74,7 +71,10 @@ export async function seedPermissions(db: SeedDb, options: SeedPermissionsOption
 
   const report = await seedPermissionCatalog(db, {
     staff: { catalog: staffCatalog, templates: STAFF_ROLE_TEMPLATES },
-    tenant: { catalog: tenantCatalog, templates: TENANT_ROLE_TEMPLATES },
+    // The project's own company roles (src/permissions/roles.ts): tenancy's
+    // four, plus any a feature adds — Crew, with scheduling in a companies
+    // project — so a new role reaches production with the deploy that adds it.
+    tenant: { catalog: tenantCatalog, templates: TENANT_ROLES.templates },
   });
   log(
     report.created.length === 0

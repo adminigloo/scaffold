@@ -94,10 +94,10 @@ describe("BO-06: a crew member's login opens their own route and nothing else", 
     const mine = await visitOn(crewA.id);
     const theirs = await visitOn(crewB.id);
     const casey = as("casey");
-    const day = await casey(adminRequest("GET", `/crew-day?date=${WED}`));
+    const day = await casey(adminRequest("GET", "/crew-day"));
     expect(day.status).toBe(200);
     expect((await readJson(day)).resource.name).toBe("Crew A");
-    expect((await casey(adminRequest("GET", `/crew-day?date=${WED}&resource=${crewB.id}`))).status).toBe(403);
+    expect((await casey(adminRequest("GET", `/crew-day?resource=${crewB.id}`))).status).toBe(403);
     expect((await casey(adminRequest("POST", `/visits/${mine.id}/progress`, { status: "in_progress" }))).status).toBe(200);
     expect((await casey(adminRequest("POST", `/visits/${theirs.id}/progress`, { status: "in_progress" }))).status).toBe(403);
     expect((await casey(adminRequest("GET", `/calendar?from=${WED}&to=${WED}`))).status).toBe(403);
@@ -111,6 +111,33 @@ describe("BO-06: a crew member's login opens their own route and nothing else", 
     const owner = as("owner");
     expect((await owner(adminRequest("GET", `/crew-day?date=${WED}&resource=${crewB.id}`))).status).toBe(200);
     expect((await owner(adminRequest("POST", `/visits/${theirs.id}/progress`, { status: "in_progress" }))).status).toBe(200);
+  });
+});
+
+describe("SEC-2A-05 (Tenancy 2a review): a crew member opens TODAY's route only", () => {
+  it("another day — past or future — is refused with a plain sentence; today is offered and marked today-only", async () => {
+    const { crewA, as, visitOn } = await business();
+    await visitOn(crewA.id);
+    const casey = as("casey");
+    for (const date of [WED, "2031-03-04", "2020-01-01"]) {
+      const res = await casey(adminRequest("GET", `/crew-day?date=${date}`));
+      expect(res.status, date).toBe(403);
+      const body = await readJson(res);
+      expect(body.error.message, date).toBe("You can open today's route only.");
+      expect(JSON.stringify(body), date).not.toContain("Cus Tomer");
+    }
+    const today = await readJson(await casey(adminRequest("GET", "/crew-day?date=2026-03-02")));
+    expect(today.date).toBe("2026-03-02");
+    expect(today.todayOnly).toBe(true);
+  });
+
+  it("anyone who may see the schedule still pages through the days", async () => {
+    const { crewA, as, visitOn } = await business();
+    await visitOn(crewA.id);
+    const day = await readJson(await as("owner")(adminRequest("GET", `/crew-day?date=${WED}&resource=${crewA.id}`)));
+    expect(day.date).toBe(WED);
+    expect(day.todayOnly).toBe(false);
+    expect(JSON.stringify(day.stops)).toContain("Cus Tomer");
   });
 });
 

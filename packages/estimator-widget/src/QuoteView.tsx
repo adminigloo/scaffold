@@ -156,6 +156,13 @@ export function QuoteView(props: QuoteViewProps) {
         <p>It may have been replaced by a newer one; check your latest email from the business.</p>
       </section>
     );
+  } else if (state.status === "error" && state.error.code === "estimates_closed" && state.error.message && state.error.message !== "estimates_closed") {
+    // Closed BY THE BUSINESS (Tenancy 2a, D7): its own sentence, no retry.
+    body = (
+      <section className="aiew-empty" data-aiew-state="closed">
+        <p className="aiew-empty-title">{state.error.message}</p>
+      </section>
+    );
   } else if (state.status === "error") {
     body = (
       <Notice tone="error" data="quote-error">
@@ -230,6 +237,7 @@ function QuoteBody({
       <div className="aiew-quote-brand" aria-hidden="true" />
       <header className="aiew-quote-head">
         <h2 className="aiew-quote-business" id={`${ids}-business`}>
+          {quote.logoUrl ? <img className="aiew-logo" src={quote.logoUrl} alt="" /> : null}
           {business}
         </h2>
         <div className="aiew-quote-meta">

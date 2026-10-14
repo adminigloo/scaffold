@@ -137,7 +137,7 @@ function view(
  */
 export async function listInvitations(ctx: Ctx, input: { readonly actorUserId: string; readonly tenantId: string }): Promise<InvitationView[]> {
   const facts = await requireActor(ctx, ctx.db, { userId: input.actorUserId, tenantId: input.tenantId }, { permission: "members.invite" });
-  const options = await roleOptions(ctx.db, input.tenantId);
+  const options = await roleOptions(ctx.db, input.tenantId, ctx.roles);
   const out: InvitationView[] = [];
   for (const row of await invitationRows(ctx.db, input.tenantId)) {
     const state = stateOf(ctx, row);
@@ -357,7 +357,7 @@ async function issue(
     }
     if (ctx.mode === "companies" && company.kind === "personal") throw ctx.fail("personal_workspace");
     const facts = await requireActor(ctx, tx, { userId: input.actorUserId, tenantId: input.tenantId }, { permission: "members.invite" });
-    const options = await roleOptions(tx, company.id);
+    const options = await roleOptions(tx, company.id, ctx.roles);
     const actorRank = facts.role?.rank ?? 0;
 
     let email: string;
@@ -375,6 +375,10 @@ async function issue(
       email = emailIn!;
       roleKey = roleIn!;
       if (roleKey === "owner") throw ctx.fail("owner_must_transfer");
+      // Tenancy 2a: a key the PROJECT offers (a host calling the service
+      // directly gets the handlers' rule). Without this an unknown key would
+      // rank 0, pass, and fail only at acceptance, in front of the invitee.
+      if (!ctx.roles.has(roleKey)) throw ctx.fail("invalid", { issues: [{ path: ["roleKey"], message: "Pick one of the roles listed." }] });
       if (!facts.role) throw ctx.fail("forbidden");
       if (actorRank <= rankOf(options, roleKey)) throw ctx.fail("rank");
     }
@@ -743,7 +747,7 @@ export async function previewInvitation(
   if (state !== "pending") return none;
   const company = await readCompany(ctx.db, str(row["tenant_id"]));
   if (!company || company.deletedAt !== null || company.suspendedAt !== null) return none;
-  const options = await roleOptions(ctx.db, company.id);
+  const options = await roleOptions(ctx.db, company.id, ctx.roles);
   const roleKey = strOrNull(row["role_key"]);
   let addressMatches: boolean | null = null;
   let signedInAs: string | null = null;

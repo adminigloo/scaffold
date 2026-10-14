@@ -27,12 +27,47 @@ import {
   type StoredInvoiceStatus,
 } from "./status.js";
 import { invoiceItems, invoicePayments, invoices } from "./schema.js";
+import { INVOICE_LIST_STATUSES, PAYMENT_METHODS, type InvoiceListStatus } from "./constants.js";
+
+export { INVOICE_LIST_STATUSES, PAYMENT_METHODS } from "./constants.js";
+export type { InvoiceListStatus } from "./constants.js";
 
 export * from "./money.js";
 export * from "./status.js";
 export * from "./errors.js";
 export * from "./estimate.js";
 export { invoiceItems, invoicePayments, invoices } from "./schema.js";
+// Tenancy 2a: the HTTP surface, its permissions, the settings fragment and
+// the setup checklist item. All structural: nothing here imports tenancy.
+export { invoicingPermissions } from "./permissions.js";
+export type { InvoicingPermission, InvoicingPermissionDefinition } from "./permissions.js";
+export {
+  invoicingSettingsFragment,
+  readInvoicingDetails,
+  DEFAULT_INVOICING_DETAILS,
+} from "./settings.js";
+export type { InvoicingDetails } from "./settings.js";
+export { resolveInvoicingBusiness, invoiceDueInstant, todayInZone, endOfDayInZone } from "./business.js";
+export type { InvoicingBusiness, ResolvedInvoicingBusiness } from "./business.js";
+export { createInvoicingAdminHandlers } from "./admin-handlers.js";
+export type {
+  CreateInvoicingAdminHandlersOptions,
+  InvoicingAdminHandlers,
+  InvoicingAuthorizeResult,
+  InvoicingDelivery,
+  InvoiceEmailDelivery,
+} from "./admin-handlers.js";
+export { createInvoicingHandlers } from "./handlers.js";
+export type { CreateInvoicingHandlersOptions, InvoicingAdmission, InvoicingHandlers } from "./handlers.js";
+export {
+  INVOICING_ADMIN_ROUTES,
+  INVOICING_ADMIN_ROUTE_PERMISSIONS,
+  INVOICING_PUBLIC_ROUTES,
+} from "./routes.js";
+export type { InvoicingAdminRouteKind, InvoicingPublicRouteKind, InvoicingRoute } from "./routes.js";
+export { invoicingChecklistItems } from "./checklist.js";
+export type { InvoicingChecklistItem } from "./checklist.js";
+export type * from "./wire.js";
 
 export type InvoicingDb = PgDatabase<any, any, any>;
 
@@ -316,17 +351,6 @@ export async function createInvoice(
 
 // --- List --------------------------------------------------------------------
 
-/** Stored statuses plus the derived "overdue". */
-export const INVOICE_LIST_STATUSES = [
-  "draft",
-  "sent",
-  "viewed",
-  "partial",
-  "paid",
-  "void",
-  "overdue",
-] as const;
-export type InvoiceListStatus = (typeof INVOICE_LIST_STATUSES)[number];
 
 /** Issued and not settled — the statuses a due date can make overdue. */
 const OPEN_STATUSES = ["sent", "viewed", "partial"] as const;
@@ -484,19 +508,37 @@ export interface PublicInvoice {
   payments: Array<{ amount: number; method: string; paidAt: Date }>;
 }
 
+/** Scope for a token read (Tenancy 2a, D13). */
+export interface InvoiceTokenOptions {
+  /**
+   * The company the URL names. With it, the token resolves only INSIDE that
+   * company: under `/t/green-acres/invoice/{a Summit token}` it answers null,
+   * where without it it would show Summit's invoice under Green Acres' name
+   * and branding. The HTTP handlers ALWAYS pass it. Without it, 0.2's
+   * behaviour, for a single-business host that has one tenant anyway.
+   */
+  readonly tenantId?: string;
+}
+
 /**
  * Public view — a customer opens their invoice by its token, no account. A
  * DRAFT answers null: staff may still be pricing it, and a link that leaked
  * early must not show a half-built bill. Viewing does not mark it viewed; call
  * `markInvoiceViewed` from the page (a mutation), so a link-preview bot's GET
  * doesn't count as the customer opening it.
+ *
+ * Pass `{ tenantId }` whenever the request names a company (D13); see
+ * `InvoiceTokenOptions`.
  */
 export async function getInvoiceByToken(
   db: InvoicingDb,
   token: string,
+  options: InvoiceTokenOptions = {},
 ): Promise<PublicInvoice | null> {
   if (typeof token !== "string" || token.length === 0) return null;
-  const [row] = await db.select().from(invoices).where(eq(invoices.viewToken, token)).limit(1);
+  const scope = tokenScope(token, options);
+  if (!scope) return null;
+  const [row] = await db.select().from(invoices).where(scope).limit(1);
   if (!row) return null;
   const invoice = row as InvoiceRow;
   if (invoice.status === "draft") return null;
@@ -529,17 +571,37 @@ export async function getInvoiceByToken(
 }
 
 /**
+ * The token's WHERE: the token, and the tenant when one is given. null for a
+ * tenant option that is present but empty: a scoped read with no scope must
+ * match nothing, never everything.
+ */
+function tokenScope(token: string, options: InvoiceTokenOptions): SQL | null {
+  if (options.tenantId === undefined) return eq(invoices.viewToken, token);
+  if (typeof options.tenantId !== "string" || options.tenantId.length === 0) return null;
+  return and(eq(invoices.viewToken, token), eq(invoices.tenantId, options.tenantId)) ?? null;
+}
+
+/**
  * The customer opened their link: sent → viewed, stamping viewedAt. Only from
  * "sent" — a draft isn't visible, a partial/paid/void invoice has moved on and
  * must not be dragged back. True when it moved.
+ *
+ * Pass `{ tenantId }` whenever the request names a company (D13): another
+ * company's token then moves nothing.
  */
-export async function markInvoiceViewed(db: InvoicingDb, token: string): Promise<boolean> {
+export async function markInvoiceViewed(
+  db: InvoicingDb,
+  token: string,
+  options: InvoiceTokenOptions = {},
+): Promise<boolean> {
   if (typeof token !== "string" || token.length === 0) return false;
+  const scope = tokenScope(token, options);
+  if (!scope) return false;
   const now = new Date();
   const rows = await db
     .update(invoices)
     .set({ status: "viewed", viewedAt: now, updatedAt: now })
-    .where(and(eq(invoices.viewToken, token), eq(invoices.status, "sent")))
+    .where(and(scope, eq(invoices.status, "sent")))
     .returning({ id: invoices.id });
   return rows.length > 0;
 }
@@ -814,7 +876,6 @@ export async function removeInvoiceItem(
 
 // --- Payments ----------------------------------------------------------------
 
-export const PAYMENT_METHODS = ["card", "cash", "check", "ach", "other"] as const;
 
 export const recordPaymentSchema = z.object({
   tenantId: tenantField,

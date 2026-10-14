@@ -10,6 +10,18 @@ export * from "./render.js";
 export * from "./sms.js";
 export * from "./html.js";
 export { commsMessages, commsScheduled, commsTemplates } from "./schema.js";
+export { commsPermissions } from "./permissions.js";
+export type { CommsPermission, CommsPermissionDefinition } from "./permissions.js";
+export { createCommsAdminHandlers } from "./handlers.js";
+export type {
+  CommsAdminHandlers,
+  CommsAuthorizeResult,
+  CommsDelivery,
+  CreateCommsAdminHandlersOptions,
+} from "./handlers.js";
+export { COMMS_ADMIN_ROUTES } from "./routes.js";
+export type { CommsAdminRouteKind, CommsRoute } from "./routes.js";
+export type * from "./wire.js";
 
 export type CommsDb = PgDatabase<any, any, any>;
 
@@ -21,6 +33,23 @@ export type CommsChannel = "email" | "sms";
 const channelSchema = z.enum(["email", "sms"]);
 
 export interface OutboundEmail {
+  /**
+   * The business this message is for (Tenancy 2a). A sender serving many
+   * companies on one provider account tags or routes by it; most ignore it.
+   */
+  readonly tenantId: string;
+  /**
+   * The From display name to use for THIS message (D8): the company's name,
+   * from `identity(tenantId)`. null = the sender's own default. Pass it as
+   * @adminigloo/email's `fromName`; the address stays your verified one.
+   */
+  readonly fromName: string | null;
+  /**
+   * Where replies to THIS message go: the company's contact address. null =
+   * the sender's default (EMAIL_REPLY_TO). Pass it as @adminigloo/email's
+   * `replyTo`.
+   */
+  readonly replyTo: string | null;
   to: string;
   subject: string;
   /** The rendered plain text — send it as the `text` part. */
@@ -40,6 +69,8 @@ export interface OutboundEmail {
   idempotencyKey?: string;
 }
 export interface OutboundSms {
+  /** The business this text is for (Tenancy 2a). */
+  readonly tenantId: string;
   to: string;
   /** Already compliant: starts with the sender name and carries the opt-out line. */
   body: string;
@@ -78,6 +109,18 @@ export type SenderResult =
 export type EmailSender = (message: OutboundEmail) => Promise<SenderResult>;
 export type SmsSender = (message: OutboundSms) => Promise<SenderResult>;
 
+/**
+ * Who a tenant's messages come from (Tenancy 2a, D8). On a platform where
+ * many companies send through one verified address, the company's NAME goes
+ * on that address and replies go to the company, never to the platform owner.
+ */
+export interface SenderIdentity {
+  /** The From display name for email; the sender name every text starts with. */
+  readonly name: string | null;
+  /** Where replies go. */
+  readonly replyTo: string | null;
+}
+
 interface CommsDeliveryConfig {
   email?: EmailSender;
   /**
@@ -86,7 +129,51 @@ interface CommsDeliveryConfig {
    * email with no subject is the first thing a spam filter drops.
    */
   defaultEmailSubject?: string;
+  /**
+   * Who this tenant's messages come from. Asked once per message (once per
+   * tenant per drain) before sending. null → the sender's own defaults.
+   *
+   * A THROW fails the message ("couldn't read who this business sends as"),
+   * and the queue retries it: sending a company's email under the platform's
+   * name and reply-to is the one outcome worse than a delay, because the
+   * customer's answer then reaches the wrong business.
+   *
+   * Without it, 0.2's behaviour: every message under the sender's defaults.
+   */
+  identity?: (tenantId: string) => SenderIdentity | null | Promise<SenderIdentity | null>;
+  /**
+   * A business's SENDING ALLOWANCE (Tenancy 2a review SEC-2A-03), asked right
+   * before a message is handed to the sender — after every other check, so a
+   * message that was never going out (switched off, a bad address, no sender)
+   * spends nothing. `true` sends.
+   *
+   * WHY. On a platform where anyone can sign up a company, every company's
+   * email leaves from the platform's ONE verified domain. Without a ceiling a
+   * single company could send thousands of messages in an hour under any name
+   * it chose, and the provider's answer — throttling or suspending the shared
+   * account — stops every other company's reminders, quotes and invoices with
+   * it. The host counts on its own limiter (create-app: per company, per hour
+   * and per day, like Tenancy 1's invitation caps).
+   *
+   * `false` is NOT SENT: the log row is `failed` with "held: …" so the owner
+   * sees it in Messages, and a QUEUED message is retried later with the usual
+   * backoff (the allowance refills), never dropped on the first refusal. A
+   * throw is treated as `true`: a broken limiter must not stop every
+   * company's mail.
+   *
+   * Without it, 0.2's behaviour: no ceiling.
+   */
+  allowance?: (message: {
+    readonly tenantId: string;
+    readonly channel: CommsChannel;
+    readonly to: string;
+    readonly templateKey: string;
+  }) => boolean | Promise<boolean>;
 }
+
+/** The log's words for a message the business's sending allowance held back. */
+export const ALLOWANCE_HELD_MESSAGE =
+  "held: this business has sent as many messages as this site allows for now — it can send again later";
 
 /**
  * The senders, injected by the host. Provider-agnostic on purpose: pass a
@@ -296,6 +383,9 @@ async function logMessage(
     missingVars?: string[] | null;
     /** The queue row this entry is about — how a reclaimed row learns it was already sent. */
     scheduledId?: string | null;
+    /** The identity an email went out under (D8); null for the sender's default. */
+    fromName?: string | null;
+    replyTo?: string | null;
   },
 ): Promise<MessageRow> {
   const [inserted] = await db
@@ -330,6 +420,14 @@ export interface SendInput {
    * At most 256 characters, Resend's limit.
    */
   idempotencyKey?: string;
+  /**
+   * Where a reply to THIS message goes, over the business's own reply-to
+   * (Tenancy 2a review T2A-BO-12). For a notice to the business's OWN office —
+   * "New lead: Pat Rivera" — the useful reply is to Pat, not back to the
+   * office's own address. Ignored unless it is a valid address; the log row
+   * records what was used.
+   */
+  replyTo?: string | null;
 }
 
 /** 400 days — a longer "don't repeat" window than any business message needs. */
@@ -344,6 +442,9 @@ const sendInputSchema = z.object({
   channel: channelSchema.optional(),
   minIntervalMs: z.number().int().min(0).max(MAX_INTERVAL_MS).optional(),
   idempotencyKey: z.string().trim().min(1).max(256).optional(),
+  // Checked again below with the email rule; anything that fails it is
+  // ignored (the business's own reply-to stays), never a refusal to send.
+  replyTo: z.string().max(320).nullish(),
 });
 
 /**
@@ -400,6 +501,56 @@ interface Delivery {
   permanent: boolean;
 }
 
+/**
+ * Identities resolved during one drain, by tenant: a run of 200 rows for 3
+ * companies asks 3 times. The PROMISE is cached, a rejection included, so a
+ * tenant whose identity throws fails each of its rows (retried next tick)
+ * without asking again per row.
+ */
+type IdentityCache = Map<string, Promise<SenderIdentity | null>>;
+
+function identityFor(senders: CommsSenders, tenantId: string, cache: IdentityCache | null): Promise<SenderIdentity | null> {
+  const resolve = senders.identity;
+  if (!resolve) return Promise.resolve(null);
+  const cached = cache?.get(tenantId);
+  if (cached) return cached;
+  // Wrapped so a SYNC throw becomes a rejection like an async one.
+  const pending = Promise.resolve().then(() => resolve(tenantId));
+  // A rejection nobody else awaits yet must not surface as unhandled.
+  pending.catch(() => undefined);
+  cache?.set(tenantId, pending);
+  return pending;
+}
+
+/** Control characters out, whitespace collapsed, trimmed, capped; null when nothing is left. */
+function cleanSenderName(value: string | null | undefined, max: number): string | null {
+  if (typeof value !== "string") return null;
+  let cleaned = "";
+  for (const char of value) {
+    const code = char.codePointAt(0) ?? 0;
+    cleaned += code < 0x20 || (code >= 0x7f && code <= 0x9f) ? " " : char;
+  }
+  cleaned = cleaned.replace(/\s+/g, " ").trim();
+  const chars = Array.from(cleaned);
+  if (chars.length > max) cleaned = chars.slice(0, max).join("").trim();
+  return cleaned.length > 0 ? cleaned : null;
+}
+
+const replyToCheck = z.string().trim().max(320).email();
+
+/**
+ * The identity as it is handed to a sender. A reply-to that fails comms' own
+ * email check is passed as null (the sender's default) rather than refused:
+ * the company settings already validate the address, and this is belt and
+ * braces against a host that hands over something else. The log row then
+ * shows `reply_to` empty, which the owner can see in Messages.
+ */
+function usableIdentity(identity: SenderIdentity | null): { name: string | null; replyTo: string | null } {
+  if (!identity) return { name: null, replyTo: null };
+  const reply = typeof identity.replyTo === "string" ? replyToCheck.safeParse(identity.replyTo) : null;
+  return { name: cleanSenderName(identity.name, 64), replyTo: reply?.success ? reply.data : null };
+}
+
 function formatInterval(ms: number): string {
   const minutes = Math.round(ms / 60_000);
   if (minutes < 120) return `${minutes} minute${minutes === 1 ? "" : "s"}`;
@@ -414,12 +565,21 @@ async function deliver(
   senders: CommsSenders,
   now: Date,
   scheduledId: string | null = null,
+  identities: IdentityCache | null = null,
 ): Promise<Delivery> {
   const parsed = sendInputSchema.parse(input);
   const vars = input.vars ?? {};
   const template = await getTemplate(db, parsed.tenantId, parsed.templateKey);
 
-  type LogFields = { toAddress?: string; subject?: string | null; body?: string; providerId?: string | null; missingVars?: string[] };
+  type LogFields = {
+    toAddress?: string;
+    subject?: string | null;
+    body?: string;
+    providerId?: string | null;
+    missingVars?: string[];
+    fromName?: string | null;
+    replyTo?: string | null;
+  };
   const settle = async (status: string, error: string | null, permanent: boolean, fields: LogFields = {}): Promise<Delivery> => ({
     message: await logMessage(db, {
       tenantId: parsed.tenantId,
@@ -461,6 +621,22 @@ async function deliver(
   }
   const to = recipient.data;
 
+  // Who this business sends as (D8), asked before anything is rendered or
+  // sent. A throw is a TRANSIENT failure (permanent: false), so the queue
+  // retries it instead of sending under the platform's identity.
+  let identity: { name: string | null; replyTo: string | null };
+  try {
+    identity = usableIdentity(await identityFor(senders, parsed.tenantId, identities));
+  } catch (cause) {
+    return settle("failed", `couldn't read who this business sends as: ${describeError(cause)}`, false, { toAddress: to });
+  }
+  // This message's own reply-to (an office notice's customer), when it is a
+  // real address; otherwise the business's.
+  if (typeof parsed.replyTo === "string") {
+    const own = replyToCheck.safeParse(parsed.replyTo);
+    if (own.success) identity = { ...identity, replyTo: own.data };
+  }
+
   const missingVars = missingVariables([template.subject, template.body], vars);
   let body = renderTemplate(template.body, vars);
   let subject: string | null = null;
@@ -473,8 +649,11 @@ async function deliver(
     const compliance = smsComplianceSchema.safeParse(senders.smsCompliance);
     if (compliance.success) {
       // Applied even when no sender is wired, so a skipped row shows exactly
-      // what WOULD have gone out.
-      body = enforceCompliance(body, compliance.data.senderName, compliance.data.optOutText);
+      // what WOULD have gone out. The company's name, when the identity has
+      // one, is the name every text starts with (D8); the compliance config
+      // is still what allows texts at all.
+      const senderName = cleanSenderName(identity.name?.replace(/:+$/, ""), 60) ?? compliance.data.senderName;
+      body = enforceCompliance(body, senderName, compliance.data.optOutText);
     } else if (senders.sms) {
       return settle(
         "failed",
@@ -485,7 +664,12 @@ async function deliver(
     }
   }
 
-  const rendered: LogFields = { toAddress: to, subject, body, missingVars };
+  // The log records the identity an EMAIL carried; a text has no From name
+  // or reply-to (its sender name is already in the body).
+  const rendered: LogFields =
+    channel === "email"
+      ? { toAddress: to, subject, body, missingVars, fromName: identity.name, replyTo: identity.replyTo }
+      : { toAddress: to, subject, body, missingVars };
 
   if (parsed.minIntervalMs) {
     const since = new Date(now.getTime() - parsed.minIntervalMs);
@@ -517,13 +701,29 @@ async function deliver(
     return settle("skipped", `no ${channel} provider configured`, true, rendered);
   }
 
+  // The business's sending allowance (SEC-2A-03): asked last, so only a
+  // message that would really leave counts against it. Held is a TRANSIENT
+  // failure — a queued reminder is tried again once the allowance refills.
+  if (senders.allowance) {
+    let allowed = true;
+    try {
+      allowed = (await senders.allowance({ tenantId: parsed.tenantId, channel, to, templateKey: parsed.templateKey })) !== false;
+    } catch {
+      allowed = true;
+    }
+    if (!allowed) return settle("failed", ALLOWANCE_HELD_MESSAGE, false, rendered);
+  }
+
   const key = parsed.idempotencyKey ? { idempotencyKey: parsed.idempotencyKey } : {};
   let verdict: SenderVerdict;
   try {
     verdict = interpretSenderResult(
       channel === "sms"
-        ? await senders.sms!({ to, body, ...key })
+        ? await senders.sms!({ tenantId: parsed.tenantId, to, body, ...key })
         : await senders.email!({
+            tenantId: parsed.tenantId,
+            fromName: identity.name,
+            replyTo: identity.replyTo,
             to,
             subject: subject ?? DEFAULT_EMAIL_SUBJECT,
             body,
@@ -787,6 +987,28 @@ export interface RunDueOptions {
    * that returns nothing (null/undefined) means "send".
    */
   beforeSend?: (row: ScheduledRow) => BeforeSendResult | Promise<BeforeSendResult>;
+  /**
+   * Claim only these tenants' rows (Tenancy 2a, D10: the active companies).
+   * Undefined: every tenant (0.2). An empty array claims nothing.
+   *
+   * EVERYTHING the run writes stays inside these tenants — the claim AND the
+   * housekeeping before it (the 0.1.x-row cleanup and the stale-claim
+   * reclaim), and every count in the result is theirs (review TB-3). One
+   * company's "Send what's due now" used to fail or revive ANOTHER company's
+   * stuck rows and report that company's counts back; a suspended company's
+   * rows were moved by the cron that is meant to leave them waiting.
+   *
+   * COMPANIES TAKE TURNS (review SEC-2A-01). With a tenant list the due rows
+   * are claimed round-robin — every company's oldest due row, then every
+   * company's second, … — so when the limit or the time budget ends a run,
+   * what is left over is spread across the companies with the most due, never
+   * one quiet company's only reminder behind another's backlog of hundreds.
+   * Within a company it is still oldest first.
+   *
+   * A suspended company's queued reminders therefore wait; after
+   * `maxLatenessMs` they expire instead of going out late.
+   */
+  tenantIds?: readonly string[];
 }
 
 export interface RunDueResult {
@@ -820,6 +1042,7 @@ const runDueOptionsSchema = z.object({
   staleClaimMs: z.number().int().min(60 * 1000).default(10 * 60 * 1000),
   timeBudgetMs: z.number().int().min(0).optional(),
   maxLatenessMs: z.number().int().min(60 * 1000).max(MAX_INTERVAL_MS).default(DEFAULT_MAX_LATENESS_MS),
+  tenantIds: z.array(z.string().min(1).max(200)).max(50_000).optional(),
 });
 
 /**
@@ -867,9 +1090,16 @@ export async function runDueMessages(
   const raw: RunDueOptions = nowOrOptions instanceof Date ? { now: nowOrOptions } : nowOrOptions;
   const options = runDueOptionsSchema.parse({
     ...raw,
+    // A readonly array is still an array; zod gets a copy it may not mutate.
+    ...(raw.tenantIds !== undefined ? { tenantIds: [...raw.tenantIds] } : {}),
     ...(legacyLimit !== undefined ? { limit: legacyLimit } : {}),
   });
   const beforeSend = raw.beforeSend;
+  const identities: IdentityCache = new Map();
+  // The tenant filter on the due-row select (D10). `inArray` over an empty
+  // list is never sent: an empty list claims nothing, by skipping the loop.
+  const tenantIds = options.tenantIds ? [...new Set(options.tenantIds)] : null;
+  const forTenants = tenantIds && tenantIds.length > 0 ? inArray(commsScheduled.tenantId, tenantIds) : undefined;
   const now = options.now ?? new Date();
   const startedAt = Date.now();
   const elapsed = () => Date.now() - startedAt;
@@ -889,6 +1119,10 @@ export async function runDueMessages(
     stoppedEarly: false,
   };
 
+  // An empty tenant list is a run with nothing to touch: no claim, and no
+  // housekeeping either (every write below is scoped to the list).
+  const anyTenant = tenantIds === null || tenantIds.length > 0;
+
   // 1. Rows 0.1.x left in `sending` (claimedAt is NULL: the column did not
   // exist). 0.1.x stranded a row there whenever anything after the claim
   // threw — including the log write AFTER the provider had accepted the
@@ -896,54 +1130,61 @@ export async function runDueMessages(
   // would re-send reminders, months old, that the customer may already have.
   // Their state is unknown, so they end `failed` saying so, and a person
   // decides.
-  const legacy = (await db
-    .update(commsScheduled)
-    .set({
-      status: "failed",
-      lastError:
-        "state unknown from 0.1.x: left in `sending` before claim times were recorded, possibly already delivered — not re-sent",
-    })
-    .where(and(eq(commsScheduled.status, "sending"), isNull(commsScheduled.claimedAt)))
-    .returning({ id: commsScheduled.id })) as { id: string }[];
-  result.failed += legacy.length;
+  if (anyTenant) {
+    const legacy = (await db
+      .update(commsScheduled)
+      .set({
+        status: "failed",
+        lastError:
+          "state unknown from 0.1.x: left in `sending` before claim times were recorded, possibly already delivered — not re-sent",
+      })
+      .where(and(eq(commsScheduled.status, "sending"), isNull(commsScheduled.claimedAt), forTenants))
+      .returning({ id: commsScheduled.id })) as { id: string }[];
+    result.failed += legacy.length;
 
-  // 2. Reclaim claims abandoned by a worker that died mid-send (a platform
-  // timeout, a crash). Without this a row left in `sending` stays there
-  // forever and the message is silently never sent. A reclaimed row that had
-  // in fact been sent is caught by the already-sent check in handleClaimed.
-  const abandoned = and(
-    eq(commsScheduled.status, "sending"),
-    lt(commsScheduled.claimedAt, new Date(now.getTime() - options.staleClaimMs)),
-  );
-  const exhausted = (await db
-    .update(commsScheduled)
-    .set({ status: "failed", lastError: `abandoned mid-send, out of attempts (${options.maxAttempts})` })
-    .where(and(abandoned, gte(commsScheduled.attempts, options.maxAttempts)))
-    .returning({ id: commsScheduled.id })) as { id: string }[];
-  result.failed += exhausted.length;
-  const revived = (await db
-    .update(commsScheduled)
-    .set({
-      status: "pending",
-      claimedAt: null,
-      lastError: "reclaimed: the worker that claimed it stopped before recording an outcome",
-    })
-    .where(abandoned)
-    .returning({ id: commsScheduled.id })) as { id: string }[];
-  result.reclaimed = revived.length;
+    // 2. Reclaim claims abandoned by a worker that died mid-send (a platform
+    // timeout, a crash). Without this a row left in `sending` stays there
+    // forever and the message is silently never sent. A reclaimed row that had
+    // in fact been sent is caught by the already-sent check in handleClaimed.
+    // Scoped to the run's tenants like the claim (TB-3): a company's own
+    // "Send what's due now" never moves another company's rows.
+    const abandoned = and(
+      eq(commsScheduled.status, "sending"),
+      lt(commsScheduled.claimedAt, new Date(now.getTime() - options.staleClaimMs)),
+      forTenants,
+    );
+    const exhausted = (await db
+      .update(commsScheduled)
+      .set({ status: "failed", lastError: `abandoned mid-send, out of attempts (${options.maxAttempts})` })
+      .where(and(abandoned, gte(commsScheduled.attempts, options.maxAttempts)))
+      .returning({ id: commsScheduled.id })) as { id: string }[];
+    result.failed += exhausted.length;
+    const revived = (await db
+      .update(commsScheduled)
+      .set({
+        status: "pending",
+        claimedAt: null,
+        lastError: "reclaimed: the worker that claimed it stopped before recording an outcome",
+      })
+      .where(abandoned)
+      .returning({ id: commsScheduled.id })) as { id: string }[];
+    result.reclaimed = revived.length;
+  }
 
   // 3. Claim and handle due rows until none are left, the limit is reached or
   // the time budget is spent. Handled rows leave the due set (terminal, or
   // rescheduled into the future), so each select sees new rows; `seen` is the
   // belt-and-braces guard against re-reading one within a run.
   const seen = new Set<string>();
-  drain: while (result.processed < options.limit) {
-    const due = (await db
-      .select()
-      .from(commsScheduled)
-      .where(and(eq(commsScheduled.status, "pending"), lte(commsScheduled.sendAt, now)))
-      .orderBy(asc(commsScheduled.sendAt))
-      .limit(options.limit - result.processed)) as ScheduledRow[];
+  drain: while (result.processed < options.limit && anyTenant) {
+    const due = tenantIds
+      ? await dueInTurns(db, now, forTenants, options.limit - result.processed)
+      : ((await db
+          .select()
+          .from(commsScheduled)
+          .where(and(eq(commsScheduled.status, "pending"), lte(commsScheduled.sendAt, now)))
+          .orderBy(asc(commsScheduled.sendAt))
+          .limit(options.limit - result.processed)) as ScheduledRow[]);
     const fresh = due.filter((row) => !seen.has(row.id));
     if (fresh.length === 0) break;
 
@@ -977,7 +1218,7 @@ export async function runDueMessages(
         db,
         { ...row, status: "sending", attempts },
         senders,
-        { beforeSend, maxLatenessMs: options.maxLatenessMs },
+        { beforeSend, maxLatenessMs: options.maxLatenessMs, identities },
         clock,
       );
       let patch: Partial<ScheduledRow>;
@@ -1015,6 +1256,34 @@ export async function runDueMessages(
 }
 
 /**
+ * The due rows of a tenant-listed run, COMPANIES TAKING TURNS (SEC-2A-01):
+ * each tenant's due rows are numbered oldest first, and the claim order is
+ * that number, then the time — every company's first due row, then every
+ * company's second, and so on. `limit` then cuts the list fairly: a company
+ * with 250 overdue reminders gets its share, and the company with one gets
+ * its one, in the same run.
+ */
+async function dueInTurns(db: CommsDb, now: Date, forTenants: SQL | undefined, limit: number): Promise<ScheduledRow[]> {
+  const ranked = db
+    .select({
+      id: commsScheduled.id,
+      turn: sql<number>`row_number() over (partition by ${commsScheduled.tenantId} order by ${commsScheduled.sendAt}, ${commsScheduled.id})`.as(
+        "turn",
+      ),
+    })
+    .from(commsScheduled)
+    .where(and(eq(commsScheduled.status, "pending"), lte(commsScheduled.sendAt, now), forTenants))
+    .as("ranked");
+  const rows = (await db
+    .select({ row: commsScheduled, turn: ranked.turn })
+    .from(commsScheduled)
+    .innerJoin(ranked, eq(ranked.id, commsScheduled.id))
+    .orderBy(asc(ranked.turn), asc(commsScheduled.sendAt), asc(commsScheduled.id))
+    .limit(limit)) as { row: ScheduledRow; turn: number }[];
+  return rows.map((r) => r.row);
+}
+
+/**
  * Write a row's outcome, retrying a failed write a couple of times in-run. A
  * write that never lands leaves the row `sending` for the stale-claim reclaim —
  * safe now (the already-sent check) but slow. Never throws: one failed write
@@ -1037,7 +1306,7 @@ async function handleClaimed(
   db: CommsDb,
   row: ScheduledRow,
   senders: CommsSenders,
-  options: { beforeSend: RunDueOptions["beforeSend"]; maxLatenessMs: number },
+  options: { beforeSend: RunDueOptions["beforeSend"]; maxLatenessMs: number; identities: IdentityCache },
   clock: () => Date,
 ): Promise<RowOutcome> {
   const note = (status: string, error: string) =>
@@ -1118,6 +1387,7 @@ async function handleClaimed(
       senders,
       clock(),
       row.id,
+      options.identities,
     );
     if (message.status === "sent") return { status: "sent", lastError: null };
     if (message.status === "skipped") return { status: "skipped", lastError: message.error };

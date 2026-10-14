@@ -16,7 +16,7 @@ import { asRoleKey, date, lockCompany, num, q, readCompany, str, strOrNull, type
 import { revokeOpenInvitationsBy } from "./invitation-rules.js";
 import type { MemberView, RequestFacts, TeamView, TenancyDb } from "./types.js";
 
-const ASSIGNABLE: readonly RoleKey[] = ["admin", "member", "viewer"];
+
 
 interface MemberRow {
   readonly userId: string;
@@ -67,7 +67,8 @@ function actionsFor(
   const outranks = caller.rank > target.rank;
   const roles =
     caller.can.has("members.role.change") && !self && !isTargetOwner && outranks && target.status === "active"
-      ? ASSIGNABLE.filter((k) => k !== target.roleKey && caller.rank > rankOf(options, k))
+      ? // The project's roles (Tenancy 2a: Crew too), from the options built on its role set.
+        options.map((o) => o.key).filter((k) => k !== "owner" && k !== target.roleKey && caller.rank > rankOf(options, k))
       : [];
   return {
     roles,
@@ -99,7 +100,7 @@ function memberView(
 
 /** Build the team page's view on `db` for a caller whose facts are already resolved. */
 export async function buildTeam(ctx: Ctx, db: TenancyDb, company: CompanyRow, callerUserId: string, facts: ActorFacts): Promise<TeamView> {
-  const options = await roleOptions(db, company.id);
+  const options = await roleOptions(db, company.id, ctx.roles);
   const rows = await memberRows(db, company.id);
   const isOwner = company.ownerUserId === callerUserId;
   const caller = { userId: callerUserId, can: facts.can, rank: facts.role?.rank ?? 0, isOwner };
@@ -113,7 +114,7 @@ export async function buildTeam(ctx: Ctx, db: TenancyDb, company: CompanyRow, ca
     });
   const personalInCompanies = ctx.mode === "companies" && company.kind === "personal";
   const invitableRoles =
-    facts.can.has("members.invite") && !personalInCompanies ? ASSIGNABLE.filter((k) => caller.rank > rankOf(options, k)) : [];
+    facts.can.has("members.invite") && !personalInCompanies ? ctx.roles.assignable.filter((k) => caller.rank > rankOf(options, k)) : [];
 
   let seats: TeamView["seats"] = null;
   if (ctx.seats) {
@@ -203,6 +204,7 @@ export async function changeMemberRole(
     const company = requireLive(ctx, await lockCompany(tx, input.tenantId));
     const facts = await requireActor(ctx, tx, { userId: input.actorUserId, tenantId: input.tenantId }, { permission: "members.role.change" });
     if (input.roleKey === "owner") throw ctx.fail("owner_must_transfer");
+    if (!ctx.roles.has(input.roleKey)) throw ctx.fail("invalid", { issues: [{ path: ["roleKey"], message: "Pick one of the roles listed." }] });
     const rows = await memberRows(tx, company.id);
     const target = rows.find((r) => r.userId === input.targetUserId && r.status === "active");
     if (!target) throw ctx.fail("not_found");
@@ -260,7 +262,7 @@ export async function changeMemberRole(
         request: input.request ?? null,
       });
     }
-    const options = await roleOptions(tx, company.id);
+    const options = await roleOptions(tx, company.id, ctx.roles);
     const fresh = (await memberRows(tx, company.id)).find((r) => r.userId === target.userId)!;
     const caller = { userId: input.actorUserId, can: facts.can, rank: facts.role?.rank ?? 0, isOwner: company.ownerUserId === input.actorUserId };
     return {

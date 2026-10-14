@@ -12,9 +12,11 @@ import type {
   IssuedWire,
   MemberWire,
   PendingForMeWire,
+  PublicCompanyWire,
   SessionWire,
   TeamWire,
 } from "../wire.js";
+import { publicPathOf } from "./views.js";
 import type {
   AdminCompanyDetail,
   AdminCompanyList,
@@ -28,6 +30,7 @@ import type {
   IssuedInvitation,
   MemberView,
   PendingForMe,
+  PublicCompany,
   SessionState,
   TeamView,
 } from "./types.js";
@@ -38,6 +41,27 @@ import type {
  * data (`<CompanySwitcher session={sessionToWire(...)} />`), so a page and an
  * API answer can never disagree about a shape.
  */
+
+/**
+ * A company's public face for a page or a widget (Tenancy 2a, 4.9): the
+ * brand bar and the "not taking requests" panel. The id is NOT on the wire:
+ * a public page addresses a company by its web address, and an id there would
+ * only be something to probe the private routes with.
+ */
+export function publicCompanyToWire(found: { readonly company: PublicCompany; readonly status: "active" | "suspended" }): PublicCompanyWire {
+  const c = found.company;
+  return {
+    name: c.name,
+    slug: c.slug,
+    publicPath: publicPathOf(c.slug),
+    logoUrl: c.logoUrl,
+    brandColor: c.brandColor,
+    onBrandColor: c.onBrandColor,
+    contactEmail: c.contactEmail,
+    contactPhone: c.contactPhone,
+    status: found.status,
+  };
+}
 
 const iso = (d: Date): string => d.toISOString();
 const isoOrNull = (d: Date | null): string | null => (d ? d.toISOString() : null);

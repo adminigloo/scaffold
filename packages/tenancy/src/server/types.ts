@@ -4,6 +4,7 @@ import type { PgDatabase } from "drizzle-orm/pg-core";
 import type { TenancyAuditAction } from "../audit.js";
 import type { BrandColorReport } from "../color.js";
 import type { SetupChecklist } from "../checklist.js";
+import type { TenantRoleSet } from "../roles.js";
 import type { TenantSettingsRegistry } from "../settings.js";
 import type {
   AuditLineWire,
@@ -85,7 +86,21 @@ export type TenancyEvent =
     }
   | { readonly type: "ownership.transferred"; readonly tenantId: string; readonly from: string; readonly to: string }
   | { readonly type: "company.suspended" | "company.reactivated"; readonly tenantId: string; readonly by: string }
-  | { readonly type: "invitation.sent"; readonly tenantId: string; readonly invitationId: string; readonly by: string };
+  | { readonly type: "invitation.sent"; readonly tenantId: string; readonly invitationId: string; readonly by: string }
+  /**
+   * Tenancy 2a: a settings section saved (`changed`: the same field list as
+   * its audit row). Scheduling's zone convergence listens for section
+   * "company" with "timeZone" in `changed` (D5).
+   */
+  | {
+      readonly type: "company.settings.updated";
+      readonly tenantId: string;
+      readonly section: string;
+      readonly changed: readonly string[];
+      readonly by: string;
+    }
+  | { readonly type: "company.profile.updated"; readonly tenantId: string; readonly changed: readonly ("name" | "slug")[]; readonly by: string }
+  | { readonly type: "company.branding.updated"; readonly tenantId: string; readonly by: string };
 
 export type TenancyEventListener = (event: TenancyEvent) => void | Promise<void>;
 
@@ -101,6 +116,13 @@ export interface CreateTenancyServiceOptions {
   readonly settings?: TenantSettingsRegistry;
   /** Default defineSetupChecklist(tenancyChecklistItems({})). */
   readonly checklist?: SetupChecklist;
+  /**
+   * The project's company roles (Tenancy 2a, D9): `defineTenantRoles([...])`,
+   * e.g. with scheduling's Crew. Default `DEFAULT_TENANT_ROLES` (Tenancy 1's
+   * four). Invitations, role changes, the team page's options and the
+   * first-company seed (D10) all read it.
+   */
+  readonly roles?: TenantRoleSet;
   readonly seats?: SeatLimitSource;
   /** Absent → logo routes answer logo_storage_off. */
   readonly logos?: LogoStore;
@@ -395,6 +417,69 @@ export interface PublicCompany {
   readonly onBrandColor: "#ffffff" | "#111111" | null;
   readonly contactEmail: string | null;
   readonly contactPhone: string | null;
+  /** Tenancy 2a: the company's zone, for public pages that show times. null = not set yet. */
+  readonly timeZone: string | null;
+}
+
+/** A company found by its web address, active or suspended (Tenancy 2a, D7). */
+export interface PublicCompanyLookup {
+  readonly company: PublicCompany;
+  /** The address asked for, when it was an OLD one (a page redirects to the current). */
+  readonly retiredSlug: string | null;
+  readonly status: "active" | "suspended";
+}
+
+/**
+ * The company as the feature packages need it (Tenancy 2a, 4.3): the basics
+ * every feature reads (structurally a `SchedulingCompany`, an
+ * `EstimatorCompany`, the base of an `InvoicingBusiness`), where its
+ * customers' replies go, where its own notices go, and every settings
+ * fragment's values.
+ */
+export interface CompanyProfile {
+  readonly id: string;
+  readonly name: string;
+  readonly slug: string;
+  /** "/t/" + slug. */
+  readonly publicPath: string;
+  readonly kind: "org" | "personal";
+  readonly status: "active" | "suspended";
+  readonly timeZone: string | null;
+  readonly contactEmail: string | null;
+  readonly contactPhone: string | null;
+  readonly address: {
+    readonly line1: string | null;
+    readonly line2: string | null;
+    readonly city: string | null;
+    readonly region: string | null;
+    readonly postalCode: string | null;
+    readonly country: string | null;
+  };
+  readonly logoUrl: string | null;
+  readonly brandColor: string | null;
+  readonly onBrandColor: "#ffffff" | "#111111" | null;
+  /** Where a customer's reply goes: the contact email, else the owner's sign-in address; null only when neither exists. */
+  readonly replyTo: string | null;
+  /** Where the company's own notices go when a feature has none saved: [contact email] or [owner's address] or []. */
+  readonly inbox: readonly string[];
+  /** Every registry fragment's parsed values (registry.parse), e.g. settings.invoicing.paymentInstructions. */
+  readonly settings: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+  /**
+   * When the company was made. A host can hold a NEW company to lower limits
+   * than an established one — create-app's per-company sending allowance
+   * does (Tenancy 2a review SEC-2A-03): a company made an hour ago that
+   * starts mailing hundreds of strangers is the shape of abuse.
+   */
+  readonly createdAt: Date;
+}
+
+/** One active member, as a person (Tenancy 2a, 4.4): for "who opens this crew's route". */
+export interface MemberPerson {
+  readonly userId: string;
+  readonly name: string | null;
+  readonly email: string | null;
+  readonly roleKey: RoleKey | null;
+  readonly roleName: string;
 }
 
 export interface ProvisionResult {
@@ -430,6 +515,8 @@ export interface TenancyService {
   readonly mode: TenancyMode;
   readonly noun: TenancyNoun;
   readonly settings: TenantSettingsRegistry;
+  /** The project's company roles (Tenancy 2a): the core four plus its extras. */
+  readonly roles: TenantRoleSet;
 
   // 6.2 provisioning
   provisionUser(input: { readonly userId: string; readonly email: string | null }): Promise<ProvisionResult>;
@@ -544,7 +631,29 @@ export interface TenancyService {
   setStaffRole(input: { readonly actorUserId: string; readonly targetUserId: string; readonly templateKey: string | null } & Req): Promise<AdminPerson>;
 
   // 6.12 / 6.13
+  /** An ACTIVE company by its web address (a suspended one is null): Tenancy 1's lookup, unchanged. */
   resolveCompanyBySlug(slug: string): Promise<{ readonly company: PublicCompany; readonly retiredSlug: string | null } | null>;
   /** No permission check: for server pages that already went through the gate (the header). */
   companyFor(tenantId: string): Promise<CompanyView | null>;
+
+  // Tenancy 2a
+  /**
+   * A company by its web address (current or retired), WITH its status: a
+   * suspended company is returned as "suspended" so its public pages can say
+   * it isn't taking requests (D7). Unknown, deleted or personal → null.
+   */
+  resolvePublicCompany(slug: string): Promise<PublicCompanyLookup | null>;
+  /**
+   * The company's profile for server code that has already decided whom it
+   * serves (a handler after `authorize`, a cron, comms' sender identity):
+   * NO permission check, like `readSettings`. null for an unknown or deleted id.
+   */
+  companyProfile(tenantId: string): Promise<CompanyProfile | null>;
+  /** The company's active members as people (no permission check): never the site's whole user table. */
+  listMemberPeople(tenantId: string): Promise<readonly MemberPerson[]>;
+  /**
+   * Every company a cron should serve: companies mode → kind 'org', personal
+   * mode → kind 'personal'; never suspended or deleted; ordered by id.
+   */
+  activeCompanyIds(): Promise<readonly string[]>;
 }

@@ -26,7 +26,11 @@ import { planEmit, type EmitPlan } from "../emit.js";
 const TEMPLATE_DIR = join(__dirname, "..", "..", "template");
 
 function answers(overrides: Partial<Answers> = {}): Answers {
-  return { ...DEFAULT_ANSWERS, projectName: "acme-windows", includeScheduling: true, ...overrides };
+  // A SINGLE BUSINESS (--tenant-noun none): the mode whose scheduling this
+  // file describes — the fixed business, the staff ladder, /book-visit and
+  // /admin/schedule. A companies project's scheduling (each company's own,
+  // under /app and /t/{web address}) is tenancy-2a.test.ts's subject.
+  return { ...DEFAULT_ANSWERS, projectName: "acme-windows", tenantNoun: "none", includeScheduling: true, ...overrides };
 }
 
 const plan = (overrides: Partial<Answers> = {}) => planEmit(TEMPLATE_DIR, "/out", answers(overrides));
@@ -224,10 +228,12 @@ describe("the crons", () => {
     const cron = code(file(p, "app", "api", "cron", "comms", "route.ts"));
     expect(cron).toContain("beforeSend: commsBeforeSend");
     expect(cron.indexOf("await afterCommsRun()")).toBeGreaterThan(cron.indexOf("runDueMessages("));
-    // The console's "send due now" goes through the same hooks.
-    const router = code(file(p, "src", "server", "routers", "comms.ts"));
-    expect(router).toContain("beforeSend: commsBeforeSend");
-    expect(router).toContain("await afterCommsRun()");
+    // The console's "send due now" goes through the same hooks — the comms
+    // package's handler runs them (Tenancy 2a, D3: the tRPC router is retired).
+    const console = code(file(p, "src", "server", "comms.ts"));
+    expect(console).toContain("beforeSend: commsBeforeSend");
+    expect(console).toContain("afterRun: afterCommsRun");
+    expect(p.files.has(join("src", "server", "routers", "comms.ts"))).toBe(false);
   });
 
   it("consult nothing extra in a comms project without scheduling", async () => {
@@ -252,13 +258,13 @@ describe("the crons", () => {
 });
 
 describe("what the project installs and declares", () => {
-  it("installs the widget with the server package, and both at the 0.4 line", async () => {
+  it("installs the widget with the server package, at the 0.5 / 0.2 lines (Tenancy 2a)", async () => {
     const pkgs = packagesFor(answers());
     expect(pkgs).toContain("@adminigloo/scheduling");
     expect(pkgs).toContain("@adminigloo/scheduling-widget");
     const manifest = JSON.parse(file(await plan(), "package.json")) as { dependencies: Record<string, string> };
-    expect(manifest.dependencies["@adminigloo/scheduling"]).toBe("^0.4.0");
-    expect(manifest.dependencies["@adminigloo/scheduling-widget"]).toBe("^0.1.0");
+    expect(manifest.dependencies["@adminigloo/scheduling"]).toBe("^0.5.0");
+    expect(manifest.dependencies["@adminigloo/scheduling-widget"]).toBe("^0.2.0");
   });
 
   it("declares the maps key and the starting zone as optional, and validates the zone at boot", async () => {

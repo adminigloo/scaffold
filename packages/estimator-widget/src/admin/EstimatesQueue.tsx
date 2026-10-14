@@ -16,16 +16,33 @@ import type { EstimateSource } from "../types.js";
  * lead), where it stands (words and an icon, never colour alone), how old it
  * is, whether a photo came with it and whether the AI read it.
  *
- * Opening a row goes to `estimateHref(id)` (a link) or `onOpen(id)`.
+ * Opening a row goes to `estimateHref` (a link) or `onOpen(id)`.
  */
+
+/**
+ * An href from a pattern or a function (Tenancy 2a). A server page can't pass
+ * a function to a client component, so a string is a pattern whose `{id}` is
+ * replaced with the encoded id: `estimateHref="/app/estimates/{id}"`.
+ */
+export function hrefFor(href: string | ((id: string) => string), id: string): string {
+  return typeof href === "function" ? href(id) : href.split("{id}").join(encodeURIComponent(id));
+}
 
 export interface EstimatesQueueProps extends AdminChromeProps {
   onOpen?: (id: string) => void;
-  estimateHref?: (id: string) => string;
+  /** Where a row opens: a pattern with `{id}` ("/app/estimates/{id}"), or a function. */
+  estimateHref?: string | ((id: string) => string);
   /** Refresh when the window regains focus (someone answered a quote while you were away). Default true. */
   pollOnFocus?: boolean;
   /** The filter to start on. Default "leads". */
   initialFilter?: EstimateFilter;
+  /**
+   * Default true; false = read-only (Tenancy 2a: a company's viewer, who may
+   * look at estimates but not work them): no "New estimate". The server
+   * refuses the create anyway; this stops offering it. Pass
+   * `can.includes("estimator.estimates.manage")`.
+   */
+  canManage?: boolean;
 }
 
 const STATUS_ICON: Record<string, string> = { accent: "●", muted: "○", warn: "◔", ok: "✓", danger: "✕" };
@@ -95,7 +112,7 @@ export function EstimatesQueue(props: EstimatesQueueProps) {
   }, [cursor, loadingMore, transport, filter, debounced, source, mounted]);
 
   const open = (id: string) => {
-    if (props.estimateHref && typeof window !== "undefined") window.location.assign(props.estimateHref(id));
+    if (props.estimateHref && typeof window !== "undefined") window.location.assign(hrefFor(props.estimateHref, id));
     else props.onOpen?.(id);
   };
 
@@ -118,9 +135,11 @@ export function EstimatesQueue(props: EstimatesQueueProps) {
     <AdminFrame chrome={props} basics={basics} data={{ "aiew-queue": rows ? "ready" : error ? "error" : "loading" }}>
       <div className="aiew-admin-head">
         <h2 className="aiew-admin-title">Estimates</h2>
-        <button type="button" className="aiew-btn aiew-btn-primary" onClick={() => void newEstimate()} disabled={creating} aria-busy={creating || undefined}>
-          {creating ? "Starting…" : "New estimate"}
-        </button>
+        {props.canManage !== false ? (
+          <button type="button" className="aiew-btn aiew-btn-primary" onClick={() => void newEstimate()} disabled={creating} aria-busy={creating || undefined}>
+            {creating ? "Starting…" : "New estimate"}
+          </button>
+        ) : null}
       </div>
       {createError ? <Notice tone="error">{createError}</Notice> : null}
       <div className="aiew-search" role="search">
@@ -167,7 +186,7 @@ export function EstimatesQueue(props: EstimatesQueueProps) {
         <ul className="aiew-rows" aria-label={`${FILTER_LABEL[filter]} estimates`}>
           {rows.map((row) => (
             <li key={row.id}>
-              <QueueRow row={row} locale={locale} now={now} href={props.estimateHref?.(row.id)} onOpen={() => open(row.id)} />
+              <QueueRow row={row} locale={locale} now={now} href={props.estimateHref ? hrefFor(props.estimateHref, row.id) : undefined} onOpen={() => open(row.id)} />
             </li>
           ))}
         </ul>

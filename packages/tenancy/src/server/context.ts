@@ -9,7 +9,7 @@ import { sql } from "drizzle-orm";
 import type { SetupChecklist } from "../checklist.js";
 import { RESERVED_SLUGS } from "../slug.js";
 import type { TenantSettingsRegistry } from "../settings.js";
-import { TENANT_ROLE_TEMPLATES } from "../templates.js";
+import { DEFAULT_TENANT_ROLES, type TenantRoleSet } from "../roles.js";
 import type { RoleKey, RoleOptionWire } from "../wire.js";
 import { asRoleKey, q, str, type CompanyRow } from "./db.js";
 import { failWith, type TenancyError } from "./errors.js";
@@ -38,6 +38,8 @@ export interface Ctx {
   readonly bootstrap: BootstrapPolicy;
   readonly settings: TenantSettingsRegistry;
   readonly checklist: SetupChecklist;
+  /** The project's company roles (Tenancy 2a, D9): the core four plus its extras (Crew). */
+  readonly roles: TenantRoleSet;
   readonly seats: SeatLimitSource | undefined;
   readonly logos: LogoStore | undefined;
   readonly reserved: ReadonlySet<string>;
@@ -65,6 +67,7 @@ export function createCtx(options: {
   bootstrap: BootstrapPolicy;
   settings: TenantSettingsRegistry;
   checklist: SetupChecklist;
+  roles?: TenantRoleSet;
   seats?: SeatLimitSource;
   logos?: LogoStore;
   reservedSlugs?: Iterable<string>;
@@ -95,6 +98,7 @@ export function createCtx(options: {
     bootstrap: options.bootstrap,
     settings: options.settings,
     checklist: options.checklist,
+    roles: options.roles ?? DEFAULT_TENANT_ROLES,
     seats: options.seats,
     logos: options.logos,
     reserved,
@@ -192,13 +196,14 @@ export async function roleIn(
 }
 
 /**
- * The company role options (owner, admin, member, viewer), highest first, with
- * the names, descriptions and ranks the database holds (a renamed system
- * template reads as renamed), falling back to the shipped ones.
+ * The company role options, highest first: the project's role set (Tenancy
+ * 2a: the core four plus extras like Crew), with the names, descriptions and
+ * ranks the database holds (a renamed system template reads as renamed),
+ * falling back to the set's own.
  */
-export async function roleOptions(tx: TenancyDb, tenantId: string): Promise<RoleOptionWire[]> {
+export async function roleOptions(tx: TenancyDb, tenantId: string, roles: TenantRoleSet = DEFAULT_TENANT_ROLES): Promise<RoleOptionWire[]> {
   const rows = await listRoleTemplates(tx, { scope: "tenant", tenantId });
-  return TENANT_ROLE_TEMPLATES.map((shipped) => {
+  return roles.templates.map((shipped) => {
     const row = rows.find((r) => r.key === shipped.key);
     return {
       key: shipped.key,

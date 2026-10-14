@@ -192,6 +192,127 @@ refuses an address two accounts share.
   previous owner is never put back by provisioning, and if they're removed from
   it they get a new workspace of their own.
 
+## Company features (Tenancy 2a)
+
+0.5 adds what the feature packages (scheduling, the estimator, invoicing,
+comms) need to serve many companies from one site. Nothing here is required:
+without it, 0.5 behaves as 0.4.
+
+### Roles a project composes
+
+The core four (owner, admin, member, viewer) plus whatever the project's
+packages add. Scheduling adds Crew: someone who opens their own route on a
+phone and sees nothing else.
+
+```ts
+import { defineTenantRoles } from "@adminigloo/tenancy";
+import { SCHEDULING_CREW_ROLE } from "@adminigloo/scheduling";
+
+export const roles = defineTenantRoles([SCHEDULING_CREW_ROLE]);   // owner, admin, member, viewer, crew
+
+export const tenancy = createTenancyService({ /* … */, roles });
+// and the seed: seedPermissionCatalog(db, { tenant: { catalog, templates: roles.templates } })
+```
+
+Extra roles rank below admin (1–29, never 10 or 20), so the owner and the
+admins manage them; a tie would mean two roles that can't manage each other,
+which nobody would guess from the team page. A bad role fails at boot with
+`InvalidTenantRoleError`. Invitations, role changes and the team page's
+options all read the set; an unknown role key is refused with "Pick one of
+the roles listed." The first company created on a database seeds the set's
+templates, and a database seeded before Crew existed gets Crew on the next
+company created. `DEFAULT_TENANT_ROLES` is Tenancy 1's four.
+
+### The company, for server code
+
+No permission check on these, like `readSettings`: they're for code that has
+already decided whom it serves (a handler after `authorize`, a public page
+after `resolveTenant`, a cron).
+
+- **`companyProfile(id)`**: name, web address and `publicPath`, kind, status,
+  time zone, contact email and phone, address, logo, colour and the text colour
+  on it, `replyTo` (the contact email, else the owner's sign-in address),
+  `inbox` (where the company's own notices go), and every settings section's
+  values. One query. It's structurally a `SchedulingCompany`, an
+  `EstimatorCompany` and an `InvoicingBusiness`'s base, so you pass
+  `(id) => tenancy.companyProfile(id)` straight in.
+- **`resolvePublicCompany(slug)`**: the company at a web address (current or
+  old), WITH its status: a suspended company comes back `"suspended"`, so its
+  public pages can say it isn't taking requests instead of a 404.
+  `resolveCompanyBySlug` still hides it. `publicCompanyToWire(found)` is the
+  public face for `<CompanyBrandBar>` (no id on it).
+- **`listMemberPeople(id)`**: the company's active people, for "who opens this
+  crew's route". Never the site's whole user table.
+- **`activeCompanyIds()`**: every company a cron should serve (not suspended,
+  not deleted), ordered by id.
+
+### Every company, for crons
+
+```ts
+import { runForEachCompany } from "@adminigloo/tenancy/server";
+
+const report = await runForEachCompany(tenancy, (tenantId) => sweepOverdue(db, tenantId), {
+  concurrency: 4,          // default
+  timeBudgetMs: 20_000,    // stop STARTING companies after this; the rest are `deferred`
+  onError: (error, tenantId) => log.error({ tenantId, error }),
+});
+// { companies, ran: [{ tenantId, result }], failed: [{ tenantId, error }], deferred: [ids] }
+```
+
+One company's throw is in `failed` (the message only, cut to 300 characters)
+and the next company runs. Every run starts at a different company
+(`rotationStart(now, n)`, a hash of the run's minute), so a run cut short never
+skips the same companies run after run — whatever the schedule: a start that
+moved by the hour started at the same company every day on a daily cron
+whenever the company count divided 24. Deferred companies aren't promised to go
+first next time, so log a non-empty `deferred` where you'll see it. If the
+company list itself can't be read, the whole run rejects.
+
+`companyProfile(id).createdAt` says when a company was made, for a host that
+gives new companies lower limits (create-app's sending allowance does).
+
+### Route seams for the feature packages
+
+```ts
+import { createCompanyRouteSeams, createPublicCompanySeams } from "@adminigloo/tenancy/server";
+
+// Staff routes: /api/app/{company id}/…
+const seams = createCompanyRouteSeams({ tenancy, principal: (req) => getSignedInUser(req) });
+createSchedulingAdminHandlers({ db, resolveTenant: seams.resolveTenant, authorize: seams.authorize, /* … */ });
+
+// Public routes: /api/t/{web address}/…
+const pub = createPublicCompanySeams({ tenancy });
+createSchedulingHandlers({ db, resolveTenant: pub.resolveTenant, admit: pub.admit, /* … */ });
+```
+
+`authorize(req, permission, tenantId)` answers, in order: signed out → a 401
+"You've been signed out. Sign in again to keep working."; not a member of this
+company (or a made-up id) → 403 "You're not part of this company."; suspended
+→ 403 "This company is suspended. Contact support to restore it."; without the
+permission → `false` (the handler's own 403); otherwise `{ userId }`. One
+permission lookup per request, however many times a route asks.
+
+`admit(tenantId, req)` is open for an active company and closed for a
+suspended or unknown one, with "{Name} isn't taking requests online right now.
+Call {phone} or email {email}." A slug-addressed request costs one tenancy
+query for both calls.
+
+### Events
+
+Three more, after commit through `onEvent`: `company.settings.updated`
+(`section` and the `changed` fields, as in the audit row),
+`company.profile.updated` (`changed`: `"name"` and/or `"slug"`) and
+`company.branding.updated`. Scheduling's time zone follows the company's by
+listening for `company.settings.updated` with `"timeZone"` changed.
+
+## Upgrading from 0.4
+
+Nothing to migrate. `RoleKey` is now `"owner" | "admin" | "member" | "viewer"
+| (string & {})`: code that switches over it exhaustively needs a default.
+`PublicCompany` gains `timeZone`, and `TenancyService` gains `roles`,
+`resolvePublicCompany`, `companyProfile`, `listMemberPeople` and
+`activeCompanyIds` (a hand-written fake of the service needs them).
+
 ## Upgrading from 0.3
 
 For hosts not on drizzle-kit (with drizzle-kit, `db:generate` writes this for you):
@@ -262,19 +383,26 @@ package takes the tenant from you instead: pass your own tenant id to their
 
 ## Not included
 
-- **Feature routes are still pinned.** Moving scheduling, estimator,
-  invoicing, comms, aeo, assistant, feedback, files, notifications and SEO off
-  the fixed `"primary"` tenant onto the active company, with a tenant
-  permission set per feature (CA-20, TB-08, SR-16) — **Tenancy 2**.
-- **Public company pages.** The pages under `/t/[slug]` (book, estimate,
-  feedback) — **Tenancy 2**. Tenancy 1 reserves the address, resolves it, and
-  shows a contact card.
+- **Per-company boards and widgets for feedback, notifications, files, the
+  assistant, analytics, SEO/AEO and book-a-call (booking)** — **Tenancy 2b**.
+  (Scheduling, the estimator, invoicing and comms are per company since 2a.)
+- **Payments to companies** (Stripe Connect: a customer paying a company's
+  invoice by card). Invoices are paid however the payment instructions say;
+  staff record the payment.
+- **Search indexing of company pages**, and per-company SEO.
+- **Logo and colour inside emails.** Emails carry the company's name and
+  reply-to; their bodies are plain text.
+- **Emailing customers about a time-zone correction** made in company
+  settings. Visits keep their clock times and reminders are re-queued silently.
+- **Moving a pre-2a companies project's feature rows** (written under the
+  fixed `"primary"` business) into a company. Nothing does it automatically.
 - **Plans, billing and entitlements.** The seat hook exists. The billing chunk
   wires it to plans.
 - Viewing as a customer (impersonation). `staff.tenants.impersonate` is declared
   and sealed, and nothing implements it.
 - A custom role editor for companies, and per-person permission changes for
-  company members. The owner/admin/member/viewer roles are fixed.
+  company members. The roles are the project's set (`defineTenantRoles`):
+  Crew is a fixed role scheduling adds.
 - Custom domains and subdomains.
 - Company deletion, data export, operator notes, and comping a plan.
 - Suspending a single member. You remove them instead. The `suspended` member

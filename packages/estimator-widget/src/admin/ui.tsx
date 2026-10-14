@@ -49,6 +49,14 @@ export interface AdminChromeProps extends ChromeProps {
   transport?: EstimatorAdminTransport;
   /** Undefined: the business's colour from Settings; null: the stylesheet's; a `#rrggbb`: that. */
   accentColor?: string | null;
+  /**
+   * Show the business's notices ("your estimate page is closed…") at the top.
+   * Default true. Pass false for the SECOND screen on a page that already
+   * shows them (Tenancy 2a review T2A-BO-06): Estimate settings mounts
+   * <EstimatorSettings> and then <EmbedKeys>, and two copies of every notice —
+   * one of them stale after a save — read as "the save didn't work".
+   */
+  notices?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -156,7 +164,7 @@ export function AdminFrame({
   return (
     <AdminRoot chrome={chrome} brandColor={basics.settings?.brandColor ?? null} data={data}>
       <div className="aiew-admin-inner">
-        {basics.status ? <AdminNotices notices={basics.status.notices} /> : null}
+        {basics.status && chrome.notices !== false ? <AdminNotices notices={basics.status.notices} /> : null}
         {children}
       </div>
     </AdminRoot>

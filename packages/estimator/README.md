@@ -95,8 +95,13 @@ sent (`settings_incomplete`). A product that would price at $0 is answered as
   address as typed.
 - Turning an estimate into a job or project, beyond booking the visit and
   invoicing it.
-- A multi-tenant create-app. The handlers take `resolveTenant`; the generated
-  app serves one business.
+- Per-company boards and widgets for feedback, notifications, files, the
+  assistant, analytics, SEO/AEO and book-a-call: Tenancy 2b. (The estimator
+  itself is per company since 0.4: see [Companies](#companies-tenancy-2a).)
+- Payments to companies, plans and billing per company, custom domains,
+  impersonation, per-company SEO and search indexing of company pages.
+- Logo and colour inside emails. Emails carry the company's name and reply-to;
+  their bodies are plain text.
 - Win-rate or pipeline reports.
 - A two-way price-list sync. Supplies can be fed FROM your own price list
   (below); changes made in the price book are announced (`onPriceBookChange`)
@@ -929,6 +934,74 @@ member), `estimator.costs.view` (owner, admin), `estimator.pricebook.manage`
 invoice (`invoiceInputFromEstimate` from `@adminigloo/invoicing`) and calls
 `markEstimateConverted`. An accepted quote then offers "Book the visit" and
 "Make an invoice".
+
+## Companies (Tenancy 2a)
+
+One deployment quotes for many companies. Everything below is optional:
+without it, 0.4 behaves exactly as 0.3 for one business.
+
+| Option | On | What it does |
+| --- | --- | --- |
+| `company(tenantId)` | both handlers, the comms listener, `resolveEstimatorSettings` | The business's name, time zone, contact details, logo and colour from the host's company profile. They override the estimator's own; the settings screen shows them read-only under "These come from your company settings." (`companySettingsHref`). A throw is reported and treated as no company for that request. |
+| `admit(tenantId, req)` | public handlers | Asked once per request on BOTH paths, the web address and the website embed key, before any other work. `{ open: false, message }` answers 409 `estimates_closed` with that sentence. |
+| `aiBudgetCeilingCents` | both handlers | The site's ceiling on photo-reading spend per company per day: the budget a reading checks is the lower of the company's own setting and this, applied before any photo is read. The settings screen says "Up to $x.xx a day on this site." Default: no ceiling. |
+| `quoteUrl`, `links.bookVisitUrl` | staff handlers, comms listener | May be async: links are built from the company's web address. |
+| `staffEmails` | comms listener | A list, or `(tenantId) => list`: where "new estimate" notices go. With tenancy: the company's own inbox. A reply to one reaches the customer it is about. |
+| `invoiceAccess(req, need, tenantId)` | staff handlers | The host's INVOICE permission, asked beside the estimator's own: "Turn into an invoice" needs `"manage"` (else 403 "You can't raise invoices…"), and an estimate's page shows the invoice it became only with `"view"`. Same answers as `authorize`. Without it, the estimator's own permission decides. |
+| `aiSiteBudgetCents` | public handlers | A daily ceiling on photo reading for EVERY business the handler serves together, beside each one's own: past it, every business's reading pauses until tomorrow (UTC). Default: none. |
+| `siteNotices: "company"` | staff handlers | The site's own setup gaps (no AI key, no file storage) in a company's words — "isn't available on this site yet" — never a setting it can't change. |
+
+Under a path that names its company (`resolveTenant`), an embed key counts only
+if it is THAT company's: another company's key is "not found", and its "last
+used" is left alone (`verifyClientKey(db, key, { tenantId })`). The web address
+decides, never the key.
+
+The sample price book comes for a trade: `loadSampleCatalog(db, tenantId, {
+trade: "lawn" | "cleaning" | "ramps" })` (the route takes `{ trade }`; none is
+0.3's ramps sample), and `SAMPLE_CATALOGS` holds all three.
+
+**Route tables and checklist items.** `ESTIMATOR_ADMIN_ROUTES` and
+`ESTIMATOR_PUBLIC_ROUTES` list every route with its permission (another
+company's id in a path answers 404). `estimatorChecklistItems({ priceBook,
+settings, embed })` gives the setup steps ("Add the work you sell and its
+prices", "Set your tax rate and quote rules", …) for tenancy's checklist.
+
+With `@adminigloo/tenancy`:
+
+```ts
+import { createEstimatorAdminHandlers, createEstimatorHandlers } from "@adminigloo/estimator";
+import { createEstimatorCommsListener } from "@adminigloo/estimator/comms";
+import { createCompanyRouteSeams, createPublicCompanySeams } from "@adminigloo/tenancy/server";
+
+const company = (id: string) => tenancy.companyProfile(id);
+const quoteUrl = async (token: string, id: string) => `${origin}${(await company(id))?.publicPath}/quote/${token}`;
+const AI_CEILING = 500; // $5.00 a day per company
+const listener = createEstimatorCommsListener({
+  db, senders, quoteUrl, company,
+  staffEmails: async (id) => (await company(id))?.inbox ?? [],
+});
+
+const pub = createPublicCompanySeams({ tenancy });               // /api/t/{web address}/estimator/…
+export const publicEstimator = createEstimatorHandlers({
+  db, resolveTenant: pub.resolveTenant, admit: pub.admit, company,
+  aiBudgetCeilingCents: AI_CEILING, photoStore, takeoff, onEvent: listener.onEvent,
+});
+
+const seams = createCompanyRouteSeams({ tenancy, principal: (req) => getSignedInUser(req) });   // /api/app/{id}/estimator/…
+export const staffEstimator = createEstimatorAdminHandlers({
+  db, resolveTenant: seams.resolveTenant, authorize: seams.authorize, company,
+  companySettingsHref: "/app/settings#company",
+  aiBudgetCeilingCents: AI_CEILING, quoteUrl, photoStore, onEvent: listener.onEvent,
+});
+```
+
+An embed key names its own company, so a request through the key skips
+`resolveTenant`; `admit` still runs for it (a suspended company's website
+widget says it isn't taking estimates).
+
+**A foreign host** passes its own `resolveTenant(req)`,
+`authorize(req, permission, tenantId)` (returning `{ userId }`, `false`, or a
+`Response`), `admit`, `company` and `staffEmails` from its own tables.
 
 ## Upgrading from 0.2
 

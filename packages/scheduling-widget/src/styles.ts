@@ -33,6 +33,10 @@ export const LIGHT_TOKENS: Record<string, string> = {
   accent: "#0d6b64",
   "accent-strong": "#0a5650",
   "accent-soft": "#d9efec",
+  // The accent as TEXT (links, an unpicked time). The same colour as the
+  // accent here; with a business's own colour (accentColor) it is stepped
+  // until it reads at 4.5:1, which the raw colour may not.
+  "accent-ink": "#0d6b64",
   "on-accent": "#ffffff",
   ok: "#187339",
   "ok-soft": "#ddf2e3",
@@ -83,6 +87,7 @@ export const DARK_TOKENS: Record<string, string> = {
   accent: "#45c4ad",
   "accent-strong": "#6cd6c3",
   "accent-soft": "#113029",
+  "accent-ink": "#45c4ad",
   "on-accent": "#0b0f13",
   ok: "#56c586",
   "ok-soft": "#10301d",
@@ -128,6 +133,9 @@ export const CONTRAST_PAIRS: ReadonlyArray<readonly [fg: string, bg: string, min
   ["faint", "ground", 4.5],
   ["accent", "surface", 4.5],
   ["accent", "ground", 4.5],
+  ["accent-ink", "surface", 4.5],
+  ["accent-ink", "ground", 4.5],
+  ["accent-ink", "accent-soft", 4.5],
   ["on-accent", "accent", 4.5],
   ["on-accent", "accent-strong", 4.5],
   ["accent", "accent-soft", 4.5],
@@ -185,12 +193,99 @@ export function declareTokens(tokens: Record<string, string>): string {
     .join(" ");
 }
 
+// ---------------------------------------------------------------------------
+// The business's own colour (Tenancy 2a, `accentColor`)
+// COPIED from @adminigloo/estimator-widget's styles (brandTokens, brandStyle,
+// mixColors, normalizeHex); change both or neither.
+// ---------------------------------------------------------------------------
+
+function rgb(hex: string): [number, number, number] {
+  const n = Number.parseInt(hex.replace("#", ""), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+function toHex([r, g, b]: [number, number, number]): string {
+  return `#${[r, g, b].map((c) => Math.max(0, Math.min(255, Math.round(c))).toString(16).padStart(2, "0")).join("")}`;
+}
+
+/** `a` moved `amount` (0–1) of the way toward `b`. */
+export function mixColors(a: string, b: string, amount: number): string {
+  const [ar, ag, ab] = rgb(a);
+  const [br, bg, bb] = rgb(b);
+  return toHex([ar + (br - ar) * amount, ag + (bg - ag) * amount, ab + (bb - ab) * amount]);
+}
+
+/** A `#rrggbb` colour (any case), lowercased; null for anything else. */
+export function normalizeHex(value: string | null | undefined): string | null {
+  return typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value.trim()) ? value.trim().toLowerCase() : null;
+}
+
+const WHITE = "#ffffff";
+const BLACK = "#000000";
+const NEAR_BLACK = "#0b0f13";
+
+/** The brand-coloured tokens `brandTokens` writes. */
+export const BRAND_TOKEN_NAMES = ["accent", "on-accent", "accent-strong", "accent-soft", "accent-ink", "focus"] as const;
+
+/**
+ * A business's colour as the accent tokens for one theme: the colour itself
+ * (buttons, a picked time), the text on it (white or near-black, whichever
+ * reads; pure black for the few mid-tones where neither reaches 4.5:1), the
+ * hover shade, a soft tint over the theme's surface, and the colour as TEXT
+ * (`accent-ink`, also the focus ring), stepped darker (light) or lighter
+ * (dark) in 5% steps until it reads at 4.5:1 on the surface, the ground and
+ * the tint. So ANY colour an owner picks keeps every pair AA.
+ */
+export function brandTokens(hex: string, theme: "light" | "dark"): Record<string, string> {
+  const accent = normalizeHex(hex) ?? (theme === "dark" ? DARK_TOKENS.accent! : LIGHT_TOKENS.accent!);
+  const palette = theme === "dark" ? { ...LIGHT_TOKENS, ...DARK_TOKENS } : LIGHT_TOKENS;
+  const surface = palette.surface!;
+  const ground = palette.ground!;
+  let onAccent = contrastRatio(WHITE, accent) >= contrastRatio(NEAR_BLACK, accent) ? WHITE : NEAR_BLACK;
+  if (contrastRatio(onAccent, accent) < 4.5) onAccent = BLACK;
+  let strong = mixColors(accent, theme === "dark" ? WHITE : BLACK, 0.15);
+  if (contrastRatio(onAccent, strong) < 4.5) strong = mixColors(accent, onAccent === WHITE ? BLACK : WHITE, 0.15);
+  const soft = mixColors(surface, accent, 0.14);
+  const target = theme === "dark" ? WHITE : BLACK;
+  let ink = accent;
+  for (let step = 1; step <= 20; step += 1) {
+    if (contrastRatio(ink, surface) >= 4.5 && contrastRatio(ink, ground) >= 4.5 && contrastRatio(ink, soft) >= 4.5) break;
+    ink = mixColors(accent, target, step * 0.05);
+  }
+  return { accent, "on-accent": onAccent, "accent-strong": strong, "accent-soft": soft, "accent-ink": ink, focus: ink };
+}
+
+/**
+ * The inline style that brands a root: both themes' accent tokens as
+ * `--aisw-bl-*` (light) and `--aisw-bd-*` (dark); the stylesheet picks the
+ * set that matches the root's theme, so a branded picker is right before
+ * hydration and follows a live theme switch. Empty for no colour.
+ */
+export function brandStyle(hex: string | null | undefined): Record<string, string> {
+  const colour = normalizeHex(hex);
+  if (!colour) return {};
+  const out: Record<string, string> = {};
+  for (const [prefix, theme] of [["bl", "light"], ["bd", "dark"]] as const) {
+    for (const [name, value] of Object.entries(brandTokens(colour, theme))) out[`--aisw-${prefix}-${name}`] = value;
+  }
+  return out;
+}
+
+function brandDeclarations(prefix: "bl" | "bd"): string {
+  return BRAND_TOKEN_NAMES.map((name) => `--aisw-${name}: var(--aisw-${prefix}-${name});`).join(" ");
+}
+
 const CSS_TEXT = `
 :where(.aisw-root) { ${declareTokens(LIGHT_TOKENS)} }
 @media (prefers-color-scheme: dark) {
   :where(.aisw-root:not([data-theme="light"])) { ${declareTokens(DARK_TOKENS)} }
 }
 :where(.aisw-root[data-theme="dark"]) { ${declareTokens(DARK_TOKENS)} }
+:where(.aisw-root[data-brand]) { ${brandDeclarations("bl")} }
+@media (prefers-color-scheme: dark) {
+  :where(.aisw-root[data-brand]:not([data-theme="light"])) { ${brandDeclarations("bd")} }
+}
+:where(.aisw-root[data-brand][data-theme="dark"]) { ${brandDeclarations("bd")} }
 
 .aisw-root {
   position: relative; box-sizing: border-box; width: 100%; max-width: 100%;
@@ -217,7 +312,7 @@ const CSS_TEXT = `
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0;
 }
-.aisw-root a:not(.aisw-btn) { color: var(--aisw-accent); font-weight: 600; text-underline-offset: 3px; }
+.aisw-root a:not(.aisw-btn) { color: var(--aisw-accent-ink); font-weight: 600; text-underline-offset: 3px; }
 
 .aisw-body { padding: 20px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
 @media (max-width: 480px) { .aisw-body { padding: 16px; gap: 16px; } }
@@ -275,7 +370,7 @@ const CSS_TEXT = `
   background: var(--aisw-surface); color: var(--aisw-ink);
 }
 @media (max-width: 480px) { .aisw-days-step { height: 44px; } }
-.aisw-days-step:hover:not(:disabled) { border-color: var(--aisw-accent); color: var(--aisw-accent); }
+.aisw-days-step:hover:not(:disabled) { border-color: var(--aisw-accent); color: var(--aisw-accent-ink); }
 .aisw-days-step:disabled { opacity: .45; cursor: default; }
 .aisw-days {
   position: relative; display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 8px; margin: 0; list-style: none;
@@ -302,7 +397,7 @@ const CSS_TEXT = `
 .aisw-time {
   width: 100%; min-height: 44px; padding: 8px 6px; cursor: pointer; font-weight: 600; font-size: 15px;
   border: 1px solid var(--aisw-line-strong); border-radius: var(--aisw-radius-sm);
-  background: var(--aisw-surface); color: var(--aisw-accent); font-variant-numeric: tabular-nums;
+  background: var(--aisw-surface); color: var(--aisw-accent-ink); font-variant-numeric: tabular-nums;
 }
 .aisw-time:hover:not(:disabled) { border-color: var(--aisw-accent); background: var(--aisw-accent-soft); }
 .aisw-time[aria-pressed="true"] { background: var(--aisw-accent); border-color: var(--aisw-accent); color: var(--aisw-on-accent); }
@@ -336,7 +431,7 @@ const CSS_TEXT = `
 .aisw-btn-danger-outline { background: var(--aisw-surface); color: var(--aisw-danger); border-color: var(--aisw-line-strong); }
 .aisw-btn-danger-outline:hover:not(:disabled) { border-color: var(--aisw-danger); background: var(--aisw-danger-soft); }
 .aisw-btn-link {
-  background: transparent; color: var(--aisw-accent); padding: 8px 4px; min-height: 44px;
+  background: transparent; color: var(--aisw-accent-ink); padding: 8px 4px; min-height: 44px;
   text-decoration: underline; text-underline-offset: 3px;
 }
 .aisw-btn-block { width: 100%; }
@@ -414,7 +509,7 @@ textarea.aisw-input { min-height: 92px; resize: vertical; }
 .aisw-divider { border: 0; border-top: 1px solid var(--aisw-line); margin: 0; }
 .aisw-next { display: grid; gap: 8px; padding: 14px 16px; border-radius: var(--aisw-radius-sm); background: var(--aisw-ground); border: 1px solid var(--aisw-line); }
 .aisw-list { display: grid; gap: 6px; padding-left: 20px; list-style: disc; }
-.aisw-list li::marker { color: var(--aisw-accent); }
+.aisw-list li::marker { color: var(--aisw-accent-ink); }
 
 /* A private link to keep: field + copy button. */
 .aisw-copy { padding: 12px 14px; border-radius: var(--aisw-radius-sm); background: var(--aisw-ground); border: 1px solid var(--aisw-line); }

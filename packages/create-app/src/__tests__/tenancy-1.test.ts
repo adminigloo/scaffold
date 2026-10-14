@@ -195,9 +195,13 @@ describe("the generated project's wiring", () => {
 
   it("gives a companies project the company pages, and a single business none of them", async () => {
     const companies = await planEmit(TEMPLATE_DIR, "/out", COMPANIES);
-    for (const page of ["onboarding", "dashboard", join("settings", "company"), join("t", "[slug]")]) {
+    for (const page of ["onboarding", "dashboard", join("settings", "company")]) {
       expect(companies.files.has(join("app", "(site)", page, "page.tsx")), page).toBe(true);
     }
+    // The company's public face is in its own route group, outside the site's
+    // chrome (Tenancy 2a review T2A-BO-01).
+    expect(companies.files.has(join("app", "(company)", "t", "[slug]", "page.tsx"))).toBe(true);
+    expect(companies.files.has(join("app", "(site)", "t", "[slug]", "page.tsx"))).toBe(false);
     const single = await planEmit(TEMPLATE_DIR, "/out", SINGLE);
     expect(single.files.has(join("app", "(site)", "onboarding", "page.tsx"))).toBe(false);
     expect(single.files.has(join("app", "(site)", "settings", "team", "page.tsx"))).toBe(true);
@@ -288,10 +292,12 @@ describe("what the buyer reads first (CA-10, CA-11, TB-DEPLOY-14, T1-10, T1-12)"
     }
   });
 
-  it("says what companies mode does not do yet, and where a suspended company writes", () => {
+  it("says where a suspended company writes — and, with field service, that each company runs it (Tenancy 2a)", () => {
     const out = nextSteps(COMPANIES, "/out/x");
-    expect(out).toContain("still run by your own staff");
+    expect(out).not.toContain("still run by your own staff");
     expect(out).toContain("SUPPORT_EMAIL");
+    const withFeatures = nextSteps(answers({ ...COMPANIES, includeScheduling: true, includeInvoicing: true }), "/out/x");
+    expect(withFeatures).toContain("Each company runs its own schedule, invoices at /app");
     expect(nextSteps(answers({ includeEmail: false }), "/out/x")).toContain("Invitations are copy-a-link until email is added");
   });
 

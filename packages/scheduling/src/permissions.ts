@@ -47,7 +47,11 @@ export const schedulingPermissions = {
     description:
       "Open their own crew's day on a phone — the stops, directions and the customer's phone — and mark each stop started, done or couldn't-do, with an undo. Nothing else: not the calendar, not other crews' routes, not settings.",
     category: "Schedule",
-    defaultFor: ["owner", "admin", "member"],
+    // "crew" is the role scheduling contributes to a project's company roles
+    // (SCHEDULING_CREW_ROLE, Tenancy 2a). A `defaultFor` naming a template
+    // the project never seeds grants nothing, so a project without the crew
+    // role is unaffected.
+    defaultFor: ["owner", "admin", "member", "crew"],
   },
   "schedule.view": {
     label: "View the schedule",

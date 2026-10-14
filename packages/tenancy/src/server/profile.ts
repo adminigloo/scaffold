@@ -63,7 +63,8 @@ export async function updateCompanyProfile(
   ctx: Ctx,
   input: Actor & { readonly name?: string; readonly slug?: string },
 ): Promise<CompanyView> {
-  return ctx.db.transaction(async (raw) => {
+  let changed: ("name" | "slug")[] = [];
+  const view = await ctx.db.transaction(async (raw) => {
     const tx = raw as unknown as TenancyDb;
     const company = requireLive(ctx, await lockCompany(tx, input.tenantId));
     const facts = await requireActor(ctx, tx, { userId: input.actorUserId, tenantId: input.tenantId }, { permission: "tenant.edit" });
@@ -148,8 +149,13 @@ export async function updateCompanyProfile(
       metadata: { from: { name: company.name, slug: company.slug }, to: { name, slug } },
       request: input.request ?? null,
     });
+    changed = [...(name !== company.name ? (["name"] as const) : []), ...(slug !== company.slug ? (["slug"] as const) : [])];
     return companyView({ ...company, name, slug }, { userId: input.actorUserId, role: roleKeyOf(facts.role?.key) });
   });
+  // Tenancy 2a: after commit, only when something changed (links built from
+  // the web address, emails signed with the name, read it fresh next time).
+  if (changed.length > 0) ctx.emit({ type: "company.profile.updated", tenantId: view.id, changed, by: input.actorUserId });
+  return view;
 }
 
 async function writeBranding(tx: TenancyDb, tenantId: string, branding: TenantBranding): Promise<void> {
@@ -173,7 +179,7 @@ export async function updateBranding(
       throw ctx.fail("invalid", { issues: [{ path: ["brandColor"], message: "Enter a colour like #0f766e." }] });
     }
   }
-  return ctx.db.transaction(async (raw) => {
+  const result = await ctx.db.transaction(async (raw) => {
     const tx = raw as unknown as TenancyDb;
     const company = requireLive(ctx, await lockCompany(tx, input.tenantId));
     const facts = await requireActor(ctx, tx, { userId: input.actorUserId, tenantId: input.tenantId }, { permission: "tenant.edit" });
@@ -195,6 +201,8 @@ export async function updateBranding(
       brand: report,
     };
   });
+  ctx.emit({ type: "company.branding.updated", tenantId: result.company.id, by: input.actorUserId });
+  return result;
 }
 
 const LOGO_TYPES: Readonly<Record<string, { ext: string; magic: (b: Uint8Array) => boolean }>> = {
@@ -272,6 +280,7 @@ export async function setLogo(
     await store.delete(stored.key).catch((e: unknown) => ctx.report(e, "logo.cleanup"));
     throw error;
   }
+  ctx.emit({ type: "company.branding.updated", tenantId: view.id, by: input.actorUserId });
   if (previousKey && previousKey !== stored.key) {
     await store.delete(previousKey).catch((e: unknown) => ctx.report(e, "logo.delete-previous"));
   }
@@ -300,6 +309,7 @@ export async function removeLogo(ctx: Ctx, input: Actor): Promise<CompanyView> {
     });
     return companyView({ ...company, branding }, { userId: input.actorUserId, role: roleKeyOf(facts.role?.key) });
   });
+  ctx.emit({ type: "company.branding.updated", tenantId: view.id, by: input.actorUserId });
   if (previousKey && ctx.logos) await ctx.logos.delete(previousKey).catch((e: unknown) => ctx.report(e, "logo.delete"));
   return view;
 }

@@ -69,6 +69,17 @@ export interface RunPhotoTakeoffDeps {
   settings?: EstimatorSettings;
   /** The daily caps on photos kept for visitors (`DEFAULT_PUBLIC_PHOTO_LIMITS`). */
   photoLimits?: PublicPhotoLimits;
+  /**
+   * The most a day of photo reading may cost across EVERY business on this
+   * site, in cents (Tenancy 2a review SEC-2A-07). Each business's own budget
+   * (held under the site's per-business ceiling, D14) protects that business;
+   * this protects the platform's AI bill from the sum of them — on a site
+   * where anyone can sign up a company, a per-company dollar a day is a dollar
+   * for every company somebody bothers to create. Once today's readings across
+   * the site would pass it, every business's reading pauses until tomorrow
+   * (UTC) and customers are asked to count instead. Default: no site ceiling.
+   */
+  siteDailyBudgetCents?: number;
   onError?: (error: unknown, context: { tenantId: string; step: string }) => void;
 }
 
@@ -252,6 +263,10 @@ export async function runPhotoTakeoff(
   if (existing && (existing.status === "read" || existing.status === "unreadable")) return fromRow(existing, true);
 
   const dayStart = utcDayStart(now);
+  const siteBudgetMicros =
+    typeof deps.siteDailyBudgetCents === "number" && Number.isFinite(deps.siteDailyBudgetCents) && deps.siteDailyBudgetCents >= 0
+      ? Math.trunc(deps.siteDailyBudgetCents) * 10_000
+      : null;
   const maxTokens = Math.max(50, Math.min(400, Math.trunc(deps.maxTokens ?? 150)));
   const ceiling = maxTakeoffCallMicros(model, maxTokens);
 
@@ -276,6 +291,10 @@ export async function runPhotoTakeoff(
   let gate: Gate;
   try {
     gate = await db.transaction(async (tx): Promise<Gate> => {
+      // With a site ceiling, every business's claim is serialised on ONE lock
+      // too, so two businesses' readings can't both pass the site sum at once.
+      // The model call itself is outside this transaction; only the claim waits.
+      if (siteBudgetMicros !== null) await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"estimator-takeoff:site"}))`);
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`estimator-takeoff:${input.tenantId}`}))`);
 
       // 10. Per requester, today.
@@ -301,6 +320,14 @@ export async function runPhotoTakeoff(
         micros: number | string;
       }>;
       if (Number(spent?.micros ?? 0) + ceiling > settings.aiDailyBudgetCents * 10_000) return { kind: "paused" };
+      // 11b. The SITE's day (SEC-2A-07): every business's readings today.
+      if (siteBudgetMicros !== null) {
+        const [site] = (await tx
+          .select({ micros: sql<number>`coalesce(sum(${estimatorTakeoffs.costMicros}), 0)::bigint` })
+          .from(estimatorTakeoffs)
+          .where(gte(estimatorTakeoffs.createdAt, dayStart))) as Array<{ micros: number | string }>;
+        if (Number(site?.micros ?? 0) + ceiling > siteBudgetMicros) return { kind: "paused" };
+      }
 
       // 12. Claim the row: one model call per photo, even under a double tap.
       step = "claim";

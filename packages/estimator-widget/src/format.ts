@@ -98,6 +98,27 @@ export function formatDateTime(instant: string | null | undefined, locale = "en-
 }
 
 /** The first word of a name when it looks like one ("Pat" from "Pat Lee"), else "". */
+/**
+ * "Mountain Time (MST)" for "America/Denver" (Tenancy 2a review T2A-BO-14):
+ * the name an owner knows, the same words Schedule settings uses, instead of
+ * the zone's database id. An engine that won't name it gets the id with
+ * spaces ("America/Denver" → "America/Denver"; "America/New_York" → "America/New York").
+ */
+export function zoneLabel(zone: string, at: Date = new Date(), locale = "en-US"): string {
+  const part = (style: "short" | "longGeneric"): string => {
+    try {
+      const parts = new Intl.DateTimeFormat(locale, { timeZone: zone, timeZoneName: style } as Intl.DateTimeFormatOptions).formatToParts(at);
+      return parts.find((p) => p.type === "timeZoneName")?.value ?? "";
+    } catch {
+      return "";
+    }
+  };
+  const short = part("short");
+  const generic = part("longGeneric");
+  if (generic && short && generic !== short && !/^(GMT|UTC)[+−-]/.test(generic)) return `${generic} (${short})`;
+  return generic || short || zone.replace(/_/g, " ");
+}
+
 export function firstName(name: string): string {
   const first = name.trim().split(/\s+/)[0] ?? "";
   // Letters, apostrophes and hyphens only: "www.spam.com" typed as a name is

@@ -111,6 +111,38 @@ export const ADMIN_COMPANIES_DEFAULT_KIND = "${companies ? "org" : "all"}" as co
  * a server page, and a function can't cross that line.
  */
 export const ADMIN_COMPANY_DETAIL_HREF = "/admin/companies/{id}";
+${companies ? renderCompanyPageConstants(answers) : ""}`;
+}
+
+/**
+ * The companies-only constants Tenancy 2a adds: the public pages every
+ * company gets (a generated list — a feature this project doesn't have
+ * contributes no entry), and where a feature's settings screen sends the owner
+ * to change the company-owned fields it shows read-only.
+ */
+function renderCompanyPageConstants(answers: Answers): string {
+  const noun = tenantLabel(answers).toLowerCase();
+  const pages = [
+    ...(answers.includeEstimator ? [`  { path: "/estimate", label: "Get an instant estimate" },`] : []),
+    ...(answers.includeScheduling ? [`  { path: "/book-visit", label: "Book a visit" },`] : []),
+  ];
+  return `
+/**
+ * The public pages every ${noun} has under its web address (Tenancy 2a), as the
+ * buttons on /t/{web address}. Generated from what this project installed: a
+ * feature it doesn't have contributes no entry, so no page asks whether one
+ * exists.
+ */
+export const PUBLIC_COMPANY_PAGES: readonly { readonly path: string; readonly label: string }[] = ${
+    pages.length === 0 ? "[]" : `[\n${pages.join("\n")}\n]`
+  };
+
+/**
+ * Where a feature's settings screen sends the owner to change what belongs to
+ * the ${noun} — its name, time zone and contact — which every feature shows
+ * read-only and reads from one place (Tenancy 2a, D5–D6).
+ */
+export const COMPANY_DETAILS_HREF = "/settings/company#details";
 `;
 }
 
@@ -119,23 +151,41 @@ export const ADMIN_COMPANY_DETAIL_HREF = "/admin/companies/{id}";
 // ---------------------------------------------------------------------------
 
 export function renderTenantSettings(answers: Answers): string {
-  return `import { companySettings, defineTenantSettings } from "${answers.scope}/tenancy";
+  const noun = tenantLabel(answers).toLowerCase();
+  // Invoicing's details are the one feature section (Tenancy 2a, D15): flat
+  // fields an owner fills once, and invoicing has no settings table of its
+  // own. Scheduling's and the estimator's settings are lists (services, crews,
+  // the price book's rules) with their own screens. Companies only: a single
+  // business has no company settings page to show it on.
+  const invoicing = companiesMode(answers) && answers.includeInvoicing;
+  const imports = invoicing
+    ? `import { companySettings, defineSettingsFragment, defineTenantSettings } from "${answers.scope}/tenancy";
+import { invoicingSettingsFragment } from "${answers.scope}/invoicing";`
+    : `import { companySettings, defineTenantSettings } from "${answers.scope}/tenancy";`;
+  const sections = invoicing ? "companySettings, defineSettingsFragment(invoicingSettingsFragment)" : "companySettings";
+  return `${imports}
 
 /**
- * Every settings section a ${tenantLabel(answers).toLowerCase()} has — the TYPED registry other
- * packages add sections to.
+ * Every settings section a ${noun} has — the TYPED registry other packages add
+ * sections to, all shown on the ${noun} settings page and filled in once.
  *
- * Tenancy 1 ships one section, \`company\` (time zone, contact email, phone and
- * address). Tenancy 2 adds the feature packages' own sections here — the
- * scheduling package's hours, the estimator's business name — and each reads
- * its values from the same store, so the owner fills them in once, on the
- * company settings page.
+ *   company    time zone, contact email, phone and address (Tenancy 1). Every
+ *              feature READS these — the schedule, the estimate page, the
+ *              invoices and every email show the ${noun}'s own details — so
+ *              nothing is typed twice and nothing drifts (Tenancy 2a, D5).${
+    invoicing
+      ? `
+ *   invoicing  "How customers pay you", how many days until an invoice is
+ *              due, and a footer note: shown on every invoice and in the
+ *              invoice email (/settings/company#invoicing).`
+      : ""
+  }
  *
  * Generated, like the permission catalog: which sections exist depends on
  * which packages were installed, and an emitted file holding an \`if\` about a
  * package it can't see is exactly what the generator refuses to write.
  */
-export const tenantSettings = defineTenantSettings([companySettings]);
+export const tenantSettings = defineTenantSettings([${sections}]);
 `;
 }
 
@@ -155,21 +205,55 @@ export function renderSetupChecklist(answers: Answers): string {
 export const setupChecklist = defineSetupChecklist([]);
 `;
   }
-  return `import { defineSetupChecklist } from "${answers.scope}/tenancy";
-import { tenancyChecklistItems } from "${answers.scope}/tenancy/server";
-
+  const scope = answers.scope;
+  // Each installed feature adds its own items (Tenancy 2a), linking to the
+  // card on its own screen that does the job. Ordered by each item's own
+  // `order`: business details 10, team 20, logo and colour 30, booking 40,
+  // crews 50, prices 60, estimate settings 70, invoice details 80, website
+  // embed 90.
+  const featureImports = [
+    ...(answers.includeScheduling ? [`import { schedulingChecklistItems } from "${scope}/scheduling";`] : []),
+    ...(answers.includeEstimator ? [`import { estimatorChecklistItems } from "${scope}/estimator";`] : []),
+    ...(answers.includeInvoicing ? [`import { invoicingChecklistItems } from "${scope}/invoicing";`] : []),
+  ];
+  const featureLines = [
+    ...(answers.includeScheduling
+      ? [
+          `  // What customers can book, and a crew with hours (a booking page offers no time until one works).`,
+          `  ...schedulingChecklistItems({ booking: "/app/schedule/settings#booking", crews: "/app/schedule/settings#crews" }),`,
+        ]
+      : []),
+    ...(answers.includeEstimator
+      ? [
+          `  // Prices, the tax rate and quote rules (instant estimates stay closed until saved once), the website embed.`,
+          `  ...estimatorChecklistItems({ priceBook: "/app/price-book", settings: "/app/estimates/settings", embed: "/app/estimates/settings#embed" }),`,
+        ]
+      : []),
+    ...(answers.includeInvoicing
+      ? [
+          `  // How customers pay — on every invoice and in the invoice email.`,
+          `  ...invoicingChecklistItems({ details: "/settings/company#invoicing" }),`,
+        ]
+      : []),
+  ];
+  return `import { defineSetupChecklist } from "${scope}/tenancy";
+import { tenancyChecklistItems } from "${scope}/tenancy/server";
+${featureImports.length > 0 ? `${featureImports.join("\n")}\n` : ""}
 /**
  * The setup checklist a new owner sees on their dashboard: add your business
- * details, invite your team, add your logo and colour.
+ * details, invite your team, add your logo and colour${
+    featureLines.length > 0 ? " — and what each feature needs before customers can use it (Tenancy 2a)" : ""
+  }.
  *
- * Other packages ADD items here (Tenancy 2: "Set your hours" from
- * scheduling). Each item knows when it is done by itself; the owner can mark
- * one "not needed" and undo that; a hidden list comes back on its own when a
- * new item is added. Generated, for the settings registry's reason.
+ * Each item knows when it is done by itself (a row in the ${tenantLabel(answers).toLowerCase()}'s own
+ * tables); the owner can mark one "not needed" and undo that; a hidden list
+ * comes back on its own when a new item is added. Someone whose role can't do
+ * an item doesn't see it (a crew member sees none). Generated, for the
+ * settings registry's reason: each line is here only with its feature.
  */
 export const setupChecklist = defineSetupChecklist([
   ...tenancyChecklistItems({ companySettings: "/settings/company", team: "/settings/team" }),
-]);
+${featureLines.length > 0 ? `${featureLines.join("\n")}\n` : ""}]);
 `;
 }
 
@@ -182,6 +266,25 @@ export function renderTenancyServer(answers: Answers): string {
   const companies = companiesMode(answers);
   const mode = companies ? "companies" : "personal";
   const reserved = projectReservedSlugs(answers);
+  // TENANCY 2a, companies only: the project's own role set (Crew with
+  // scheduling), and the hook that gives each new company its features'
+  // first settings and email templates. Behind a DYNAMIC import, on purpose:
+  // company-setup imports the feature glue, which imports this module, and a
+  // static import would be a load-time cycle in which one side reads the
+  // other half-initialised.
+  const companyOptions = companies
+    ? `
+  // The roles a company's people can hold: tenancy's four, plus any a
+  // feature adds (src/permissions/roles.ts — Crew, with scheduling).
+  roles: TENANT_ROLES,
+  // After each change commits: a new company gets its features' first
+  // settings and email templates; a new time zone moves its schedule's
+  // reminders at once. Imported when first needed, NOT at the top of this
+  // file — company-setup imports the feature glue, which imports this module,
+  // and a static import would be a load-time cycle in which one side reads
+  // the other half-initialised. Never throws (onCompanyEvent logs).
+  onEvent: (event) => import("./company-setup").then((m) => m.onCompanyEvent(event)),`
+    : "";
   return `import { resolveAppEnv } from "${scope}/env";
 import { auditEntry } from "${scope}/observability";
 import { auditLog } from "${scope}/observability/schema";
@@ -189,7 +292,7 @@ import type { BootstrapPolicy } from "${scope}/permissions";
 import { createTenancyService, type TenancyAuditSink } from "${scope}/tenancy/server";
 import { db } from "@/db";
 import { env } from "@/env";
-import { tenantCatalog } from "@/permissions/catalog";
+import { tenantCatalog } from "@/permissions/catalog";${companies ? `\nimport { TENANT_ROLES } from "@/permissions/roles";` : ""}
 import { NOUN } from "@/tenancy";
 import { auditRegistry } from "./audit";
 import { log } from "./logger";
@@ -265,7 +368,7 @@ export const tenancy = createTenancyService({
   // The platform's own name is not a customer's web address (review T1-07).
   reservedSlugs: ${JSON.stringify(reserved)},
   invitations: { expiresInHours: INVITATION_EXPIRY_HOURS },
-  audit: auditSink,
+  audit: auditSink,${companyOptions}
   onEventError: (error, event) => {
     log.error({ err: error, event: event.type }, "a tenancy event listener failed");
   },
@@ -503,7 +606,7 @@ export function renderCompanySwitcherSlot(answers: Answers): string {
     : `session={session} baseUrl={TENANCY_API} noun={NOUN} reloadHref={AFTER_AUTH_PATH} createHref={null} settingsHref={null}`;
   return `import type { Principal } from "${scope}/auth";
 import { CompanySwitcher } from "${scope}/tenancy-widget";
-import { sessionToWire } from "${scope}/tenancy/server";
+import { sessionToWire, type SessionState } from "${scope}/tenancy/server";
 import { currentPrincipal } from "@/server/auth";
 import { tenancy } from "@/server/tenancy";
 import { AFTER_AUTH_PATH, NOUN, TENANCY_API } from "@/tenancy";
@@ -524,14 +627,21 @@ import { AFTER_AUTH_PATH, NOUN, TENANCY_API } from "@/tenancy";
  */
 export async function CompanySwitcherSlot({
   principal: given,
+  session: resolved,
 }: {
   /** The header has usually loaded the principal already; pass it to save the query. */
   readonly principal?: Principal | null;
+  /**
+   * The header resolves the session ONCE (it needs the active ${tenantLabel(answers).toLowerCase()} for its
+   * own permission-filtered links); pass it so this slot doesn't resolve it
+   * again. Absent: the slot resolves it itself.
+   */
+  readonly session?: SessionState | null;
 } = {}) {
   try {
     const principal = given === undefined ? await currentPrincipal() : given;
     if (!principal) return null;
-    const session = sessionToWire(await tenancy.resolveSession({ userId: principal.userId }));
+    const session = sessionToWire(resolved ?? (await tenancy.resolveSession({ userId: principal.userId })));
     return <CompanySwitcher ${props} />;
   } catch {
     return null;

@@ -5,17 +5,20 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
 // create-app's OWN decisions for a generated --estimator project (type-only
-// imports, so this loads without the package): the tenant, the staff key each
-// estimator permission maps to, the links the emails carry, what the staff
-// screens are told about email, the model that reads a photo, and how a visit
-// booked from an estimate is listed on it. Used as they are, not copied.
+// imports, so this loads without the package): the links the emails carry,
+// what the staff screens are told about email, the model that reads a photo,
+// and how a visit booked from an estimate is listed on it — from the module
+// both modes share — and the staff key each estimator permission maps to,
+// from the single-business module (Tenancy 2a moved everything that names the
+// one fixed business there; this scenario IS a single business). Used as they
+// are, not copied.
 import {
-  ESTIMATOR_STAFF_KEYS,
   estimatorDeliveryStatus,
   estimatorLinks,
   linkedVisit,
   takeoffModelFor,
 } from "../../packages/create-app/overlays/estimator/src/server/estimator-config.ts";
+import { ESTIMATOR_STAFF_KEYS } from "../../packages/create-app/overlays/estimator-single/src/server/estimator-staff.ts";
 
 /**
  * The fixture behind e2e/tests/estimator-scenario.spec.ts: a REAL estimator

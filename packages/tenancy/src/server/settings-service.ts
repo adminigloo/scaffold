@@ -90,7 +90,8 @@ export async function updateSettings(
     readonly request?: RequestFacts;
   },
 ): Promise<SettingsSectionWire> {
-  return ctx.db.transaction(async (raw) => {
+  let saved: { tenantId: string; section: string; changed: string[] } | null = null;
+  const section = await ctx.db.transaction(async (raw) => {
     const tx = raw as unknown as TenancyDb;
     const company = requireLive(ctx, await lockCompany(tx, input.tenantId));
     const facts = await requireActor(ctx, tx, { userId: input.actorUserId, tenantId: input.tenantId });
@@ -121,9 +122,15 @@ export async function updateSettings(
         metadata: { section: fragment.key, changed },
         request: input.request ?? null,
       });
+      saved = { tenantId: company.id, section: fragment.key, changed };
     }
     return sectionWire(fragment, next, true);
   });
+  // Tenancy 2a: after commit, with the same `changed` list as the audit row.
+  // Scheduling converges its zone on section "company" + "timeZone" (D5).
+  const done = saved as { tenantId: string; section: string; changed: string[] } | null;
+  if (done) ctx.emit({ type: "company.settings.updated", tenantId: done.tenantId, section: done.section, changed: done.changed, by: input.actorUserId });
+  return section;
 }
 
 /** Typed values for other packages' server code (Tenancy 2): NO permission check. */

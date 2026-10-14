@@ -217,6 +217,34 @@ export default defineConfig({
           exclude: ["**/node_modules/**", "**/dist/**"],
         },
       },
+      {
+        /**
+         * The SINGLE-BUSINESS halves of the two overlays above (Tenancy 2a):
+         * the one fixed business, the staff key each feature permission is
+         * checked against, and scheduling's crew-only staff role. They moved
+         * into `-single` overlays so a companies project never carries a
+         * fixed tenant — and since the maximal configuration the other sweeps
+         * plan is a companies project, without this project these files
+         * would run in no pipeline of this package's own.
+         */
+        resolve: {
+          alias: [
+            { find: /^__SCOPE__\/scheduling$/, replacement: here("../scheduling/src/index.ts") },
+            { find: /^__SCOPE__\/estimator$/, replacement: here("../estimator/src/index.ts") },
+            { find: /^zod$/, replacement: here("../scheduling/node_modules/zod/index.js") },
+            {
+              find: /^@\/server\/scheduling-staff$/,
+              replacement: here("./overlays/scheduling-single/src/server/scheduling-staff.ts"),
+            },
+          ],
+        },
+        test: {
+          name: "field-service-single",
+          testTimeout,
+          include: ["overlays/scheduling-single/**/*.test.ts", "overlays/estimator-single/**/*.test.ts"],
+          exclude: ["**/node_modules/**", "**/dist/**"],
+        },
+      },
     ],
   },
 });

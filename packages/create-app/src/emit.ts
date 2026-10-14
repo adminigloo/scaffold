@@ -40,6 +40,38 @@ import {
 } from "./tenancy-proofs-emit.js";
 import { renderProjectReadme } from "./readme-emit.js";
 import { assertNoPrerenderedAuthRoutes } from "./prerender.js";
+import {
+  COMPANY_CRONS_MARKER,
+  COMPANY_EMAIL_MARKER,
+  DEPLOYMENT_SINGLE_REGIONS,
+  PRO_CRONS_MARKER,
+  replaceDeploymentRegion,
+  hasFieldService,
+  renderDeploymentCompanyNotes,
+  renderCommsCron,
+  renderCommsGlue,
+  renderCompanyLinks,
+  renderCompanyRoutes,
+  renderCompanySetup,
+  renderEstimatorFeaturesCompanies,
+  renderEstimatorNotifyCompanies,
+  renderInvoicingGlue,
+  renderPublicCompanyGate,
+  renderSchedulingNotifyCompanies,
+  renderStaffAccess,
+  renderTenantRoles,
+} from "./features-emit.js";
+import {
+  renderCompanyCronsTest,
+  renderCompanyEmailTest,
+  renderCompanyRows,
+  renderFeatureIsolationTest,
+} from "./feature-proofs-emit.js";
+
+/** A companies project (`--tenant-noun` anything but `none`): each company runs the features itself. */
+function isCompanies(answers: Answers): boolean {
+  return answers.tenantNoun !== "none";
+}
 
 export interface EmitPlan {
   readonly targetDir: string;
@@ -253,7 +285,24 @@ export async function planEmit(
   // other place a buyer met it was the generator's terminal output.
   const deployment = files.get("DEPLOYMENT.md");
   if (deployment !== undefined) {
-    files.set("DEPLOYMENT.md", deployment.split(DEPLOY_REQUIRED_ENV_MARKER).join(renderDeployRequiredEnv(answers)));
+    // And what a companies project's crons and emails do (Tenancy 2a): every
+    // active company per run, and each company's emails under its own name —
+    // generated, so a single business's copy says nothing about companies.
+    const notes = renderDeploymentCompanyNotes(answers);
+    // And, in a companies project, its own words in place of the template's
+    // single-business paragraphs (/admin paths, the staff Crew role, the zone
+    // variables), so the file never contradicts itself (review TB-6).
+    let text = deployment
+      .split(DEPLOY_REQUIRED_ENV_MARKER)
+      .join(renderDeployRequiredEnv(answers))
+      .split(COMPANY_CRONS_MARKER)
+      .join(notes.crons)
+      .split(COMPANY_EMAIL_MARKER)
+      .join(notes.email)
+      .split(PRO_CRONS_MARKER)
+      .join(notes.proCrons);
+    for (const region of DEPLOYMENT_SINGLE_REGIONS) text = replaceDeploymentRegion(text, region, notes.regions[region]);
+    files.set("DEPLOYMENT.md", text);
   }
 
   files.set("package.json", renderPackageJson(answers));
@@ -303,6 +352,24 @@ export async function planEmit(
   if (answers.includeComms) {
     files.set(join("src", "server", "comms-senders.ts"), renderCommsSenders(answers));
     files.set(join("src", "server", "comms-hooks.ts"), renderCommsHooks(answers));
+    // The Messages console's glue and the queue drain (Tenancy 2a). Both
+    // generated: the console runs on the package's handlers in both modes
+    // (D3) with a different authorize per mode, and the cron drains every
+    // active company in a companies project and the one business otherwise.
+    files.set(join("src", "server", "comms.ts"), renderCommsGlue(answers));
+    files.set(join("app", "api", "cron", "comms", "route.ts"), renderCommsCron(answers));
+  }
+  // The ledger's glue (Tenancy 2a, D3): the package's handlers in both modes,
+  // with the business per company or the fixed one, and the invoice email
+  // only where comms is there to send it — so it is rendered, not copied.
+  if (answers.includeInvoicing) {
+    files.set(join("src", "server", "invoicing.ts"), renderInvoicingGlue(answers));
+  }
+  // The staff ladder invoicing and messages climb in a single-business
+  // project: one key per job (D12). A companies project checks company roles
+  // instead (src/server/company-routes.ts), so it never gets this file.
+  if (!isCompanies(answers) && (answers.includeInvoicing || answers.includeComms)) {
+    files.set(join("src", "server", "staff-access.ts"), renderStaffAccess(answers));
   }
   // Who hears about each visit. Generated because the answer is "the comms
   // listener" with --comms and "nobody" without it, and the routes that call
@@ -334,6 +401,38 @@ export async function planEmit(
   files.set(join("src", "server", "tenancy-logo.ts"), renderTenancyLogo(answers));
   files.set(join("src", "components", "CompanySwitcherSlot.tsx"), renderCompanySwitcherSlot(answers));
   files.set(join("src", "components", "CompanyGate.tsx"), renderCompanyGate(answers));
+  // The roles a company's people can hold, composed once (Tenancy 2a, D9):
+  // the four core roles, plus Crew from scheduling in a companies project.
+  // Read by the tenancy service AND by the seed, in both modes.
+  files.set(join("src", "permissions", "roles.ts"), renderTenantRoles(answers));
+  // EACH COMPANY RUNS THE FEATURES ITSELF (Tenancy 2a), companies only: whose
+  // request a feature route is (the company id or web address in its path),
+  // each company's links on this deployment, its first-time setup, and the
+  // gate every public company page renders through. A single-business project
+  // has none of these — its features run for the one business.
+  if (isCompanies(answers)) {
+    files.set(join("src", "server", "company-routes.ts"), renderCompanyRoutes(answers));
+    files.set(join("src", "server", "company-links.ts"), renderCompanyLinks(answers));
+    files.set(join("src", "server", "company-setup.ts"), renderCompanySetup(answers));
+    files.set(join("src", "components", "PublicCompanyGate.tsx"), renderPublicCompanyGate(answers));
+  }
+  // The feature proofs (Tenancy 2a, section 12), companies only and per
+  // installed feature: every feature ROUTE refuses another company's ids,
+  // every cron serves every active company and skips a suspended one, and
+  // each company's email goes out under its own name and reply-to.
+  if (isCompanies(answers) && hasFieldService(answers)) {
+    files.set(join("src", "test", "company-rows.ts"), renderCompanyRows(answers));
+    files.set(
+      join("src", "server", "__tests__", "feature-isolation.test.ts"),
+      renderFeatureIsolationTest(answers),
+    );
+  }
+  if (isCompanies(answers) && (answers.includeScheduling || answers.includeEstimator || answers.includeComms)) {
+    files.set(join("src", "server", "__tests__", "company-crons.test.ts"), renderCompanyCronsTest(answers));
+  }
+  if (isCompanies(answers) && answers.includeComms && answers.includeEmail) {
+    files.set(join("src", "server", "__tests__", "company-email.test.ts"), renderCompanyEmailTest(answers));
+  }
   // The proofs every project runs on itself, in `pnpm test` (PGlite, no
   // database to set up): procedure scopes, company isolation, provisioning.
   files.set(
@@ -1549,8 +1648,12 @@ export function renderEnvModule(answers: Answers): string {
     runtime.push("CRON_SECRET: process.env.CRON_SECRET");
   }
   if (answers.includeComms) {
+    // In a companies project the crons serve EVERY company (Tenancy 2a), so
+    // the one secret holds back every company's reminders — said so here,
+    // where /setup reads it.
+    const whose = answers.tenantNoun === "none" ? "" : ` for every ${tenantLabel(answers).toLowerCase()}`;
     features.push(
-      `{ name: "Scheduled messages", vars: ["CRON_SECRET"], disables: "The comms cron: /api/cron/comms answers 401 until the secret is set and the scheduler sends it. Templates and the log are unaffected; nothing drains the queue automatically." }`,
+      `{ name: "Scheduled messages", vars: ["CRON_SECRET"], disables: "The comms cron: /api/cron/comms answers 401 until the secret is set and the scheduler sends it. Templates and the log are unaffected; nothing drains the queue automatically${whose}." }`,
     );
   }
 
@@ -1803,6 +1906,52 @@ export const PACKAGE_PERMISSION_FRAGMENTS: readonly PackagePermissionFragment[] 
     installedBy: (answers) => answers.includeAi,
     why: "A customer using the AI features inside their own account.",
   },
+  // THE FIELD-SERVICE FEATURES, IN A COMPANIES PROJECT (Tenancy 2a, D9). Each
+  // company runs its own schedule, price book, ledger and messages, so the
+  // keys belong to the company's roles — the defaults name owner, admin,
+  // member, viewer and (scheduling) crew. A single-business project keeps
+  // these features on the staff ladder instead (one staff key per job,
+  // mapped in its glue), so it never spreads these fragments.
+  {
+    package: "scheduling",
+    binding: "schedulingPermissions",
+    scope: "tenant",
+    installedBy: (answers) => answers.tenantNoun !== "none" && answers.includeScheduling,
+    why:
+      "Each company runs its own schedule, so these are company keys: owners " +
+      "and admins set up crews and hours, members book and move visits, a " +
+      "viewer looks, and Crew opens only their own route.",
+  },
+  {
+    package: "estimator",
+    binding: "estimatorPermissions",
+    scope: "tenant",
+    installedBy: (answers) => answers.tenantNoun !== "none" && answers.includeEstimator,
+    why:
+      "Each company runs its own price book and quotes, so these are company " +
+      "keys: owners and admins change prices and settings and see costs, " +
+      "members work estimates and send quotes, a viewer looks.",
+  },
+  {
+    package: "invoicing",
+    binding: "invoicingPermissions",
+    scope: "tenant",
+    installedBy: (answers) => answers.tenantNoun !== "none" && answers.includeInvoicing,
+    why:
+      "Each company keeps its own ledger, so these are company keys: members " +
+      "raise and send invoices and record payments, owners and admins also " +
+      "reverse them, a viewer looks.",
+  },
+  {
+    package: "comms",
+    binding: "commsPermissions",
+    scope: "tenant",
+    installedBy: (answers) => answers.tenantNoun !== "none" && answers.includeComms,
+    why:
+      "Each company has its own messages, so these are company keys: everyone " +
+      "but crew reads them, owners and admins change the wording and send " +
+      "what's due.",
+  },
 ];
 
 export class PermissionScopeMismatchError extends Error {
@@ -1884,11 +2033,18 @@ export function renderPermissionsCatalog(answers: Answers): string {
   const staffFragments = inScope("staff");
   const tenantFragments = inScope("tenant");
 
+  // THE STAFF KEYS BELOW ARE A SINGLE BUSINESS'S (Tenancy 2a, D12): there the
+  // field-service features run for the one business on the staff ladder. In a
+  // companies project each company runs them on its own roles — the package
+  // fragments above, in the tenant catalog — and the platform's staff have no
+  // schedule, price book, ledger or messages of their own.
+  const single = answers.tenantNoun === "none";
+
   // Scheduling's staff keys, one per job, so a crew member can be given their
   // route without the office's full power (the crew role holds only
-  // `staff.schedule.route`). src/server/scheduling-config.ts maps the
+  // `staff.schedule.route`). src/server/scheduling-staff.ts maps the
   // package's four permissions onto these.
-  const schedulingStaffKeys = answers.includeScheduling
+  const schedulingStaffKeys = single && answers.includeScheduling
     ? `
   "staff.schedule.route": {
     label: "Work a crew's route",
@@ -1923,10 +2079,10 @@ export function renderPermissionsCatalog(answers: Answers): string {
   // The estimator's staff keys, one per job, on the scheduling pattern. The
   // package declares its permissions for the TENANT ladder (each business runs
   // its own price book); this project serves one business from the staff
-  // ladder, so src/server/estimator-config.ts maps the package's five keys onto
+  // ladder, so src/server/estimator-staff.ts maps the package's five keys onto
   // these. SEEING COSTS is its own key on purpose: a supply's price and the
   // margin on a job are the owner's, and staff who quote customers see prices.
-  const estimatorStaffKeys = answers.includeEstimator
+  const estimatorStaffKeys = single && answers.includeEstimator
     ? `
   "staff.estimates.view": {
     label: "See estimates and the price book",
@@ -1956,6 +2112,41 @@ export function renderPermissionsCatalog(answers: Answers): string {
     label: "Change estimate settings",
     description: "The business's details, tax rate, quote rules, who hears about new leads, photo reading and its daily budget, and website embed keys.",
     category: "Estimates",
+    defaultFor: ["admin"],
+  },`
+    : "";
+  // Invoicing's and messages' staff keys (Tenancy 2a, D12): one key per job
+  // on the scheduling pattern, replacing the `staff.dashboard.view` that used
+  // to gate both — a seasonal mower given the shell's key could reverse
+  // payments and rewrite every customer email. src/server/invoicing.ts and
+  // src/server/comms.ts map the packages' permissions onto these.
+  const invoicingStaffKeys = single && answers.includeInvoicing
+    ? `
+  "staff.invoices.view": {
+    label: "See invoices",
+    description: "The invoice ledger, every invoice, its lines and payments.",
+    category: "Invoices",
+    defaultFor: ["admin", "cs_lead"],
+  },
+  "staff.invoices.manage": {
+    label: "Raise and send invoices, record and reverse payments",
+    description: "Create and edit invoices, send them (the customer is emailed), void them, and record or reverse a payment.",
+    category: "Invoices",
+    defaultFor: ["admin"],
+  },`
+    : "";
+  const commsStaffKeys = single && answers.includeComms
+    ? `
+  "staff.comms.view": {
+    label: "See messages",
+    description: "The wording of every email and text customers get, and what went to whom and when.",
+    category: "Messages",
+    defaultFor: ["admin", "cs_lead"],
+  },
+  "staff.comms.manage": {
+    label: "Edit messages and send what's due",
+    description: "Change the wording customers get, switch a message off or on, and send what's due now.",
+    category: "Messages",
     defaultFor: ["admin"],
   },`
     : "";
@@ -2065,7 +2256,7 @@ const appStaffPermissions = {
     category: "${plural}",
     // Sealed: an override must not hand this to one person quietly.
     sealed: true,
-  },${schedulingStaffKeys}${estimatorStaffKeys}
+  },${schedulingStaffKeys}${estimatorStaffKeys}${invoicingStaffKeys}${commsStaffKeys}
 } as const;
 
 export const staffCatalog = definePermissions(
@@ -2183,6 +2374,7 @@ import { emailEvents } from "${scope}/email/schema";
 import { db } from "@/db";
 import { renderInvitationEmail } from "@/emails/invitation";
 import { env } from "@/env";
+import { SITE_NAME } from "@/seo";
 import { log } from "@/server/logger";
 
 ${contract}
@@ -2225,7 +2417,9 @@ export async function sendInvitationEmail(
     roleName: request.roleName,
     url: request.url,
     expiresAt: request.expiresAt,
-    productName: "${answers.projectName}",
+    // The site's own name (what its header says), never the folder it was
+    // generated into (review T2A-BO-12: "join Green Acres on igloo-back-office").
+    productName: SITE_NAME,
   });
 
   // The invitation row already exists by the time this runs, so nothing here
@@ -2426,6 +2620,8 @@ describe("sendInvitationEmail answers with the provider's verdict, and never thr
  */
 export function renderCommsSenders(answers: Answers): string {
   const scope = answers.scope;
+  const companies = isCompanies(answers);
+  const noun = tenantLabel(answers).toLowerCase();
 
   const header = `/**
  * The app's comms senders, injected into ${scope}/comms. A sender is a function
@@ -2433,9 +2629,9 @@ export function renderCommsSenders(answers: Answers): string {
  * and the log, and takes the delivery from here so the provider is the app's
  * choice, not the package's.
  *
- * Generated by create-adminigloo-app from the answers this project was
- * created with. Editing it is fine — it is yours — but \`add email\` will
- * then write its version beside yours as \`.new\` rather than over it.
+ * Generated by create-adminigloo-app from the answers this project was created
+ * with. Editing it is fine — it is yours — but \`add email\` will then write
+ * its version beside yours as \`.new\` rather than over it.
  *
  * SMS — wire it here when you need it. It REQUIRES \`smsCompliance\` (a type
  * error without it):
@@ -2452,19 +2648,217 @@ export function renderCommsSenders(answers: Answers): string {
  *
  *   Every text is then sent as "Your Business Name: …" with "Reply STOP to opt
  *   out." (or your \`optOutText\`) appended unless the text already contains
- *   that exact line. Send through a Twilio MESSAGING SERVICE registered to
- *   your A2P 10DLC campaign (messagingServiceSid), not a bare \`from\` number:
- *   unregistered traffic from a US long code is filtered or blocked.
+ *   that exact line.${companies ? ` In this project each ${noun}'s name (its sender
+ *   identity, below) is the name every text of theirs starts with.` : ""} Send through a Twilio MESSAGING SERVICE registered to
+ *   your A2P 10DLC campaign (messagingServiceSid), not a bare \`from\` number.
  *   Recipients arrive already normalised to E.164.
  *
  * IMMEDIATE vs LATER. A confirmation goes out in the request that caused it:
- * \`sendNow(db, { tenantId: COMMS_TENANT, to, templateKey, vars }, commsSenders)\`.
- * Only future messages (reminders, follow-ups) belong in \`enqueueMessage\` —
- * give them \`refType\`/\`refId\` so \`cancelScheduled\` can withdraw them when the
+ * \`sendNow(db, { tenantId, to, templateKey, vars }, commsSenders)\`. Only
+ * future messages (reminders, follow-ups) belong in \`enqueueMessage\` — give
+ * them \`refType\`/\`refId\` so \`cancelScheduled\` can withdraw them when the
  * thing they are about is cancelled or moved, and a \`dedupeKey\` if the
  * enqueue can be retried.
  */`;
 
+  if (companies) {
+    // EACH COMPANY'S EMAILS GO OUT AS THE COMPANY (Tenancy 2a, D8). No fixed
+    // tenant here: every message carries its company's id, and the identity
+    // is read per company.
+    const identity = `
+/**
+ * WHO A ${noun.toUpperCase()}'S MESSAGES COME FROM (Tenancy 2a, D8), asked by comms once
+ * per ${noun} per send or drain:
+ *
+ *   From      "{${noun} name}" <EMAIL_FROM's address>. The platform's verified
+ *             sending domain is the only one the provider sends from, so the
+ *             ${noun}'s NAME goes on it — never another address.
+ *   Reply-To  the ${noun}'s contact email, else its owner's sign-in address —
+ *             never this site's EMAIL_REPLY_TO while the ${noun} has either: a
+ *             customer's "I need to reschedule" must reach the business, not
+ *             you. Only a ${noun} with neither falls back to the default.
+ *
+ * Read per call from the ${noun} profile, so a rename shows on the next email.
+ * comms records both in the delivery log (from_name, reply_to), so the owner
+ * sees in Messages exactly what their customers saw. A throw here fails that
+ * message and the queue retries it: sending a ${noun}'s email under the
+ * platform's reply-to is the one outcome worse than a delay.
+ */
+export async function companyIdentity(tenantId: string): Promise<SenderIdentity | null> {
+  const profile = await tenancy.companyProfile(tenantId);
+  return profile ? { name: profile.name, replyTo: profile.replyTo } : null;
+}
+`;
+    // EACH COMPANY'S SENDING ALLOWANCE (review SEC-2A-03), on the app's own
+    // limiter — only where email can actually leave.
+    const allowance = `
+/**
+ * EACH ${noun.toUpperCase()}'S SENDING ALLOWANCE (review SEC-2A-03): how many emails one
+ * ${noun} may send from this site, per hour and per day, asked by comms right
+ * before each message is handed to Resend.
+ *
+ * WHY. Anyone can sign up a ${noun} here, and every ${noun}'s email leaves from
+ * YOUR one verified sending domain. Without a ceiling one ${noun} could send
+ * thousands of messages in an hour under any name it chose — and the
+ * provider's answer, throttling or suspending your account or domain, stops
+ * every other ${noun}'s reminders, quotes and invoices with it. Tenancy's
+ * invitations are capped the same way.
+ *
+ *   an established ${noun}      100 an hour, 500 a day
+ *   one made in the last week   20 an hour, 100 a day
+ *
+ * A held email isn't lost: it is logged in the ${noun}'s Messages as "held",
+ * an invoice's Send says the allowance was reached, and a queued reminder is
+ * tried again later. When a ${noun} reaches its allowance it is logged and
+ * reported to /admin/errors (at most once an hour per ${noun}), so you see
+ * who. Raise the numbers here as real ${noun}s need more; they count in
+ * Upstash when it is configured (in memory per server otherwise), and a
+ * limiter that is down lets mail through rather than stop every ${noun}.
+ */
+export const COMMS_SEND_ALLOWANCE = {
+  established: { hour: 100, day: 500 },
+  newCompany: { hour: 20, day: 100 },
+} as const;
+
+/** How long a ${noun} counts as new, for the lower allowance. */
+const NEW_COMPANY_MS = 7 * 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+
+/** When each ${noun} was made, read once per process: it never changes. */
+const createdAt = new Map<string, number>();
+/** When each ${noun} last hit its allowance was reported, so a held backlog reports once an hour, not per email. */
+const reportedAt = new Map<string, number>();
+
+export async function companySendAllowance(message: { readonly tenantId: string }): Promise<boolean> {
+  const { tenantId } = message;
+  let made = createdAt.get(tenantId);
+  if (made === undefined) {
+    const profile = await tenancy.companyProfile(tenantId);
+    // An unknown ${noun} gets the new one's allowance: nothing to trust yet.
+    made = profile ? profile.createdAt.getTime() : Date.now();
+    if (profile) createdAt.set(tenantId, made);
+  }
+  const caps = Date.now() - made < NEW_COMPANY_MS ? COMMS_SEND_ALLOWANCE.newCompany : COMMS_SEND_ALLOWANCE.established;
+  for (const [bucket, limit, windowMs] of [
+    ["hour", caps.hour, HOUR_MS],
+    ["day", caps.day, DAY_MS],
+  ] as const) {
+    const result = await limiter.limit({ key: \`comms-out:\${bucket}:\${tenantId}\`, policy: { limit, windowMs } });
+    if (!result.allowed) {
+      const last = reportedAt.get(tenantId) ?? 0;
+      if (Date.now() - last > HOUR_MS) {
+        reportedAt.set(tenantId, Date.now());
+        log.warn({ tenantId, bucket, limit }, "comms: a ${noun} reached its sending allowance; its emails are held");
+        void reportError({
+          error: new Error(\`A ${noun} reached its sending allowance (\${limit} emails a\${bucket === "hour" ? "n hour" : " day"}); its emails are held until it refills.\`),
+          source: "route",
+          tenantId,
+          context: { feature: "comms", route: "allowance", bucket },
+        });
+      }
+      return false;
+    }
+  }
+  return true;
+}
+`;
+    if (!answers.includeEmail) {
+      return `import type { CommsSenders, SenderIdentity } from "${scope}/comms";
+import { tenancy } from "./tenancy";
+
+${header}
+${identity}
+/**
+ * NO EMAIL SENDER: ${answers.projectName} was generated without
+ * ${scope}/email, so there is nothing here to send mail with. comms records
+ * each email as "skipped" — a real outcome in the log, never a fake "sent" —
+ * with the ${noun} name and reply-to it WOULD have gone out under, and nothing
+ * throws. \`add email\` (pnpm dlx @adminigloo/create-app add email) rewrites
+ * this file with Resend wired in.
+ */
+export const commsSenders: CommsSenders = { identity: companyIdentity };
+
+/** False: an email "sent" from this project is logged as skipped. Promise none. */
+export const commsEmailConfigured: boolean = false;
+`;
+    }
+    return `import type { CommsSenders, SenderIdentity } from "${scope}/comms";
+import { createEmailSender, type EmailSender, type EmailTransport } from "${scope}/email";
+import { env } from "@/env";
+import { reportError } from "./error-reporter";
+import { log } from "./logger";
+import { limiter } from "./rate-limit";
+import { tenancy } from "./tenancy";
+
+${header}
+${identity}${allowance}
+/**
+ * EMAIL THROUGH ${scope}/email (Resend). With no RESEND_API_KEY the sender
+ * answers "skipped" for every message and comms logs exactly that, so the
+ * whole flow runs on a laptop and the log shows what would have gone out.
+ *
+ * EMAIL_FROM is deferred until deployment, so on a laptop it is undefined —
+ * and \`createEmailSender\` refuses a From it cannot parse at construction,
+ * which at module scope would fail every import of this file. The fallback is
+ * an RFC 2606 reserved domain that can never receive anything.
+ *
+ * \`transport\` replaces Resend — how the project's own email-identity test
+ * (src/server/__tests__/company-email.test.ts) reads exactly what each
+ * ${noun}'s email went out as, through these same senders.
+ */
+function mailerFor(transport?: EmailTransport): EmailSender {
+  return createEmailSender({
+    apiKey: env.RESEND_API_KEY,
+    from: env.EMAIL_FROM ?? "messages@example.invalid",
+    replyTo: env.EMAIL_REPLY_TO,
+    ...(transport ? { send: transport } : {}),
+  });
+}
+
+function sendersOver(mailer: EmailSender): CommsSenders {
+  return {
+    identity: companyIdentity,
+    // Each ${noun}'s sending allowance (above): asked before every email leaves.
+    allowance: companySendAllowance,
+    // The template is plain text; comms hands over \`html\` already converted
+    // (escaped first, then paragraphs and links), so a customer's name can
+    // never become markup. The ${noun}'s name and reply-to ride on each
+    // message (\`fromName\`, \`replyTo\`), and the outcome is returned as it is
+    // so the delivery log stays honest without this function throwing.
+    email: (message) =>
+      mailer.send({
+        to: message.to,
+        subject: message.subject,
+        text: message.body,
+        html: message.html,
+        template: "comms",
+        tenantId: message.tenantId,
+        fromName: message.fromName,
+        replyTo: message.replyTo,
+      }),
+  };
+}
+
+/** These senders over another transport (a test's capture). */
+export function buildCommsSenders(transport?: EmailTransport): CommsSenders {
+  return sendersOver(mailerFor(transport));
+}
+
+const mailer = mailerFor();
+
+export const commsSenders: CommsSenders = sendersOver(mailer);
+
+/**
+ * Whether an email sent now would actually leave: true once RESEND_API_KEY is
+ * set. The booking and estimate pages read it so they never tell a customer
+ * "we've emailed you" from a deployment that cannot.
+ */
+export const commsEmailConfigured: boolean = mailer.configured;
+`;
+  }
+
+  // SINGLE BUSINESS: the one fixed business's messages, as before 2a.
   const templates = `
 /**
  * The tenant every comms row in this project is written for. Single-business,
@@ -2542,6 +2936,9 @@ export const commsSenders: CommsSenders = {
       text: message.body,
       html: message.html,
       template: "comms",
+      tenantId: message.tenantId,
+      fromName: message.fromName,
+      replyTo: message.replyTo,
     }),
 };
 
@@ -2570,6 +2967,7 @@ export function renderCommsHooks(answers: Answers): string {
   const producers = [
     ...(answers.includeScheduling ? ["schedulingComms"] : []),
     ...(answers.includeEstimator ? ["estimatorComms"] : []),
+    ...(answers.includeInvoicing ? ["invoicingProducer"] : []),
   ];
   const imports = [
     `import type { BeforeSendResult, ScheduledRow } from "${scope}/comms";`,
@@ -2580,6 +2978,7 @@ export function renderCommsHooks(answers: Answers): string {
     ...(answers.includeEstimator
       ? [`import { estimatorComms } from "@/server/estimator-notify";`]
       : []),
+    ...(answers.includeInvoicing ? [`import { invoicingComms } from "@/server/invoicing";`] : []),
   ];
   const paragraphs: string[] = [];
   if (answers.includeScheduling) {
@@ -2598,6 +2997,28 @@ export function renderCommsHooks(answers: Answers): string {
  * into the one it sends. \`afterCommsRun\` scrubs that link from the delivery
  * log the same way.`);
   }
+  if (answers.includeInvoicing) {
+    paragraphs.push(`
+ * Invoicing (Tenancy 2a). It queues nothing — an invoice email goes out the
+ * moment staff press Send — but that email carries the customer's invoice
+ * link, which is replaced with ":token" in the delivery log right after each
+ * send; \`afterCommsRun\` sweeps again for one a crashed send left behind.`);
+  }
+  const invoicingProducer = answers.includeInvoicing
+    ? `/**
+ * Invoicing's place in the list: nothing of its own to re-check at send time
+ * (null: not its row), its link scrub after each drain, and its invoice email
+ * template beside the others. Read lazily, inside each method: the invoicing
+ * glue imports modules that import this one.
+ */
+const invoicingProducer: QueueProducer = {
+  beforeSend: async () => null,
+  redactSent: () => invoicingComms.redactSent(),
+  ensureTemplates: (tenantId) => invoicingComms.ensureTemplates(tenantId),
+};
+
+`
+    : "";
   const why = paragraphs.length > 0
     ? `
  * Here, in order:${paragraphs.join("\n *")}`
@@ -2624,7 +3045,7 @@ interface QueueProducer {
   ensureTemplates?(tenantId: string): Promise<number>;
 }
 
-const PRODUCERS: readonly QueueProducer[] = [${producers.join(", ")}];
+${invoicingProducer}const PRODUCERS: readonly QueueProducer[] = [${producers.join(", ")}];
 
 /** For \`runDueMessages\`' \`beforeSend\`. A row no producer claims is sent as queued. */
 export async function commsBeforeSend(row: ScheduledRow): Promise<BeforeSendResult> {
@@ -2681,6 +3102,9 @@ export async function afterCommsRun(): Promise<void> {
  * the list is empty and the booking page says it sends no email.
  */
 export function renderSchedulingNotify(answers: Answers): string {
+  // A companies project: every company's visit emails are its own (Tenancy
+  // 2a) — features-emit.ts writes that variant.
+  if (isCompanies(answers)) return renderSchedulingNotifyCompanies(answers);
   const scope = answers.scope;
   const header = `/**
  * Who hears about each visit — the listeners every scheduling event is handed
@@ -2765,7 +3189,8 @@ import { db } from "@/db";
 import { env } from "@/env";
 import { commsEmailConfigured, commsSenders } from "@/server/comms-senders";
 import { log } from "@/server/logger";
-import { SCHEDULING_TENANT, schedulingDeliveryStatus, schedulingLinks } from "@/server/scheduling-config";
+import { schedulingDeliveryStatus, schedulingLinks } from "@/server/scheduling-config";
+import { SCHEDULING_TENANT } from "@/server/scheduling-staff";
 
 ${header}
 
@@ -2895,6 +3320,9 @@ ${dispatch}`;
  * that is one fact: whether an estimate leads to a booking page.
  */
 export function renderEstimatorFeatures(answers: Answers): string {
+  // A companies project: the booking button goes to each company's OWN
+  // booking page, so it is a function of the company's public path.
+  if (isCompanies(answers)) return renderEstimatorFeaturesCompanies(answers);
   const book = answers.includeScheduling
     ? `/**
  * Where "Book a visit to measure" (after a customer saves an estimate) and
@@ -2937,6 +3365,8 @@ ${book}
  * the estimate page promises no email.
  */
 export function renderEstimatorNotify(answers: Answers): string {
+  // A companies project: every company's estimate emails are its own.
+  if (isCompanies(answers)) return renderEstimatorNotifyCompanies(answers);
   const scope = answers.scope;
   const header = `/**
  * Who hears about each estimate — the listeners every estimator event is
@@ -3006,7 +3436,8 @@ import { createEstimatorCommsListener } from "${scope}/estimator/comms";
 import { db } from "@/db";
 import { env } from "@/env";
 import { commsEmailConfigured, commsSenders } from "@/server/comms-senders";
-import { ESTIMATOR_TENANT, estimatorDeliveryStatus, estimatorLinks } from "@/server/estimator-config";
+import { estimatorDeliveryStatus, estimatorLinks } from "@/server/estimator-config";
+import { ESTIMATOR_TENANT } from "@/server/estimator-staff";
 import { log } from "@/server/logger";
 
 ${header}
@@ -3114,9 +3545,16 @@ export function renderEstimatorServices(answers: Answers): string {
     "type PhotoReadingOffReason",
     ...(scheduling ? ["type LinkedVisit"] : []),
   ];
+  // A COMPANIES project (Tenancy 2a): every tenant below is the company the
+  // call is for — the ARGUMENT the estimator hands each seam — never a
+  // constant; the visits and the invoice an estimate links to are the
+  // company's own screens; and an invoice made from a quote is due when the
+  // company's own invoice details say. A single business keeps the one fixed
+  // tenant its staff modules name.
+  const companies = isCompanies(answers);
   const configImports = [
-    ...(invoicing ? ["ESTIMATOR_TENANT"] : []),
-    ...(scheduling ? ["estimatorLinks", "linkedVisit"] : []),
+    ...(scheduling && !companies ? ["estimatorLinks"] : []),
+    ...(scheduling ? ["linkedVisit"] : []),
     ...(ai ? ["takeoffModelFor"] : []),
   ];
 
@@ -3129,12 +3567,17 @@ export function renderEstimatorServices(answers: Answers): string {
     ...(storage ? [`import { deleteFile, storeFile } from "${scope}/storage";`] : []),
     ...(storage || scheduling || invoicing ? [`import { db } from "@/db";`] : []),
     `import { env } from "@/env";`,
-    ...(invoicing ? [`import { invoicePreviewPath } from "@/invoice-link";`] : []),
     ...(ai ? [`import { anthropic, MODEL_RATES, recordAiUsage } from "@/server/ai";`] : []),
     ...(storage ? [`import { getBlobStore } from "@/server/blob-store";`] : []),
+    ...(companies && scheduling ? [`import { companyLinks } from "@/server/company-links";`] : []),
+    ...(companies && invoicing ? [`import { companyAuthorizer, type FeatureHandlerOverrides } from "@/server/company-routes";`] : []),
     ...(configImports.length > 0 ? [`import { ${configImports.join(", ")} } from "@/server/estimator-config";`] : []),
+    ...(invoicing && !companies ? [`import { ESTIMATOR_TENANT } from "@/server/estimator-staff";`] : []),
+    ...(invoicing && companies ? [`import { dueDateFor, invoicingBusiness } from "@/server/invoicing";`] : []),
+    ...(invoicing && !companies ? [`import { INVOICING_STAFF_KEYS } from "@/server/invoicing";`] : []),
     ...(ai ? [`import { log } from "@/server/logger";`] : []),
-    ...(scheduling ? [`import { SCHEDULING_TENANT } from "@/server/scheduling-config";`] : []),
+    ...(scheduling && !companies ? [`import { SCHEDULING_TENANT } from "@/server/scheduling-staff";`] : []),
+    ...(invoicing && !companies ? [`import { authorizeStaffFor } from "@/server/staff-access";`] : []),
   ];
 
   const zones = `/**
@@ -3267,21 +3710,36 @@ export const estimatorTakeoff: CreateEstimatorHandlersOptions["takeoff"] = undef
 export const estimatorPhotoReadingOff: PhotoReadingOffReason | undefined = "not_installed";`;
 
   const urls = scheduling
-    ? `
+    ? companies
+      ? `
+/**
+ * A company's own calendar, absolute (the estimate's page links each visit
+ * booked from it to its day there). The reader is already in the company's
+ * area, so this is the page itself, not the email switch route.
+ */
+const SCHEDULE_PAGE = new URL(
+  "app/schedule",
+  (env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000").replace(/\\/?$/, "/"),
+).toString();
+`
+      : `
 /** Absolute links on this deployment (estimator-config). */
 const estimatorUrls = estimatorLinks(env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000");
 `
     : "";
 
+  // The tenant each read is for: the company the estimator asked about
+  // (companies), or the one business (single).
+  const visitTenant = companies ? "tenantId" : "SCHEDULING_TENANT";
   const visitsFn = scheduling
     ? `
 /**
  * The visits booked from an estimate (the booking page's ?estimate=<id>), for
- * the estimate's own page: when, in the business's zone, the status in words,
- * and a link to that day on the staff calendar. Read from scheduling's table
- * by (tenant, estimate) — scheduling exports no lookup for it.
+ * the estimate's own page: when, in the ${companies ? "company's" : "business's"} zone, the status in words,
+ * and a link to that day on the ${companies ? "company's" : "staff"} calendar. Read from scheduling's table
+ * by (tenant, estimate) — scheduling exports no lookup for it.${companies ? " The tenant is the\n * company the estimate belongs to, never a constant: Summit's visits never\n * appear on Green Acres' estimate." : ""}
  */
-async function visitsForEstimate(estimateId: string): Promise<LinkedVisit[]> {
+async function visitsForEstimate(estimateId: string${companies ? ", tenantId: string" : ""}): Promise<LinkedVisit[]> {
   const rows = await db
     .select({
       id: schedulingBookings.id,
@@ -3291,36 +3749,98 @@ async function visitsForEstimate(estimateId: string): Promise<LinkedVisit[]> {
       startTime: schedulingBookings.startTime,
     })
     .from(schedulingBookings)
-    .where(and(eq(schedulingBookings.tenantId, SCHEDULING_TENANT), eq(schedulingBookings.estimateId, estimateId)))
+    .where(and(eq(schedulingBookings.tenantId, ${visitTenant}), eq(schedulingBookings.estimateId, estimateId)))
     .orderBy(asc(schedulingBookings.scheduledDate), asc(schedulingBookings.startTime))
     .limit(20);
   if (rows.length === 0) return [];
-  const { timeZone } = await getSchedulingSettings(db, SCHEDULING_TENANT);
-  return rows.map((row) => linkedVisit(row, timeZone, estimatorUrls.scheduleAdmin));
+  const { timeZone } = await getSchedulingSettings(db, ${visitTenant});
+  return rows.map((row) => linkedVisit(row, timeZone, ${companies ? "SCHEDULE_PAGE" : "estimatorUrls.scheduleAdmin"}));
 }
 `
     : "";
 
   const invoiceFns = invoicing
-    ? `
+    ? companies
+      ? `
 /**
- * The tenant invoices are written for: the invoicing router's INVOICING_TENANT,
- * which is "primary" like ESTIMATOR_TENANT — one business, one id.
+ * The invoice an estimate became, for the estimate's own page: its number and
+ * status, and a link to it on the company's own invoice screen — which needs
+ * no token (the customer's link stays on the ledger's "Copy link").
+ */
+async function invoiceForEstimate(estimateId: string, tenantId: string): Promise<LinkedInvoice | null> {
+  const [row] = await db
+    .select({ id: invoices.id, number: invoices.invoiceNumber, status: invoices.status })
+    .from(invoices)
+    .where(and(eq(invoices.tenantId, tenantId), eq(invoices.estimateId, estimateId)))
+    .limit(1);
+  return row ? { id: row.id, number: row.number, status: row.status, url: \`/app/invoices/\${encodeURIComponent(row.id)}\` } : null;
+}
+
+/**
+ * "Create invoice" on an accepted quote: ONE TRANSACTION, so a quote is
+ * invoiced once or not at all — and the invoice is THE SAME COMPANY'S as the
+ * estimate (the tenant the estimator hands in), due after the company's own
+ * "invoices are due after N days" (its invoice details), at the end of that
+ * day in its time zone.
+ *
+ *   1. the estimate and its lines, as the customer accepted them;
+ *   2. the invoice input, from invoicing's own bridge — labor folded into each
+ *      line with the quoted total kept to the cent, the tax rate AND the
+ *      discount carried over, nothing billed from a quote that isn't accepted;
+ *   3. the invoice and its lines;
+ *   4. the estimate CLAIMED as converted — only an accepted one, only once. If
+ *      it was not, the claim fails and the invoice is rolled back.
+ *
+ * A refusal from either package is the refusal the estimate's page shows
+ * ("transition_not_allowed"), never a 500.
+ */
+export const convertEstimateToInvoice: CreateEstimatorAdminHandlersOptions["convertToInvoice"] = async ({
+  tenantId,
+  estimateId,
+  userId,
+}) => {
+  const found = await getEstimate(db, tenantId, estimateId);
+  if (!found) throw new EstimatorInputError("transition_not_allowed", "This estimate can't be invoiced.");
+  const business = await invoicingBusiness(tenantId);
+  const dueDate = business ? dueDateFor(business) : null;
+  try {
+    return await db.transaction(async (tx) => {
+      const invoice = await createInvoice(
+        tx,
+        { tenantId, ...invoiceInputFromEstimate(found.estimate, found.items), dueDate },
+        userId ?? undefined,
+      );
+      const claimed = await markEstimateConverted(tx, tenantId, estimateId);
+      if (!claimed) {
+        throw new EstimatorInputError("transition_not_allowed", "Only an accepted quote can become an invoice, and only once.");
+      }
+      return { id: invoice.id, number: invoice.invoiceNumber, status: "draft", url: \`/app/invoices/\${encodeURIComponent(invoice.id)}\` };
+    });
+  } catch (error) {
+    if (error instanceof InvoicingError) throw new EstimatorInputError("transition_not_allowed", error.message);
+    throw error;
+  }
+};
+`
+      : `
+/**
+ * The tenant invoices are written for: invoicing's INVOICING_TENANT, which is
+ * "primary" like ESTIMATOR_TENANT — one business, one id.
  */
 const INVOICING_TENANT = ESTIMATOR_TENANT;
 
 /**
  * The invoice an estimate became, for the estimate's own page: its number and
- * status, and the staff PREVIEW of the customer's invoice page (opening it
- * never counts as the customer viewing it).
+ * status, and a link to it in the ledger (/admin/invoices/{id}) — the staff
+ * page needs no token, and opening it never counts as the customer viewing it.
  */
 async function invoiceForEstimate(estimateId: string): Promise<LinkedInvoice | null> {
   const [row] = await db
-    .select({ id: invoices.id, number: invoices.invoiceNumber, status: invoices.status, viewToken: invoices.viewToken })
+    .select({ id: invoices.id, number: invoices.invoiceNumber, status: invoices.status })
     .from(invoices)
     .where(and(eq(invoices.tenantId, INVOICING_TENANT), eq(invoices.estimateId, estimateId)))
     .limit(1);
-  return row ? { id: row.id, number: row.number, status: row.status, url: invoicePreviewPath(row.viewToken) } : null;
+  return row ? { id: row.id, number: row.number, status: row.status, url: \`/admin/invoices/\${encodeURIComponent(row.id)}\` } : null;
 }
 
 /**
@@ -3358,7 +3878,7 @@ export const convertEstimateToInvoice: CreateEstimatorAdminHandlersOptions["conv
       if (!claimed) {
         throw new EstimatorInputError("transition_not_allowed", "Only an accepted quote can become an invoice, and only once.");
       }
-      return { id: invoice.id, number: invoice.invoiceNumber, status: "draft", url: invoicePreviewPath(invoice.viewToken) };
+      return { id: invoice.id, number: invoice.invoiceNumber, status: "draft", url: \`/admin/invoices/\${encodeURIComponent(invoice.id)}\` };
     });
   } catch (error) {
     if (error instanceof InvoicingError) throw new EstimatorInputError("transition_not_allowed", error.message);
@@ -3374,15 +3894,68 @@ export const convertEstimateToInvoice: CreateEstimatorAdminHandlersOptions["conv
 export const convertEstimateToInvoice: CreateEstimatorAdminHandlersOptions["convertToInvoice"] = undefined;
 `;
 
+  // "Turn into an invoice" WRITES AN INVOICE (review SEC-2A-02), so the
+  // invoice permission is asked beside the estimator's own. Three variants,
+  // chosen here: the company's invoice keys, the single business's staff
+  // invoice keys, or nothing to ask without invoicing.
+  const invoiceAccess = invoicing
+    ? companies
+      ? `
+/**
+ * The company's INVOICE permission, asked beside the estimator's own (review
+ * SEC-2A-02): "Turn into an invoice" writes an invoice, so it needs
+ * \`invoices.manage\` as well as \`estimator.estimates.manage\` — a member whose
+ * invoice rights an owner took away can't raise one by converting a quote —
+ * and an estimate's page shows the invoice it became only to someone with
+ * \`invoices.view\`. \`overrides.principal\` is how the project's isolation
+ * proof asks it as somebody else.
+ */
+export function estimatorInvoiceAccess(overrides: FeatureHandlerOverrides = {}): CreateEstimatorAdminHandlersOptions["invoiceAccess"] {
+  const authorize = companyAuthorizer(overrides);
+  return (req, need, tenantId) => authorize(req, need === "manage" ? "invoices.manage" : "invoices.view", tenantId);
+}
+`
+      : `
+/**
+ * The business's INVOICE staff keys, asked beside the estimator's own (review
+ * SEC-2A-02): "Turn into an invoice" writes an invoice, so it needs
+ * \`staff.invoices.manage\` as well as the estimates key — a CS agent who may
+ * quote but not bill can't raise one by converting a quote — and an
+ * estimate's page shows the invoice only to someone with \`staff.invoices.view\`.
+ */
+export function estimatorInvoiceAccess(): CreateEstimatorAdminHandlersOptions["invoiceAccess"] {
+  const authorize = authorizeStaffFor(INVOICING_STAFF_KEYS, "Sign in to see invoices.");
+  return (req, need, tenantId) => authorize(req, need === "manage" ? "invoices.manage" : "invoices.view", tenantId);
+}
+`
+    : `
+/**
+ * The invoice permission "Turn into an invoice" would ask. Nothing:
+ * ${answers.projectName} was generated without invoicing, so no quote turns into
+ * an invoice here. \`add invoicing\` wires it in.
+ */
+export function estimatorInvoiceAccess(_overrides: unknown = {}): CreateEstimatorAdminHandlersOptions["invoiceAccess"] {
+  return undefined;
+}
+`;
+
   const seamLines = [
     ...(scheduling
-      ? [
-          "  // An accepted quote's \"Book the visit\": the booking page, tied to the estimate.",
-          "  bookVisitUrl: (estimate) => estimatorUrls.bookVisit(estimate.id),",
-          "  visits: (estimateId) => visitsForEstimate(estimateId),",
-        ]
+      ? companies
+        ? [
+            "  // An accepted quote's \"Book the visit\": the company's own booking page, tied to the estimate.",
+            "  bookVisitUrl: async (estimate, tenantId) => (await companyLinks(tenantId)).bookVisit(estimate.id),",
+            "  visits: (estimateId, tenantId) => visitsForEstimate(estimateId, tenantId),",
+          ]
+        : [
+            "  // An accepted quote's \"Book the visit\": the booking page, tied to the estimate.",
+            "  bookVisitUrl: (estimate) => estimatorUrls.bookVisit(estimate.id),",
+            "  visits: (estimateId) => visitsForEstimate(estimateId),",
+          ]
       : []),
-    ...(invoicing ? ["  invoice: (estimateId) => invoiceForEstimate(estimateId),"] : []),
+    ...(invoicing
+      ? [companies ? "  invoice: (estimateId, tenantId) => invoiceForEstimate(estimateId, tenantId)," : "  invoice: (estimateId) => invoiceForEstimate(estimateId),"]
+      : []),
   ];
   const seams = seamLines.length > 0
     ? `
@@ -3417,7 +3990,7 @@ ${zones}
 ${photos}
 
 ${reading}
-${urls}${visitsFn}${invoiceFns}${seams}`;
+${urls}${visitsFn}${invoiceFns}${invoiceAccess}${seams}`;
 }
 
 /**
@@ -3456,11 +4029,13 @@ export function renderAuditRegistry(answers: Answers): string {
   ];
   const fragments = ["adminAuditedActions", "tenancyAuditedActions"];
 
-  if (answers.includeScheduling) {
+  if (answers.includeScheduling && answers.tenantNoun === "none") {
     // Giving a crew member their route (the crew-only staff role) and taking
-    // it away. Declared beside the decision in scheduling-config, which
-    // imports nothing from here, so there is no cycle.
-    imports.push('import { schedulingAuditedActions } from "./scheduling-config";');
+    // it away — a single business's crew. Declared beside the decision in
+    // scheduling-staff, which imports nothing from here, so there is no
+    // cycle. (In a companies project a crew member is a company member with
+    // the Crew role, and tenancy audits the role change itself.)
+    imports.push('import { schedulingAuditedActions } from "./scheduling-staff";');
     fragments.push("schedulingAuditedActions");
   }
 
@@ -3582,12 +4157,6 @@ export function renderAppRouter(answers: Answers): string {
   if (answers.includeAssistant) {
     imports.splice(1, 0, 'import { assistantRouter } from "./assistant";');
   }
-  if (answers.includeInvoicing) {
-    imports.splice(1, 0, 'import { invoicingRouter } from "./invoicing";');
-  }
-  if (answers.includeComms) {
-    imports.splice(1, 0, 'import { commsRouter } from "./comms";');
-  }
   if (answers.includeAeo) {
     imports.splice(1, 0, 'import { aeoRouter } from "./aeo";');
   }
@@ -3662,11 +4231,13 @@ export function renderAppRouter(answers: Answers): string {
 `
     : "";
 
-  // Field service. The invoicing router carries a PUBLIC procedure (the
-  // pay-by-token read) beside its staff ones — an invoice the customer never
-  // signs in to see. What keeps it safe is the same rule the shop follows:
-  // amount, tenant and eligibility are read server-side, never from the
-  // request.
+  // Field service has no router here at all (Tenancy 2a, D3). Invoicing and
+  // messages used to: a tRPC router each behind pages copied into the
+  // project. Both now run on their packages' own HTTP handlers and widgets,
+  // like scheduling and the estimator — one path per feature, the wire the
+  // widgets are built against, and a fix that reaches every project by
+  // `npm update` — in both modes. In a companies project every feature route
+  // names its company in its path (/api/app/{id}/…, /api/t/{web address}/…).
   //
   // The estimator has no router here, deliberately, for scheduling's reason.
   // Its estimate page, quote page and staff screens speak HTTP to the
@@ -3678,22 +4249,6 @@ export function renderAppRouter(answers: Answers): string {
   // page and staff screens speak HTTP to the package's own handlers
   // (app/api/schedule and app/api/admin/schedule) — the wire the widgets are
   // built against, one path rather than a tRPC copy of it that drifts.
-
-  const invoicing = answers.includeInvoicing
-    ? `
-  // Invoices and payments, plus the public by-token read a customer opens from
-  // an emailed link without an account.
-  invoicing: invoicingRouter,
-`
-    : "";
-
-  const comms = answers.includeComms
-    ? `
-  // Templated messages: the staff console edits templates and reads the log;
-  // the cron route drains what is due through the injected senders.
-  comms: commsRouter,
-`
-    : "";
 
   const aeo = answers.includeAeo
     ? `
@@ -3766,7 +4321,7 @@ export const appRouter = createTRPCRouter({
   // writes actually live. Mounted even in a project generated without the admin
   // shell, so the panel can be added later without re-deriving its boundary.
   admin: adminRouter,
-${ai}${feedback}${seo}${notifications}${storage}${assistant}${invoicing}${comms}${aeo}${shop}});
+${ai}${feedback}${seo}${notifications}${storage}${assistant}${aeo}${shop}});
 
 export type AppRouter = typeof appRouter;
 `;
@@ -3891,6 +4446,13 @@ interface GeneratedLink {
    * settled here, who sees them at request time — never a feature `if`.
    */
   readonly audience?: "everyone" | "staff" | "developer";
+  /**
+   * A TENANT permission key (Tenancy 2a): the link is drawn only for someone
+   * whose role in their active company holds it — a crew member's header
+   * shows Dashboard and Today's route and nothing else. Like `audience`, a
+   * runtime filter over a generated list; absent means every member.
+   */
+  readonly permission?: string;
 }
 
 /** `// ...` lines, wrapped and indented one level into an array literal. */
@@ -3930,7 +4492,7 @@ function renderLinkArray(
           .map(
             (link) =>
               `${indentedComment(link.why)}  ` +
-              `{ href: "${link.href}", label: "${link.label}"${link.audience && link.audience !== "everyone" ? `, audience: "${link.audience}"` : ""} },\n`,
+              `{ href: "${link.href}", label: "${link.label}"${link.audience && link.audience !== "everyone" ? `, audience: "${link.audience}"` : ""}${link.permission ? `, permission: "${link.permission}"` : ""} },\n`,
           )
           .join("\n")}]`;
   return `${doc}\nexport const ${name}: readonly SiteLink[] = ${body};\n`;
@@ -4015,7 +4577,13 @@ export function renderSiteNav(answers: Answers): string {
   // it is the page a field-service business exists to send people to — a
   // booking page reachable only from a link somebody pasted is one most
   // customers never find. Signed out is the main audience.
-  if (answers.includeScheduling) {
+  //
+  // A SINGLE BUSINESS ONLY (Tenancy 2a). In a companies project the platform
+  // books and quotes nobody: each company does, at its own /t/{web address}
+  // pages, which it links from its own website — so the platform's header
+  // carries neither.
+  const single = answers.tenantNoun === "none";
+  if (single && answers.includeScheduling) {
     site.push({
       href: "/book-visit",
       label: "Book a visit",
@@ -4031,8 +4599,8 @@ export function renderSiteNav(answers: Answers): string {
   // The instant estimate, from the estimator overlay. Public for the booking
   // page's reason: it is the page a field-service business sends people to,
   // and a price somebody can only reach from a pasted link is a price most
-  // customers never see.
-  if (answers.includeEstimator) {
+  // customers never see. A single business only, like the booking page.
+  if (single && answers.includeEstimator) {
     site.push({
       href: "/estimate",
       label: "Get an estimate",
@@ -4045,15 +4613,66 @@ export function renderSiteNav(answers: Answers): string {
     });
   }
 
-  // WHERE A SIGNED-IN PERSON WORKS (Tenancy 1). Per mode, chosen here so the
-  // header holds no `if` about it: a project whose customers are companies
-  // gets the company dashboard (with its setup checklist), the team page and
-  // the company's settings; a single-business project gets the team page,
-  // because its one workspace has no dashboard or settings of its own.
-  // /members still exists (old links and old invitation emails) and
-  // redirects to /settings/team, so it is not listed twice.
+  // WHERE A SIGNED-IN PERSON WORKS (Tenancy 1, 2a). Per mode, chosen here so
+  // the header holds no `if` about it: a project whose customers are
+  // companies gets the company dashboard, the company's own feature screens
+  // under /app (Tenancy 2a), the team page and the company's settings — each
+  // with the TENANT key it needs, so the header shows a person only what their
+  // role in their active company opens (a crew member: Dashboard and Today's
+  // route); a single-business project gets the team page, because its one
+  // workspace has no dashboard or settings of its own and its features are
+  // staff screens under /admin. /members still exists (old links and old
+  // invitation emails) and redirects to /settings/team, so it is not listed
+  // twice.
+  const companyFeatureLinks: GeneratedLink[] = [];
+  if (!single && answers.includeScheduling) {
+    companyFeatureLinks.push(
+      {
+        href: "/app/schedule",
+        label: "Schedule",
+        permission: "schedule.view",
+        why:
+          `The ${label}'s calendar: every crew's visits, the online requests ` +
+          "waiting for an answer, and Schedule settings beside it.",
+      },
+      {
+        href: "/app/schedule/today",
+        label: "Today's route",
+        permission: "schedule.route",
+        why:
+          "A crew's stops for the day, on a phone. On the one key the Crew " +
+          "role holds, so a crew member's header shows this and the dashboard.",
+      },
+    );
+  }
+  if (!single && answers.includeEstimator) {
+    companyFeatureLinks.push({
+      href: "/app/estimates",
+      label: "Estimates",
+      permission: "estimator.view",
+      why:
+        `The ${label}'s leads and quotes; its price book and estimate ` +
+        "settings are linked from the Estimates page's header.",
+    });
+  }
+  if (!single && answers.includeInvoicing) {
+    companyFeatureLinks.push({
+      href: "/app/invoices",
+      label: "Invoices",
+      permission: "invoices.view",
+      why: `The ${label}'s ledger: raise and send invoices, record payments.`,
+    });
+  }
+  if (!single && answers.includeComms) {
+    companyFeatureLinks.push({
+      href: "/app/messages",
+      label: "Messages",
+      permission: "comms.view",
+      why: `The emails the ${label}'s customers get, their wording, and what went out.`,
+    });
+  }
   const app: GeneratedLink[] =
-    answers.tenantNoun === "none"
+    single
       ? [
           {
             href: "/settings/team",
@@ -4069,13 +4688,16 @@ export function renderSiteNav(answers: Answers): string {
             href: "/dashboard",
             label: "Dashboard",
             why:
-              `The active ${label}'s home: its setup checklist and where to ` +
-              "go next. A new owner who has no company yet is sent from here " +
-              "to onboarding.",
+              `The active ${label}'s home: its setup checklist and a card for ` +
+              "every part of it the person's role opens. Any member may open " +
+              "it; a new owner who has no company yet is sent from here to " +
+              "onboarding.",
           },
+          ...companyFeatureLinks,
           {
             href: "/settings/team",
             label: "Team",
+            permission: "members.view",
             why:
               `Who is in this ${label} and who has been invited: invite, ` +
               "resend, withdraw, change a role, remove, hand over ownership.",
@@ -4083,9 +4705,10 @@ export function renderSiteNav(answers: Answers): string {
           {
             href: "/settings/company",
             label: "Settings",
+            permission: "tenant.view",
             why:
-              `The ${label}'s name, web address, logo, brand colour and ` +
-              "contact details.",
+              `The ${label}'s name, web address, logo, brand colour, time ` +
+              "zone and contact details — typed once, read by every feature.",
           },
         ];
 
@@ -4275,13 +4898,13 @@ export function renderSiteNav(answers: Answers): string {
  * installed contributes no entry, and whatever is left is the nav. Add your own
  * routes as you build them, to the array whose audience matches: SITE_LINKS is
  * seen by everyone including signed-out visitors, APP_LINKS only once somebody
- * is signed in, FOOTER_LINKS by everyone but out of the way. Anything that
- * depends on which permissions the viewer holds belongs in a permission-
- * filtered nav instead, next to the pages it gates.
+ * is signed in, FOOTER_LINKS by everyone but out of the way.
  *
- * \`audience\` is the one runtime filter, and absent means everyone: "staff"
- * links are drawn only for a staff role (the header checks), "developer" links
- * are left out of the footer in production (/setup is a diagnostics page).
+ * Two runtime filters, and absent means everyone: \`audience\` — "staff" links
+ * are drawn only for a staff role (the header checks), "developer" links are
+ * left out of the footer in production (/setup is a diagnostics page) — and
+ * \`permission\`, a key of the viewer's active company: the header and the
+ * dashboard draw the link only when the person's role there holds it.
  * Which links EXIST was settled when this file was generated; who SEES them is
  * settled per request.
  */
@@ -4289,6 +4912,8 @@ export interface SiteLink {
   readonly href: string;
   readonly label: string;
   readonly audience?: "staff" | "developer";
+  /** A permission key of the viewer's ACTIVE company; the link shows only when their role there holds it. */
+  readonly permission?: string;
 }
 
 ${arrays.join("\n")}`;
@@ -4556,11 +5181,16 @@ export function renderAdminNav(answers: Answers): string {
 
   // Field service — the quote → book → bill work, plus the two around it. One
   // group for however many were asked for; each entry is present only when its
-  // overlay was copied, and all sit on the shell's own key the way the other
-  // feature pages do (mint a narrower key when an action should not be every
-  // staff member's).
+  // overlay was copied, each on its own job's staff key.
+  //
+  // A SINGLE BUSINESS ONLY (Tenancy 2a). In a companies project the platform
+  // has no schedule, price book, ledger or messages of its own — each company
+  // runs them in its own area (/app/…), and the admin shell is the operator
+  // console — so none of these four is listed there. (AI citations is still
+  // the platform's.)
+  const single = answers.tenantNoun === "none";
   const fieldService: GeneratedNavItem[] = [];
-  if (answers.includeEstimator) {
+  if (single && answers.includeEstimator) {
     fieldService.push(
       {
         href: "/admin/estimates",
@@ -4595,7 +5225,7 @@ export function renderAdminNav(answers: Answers): string {
       },
     );
   }
-  if (answers.includeScheduling) {
+  if (single && answers.includeScheduling) {
     fieldService.push(
       {
         href: "/admin/schedule",
@@ -4627,26 +5257,26 @@ export function renderAdminNav(answers: Answers): string {
       },
     );
   }
-  if (answers.includeInvoicing) {
+  if (single && answers.includeInvoicing) {
     fieldService.push({
       href: "/admin/invoices",
       label: "Invoices",
-      permission: "staff.dashboard.view",
+      permission: "staff.invoices.view",
       why:
-        "The invoice ledger from the invoicing package: raise an invoice, record " +
-        "a payment, and share the by-token link a customer pays without an " +
-        "account.",
+        "The invoice ledger from the invoicing widget: raise an invoice, send " +
+        "it, record a payment, and copy the link a customer opens without an " +
+        "account. On its own staff key (Tenancy 2a), not the shell's.",
     });
   }
-  if (answers.includeComms) {
+  if (single && answers.includeComms) {
     fieldService.push({
       href: "/admin/comms",
       label: "Messages",
-      permission: "staff.dashboard.view",
+      permission: "staff.comms.view",
       why:
-        "The templates and delivery log from the comms package. The cron route " +
-        "drains what is due; this console is where the templates are edited and " +
-        "the log is read.",
+        "The Messages console from the comms widget: the wording of every email " +
+        "customers get, and the delivery log. The cron route drains what is " +
+        "due. On its own staff key (Tenancy 2a), not the shell's.",
     });
   }
   if (answers.includeAeo) {
@@ -6114,21 +6744,34 @@ export function renderRobots(answers: Answers): string {
         why: "A company's own home and setup checklist. Signed-in only.",
       },
       {
+        path: "/app/",
+        why: "Each company's own working area (Tenancy 2a): its schedule, estimates, invoices and messages. Signed-in only.",
+      },
+      {
         path: "/t/",
-        why: "Each company's reserved public address. Tenancy 1 only shows a contact card there (and marks it noindex); real public pages come later.",
+        why: "Each company's public pages (Tenancy 2a): its booking and estimate pages and the token pages behind its emails. Kept out of search in this release — every page there says noindex too — and the token pages are each one customer's key.",
       },
     );
   }
-  if (answers.includeEstimator) {
+  // The token pages at the ROOT exist only in a single-business project: a
+  // companies project's live under each company's /t/ address (above).
+  const single = answers.tenantNoun === "none";
+  if (single && answers.includeEstimator) {
     disallowed.push({
       path: "/quote/",
       why: "A customer's own quote, opened from the link in their email. The URL is the key to it (anyone holding it can accept); the page already says noindex and the API sends X-Robots-Tag, and this keeps a crawler that found a leaked link from fetching it at all.",
     });
   }
-  if (answers.includeScheduling) {
+  if (single && answers.includeScheduling) {
     disallowed.push({
       path: "/visit/",
       why: "A customer's own visit, opened from the link in their email. The URL is the key to it; the page already says noindex and the API sends X-Robots-Tag, and this keeps a crawler that found a leaked link from fetching it at all.",
+    });
+  }
+  if (single && answers.includeInvoicing) {
+    disallowed.push({
+      path: "/invoice/",
+      why: "A customer's own invoice, opened from the link in their email. The URL is the key to it; the page already says noindex and the API sends X-Robots-Tag, and this keeps a crawler that found a leaked link from fetching it at all.",
     });
   }
   if (sells) {
@@ -6226,13 +6869,17 @@ export function renderSitemap(answers: Answers): string {
       why: "From the marketing-pricing overlay, which needs both a marketing site and something to sell.",
     });
   }
-  if (answers.includeScheduling) {
+  // A single business's own booking and estimate pages. A companies project
+  // has none at its root — each company's are under /t/, which stays out of
+  // search in this release (Tenancy 2a, D17), so none is listed here.
+  const single = answers.tenantNoun === "none";
+  if (single && answers.includeScheduling) {
     pages.push({
       path: "/book-visit",
       why: "The booking page, from the scheduling overlay — for a field-service business the page most worth finding. The manage pages under /visit are never listed: each URL is one customer's key.",
     });
   }
-  if (answers.includeEstimator) {
+  if (single && answers.includeEstimator) {
     pages.push({
       path: "/estimate",
       why: "The instant estimate, from the estimator overlay. The quote pages under /quote are never listed: each URL is one customer's key.",
@@ -6324,10 +6971,14 @@ export function renderLlmsTxt(answers: Answers): string {
   if (answers.includeMarketing && sells) {
     pages.push({ path: "/pricing", line: "Plans and pricing." });
   }
-  if (answers.includeScheduling) {
+  // A single business's own pages only: a companies project's booking and
+  // estimate pages are each company's, under /t/, and out of search in this
+  // release (Tenancy 2a, D17).
+  const single = answers.tenantNoun === "none";
+  if (single && answers.includeScheduling) {
     pages.push({ path: "/book-visit", line: "Book a visit: pick a service and a time; we come to you." });
   }
-  if (answers.includeEstimator) {
+  if (single && answers.includeEstimator) {
     pages.push({ path: "/estimate", line: "Instant estimate: a price from our own price book for what you can count or measure." });
   }
   if (sells) {

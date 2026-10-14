@@ -36,6 +36,12 @@ const sells = (answers: Answers): boolean => answers.businessModel !== "none";
  * A generator test fails when an overlay router exists with no row here, and a
  * second greps each router for its rungs and checks the rows against them — so
  * this table can't silently fall behind the overlays.
+ *
+ * NO FIELD-SERVICE ROUTERS (Tenancy 2a, D3): invoicing's and messages' tRPC
+ * routers are retired, like scheduling's and the estimator's before them.
+ * Those features are package HTTP handlers, and the project's feature
+ * isolation proof (feature-isolation.test.ts) drives every one of their
+ * routes instead.
  */
 export const ROUTER_SCOPES: readonly RouterScopeRow[] = [
   { key: "health", scope: "public", installedBy: always, source: null },
@@ -47,11 +53,7 @@ export const ROUTER_SCOPES: readonly RouterScopeRow[] = [
   { key: "notifications", scope: "staff", installedBy: (a) => a.includeNotifications, source: "notifications/src/server/routers/notifications.ts" },
   { key: "files", scope: "staff", installedBy: (a) => a.includeStorage, source: "storage/src/server/routers/files.ts" },
   { key: "assistant", scope: "staff", installedBy: (a) => a.includeAssistant, source: "assistant/src/server/routers/assistant.ts" },
-  { key: "comms", scope: "staff", installedBy: (a) => a.includeComms, source: "comms/src/server/routers/comms.ts" },
   { key: "aeo", scope: "staff", installedBy: (a) => a.includeAeo, source: "aeo/src/server/routers/aeo.ts" },
-  { key: "invoicing", scope: "staff", installedBy: (a) => a.includeInvoicing, source: "invoicing/src/server/routers/invoicing.ts" },
-  { key: "invoicing.byToken", scope: "public", installedBy: (a) => a.includeInvoicing, source: "invoicing/src/server/routers/invoicing.ts" },
-  { key: "invoicing.markViewed", scope: "public", installedBy: (a) => a.includeInvoicing, source: "invoicing/src/server/routers/invoicing.ts" },
   { key: "catalog", scope: "staff", installedBy: sells, source: "stripe/src/server/routers/catalog.ts" },
   { key: "checkout", scope: "public", installedBy: sells, source: "stripe/src/server/routers/checkout.ts" },
   { key: "checkout.createIntent", scope: "authenticated", installedBy: sells, source: "stripe/src/server/routers/checkout.ts" },

@@ -72,6 +72,12 @@ export interface VisitPickerProps extends ChromeProps {
   days?: number;
   /** Called once per successful request. */
   onRequested?: (result: VisitRequestResponse) => void;
+  /**
+   * The business's own colour (Tenancy 2a): a `#rrggbb` becomes the accent,
+   * with the text on it, its shades and the focus ring derived for contrast.
+   * undefined or null: the stylesheet's accent.
+   */
+  accentColor?: string | null;
 }
 
 type Step = "service" | "time" | "details" | "done";
@@ -281,6 +287,17 @@ export function VisitPicker(props: VisitPickerProps) {
   let body;
   if (configState.status === "loading") {
     body = <Skeleton label="Loading times…" />;
+  } else if (configState.status === "error" && configState.error.code === "booking_closed" && configState.error.message && configState.error.message !== "booking_closed") {
+    // Closed BY THE BUSINESS (Tenancy 2a, D7): the server's own sentence
+    // ("Green Acres isn't taking requests online right now. Call …"), and no
+    // retry: trying again changes nothing until the business is open again.
+    body = (
+      <section className="aisw-empty" data-aisw-state="closed" aria-labelledby={`${ids}-closed`}>
+        <h2 className="aisw-empty-title" id={`${ids}-closed`}>
+          {configState.error.message}
+        </h2>
+      </section>
+    );
   } else if (configState.status === "error") {
     body = (
       <Notice tone="error">
@@ -563,7 +580,17 @@ export function VisitPicker(props: VisitPickerProps) {
       nonce={props.nonce}
       className={props.className}
       style={props.style}
-      data={{ "aisw-picker": configState.status === "ready" ? (closed && currentStep !== "done" ? "closed" : currentStep) : configState.status }}
+      accent={props.accentColor ?? null}
+      data={{
+        "aisw-picker":
+          configState.status === "ready"
+            ? closed && currentStep !== "done"
+              ? "closed"
+              : currentStep
+            : configState.status === "error" && configState.error.code === "booking_closed"
+              ? "closed"
+              : configState.status,
+      }}
     >
       <div className="aisw-body">{body}</div>
     </WidgetRoot>

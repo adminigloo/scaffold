@@ -289,6 +289,9 @@ export async function listCrewDay(
       estimated: counted.some((drive) => drive.estimated),
     },
     routeUrl,
+    // The model reads any day it is asked for; whether a CALLER may page to
+    // another day is the staff handler's decision (it sets this).
+    todayOnly: false,
   };
 }
 

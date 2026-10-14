@@ -33,7 +33,7 @@ import {
 } from "../prerender.js";
 import type { EmitPlan } from "../emit.js";
 import { planEmit } from "../emit.js";
-import { DEFAULT_ANSWERS, type Answers } from "../answers.js";
+import { DEFAULT_ANSWERS, TENANT_NOUNS, type Answers, type TenantNoun } from "../answers.js";
 import { EVERY_CONFIGURATION, TEMPLATE_DIR } from "./configurations.js";
 
 function answers(overrides: Partial<Answers> = {}): Answers {
@@ -64,7 +64,7 @@ const SITE_LAYOUT = `
  * Every configuration planned once, and both properties read off the same
  * sweep.
  *
- * Four hundred and eighty `planEmit` calls is half a minute of file reading —
+ * Every `planEmit` call is real file reading, so a sweep of the product is
  * past the default test timeout on its own, which is why the two tests that
  * await this sweep carry explicit ones — and doing it twice to ask two
  * questions about the same plans would be a minute. A
@@ -80,12 +80,21 @@ interface Swept {
   readonly refused?: string;
 }
 
-let sweeping: Promise<readonly Swept[]> | undefined;
+/**
+ * ONE SWEEP PER TENANT NOUN, memoised. The whole product is 1,920 plans: two
+ * and a half minutes alone, which overran the 180-second limit under load (the
+ * cliff every-configuration.test.ts was sliced for). Each noun's slice is a
+ * fifth of that, the slices together are still every configuration, and the
+ * two readers below share each slice's plans.
+ */
+const sweeping = new Map<TenantNoun, Promise<readonly Swept[]>>();
 
-function sweep(): Promise<readonly Swept[]> {
-  sweeping ??= (async () => {
+function sweep(noun: TenantNoun): Promise<readonly Swept[]> {
+  const cached = sweeping.get(noun);
+  if (cached) return cached;
+  const slice = (async () => {
     const results: Swept[] = [];
-    for (const config of EVERY_CONFIGURATION) {
+    for (const config of EVERY_CONFIGURATION.filter((c) => c.answers.tenantNoun === noun)) {
       try {
         const plan = await planEmit(TEMPLATE_DIR, "/out", config.answers);
         results.push({ label: config.label, scoped: authScopedLayouts(plan) });
@@ -96,7 +105,8 @@ function sweep(): Promise<readonly Swept[]> {
     }
     return results;
   })();
-  return sweeping;
+  sweeping.set(noun, slice);
+  return slice;
 }
 
 describe("the detector finds the layout the session is read from", () => {
@@ -148,7 +158,7 @@ describe("the detector finds the layout the session is read from", () => {
     ]);
   });
 
-  it("finds one in every configuration, so the rule below is never vacuous", async () => {
+  it.each(TENANT_NOUNS)("finds one in every configuration, so the rule below is never vacuous (--tenant-noun %s)", async (noun) => {
     // THE ANTI-VACUITY HALF, and the assertion most likely to earn its keep.
     // `assertNoPrerenderedAuthRoutes` returns immediately when no layout reads a
     // session, which is exactly what a refactor of the header would produce: a
@@ -157,7 +167,7 @@ describe("the detector finds the layout the session is read from", () => {
     //
     // A configuration the rule REFUSED is not evidence of blindness — it is the
     // detector working — so those are the other test's business, not this one's.
-    const blind = (await sweep())
+    const blind = (await sweep(noun))
       .filter((result) => result.refused === undefined)
       .filter(
         (result) =>
@@ -176,13 +186,13 @@ describe("the detector finds the layout the session is read from", () => {
         `${blind.join("\n")}\n`,
     ).toEqual([]);
     // The timeout is the sweep's, not this test's: whichever of the two
-    // sweep-readers runs first pays for all 480 plans.
+    // sweep-readers runs first pays for this noun's slice of the plans.
   }, 180_000);
 });
 
 describe("no emitted page forces a prerender under it", () => {
-  it("holds for every configuration the generator can produce", async () => {
-    const problems = (await sweep())
+  it.each(TENANT_NOUNS)("holds for every configuration the generator can produce (--tenant-noun %s)", async (noun) => {
+    const problems = (await sweep(noun))
       .filter((result) => result.refused !== undefined)
       .map((result) => `${result.label}\n    ${result.refused ?? ""}`);
 

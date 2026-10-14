@@ -235,6 +235,11 @@ export const HELP = `
   --aeo                Field service: answer-engine citation tracking — do the AI
     / --no-aeo         answers to your customers' questions mention you. Staff
                        screen; the model asker is yours to wire.
+
+  With a --tenant-noun (companies), the estimator, scheduling, invoicing and
+  messages are EACH COMPANY'S: its own screens at /app, its own public pages
+  at /t/{web address}, emails under its own name, crons that serve every
+  company. With --tenant-noun none they run for your one business at /admin.
   --help, -h           Show this.
 
   Any flag given is used verbatim; only the rest are prompted for.
@@ -511,17 +516,18 @@ export function nextSteps(answers: Answers, targetDir: string): string {
       ...(answers.adminShell !== "none"
         ? [`  Every ${noun} is at /admin/companies: suspend, reactivate, new owner.`]
         : []),
-      `  In this release the feature screens are still run by your own staff`,
-      `  in /admin; they move onto each ${noun} in Tenancy 2.`,
-      // Review R2 TB2-06: the public booking and estimate pages book with the
-      // PLATFORM owner, not with each company. Said where it's read.
-      ...(answers.includeScheduling || answers.includeEstimator
+      // Tenancy 2a, said where it's read (review R2 TB2-06): WHO the field
+      // features are for. Each company runs them itself — its own screens
+      // under /app, its own public pages under /t/{web address}.
+      ...(answers.includeScheduling || answers.includeEstimator || answers.includeInvoicing || answers.includeComms
         ? [
-            `  The site's ${[
-              ...(answers.includeScheduling ? ["Book a visit"] : []),
-              ...(answers.includeEstimator ? ["Get an estimate"] : []),
-            ].join(" and ")} ${answers.includeScheduling && answers.includeEstimator ? "pages book" : "page books"} with YOUR business, not`,
-            `  with each ${noun}, until Tenancy 2.`,
+            `  Each ${noun} runs its own ${[
+              ...(answers.includeScheduling ? ["schedule"] : []),
+              ...(answers.includeEstimator ? ["estimates"] : []),
+              ...(answers.includeInvoicing ? ["invoices"] : []),
+              ...(answers.includeComms ? ["messages"] : []),
+            ].join(", ")} at /app, with its own`,
+            `  public pages at /t/{its web address} and emails under its own name.`,
           ]
         : []),
       `  Set SUPPORT_EMAIL so a suspended ${noun} knows where to write.`,

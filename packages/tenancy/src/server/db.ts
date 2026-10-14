@@ -1,5 +1,6 @@
 import { sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
+import { ROLE_KEY_PATTERN } from "../roles.js";
 import type { TenantBranding, TenantKind, TenantSetupState } from "../schema.js";
 import type { CompanyStatus, RoleKey } from "../wire.js";
 import type { TenancyDb } from "./types.js";
@@ -185,10 +186,25 @@ export async function readCompany(db: TenancyDb, tenantId: string): Promise<Comp
   return rows[0] ? companyRow(rows[0]) : null;
 }
 
+/** The core four. A project may add more (Tenancy 2a): see `TenantRoleSet`. */
 export const ROLE_KEYS: readonly RoleKey[] = ["owner", "admin", "member", "viewer"];
 
+/**
+ * A role key read back from the database, or null for anything that isn't
+ * one. Tenancy 2a: any well-formed key (a project's Crew), not only the core
+ * four: a key in a stored row was a role when it was assigned, and showing it
+ * beats showing "No role" for someone who has one. Keys a CALLER sends are
+ * checked against the project's role set instead (the handlers, `roles.has`).
+ *
+ * CONTRACT: 4.1 lists `asRoleKey → roles.has`. It is a free function with no
+ * service context (the views and the gate call it), and the set check would
+ * turn a stored key the project later dropped into "No role" on the team page
+ * while the person still holds its grants. So reads take any well-formed key
+ * and every WRITE path (handlers, `sendInvitation`, `changeMemberRole`)
+ * checks `ctx.roles.has`, which is where an unknown key must be refused.
+ */
 export function asRoleKey(value: unknown): RoleKey | null {
-  return typeof value === "string" && (ROLE_KEYS as readonly string[]).includes(value) ? (value as RoleKey) : null;
+  return typeof value === "string" && ROLE_KEY_PATTERN.test(value) ? (value as RoleKey) : null;
 }
 
 /** A user row's facts, or null for a missing or deleted user. */

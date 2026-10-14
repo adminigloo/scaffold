@@ -185,14 +185,9 @@ With scheduling it also holds `/api/cron/scheduling`, once a day: it releases
 booking requests nobody answered in time and tells the customer. A lapsed
 request stops holding its time at its deadline either way, and is also
 released whenever a customer books or staff open the calendar, so the cron
-matters most in a quiet week. On Pro, run both every 15 minutes:
+matters most in a quiet week. On Pro, run them every 15 minutes:
 
-```json
-"crons": [
-  { "path": "/api/cron/comms", "schedule": "*/15 * * * *" },
-  { "path": "/api/cron/scheduling", "schedule": "*/15 * * * *" }
-]
-```
+<!-- adminigloo:pro-crons -->
 
 **Appointment reminders on the daily schedule.** The comms cron runs at 14:00
 UTC (7 AM Mountain Standard Time), and `src/server/scheduling-notify.ts` tells
@@ -214,6 +209,7 @@ daily run (`FOLLOW_UP_RUNS`) — change it to `{ everyMinutes: 15 }` when you
 tighten the comms cron, as with reminders.
 
 The same `CRON_SECRET` covers every route.
+<!-- adminigloo:company-crons -->
 
 ### Estimator: photos and photo reading
 
@@ -231,6 +227,7 @@ sets the daily budget and the readings per visitor in Estimate settings; past
 either, customers are asked to count the steps themselves. `ANTHROPIC_API_KEY`
 switches it on.
 
+<!-- adminigloo:single:estimator-setup:begin -->
 The business's name, tax rate, quote rules and who hears about new leads are
 set by the owner in `/admin/estimator/settings`. Until the owner has saved the
 name and tax rate there, `/estimate` says instant estimates aren't available
@@ -241,6 +238,7 @@ chooses the zone quotes are dated in the first time the estimator runs
 empty: the owner builds it, or loads the sample catalog, at
 `/admin/estimator`. A new product, and every sample product, stays off
 `/estimate` until the owner turns it on.
+<!-- adminigloo:single:estimator-setup:end -->
 
 ### Scheduling: Google Maps
 
@@ -260,15 +258,18 @@ In the Google Cloud console, on the project that holds the key:
 A key with either API switched off answers REQUEST_DENIED; the app logs
 "google maps request failed" and carries on with what it has.
 
+<!-- adminigloo:single:scheduling-setup:begin -->
 The business's time zone, name, services, crews and hours are set by the owner
 in `/admin/schedule/settings`. `SCHEDULING_TIME_ZONE` only chooses the zone the
 business starts in the first time scheduling runs (America/Denver when unset).
 Online booking starts **off**: the booking page says it is closed until the
 owner has checked those and switched on "Take bookings online", and the staff
 calendar lists what is left to set up.
+<!-- adminigloo:single:scheduling-setup:end -->
 
 ### Scheduling: crews on their phones
 
+<!-- adminigloo:single:crews:begin -->
 A crew member needs no developer. They sign in once at `/sign-in`; the owner
 then picks them for their crew in Schedule settings → Crews ("Who opens this
 crew's route"). Picking somebody who holds no staff role gives them the
@@ -277,6 +278,7 @@ stops at `/admin/schedule/today`, Start, Complete and "Couldn't do it", no
 calendar, no settings, no Messages. Un-picking them takes it away. Both are in
 the audit log. Office staff keep their own role (`staff.schedule.view`,
 `.manage`, `.settings`); picking the owner for a van never demotes them.
+<!-- adminigloo:single:crews:end -->
 
 ## 3. Day to day
 
@@ -478,6 +480,7 @@ in the table above); `RESEND_API_KEY` is what can wait. To send them:
 2. Set `RESEND_API_KEY` and `EMAIL_FROM` (an address on that domain) in both
    Vercel scopes.
 3. Send a test invitation on staging and open it from the email.
+<!-- adminigloo:company-email -->
 
 A project generated without email gets it with
 `pnpm dlx @adminigloo/create-app add email`.

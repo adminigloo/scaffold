@@ -480,6 +480,8 @@ test.describe("the price book", () => {
     await expect(page.getByText("No products yet.")).toBeVisible();
     await page.getByRole("button", { name: "Load a sample catalog" }).click();
     const dialog = page.getByRole("dialog", { name: "Load a sample catalog?" });
+    // The trade is asked, never assumed (Tenancy 2a review T2A-BO-10).
+    await dialog.getByLabel("Wheelchair ramps and accessibility").check();
     await expect(dialog).toContainText("This adds 5 sample products and 10 supplies with sample prices.");
     expect(fake.sampleLoaded).toBe(false);
     await dialog.getByRole("button", { name: "Load the sample" }).click();

@@ -414,6 +414,29 @@ textarea.aitw-input { min-height: 92px; resize: vertical; }
 .aitw-badge-icon svg { width: 22px; height: 22px; }
 .aitw-badge-icon[data-tone="ok"] { background: var(--aitw-ok-soft); color: var(--aitw-ok); }
 .aitw-switch-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+
+/* A company's public face (Tenancy 2a): the brand bar and the closed panel.
+   Here the company's colour is the point, so it's used as given; its text
+   colour is the one the server worked out for it (white or near-black). */
+.aitw-brandbar {
+  display: flex; align-items: center; gap: 12px; min-width: 0; padding: 12px 0;
+  border-bottom: 3px solid transparent; color: var(--aitw-ink);
+}
+.aitw-brandbar[data-brand] { border-bottom-color: var(--aitw-brand); }
+.aitw-brandbar-logo { display: block; max-height: 40px; max-width: 160px; width: auto; height: auto; flex: none; object-fit: contain; }
+.aitw-brandbar-initials {
+  width: 40px; height: 40px; flex: none; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center;
+  background: var(--aitw-accent-soft); color: var(--aitw-accent); font-size: 19px; line-height: 1; font-weight: 800; letter-spacing: .02em;
+}
+.aitw-brandbar-initials[data-brand] { background: var(--aitw-brand); color: var(--aitw-on-brand); }
+.aitw-brandbar-text { display: grid; gap: 2px; min-width: 0; }
+.aitw-brandbar-name { font-size: 18px; font-weight: 700; color: var(--aitw-ink); text-decoration: none; overflow-wrap: anywhere; }
+a.aitw-brandbar-name:hover { text-decoration: underline; text-underline-offset: 3px; }
+a.aitw-brandbar-name:focus-visible, .aitw-contact a:focus-visible { outline: 2px solid var(--aitw-focus); outline-offset: 2px; border-radius: 2px; }
+.aitw-contact { margin: 0; display: flex; flex-wrap: wrap; gap: 2px 12px; color: var(--aitw-muted); font-size: 14.5px; }
+.aitw-contact a { color: var(--aitw-accent); overflow-wrap: anywhere; }
+.aitw-contact-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.aitw-contact-list a { color: var(--aitw-accent); font-weight: 600; overflow-wrap: anywhere; }
 `;
 
 export interface InjectStylesOptions {

@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { capabilitiesFor, overlayNamesFor } from "../answers.js";
+import { TENANT_NOUNS, capabilitiesFor, overlayNamesFor } from "../answers.js";
 import { parseArgs, collectAnswers } from "../cli.js";
 import { assertTargetUsable, planEmit, writePlan } from "../emit.js";
 import type { Prompter } from "../prompt.js";
@@ -81,11 +81,40 @@ const ALWAYS = [
   join("app", "(site)", "page.tsx"),
 ] as const;
 
+/**
+ * THE SWEEP, CUT INTO ONE SLICE PER TENANT NOUN.
+ *
+ * It was one test, and it outgrew its own limit: 1,920 configurations at 80 to
+ * 100 ms of real file reading each is two and a half minutes on a quiet machine
+ * against a 180-second timeout, so any load beside it (the rest of this suite
+ * in parallel workers, or a CI runner) turned a working generator red. Raising
+ * the limit again would only move the cliff. Slicing keeps the sweep EXHAUSTIVE
+ * (the slices partition EVERY_CONFIGURATION, asserted below) while each slice
+ * is a fifth of the work under the same limit, and a fault still reads as one
+ * failure list per slice, never one test per configuration.
+ *
+ * The tenant noun is the slice because it is the outermost axis of the product
+ * and the one Tenancy 2a moved most: companies mode and single-business mode
+ * select different overlays for every field-service feature.
+ */
+const SLICES = TENANT_NOUNS.map(
+  (noun) => [noun, EVERY_CONFIGURATION.filter((config) => config.answers.tenantNoun === noun)] as const,
+);
+
 describe("the generator can produce every configuration", () => {
-  it("plans, and the plan is a project", async () => {
+  it("is swept whole: the slices below cover every configuration exactly once", () => {
+    expect(SLICES.reduce((total, [, configs]) => total + configs.length, 0)).toBe(
+      EVERY_CONFIGURATION.length,
+    );
+    for (const [noun, configs] of SLICES) {
+      expect(configs.length, `--tenant-noun ${noun}`).toBeGreaterThan(0);
+    }
+  });
+
+  it.each(SLICES)("plans, and the plan is a project (--tenant-noun %s)", async (_noun, configs) => {
     const problems: string[] = [];
 
-    for (const config of EVERY_CONFIGURATION) {
+    for (const config of configs) {
       let plan;
       try {
         plan = await planEmit(TEMPLATE_DIR, "/out", config.answers);
@@ -157,12 +186,12 @@ describe("the generator can produce every configuration", () => {
 
     expect(
       problems,
-      `${problems.length} of ${EVERY_CONFIGURATION.length} configurations cannot be ` +
+      `${problems.length} of ${configs.length} configurations cannot be ` +
         `generated. Each entry starts with the exact flags that reproduce it:\n\n` +
         `${problems.join("\n")}\n`,
     ).toEqual([]);
-    // 480 planEmit calls of real file reading — the sweep outgrew the default
-    // timeout when the feedback axis doubled it.
+    // A slice is a fifth of the sweep (see SLICES): well under a minute alone,
+    // with room inside the limit for a loaded runner.
   }, 180_000);
 
   it("is reachable through the flags, with nothing left to a prompt", async () => {
