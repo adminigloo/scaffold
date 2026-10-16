@@ -1,5 +1,14 @@
 # @adminigloo/invoicing-widget
 
+## 0.1.1
+
+### Patch Changes
+
+- 786a643: Released with `@adminigloo/invoicing` 0.4 (Tenancy 2b-1): the optional peer is
+  now `^0.4.0`. No screen or wire change.
+- Updated dependencies [786a643]
+  - @adminigloo/invoicing@0.4.0
+
 ## 0.1.0
 
 ### Minor Changes

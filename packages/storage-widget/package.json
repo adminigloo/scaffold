@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/storage-widget",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "The photos and files screens for AdminIgloo storage, under ./admin: the photos and files kept with a visit, an estimate or an invoice (with the phone camera at the job), the company Files screen, and how much room is left. Talks to @adminigloo/storage's handlers. React is its only peer.",
   "license": "UNLICENSED",
   "type": "module",

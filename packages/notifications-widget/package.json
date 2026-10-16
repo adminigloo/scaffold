@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/notifications-widget",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "The alerts screens for AdminIgloo notifications, under ./admin: the bell in the header with each person's unread alerts for their company, the full alerts page, and Alert settings (how each person hears about each kind of alert, and who in the company hears about new work). Talks to @adminigloo/notifications's handlers. React is its only peer.",
   "license": "UNLICENSED",
   "type": "module",

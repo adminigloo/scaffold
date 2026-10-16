@@ -1,5 +1,14 @@
 # @adminigloo/tenancy-widget
 
+## 0.2.1
+
+### Patch Changes
+
+- 786a643: Released with `@adminigloo/tenancy` 0.6 (Tenancy 2b-1): the optional peer is
+  now `^0.6.0`. No component or wire change.
+- Updated dependencies [786a643]
+  - @adminigloo/tenancy@0.6.0
+
 ## 0.2.0
 
 ### Minor Changes

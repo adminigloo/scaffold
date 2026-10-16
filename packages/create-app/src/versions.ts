@@ -167,7 +167,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // it belongs here all the same. `renderPackageJson` spelled `^0.1.1` out
   // inline, which put a fourteenth version in a place no drift test looked at —
   // the exact arrangement the rest of this table exists to replace.
-  testing: "0.2.1",
+  testing: "0.2.2",
   // Field service — first releases, pinned at the workspace versions the drift
   // test reads. The emitted routers/handlers import from each unconditionally
   // for the config that selects it, so a caret over anything older can resolve

@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/notifications",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Alerts for each company and each person in it: a bell with their own company's alerts in plain words, each person's choice of in the app or also by email, one place where the owner picks who hears about new work, and alert emails under the company's name. Durable in your own database, with handlers for @adminigloo/notifications-widget.",
   "license": "UNLICENSED",
   "type": "module",
