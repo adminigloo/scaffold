@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/tenancy-widget",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "The screens for AdminIgloo companies: onboarding (name your company), the company switcher, the setup checklist, the team page (invite, change roles, remove, leave, transfer ownership) and company settings, plus the operator console under ./admin (companies, suspend and reactivate, staff roles). Talks to @adminigloo/tenancy's handlers. React is its only peer.",
   "license": "UNLICENSED",
   "type": "module",
@@ -34,7 +34,7 @@
   },
   "peerDependencies": {
     "react": "^18.0.0 || ^19.0.0",
-    "@adminigloo/tenancy": "^0.6.0"
+    "@adminigloo/tenancy": "^0.7.0"
   },
   "peerDependenciesMeta": {
     "@adminigloo/tenancy": {

@@ -1,5 +1,12 @@
 # @adminigloo/commerce
 
+## 0.1.6
+
+### Patch Changes
+
+- Updated dependencies [e3d0371]
+  - @adminigloo/stripe@0.3.0
+
 ## 0.1.5
 
 ### Patch Changes

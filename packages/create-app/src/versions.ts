@@ -93,7 +93,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // is the hole the form used to fall through: it created the product, had
   // `upsertVariant` refuse it, and left a draft with nothing under it.
   catalog: "0.2.1",
-  commerce: "0.1.5",
+  commerce: "0.1.6",
   // 0.2.0 for the typed plan record. `src/plans.ts` is emitted into every
   // project that sells something and calls `definePlans`, which does not exist
   // in 0.1.x — so a project resolving the old line fails to compile on a file
@@ -167,7 +167,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // it belongs here all the same. `renderPackageJson` spelled `^0.1.1` out
   // inline, which put a fourteenth version in a place no drift test looked at —
   // the exact arrangement the rest of this table exists to replace.
-  testing: "0.2.2",
+  testing: "0.2.3",
   // Field service — first releases, pinned at the workspace versions the drift
   // test reads. The emitted routers/handlers import from each unconditionally
   // for the config that selects it, so a caret over anything older can resolve
@@ -243,7 +243,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // company's public pages, and any role the server offers (Crew). 0.2.1
   // (Tenancy 2b-1): its tenancy peer is ^0.6.0 — pinned, so a project's
   // lockfile can't keep a 0.2.0 whose peer still names tenancy 0.5.
-  "tenancy-widget": "0.2.1",
+  "tenancy-widget": "0.2.2",
   // 0.2.0 (sweep): line items after creation, atomic idempotent payments,
   // reversals, a status transition table and tenant-scoped reads — the emitted
   // admin page and router call addInvoiceItem/reversePayment/markInvoiceViewed

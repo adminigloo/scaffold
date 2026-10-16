@@ -1,5 +1,14 @@
 # @adminigloo/testing
 
+## 0.2.3
+
+### Patch Changes
+
+- Updated dependencies [e3d0371]
+- Updated dependencies [e3d0371]
+  - @adminigloo/stripe@0.3.0
+  - @adminigloo/tenancy@0.7.0
+
 ## 0.2.2
 
 ### Patch Changes

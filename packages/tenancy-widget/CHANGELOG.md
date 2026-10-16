@@ -1,5 +1,12 @@
 # @adminigloo/tenancy-widget
 
+## 0.2.2
+
+### Patch Changes
+
+- Updated dependencies [e3d0371]
+  - @adminigloo/tenancy@0.7.0
+
 ## 0.2.1
 
 ### Patch Changes

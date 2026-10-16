@@ -1113,7 +1113,7 @@ describe("what the project claims and documents (11.13)", () => {
     for (const [pkg, range] of [
       // Tenancy 2b-1 moved every line it changed (versions.ts says why).
       ["tenancy", "^0.7.0"],
-      ["tenancy-widget", "^0.2.1"],
+      ["tenancy-widget", "^0.2.2"],
       ["scheduling", "^0.6.0"],
       ["scheduling-widget", "^0.3.0"],
       ["estimator", "^0.5.0"],
