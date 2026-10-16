@@ -163,16 +163,31 @@ tenancy, scheduling, the estimator, invoicing, comms, notifications and storage
 The generated `DEPLOYMENT.md` (§9, "Upgrading") carries these steps for that
 project's own features.
 
+### Feedback per company (Tenancy 2b-2a, create-app 0.26)
+
+With `--feedback` in a companies project, each company works its own board at
+`/app/feedback` (settings at `/app/feedback/settings`), and its customers write
+to it at `/t/{web address}/feedback` — emailed the team's answer in the
+company's name with `--comms`, and alerting the team with `--notifications`.
+This site's own board (the in-app button's) stays at `/admin/feedback`, on
+staff keys of its own (`staff.feedback.*`). A single business keeps its one
+board. `upgrade` removes the retired feedback tRPC router; then run
+`pnpm db:generate && pnpm db:migrate` (or feedback's
+`sql/upgrade-0.9-to-0.10.sql`) and `pnpm db:seed` for the new staff keys.
+
+Not included yet: filters and search on the board, a "new ticket" button for
+the team, epics, column and category editors as package screens, private
+screenshots, custom domains.
+
 ### Not included (Tenancy 2b-1)
 
 What a generated project does NOT do yet, so nobody sells it as doing so. The
 generated `README.md` carries the same lists (single-business projects leave
 out the items that are only about companies).
 
-- **The feedback board per company, and the complete board** — Tenancy 2b-2.
-  It will keep screenshots as these private files and send its alerts through
-  these notifications. Until then, feedback screenshots stay on the public
-  Blob store as in 2a.
+- **The complete feedback board** (filters, search, a "new ticket" button for the team, epics) — Tenancy 2b-2b.
+  The board per company, its alerts and its private screenshots are here (Tenancy
+  2b-2a).
 - **The AI assistant per company** — Tenancy 2b-3.
 - **Website analytics, SEO/AEO and book-a-call (booking) per company** —
   Tenancy 2b-4.

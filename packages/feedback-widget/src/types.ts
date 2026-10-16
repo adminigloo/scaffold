@@ -106,10 +106,27 @@ export interface FeedbackReporter {
 export interface FeedbackConfig {
   /** Root of the platform's mounted handlers, e.g. "https://platform.example.com/api/igloo". */
   baseUrl: string;
-  /** The aik_… license key issued for this install. */
-  clientKey: string;
+  /**
+   * The aik_… website key issued for this install. Optional since 0.4.0: a
+   * company's own feedback page (`/api/t/{web address}/feedback`) names the
+   * company in its address and needs none.
+   */
+  clientKey?: string;
   /** Attached to every ticket so triage knows who was in the seat. */
   reporter?: FeedbackReporter;
+  /**
+   * Take a screenshot of the page when the form opens (default true). Off for
+   * a page whose only purpose is the form — a company's public feedback page,
+   * where the customer is writing about the business, not about the page they
+   * are on — and the form opens straight onto "What happened?" (0.4.0).
+   */
+  screenshot?: boolean;
+  /**
+   * Ask for the reporter's name and email in the form (0.4.0), so the team
+   * can answer by email as well as under "My reports". Ignored when
+   * `reporter` already says who they are. Default false.
+   */
+  askContact?: boolean;
   /** Register Ctrl+Shift+B (default true). */
   enableShortcut?: boolean;
   /**

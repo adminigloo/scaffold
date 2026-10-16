@@ -82,6 +82,8 @@ export function alertHrefs(answers: Answers): Readonly<Record<string, string>> {
   if (answers.includeInvoicing) out.invoice = companies ? "/app/invoices/{id}" : shell ? "/admin/invoices/{id}" : "";
   if (answers.includeComms) out.messages = companies ? "/app/messages" : shell ? "/admin/comms" : "";
   if (answers.includeStorage) out.files = companies ? "/app/files" : shell ? "/admin/files" : "";
+  // Tenancy 2b-2a: a company's feedback board, with the ticket open.
+  if (companies && answers.includeFeedback) out.feedback = "/app/feedback?ticket={id}";
   return out;
 }
 
@@ -94,6 +96,9 @@ function alertFragments(answers: Answers): readonly string[] {
     ...(answers.includeInvoicing ? ["invoicingAlertKinds"] : []),
     ...(answers.includeComms ? ["commsAlertKinds"] : []),
     ...(answers.includeStorage ? ["storageAlertKinds"] : []),
+    // Tenancy 2b-2a: a company's feedback board (this site's own board has no
+    // company people to alert, so a single-business project has none).
+    ...(companiesMode(answers) && answers.includeFeedback ? ["feedbackAlertKinds"] : []),
   ];
 }
 
@@ -193,6 +198,9 @@ function alertsShared(answers: Answers): {
       ? [`import { commsAlertKinds, commsFailureAlert, commsTemplates, deliverNow, templateLabel, type CommsFailure } from "${scope}/comms";`]
       : []),
     ...(storage ? [`import { storageAlertKinds, storageUsageAlert, type StorageUsageEvent } from "${scope}/storage";`] : []),
+    ...(companies && answers.includeFeedback
+      ? [`import { feedbackAlertKinds, feedbackAlertsFor, type FeedbackEvent } from "${scope}/feedback";`]
+      : []),
   ];
 
   const fragments = alertFragments(answers);
@@ -273,6 +281,23 @@ export async function alertOnInvoicingEvent(event: InvoicingEvent): Promise<void
     await alerts.notify(invoicingAlertsFor(event, { hrefs: { invoice: ALERT_HREFS.invoice } }));
   } catch (error) {
     reportAlertsError(error, { tenantId: event.tenantId, step: "invoicing-event" });
+  }
+}`);
+  }
+
+  if (companies && answers.includeFeedback) {
+    producerBlocks.push(`
+/**
+ * Feedback's events (Tenancy 2b-2a): a customer sent the ${noun} something
+ * new, or answered on their ticket — to everyone who can see its board.
+ * Handed to the ${noun}'s intake handlers as \`onEvent\` (src/server/feedback.ts),
+ * which never passes this site's own board's events.
+ */
+export async function alertOnFeedbackEvent(event: FeedbackEvent): Promise<void> {
+  try {
+    await alerts.notify(feedbackAlertsFor(event, { hrefs: { ticket: ALERT_HREFS.feedback } }));
+  } catch (error) {
+    reportAlertsError(error, { tenantId: event.tenantId, step: "feedback-event" });
   }
 }`);
   }
@@ -1259,7 +1284,18 @@ function fileRecordEntries(answers: Answers): string[] {
     ...(answers.includeInvoicing
       ? [`      ...invoicingFileRecords(db, { invoiceHref: ${JSON.stringify(companies ? "/app/invoices/{id}" : "/admin/invoices/{id}")} }),`]
       : []),
+    // Tenancy 2b-2a review (M3): a company's feedback ticket keeps its
+    // screenshots privately, and the ticket's permissions decide who opens
+    // them. Companies only: this site's own board isn't a company's.
+    ...(companies && answers.includeFeedback
+      ? [`      ...feedbackFileRecords(db, { ticketHref: "/app/feedback?ticket={id}" }),`]
+      : []),
   ];
+}
+
+/** True when a company's feedback screenshots are kept privately in this project (review M3). */
+export function privateFeedbackScreenshots(answers: Answers): boolean {
+  return companiesMode(answers) && answers.includeFeedback && answers.includeStorage;
 }
 
 /**
@@ -1286,6 +1322,7 @@ export function renderFiles(answers: Answers): string {
     ...(est ? [`import { estimatorFileRecords, estimatorPhotoPurpose, estimatorStaffPhotoPurpose } from "${scope}/estimator";`] : []),
     ...(answers.includeInvoicing ? [`import { invoicingFileRecords } from "${scope}/invoicing";`] : []),
     ...(answers.includeScheduling ? [`import { schedulingFileRecords } from "${scope}/scheduling";`] : []),
+    ...(companies && answers.includeFeedback ? [`import { feedbackFileRecords, feedbackScreenshotPurpose } from "${scope}/feedback";`] : []),
     `import { db } from "@/db";`,
     `import { env } from "@/env";`,
     ...(companies ? [`import { SITE_NAME } from "@/seo";`] : []),
@@ -1581,7 +1618,7 @@ export function createFilesStorage(
     // table of the same name somebody else made.
     tables: storageTables,
     stores,
-    purposes: [...STORAGE_BUILT_IN_PURPOSES${est ? ", estimatorPhotoPurpose, estimatorStaffPhotoPurpose" : ""}],
+    purposes: [...STORAGE_BUILT_IN_PURPOSES${est ? ", estimatorPhotoPurpose, estimatorStaffPhotoPurpose" : ""}${companies && answers.includeFeedback ? ", feedbackScreenshotPurpose" : ""}],
     // GENERATED: the records files can belong to, one per installed feature.
     // The record's own permissions decide who sees its files (D12).
     records: [${records.length > 0 ? `\n${records.join("\n")}\n    ` : ""}],
@@ -1625,6 +1662,21 @@ export const estimatorPhotoStore: StoragePurposeStore | undefined = files.purpos
  * (src/server/estimator-services.ts).
  */
 export const estimatorStaffPhotoStore: StoragePurposeStore | undefined = files.purposeStore("estimator.staff-photo");
+`
+    : ""
+}
+${
+  companies && answers.includeFeedback
+    ? `
+/**
+ * Where a ${noun}'s feedback screenshots are kept (Tenancy 2b-2a review M3):
+ * PRIVATELY, on their ticket — the ticket's permissions decide who opens them
+ * (\`feedback.view\`), through the ${noun}'s signed-in files route. Counted,
+ * never refused because the ${noun} is full, and capped at a tenth of the room
+ * (strangers send these). Undefined without a private store: the ${noun}'s
+ * feedback then takes no screenshots (src/server/feedback.ts).
+ */
+export const feedbackScreenshotStore: StoragePurposeStore | undefined = files.purposeStore("feedback.screenshot");
 `
     : ""
 }
@@ -2126,6 +2178,7 @@ export function alertProducers(answers: Answers): readonly string[] {
     ...(answers.includeInvoicing ? ["alertOnInvoicingEvent"] : []),
     ...(answers.includeComms ? ["alertOnCommsFailure"] : []),
     ...(answers.includeStorage ? ["alertOnStorageUsage"] : []),
+    ...(companiesMode(answers) && answers.includeFeedback ? ["alertOnFeedbackEvent"] : []),
   ];
 }
 

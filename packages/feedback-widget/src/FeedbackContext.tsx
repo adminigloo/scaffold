@@ -22,7 +22,7 @@ import {
   type ThreadMessage,
   type ThreadTicket,
 } from "./transport.js";
-import { loadReports, removeReport, saveReport, type StoredReport } from "./reports.js";
+import { loadReports, removeReport, reportsInstallId, saveReport, type StoredReport } from "./reports.js";
 import { injectStyles } from "./styles.js";
 import type {
   ClientMetadata,
@@ -80,6 +80,23 @@ export interface FeedbackContextValue {
   threadLoading: boolean;
   threadError: string | null;
   isReplying: boolean;
+  /**
+   * The platform's sentence when this form takes no new reports (a closed
+   * company, 0.4.0), once its settings have loaded; null when it does. Reading
+   * and replying under "My reports" still work.
+   */
+  closedMessage: string | null;
+  /** The form asks for the reporter's name and email (config.askContact, and no config.reporter). */
+  askContact: boolean;
+  reporterName: string;
+  reporterEmail: string;
+  setReporterName: (value: string) => void;
+  setReporterEmail: (value: string) => void;
+  /** The honeypot field's value (0.4.0): rendered off screen, so only a script fills it. */
+  website: string;
+  setWebsite: (value: string) => void;
+  /** Load the form's settings (categories, open or closed) ahead of opening it. Once per mount. */
+  prepare: () => Promise<void>;
   openFeedback: () => Promise<void>;
   /** Open the modal straight onto the report list — no screenshot capture. */
   openReports: () => void;
@@ -114,6 +131,11 @@ export function FeedbackProvider({
     () => new FeedbackTransport(config.baseUrl, config.clientKey),
     [config.baseUrl, config.clientKey],
   );
+  // Which "My reports" list is this install's: the website key's, or (no key,
+  // a company's own feedback page) the form address's (0.4.0).
+  const installId = useMemo(() => reportsInstallId(config), [config.baseUrl, config.clientKey]);
+  const askContact = Boolean(config.askContact) && !config.reporter;
+  const takeScreenshot = config.screenshot !== false;
   const recorder = useSessionRecorder({ ignoreUrlPrefix: config.baseUrl });
 
   const [isOpen, setIsOpen] = useState(false);
@@ -134,22 +156,32 @@ export function FeedbackProvider({
   const [threadLoading, setThreadLoading] = useState(false);
   const [threadError, setThreadError] = useState<string | null>(null);
   const [isReplying, setIsReplying] = useState(false);
+  const [closedMessage, setClosedMessage] = useState<string | null>(null);
+  const [reporterName, setReporterName] = useState("");
+  const [reporterEmail, setReporterEmail] = useState("");
+  const [website, setWebsite] = useState("");
   const capturingRef = useRef(false);
 
   useEffect(() => {
     injectStyles();
     // In an effect, not at render: localStorage does not exist during SSR,
     // and the first client render must match the server's HTML anyway.
-    setReports(loadReports(config.clientKey));
-  }, [config.clientKey]);
+    setReports(loadReports(installId));
+  }, [installId]);
 
   // One config fetch per mount, deferred so it never competes with page load.
   const categoriesLoadedRef = useRef(false);
   const loadCategories = useCallback(async () => {
     if (categoriesLoadedRef.current) return;
     categoriesLoadedRef.current = true;
-    const fetched = await transport.fetchCategories();
-    if (fetched && fetched.length > 0) setCategories(fetched);
+    const fetched = await transport.fetchConfig();
+    if (fetched.categories && fetched.categories.length > 0) {
+      setCategories(fetched.categories);
+      // The first of the platform's own list, not "bug": a company's
+      // categories may not have one (0.4.0).
+      setCategory((current) => (fetched.categories?.some((c) => c.key === current) ? current : (fetched.categories?.[0]?.key ?? current)));
+    }
+    setClosedMessage(fetched.closed);
   }, [transport]);
 
   const openFeedback = useCallback(async () => {
@@ -163,6 +195,16 @@ export function FeedbackProvider({
     setAnnotatedDataUrl(null);
     setSubmitError(null);
     setTicketNumber(null);
+
+    // A form-only page (config.screenshot false, 0.4.0): nothing on screen
+    // is what the report is about, so it opens straight onto the words.
+    if (!takeScreenshot) {
+      setIsOpen(true);
+      setStep("describe");
+      capturingRef.current = false;
+      setIsCapturing(false);
+      return;
+    }
 
     // STEP 1 — capture the reporter's open overlays BEFORE our own UI opens.
     // A `position: fixed` modal, AI panel or toast does not survive a full-page
@@ -201,7 +243,7 @@ export function FeedbackProvider({
       capturingRef.current = false;
       setIsCapturing(false);
     }
-  }, [isOpen, loadCategories, config.overlaySelectors]);
+  }, [isOpen, loadCategories, config.overlaySelectors, takeScreenshot]);
 
   const closeFeedback = useCallback(() => {
     setIsOpen(false);
@@ -217,13 +259,13 @@ export function FeedbackProvider({
     // No screenshot, no capture guard: this path photographs nothing. A fresh
     // read from storage on every open, so a report sent in another tab is
     // already in the list.
-    setReports(loadReports(config.clientKey));
+    setReports(loadReports(installId));
     setActiveReport(null);
     setThread(null);
     setThreadError(null);
     setStep("reports");
     setIsOpen(true);
-  }, [config.clientKey]);
+  }, [installId]);
 
   const openThread = useCallback(
     async (report: StoredReport) => {
@@ -241,7 +283,7 @@ export function FeedbackProvider({
           // The platform no longer recognises the pair — the ticket was
           // deleted, or this entry belongs to a different install. Keeping a
           // dead row that errors on every tap teaches people the list lies.
-          setReports(removeReport(config.clientKey, report.ticketNumber));
+          setReports(removeReport(installId, report.ticketNumber));
           setThreadError(
             `Ticket ${report.ticketNumber} is no longer available, so it has been removed from this list.`,
           );
@@ -252,7 +294,7 @@ export function FeedbackProvider({
         setThreadLoading(false);
       }
     },
-    [transport, config.clientKey],
+    [transport, installId],
   );
 
   const backToReports = useCallback(() => {
@@ -331,9 +373,17 @@ export function FeedbackProvider({
         category,
         screenshotUrl,
         annotatedScreenshotUrl: annotatedUrl,
-        reporter: config.reporter,
+        reporter:
+          config.reporter ??
+          (askContact && (reporterName.trim() || reporterEmail.trim())
+            ? {
+                ...(reporterName.trim() ? { name: reporterName.trim().slice(0, 120) } : {}),
+                ...(reporterEmail.trim() ? { email: reporterEmail.trim().slice(0, 255) } : {}),
+              }
+            : undefined),
         clientMetadata: buildClientMetadata(),
         recentErrors: recorder.getErrors(),
+        website,
       });
 
       if (result.ok) {
@@ -344,7 +394,7 @@ export function FeedbackProvider({
         if (result.ticketToken) {
           const title = (description.split("\n", 1)[0] ?? "").slice(0, 100);
           setReports(
-            saveReport(config.clientKey, {
+            saveReport(installId, {
               ticketNumber: result.ticketNumber,
               title,
               token: result.ticketToken,
@@ -367,7 +417,11 @@ export function FeedbackProvider({
     priority,
     category,
     config.reporter,
-    config.clientKey,
+    installId,
+    askContact,
+    reporterName,
+    reporterEmail,
+    website,
     transport,
     recorder,
     buildClientMetadata,
@@ -406,6 +460,15 @@ export function FeedbackProvider({
     threadLoading,
     threadError,
     isReplying,
+    closedMessage,
+    askContact,
+    reporterName,
+    reporterEmail,
+    setReporterName,
+    setReporterEmail,
+    website,
+    setWebsite,
+    prepare: loadCategories,
     openFeedback,
     openReports,
     openThread,

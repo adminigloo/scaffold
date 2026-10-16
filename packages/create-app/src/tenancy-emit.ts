@@ -125,6 +125,8 @@ function renderCompanyPageConstants(answers: Answers): string {
   const pages = [
     ...(answers.includeEstimator ? [`  { path: "/estimate", label: "Get an instant estimate" },`] : []),
     ...(answers.includeScheduling ? [`  { path: "/book-visit", label: "Book a visit" },`] : []),
+    // Tenancy 2b-2a: where the company's customers send it feedback.
+    ...(answers.includeFeedback ? [`  { path: "/feedback", label: "Send feedback" },`] : []),
   ];
   return `
 /**

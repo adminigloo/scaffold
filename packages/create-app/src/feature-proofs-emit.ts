@@ -41,6 +41,12 @@ interface FeatureSuite {
    */
   readonly adminExpr?: string;
   /**
+   * Tenancy 2b-2a: how the proof builds the public handler, when it isn't the
+   * builder as it is — feedback's is given an in-memory screenshot store, so
+   * its upload route reaches its own checks in a project with no file store.
+   */
+  readonly publicExpr?: string;
+  /**
    * Tenancy 2b-1: the public routes the GENERIC public pass drives. Storage's
    * public routes (signed links, public files) are not company-scoped by
    * address, so they have their own suite (14.1) and none here.
@@ -148,6 +154,21 @@ function suitesFor(answers: Answers): readonly FeatureSuite[] {
       genericPublic: false,
     });
   }
+  // TENANCY 2b-2a: a company's feedback board and its public feedback page.
+  if (answers.includeFeedback) {
+    suites.push({
+      feature: "feedback",
+      glue: "@/server/feedback",
+      adminBuilder: "buildFeedbackAdminHandlers",
+      adminRoutes: "FEEDBACK_ADMIN_ROUTES",
+      adminSegment: "feedback",
+      publicBuilder: "buildFeedbackPublicHandlers",
+      publicRoutes: "FEEDBACK_PUBLIC_ROUTES",
+      publicSegment: "feedback",
+      pkg: "feedback",
+      permissions: "feedbackPermissions",
+    });
+  }
   return suites;
 }
 
@@ -165,6 +186,8 @@ export const FEATURE_ENTITIES: Readonly<Record<string, readonly string[]>> = {
   // Tenancy 2b-1 (3.1).
   notifications: ["alert", "person"],
   storage: ["file", "file-token", "public-key", "record-type", "record"],
+  // Tenancy 2b-2a.
+  feedback: ["ticket", "column", "category", "feedback-key", "ticket-number", "ticket-token"],
 };
 
 // ---------------------------------------------------------------------------
@@ -180,6 +203,7 @@ export function renderCompanyRows(answers: Answers): string {
   const comms = answers.includeComms;
   const alerts = answers.includeNotifications;
   const storage = answers.includeStorage;
+  const feedback = answers.includeFeedback;
   // Tenancy 2b-1: alerts and files are planted FOR people (the owner, a
   // member), and files through the proof's own memory stores.
   const withPeople = alerts || storage;
@@ -214,6 +238,19 @@ export function renderCompanyRows(answers: Answers): string {
       : []),
     ...(invoicing
       ? [`import { createInvoice, invoiceItems, recordPayment, setInvoiceStatus } from "${scope}/invoicing";`]
+      : []),
+    ...(feedback
+      ? [
+          `import {
+  addTicketMessage,
+  createCategory,
+  createStatus,
+  createTicket,
+  ensureFeedbackBoard,
+  issueClientKey as issueFeedbackKey,
+  submitPayloadSchema,
+} from "${scope}/feedback";`,
+        ]
       : []),
     ...(scheduling
       ? [
@@ -459,6 +496,59 @@ export function renderCompanyRows(answers: Answers): string {
 `);
   }
 
+  if (feedback) {
+    blocks.push(`
+  // FEEDBACK (Tenancy 2b-2a): the ${noun}'s board (its default columns and
+  // categories), a ticket from a customer with the team's reply on it, a
+  // column and a category of its own, and a website key. The ticket's NUMBER
+  // counts per ${noun} — both ${noun}s have an FB-00001 — so it is a route
+  // value, not something that identifies this ${noun} (left out below); its
+  // reporter's token is.
+  await ensureFeedbackBoard(database, tenantId);
+  const report = await createTicket(database, {
+    tenantId,
+    payload: submitPayloadSchema.parse({
+      description: \`\${Label} feedback: the gate code doesn't work.\`,
+      priority: "high",
+      reporter: { name: customer.name, email: customer.email },
+      clientMetadata: {
+        browser: "Probe",
+        os: "Probe",
+        viewport: { width: 1, height: 1 },
+        url: \`https://\${label}.test/feedback\`,
+        pathname: \`/\${label}-feedback\`,
+        clickTrail: [],
+        sessionId: \`\${label}-session\`,
+        capturedAt: 0,
+      },
+    }),
+  });
+  rows.ticket = report.id;
+  rows["ticket-number"] = report.ticketNumber;
+  rows["ticket-token"] = report.ticketToken;
+  strings.push(\`\${Label} feedback: the gate code doesn't work.\`, \`/\${label}-feedback\`);
+  await addTicketMessage(database, tenantId, {
+    ticketId: report.id,
+    senderType: "staff",
+    senderName: \`\${Label} Office\`,
+    body: \`\${Label} office reply\`,
+  });
+  strings.push(\`\${Label} Office\`, \`\${Label} office reply\`);
+  const column = await createStatus(database, tenantId, { key: \`\${label}_waiting\`, label: \`\${Label} waiting\` });
+  rows.column = column.id;
+  strings.push(\`\${Label} waiting\`, \`\${label}_waiting\`);
+  const category = await createCategory(database, tenantId, { key: \`\${label}_billing\`, label: \`\${Label} billing\` });
+  rows.category = category.id;
+  strings.push(\`\${Label} billing\`, \`\${label}_billing\`);
+  const websiteKey = await issueFeedbackKey(database, { tenantId, label: \`\${Label} feedback website\` });
+  rows["feedback-key"] = websiteKey.id;
+  strings.push(\`\${Label} feedback website\`);
+  // The plaintext website key. Not a route placeholder: the keyed intake
+  // (/api/igloo) names its board by this key alone, so the isolation proof
+  // calls every intake route with the OTHER ${noun}'s key.
+  rows["feedback-website-key"] = websiteKey.key;
+`);
+  }
   if (alerts) {
     blocks.push(`
   // ALERTS (Tenancy 2b-1, 14.1): one alert for the ${noun}'s owner through
@@ -582,7 +672,9 @@ export function renderCompanyRows(answers: Answers): string {
 
   // The record TYPE is a word every ${noun} shares ("scheduling.visit"), not
   // something of this one's: it is left out of the strings that identify it.
-  const identifying = `  strings.push(...Object.entries(rows).filter(([entity]) => entity !== "record-type").map(([, value]) => value));`;
+  // So is a feedback ticket's NUMBER (Tenancy 2b-2a): numbers count per
+  // ${noun}, so every ${noun}'s first ticket is FB-00001.
+  const identifying = `  strings.push(...Object.entries(rows).filter(([entity]) => entity !== "record-type" && entity !== "ticket-number").map(([, value]) => value));`;
   const peopleParam = withPeople
     ? `,
   people: CompanyPeople`
@@ -692,6 +784,21 @@ vi.mock("@/server/estimator-services", async (importOriginal) => {
     },
   };
 });
+`;
+
+/**
+ * Tenancy 2b-2a: without a screenshot store (no blob token on a laptop or in
+ * CI) the keyed intake's upload route answers "can't be kept here yet" before
+ * it reads anything — true, and proof of nothing. The proof hands it a store
+ * that keeps nothing, so the upload route reaches its own checks in every
+ * project. (A company's keyless feedback page refuses uploads outright.)
+ */
+const FEEDBACK_SCREENSHOT_STORE = `
+/** A screenshot store that keeps nothing, so the keyed upload route reaches its checks. */
+let memoryShots = 0;
+const memoryScreenshots = {
+  put: async () => ({ url: "https://memory.public.blob.vercel-storage.com/probe-" + (memoryShots += 1) + ".png", fileId: null }),
+};
 `;
 
 // ---------------------------------------------------------------------------
@@ -1025,16 +1132,19 @@ export function renderFeatureIsolationTest(answers: Answers): string {
   // The estimator's embed is the one public entry that names its company by a
   // KEY rather than a path, so it gets its own pass (below) with its header.
   const embed = answers.includeEstimator;
+  // Feedback's keyed intake (/api/igloo, Tenancy 2b-2a) is the other: a
+  // website key names the board, so it gets a pass of its own with its header.
+  const intake = answers.includeFeedback;
   // Scheduling's Crew role is one of the company's roles in this project: the
   // role pass checks it too.
   const crew = answers.includeScheduling;
   const routeImports = suites.map(
     (s) =>
-      `import { ${[s.adminRoutes, ...(s.publicRoutes ? [s.publicRoutes] : []), s.permissions, ...(embed && s.feature === "estimator" ? ["ESTIMATOR_KEY_HEADER"] : [])].sort().join(", ")} } from "${scope}/${s.pkg}";`,
+      `import { ${[s.adminRoutes, ...(s.publicRoutes ? [s.publicRoutes] : []), s.permissions, ...(embed && s.feature === "estimator" ? ["ESTIMATOR_KEY_HEADER"] : []), ...(s.feature === "feedback" ? ["CLIENT_KEY_HEADER"] : [])].sort().join(", ")} } from "${scope}/${s.pkg}";`,
   );
   const glueImports = suites.map(
     (s) =>
-      `import { ${[s.adminBuilder, ...(s.publicBuilder ? [s.publicBuilder] : []), ...(embed && s.feature === "estimator" ? ["buildEstimatorEmbedHandlers"] : [])].join(", ")} } from "${s.glue}";`,
+      `import { ${[s.adminBuilder, ...(s.publicBuilder ? [s.publicBuilder] : []), ...(embed && s.feature === "estimator" ? ["buildEstimatorEmbedHandlers"] : []), ...(s.feature === "feedback" ? ["buildFeedbackIntakeHandlers"] : [])].join(", ")} } from "${s.glue}";`,
   );
   if (storage) {
     routeImports.push(`import { createMemoryBlobStore, type MemoryBlobStore } from "${scope}/storage/testing";`);
@@ -1044,7 +1154,7 @@ export function renderFeatureIsolationTest(answers: Answers): string {
   const suiteRows = suites
     .map((s) => {
       const pub = s.publicBuilder && s.genericPublic !== false
-        ? `public: ${s.publicBuilder},
+        ? `public: ${s.publicExpr ?? s.publicBuilder},
     publicRoutes: ${s.publicRoutes},
     publicBase: (slug: string) => \`/api/t/\${slug}/${s.publicSegment}/\`,`
         : `public: null,
@@ -1114,6 +1224,17 @@ export function renderFeatureIsolationTest(answers: Answers): string {
   if (storage) {
     snapshot.push(`    stored_files: await all(sql\`select * from stored_files where tenant_id = \${a} order by id\`),`);
   }
+  // Tenancy 2b-2a: A's feedback board — its tickets, columns, categories,
+  // website keys, and the messages on its tickets (by their ticket).
+  if (intake) {
+    snapshot.push(
+      `    feedback_tickets: await all(sql\`select * from feedback_tickets where tenant_id = \${a} order by id\`),`,
+      `    feedback_statuses: await all(sql\`select * from feedback_statuses where tenant_id = \${a} order by id\`),`,
+      `    feedback_categories: await all(sql\`select * from feedback_categories where tenant_id = \${a} order by id\`),`,
+      `    feedback_client_keys: await all(sql\`select * from feedback_client_keys where tenant_id = \${a} order by id\`),`,
+      `    feedback_messages: await all(sql\`select * from feedback_messages where ticket_id in (select id from feedback_tickets where tenant_id = \${a}) order by id\`),`,
+    );
+  }
 
   return `import { beforeAll, describe, expect, it, vi } from "vitest";
 import { sql, type SQL } from "drizzle-orm";
@@ -1161,7 +1282,7 @@ vi.mock("@/db", async () => {
   const { createAppPglite } = await import("@/test/pglite");
   return { db: (await createAppPglite()).db };
 });
-${answers.includeEstimator ? ESTIMATOR_PHOTO_STORE_MOCK : ""}${filesParts.helpers}
+${answers.includeEstimator ? ESTIMATOR_PHOTO_STORE_MOCK : ""}${intake ? FEEDBACK_SCREENSHOT_STORE : ""}${filesParts.helpers}
 interface FeatureRoute {
   readonly kind: string;
   readonly method: "GET" | "POST";
@@ -1231,6 +1352,14 @@ const fx = {} as {
   bKey: string;
   /** A's plaintext website key: used under B's web address, it must find nothing. */
   aKey: string;`
+      : ""
+  }${
+    intake
+      ? `
+  /** B's plaintext feedback website key: the keyed intake's only way to name a board. */
+  bFeedbackKey: string;
+  /** A's: under B's web address, it must be refused. */
+  aFeedbackKey: string;`
       : ""
   }
 };
@@ -1447,6 +1576,15 @@ beforeAll(async () => {
   if (!aKey) throw new Error("company A has no website key");
   fx.aKey = aKey;`
       : ""
+  }${
+    intake
+      ? `
+  const bFeedbackKey = b.rows["feedback-website-key"];
+  const aFeedbackKey = a.rows["feedback-website-key"];
+  if (!bFeedbackKey || !aFeedbackKey) throw new Error("the companies have no feedback website keys");
+  fx.bFeedbackKey = bFeedbackKey;
+  fx.aFeedbackKey = aFeedbackKey;`
+      : ""
   }
 
   // The role pass's people: a viewer${crew ? " and a crew member" : ""} of A, invited like anyone else.
@@ -1562,13 +1700,43 @@ ${
 `
       : ""
   }
+${
+    intake
+      ? `
+    // FEEDBACK'S KEYED INTAKE (/api/igloo, what a ${noun}'s own website and
+    // this site's own button call): no web address — the website KEY names
+    // the board. With B's key, every route with A's ticket number and
+    // reporter token is "not found" or says nothing of A.
+    const keyed = buildFeedbackIntakeHandlers({ screenshots: memoryScreenshots });
+    for (const route of FEEDBACK_PUBLIC_ROUTES) {
+      await expectIsolated(
+        await keyed.handle(requestFor("/api/igloo/", route, fx.aRows, { [CLIENT_KEY_HEADER]: fx.bFeedbackKey })),
+        \`feedback intake \${route.kind} with B's website key and A's rows\`,
+        readsARow(route) ? "not-found" : "below-500",
+      );
+      exercised.add(\`intake:feedback:\${route.kind}\`);
+    }
+    // A's website key under B's web address: the address decides, and a key
+    // of another ${noun} is refused there, never read as A's.
+    const atBravo = buildFeedbackPublicHandlers();
+    for (const route of FEEDBACK_PUBLIC_ROUTES) {
+      await expectIsolated(
+        await atBravo.handle(requestFor(\`/api/t/\${fx.bSlug}/feedback/\`, route, fx.aRows, { [CLIENT_KEY_HEADER]: fx.aFeedbackKey })),
+        \`feedback public \${route.kind} with A's website key under B's web address\`,
+        "refused",
+      );
+    }
+`
+      : ""
+  }
     // Every route kind of every table was driven: none skipped.
     const expected = [
       ...SUITES.flatMap((suite) => [
         ...suite.adminRoutes.map((route) => \`admin:\${suite.feature}:\${route.kind}\`),
         ...suite.publicRoutes.map((route) => \`public:\${suite.feature}:\${route.kind}\`),
       ]),${embed ? `
-      ...ESTIMATOR_PUBLIC_ROUTES.map((route) => \`embed:estimator:\${route.kind}\`),` : ""}
+      ...ESTIMATOR_PUBLIC_ROUTES.map((route) => \`embed:estimator:\${route.kind}\`),` : ""}${intake ? `
+      ...FEEDBACK_PUBLIC_ROUTES.map((route) => \`intake:feedback:\${route.kind}\`),` : ""}
     ];
     expect([...exercised].sort()).toEqual([...new Set(expected)].sort());
 

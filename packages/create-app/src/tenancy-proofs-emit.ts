@@ -48,10 +48,10 @@ export const ROUTER_SCOPES: readonly RouterScopeRow[] = [
   { key: "members", scope: "tenant", installedBy: always, source: null },
   { key: "admin", scope: "staff", installedBy: always, source: null },
   { key: "ai", scope: "tenant", installedBy: (a) => a.includeAi, source: "ai/src/server/routers/ai.ts" },
-  { key: "feedback", scope: "staff", installedBy: (a) => a.includeFeedback, source: "feedback/src/server/routers/feedback.ts" },
   { key: "seo", scope: "staff", installedBy: (a) => a.includeSeoReports, source: "seo-reports/src/server/routers/seo.ts" },
   // No notifications or files router (Tenancy 2b-1): alerts and files run on
   // their packages' own HTTP handlers, proved by the feature isolation suite.
+  // Nor feedback (Tenancy 2b-2a): its board is the package's handlers too.
   { key: "assistant", scope: "staff", installedBy: (a) => a.includeAssistant, source: "assistant/src/server/routers/assistant.ts" },
   { key: "aeo", scope: "staff", installedBy: (a) => a.includeAeo, source: "aeo/src/server/routers/aeo.ts" },
   { key: "catalog", scope: "staff", installedBy: sells, source: "stripe/src/server/routers/catalog.ts" },

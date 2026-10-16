@@ -252,6 +252,8 @@ export interface CompanyLinks {
   readonly manageVisit: (token: string) => string;
   readonly quote: (token: string) => string;
   readonly invoice: (token: string) => string;
+  /** The ${noun}'s public feedback page (Tenancy 2b-2a): where its customers send feedback and follow their ticket. */
+  readonly feedback: string;
   /**
    * One of the ${noun}'s own screens, THROUGH THE SWITCH ROUTE (D2):
    * {app}/app/switch/{web address}?next={path}. Someone in two ${tenantLabelPlural(answers).toLowerCase()} who
@@ -288,6 +290,7 @@ export function companyLinksFor(slug: string, base: string = appBase()): Company
     manageVisit: (token) => at(\`\${home}/visit/\${encodeURIComponent(token)}\`),
     quote: (token) => at(\`\${home}/quote/\${encodeURIComponent(token)}\`),
     invoice: (token) => at(\`\${home}/invoice/\${encodeURIComponent(token)}\`),
+    feedback: at(\`\${home}/feedback\`),
     app: (path) => {
       const url = new URL(\`app/switch/\${encodeURIComponent(slug)}\`, base);
       url.searchParams.set("next", path);
@@ -359,6 +362,18 @@ export function renderCompanySetup(answers: Answers): string {
       module: "./invoicing",
       fn: "setupInvoicingFor",
       what: answers.includeComms ? "the invoice email" : "nothing yet (no email to send invoices with)",
+    });
+  }
+  // FEEDBACK (Tenancy 2b-2a): the board's default columns and categories
+  // and, with comms, the two reporter emails.
+  if (answers.includeFeedback) {
+    setups.push({
+      name: "feedback",
+      module: "./feedback",
+      fn: "setupFeedbackFor",
+      what: answers.includeComms
+        ? "its feedback board's columns and categories, and the two reporter emails"
+        : "its feedback board's columns and categories",
     });
   }
   // No comms entry (review T2A-BO-08): its starter templates ("Booking

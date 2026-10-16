@@ -34,7 +34,7 @@ type Status = "per-company" | `chunk:${string}` | `shared:${string}`;
 
 /** Every directory under packages/, and where it stands. */
 export const PER_COMPANY_COVERAGE: Readonly<Record<string, Status>> = {
-  // Per company today (Tenancy 1, 2a and 2b-1).
+  // Per company today (Tenancy 1, 2a, 2b-1 and 2b-2a).
   tenancy: "per-company",
   "tenancy-widget": "per-company",
   permissions: "per-company",
@@ -54,9 +54,9 @@ export const PER_COMPANY_COVERAGE: Readonly<Record<string, Status>> = {
   "notifications-widget": "per-company",
   storage: "per-company",
   "storage-widget": "per-company",
+  feedback: "per-company",
+  "feedback-widget": "per-company",
   // Not yet: the chunk that makes each per company.
-  feedback: "chunk:2b-2 feedback",
-  "feedback-widget": "chunk:2b-2 feedback",
   assistant: "chunk:2b-3 assistant",
   "assistant-widget": "chunk:2b-3 assistant",
   ai: "chunk:2b-3 assistant",
@@ -124,6 +124,8 @@ const COMPANY_EVERYTHING: Answers = {
   ...DEFAULT_ANSWERS,
   projectName: "igloo-back-office",
   ...TENANCY_2B1_CONFIGURATIONS.companyAll,
+  // Tenancy 2b-2a: and the feedback board, whose route tables are per company.
+  includeFeedback: true,
 };
 
 let planned: Promise<EmitPlan> | null = null;

@@ -1,56 +1,32 @@
 /**
- * Issue a feedback-widget client key — the licence artifact of the feedback
- * feature. Prints the plaintext ONCE; only its hash is stored.
+ * Issue the website key for THIS SITE'S OWN feedback button — the one the
+ * template mounts on every page (src/components/FeedbackWidget.tsx). Its
+ * tickets land on the site's own board at /admin/feedback. Prints the key
+ * ONCE; only its hash is stored.
  *
- *   pnpm feedback:issue-key <tenant-slug> [label]
+ *   pnpm feedback:issue-key [label]
  *
- * The tenant is created if the slug does not exist yet, so issuing a key for a
- * brand-new client is one command.
+ * (A company's own website keys are made by the company, on its feedback
+ * settings page. This script is only for this site's own button.)
  *
  * DELIBERATELY WILLING TO RUN AGAINST A DEPLOYED DATABASE, unlike the seed
  * scripts beside it. Seeding invents fixtures, which have no business in
  * production; this writes the one row a real deployment needs before its
- * widget can mount, and refusing here would leave no supported way to do it.
+ * button can appear, and refusing here would leave no supported way to do it.
  */
-import { eq } from "drizzle-orm";
-import { issueClientKey } from "__SCOPE__/feedback";
-import { tenants } from "__SCOPE__/tenancy/schema";
+import { FEEDBACK_PLATFORM_BOARD, issueClientKey } from "__SCOPE__/feedback";
 import { db } from "../src/db";
 
-const slug = process.argv[2];
-const label = process.argv[3] ?? "default";
+const label = process.argv[2] ?? "This site's feedback button";
 
-if (!slug) {
-  console.error("usage: pnpm feedback:issue-key <tenant-slug> [label]");
-  process.exit(1);
-}
-
-const existing = await db
-  .select()
-  .from(tenants)
-  .where(eq(tenants.slug, slug))
-  .limit(1);
-let tenant = existing[0];
-if (!tenant) {
-  const inserted = await db
-    .insert(tenants)
-    .values({ slug, name: slug, kind: "org" })
-    .returning();
-  tenant = inserted[0];
-  console.log(`created tenant "${slug}" (${tenant?.id})`);
-}
-if (!tenant) throw new Error("tenant lookup and creation both came back empty");
-
-const issued = await issueClientKey(db, { tenantId: tenant.id, label });
+const issued = await issueClientKey(db, { tenantId: FEEDBACK_PLATFORM_BOARD, label });
 
 console.log("");
-console.log(`  tenant : ${tenant.name} (${tenant.id})`);
 console.log(`  label  : ${issued.label}`);
-console.log(`  key id : ${issued.id}`);
 console.log("");
 console.log(`  ${issued.key}`);
 console.log("");
-console.log("This is the only time the key is shown. Put it in the consuming");
-console.log("app's configuration — for this app: ADMINIGLOO_FEEDBACK_KEY in");
-console.log(".env.local, and in the deployment's environment settings.");
+console.log("This is the only time the key is shown. Put it in");
+console.log("ADMINIGLOO_FEEDBACK_KEY in .env.local, and in the deployment's");
+console.log("environment settings. Feedback sent with it appears at /admin/feedback.");
 process.exit(0);

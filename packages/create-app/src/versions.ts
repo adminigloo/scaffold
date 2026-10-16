@@ -151,7 +151,11 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // the workspace-protocol publish fix (0.7.1 shipped an unresolved workspace:^).
   // 0.8.0 adds the optional AdminIgloo license gate (deps @adminigloo/license),
   // a no-op unless the app passes license config with mode "enforce".
-  feedback: "0.9.1",
+  // 0.10.0 (Tenancy 2b-2a): a board per company. Every staff function takes
+  // the company, and the emitted src/server/feedback.ts mounts
+  // createFeedbackAdminHandlers and the intake with resolveTenant and admit —
+  // none of which exist in 0.9, whose functions act on the whole install.
+  feedback: "0.10.0",
   // 0.2.1 — 0.2.0 brought the "My reports" view the thread endpoints exist
   // to serve; the patch is the glacier re-skin with the widget's own dark
   // theme, which a caret would cover anyway. Pinned at the workspace version
@@ -162,7 +166,10 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // fixed positioning, so a report about a modal used to show only the page
   // behind it. The emitted FeedbackWidget only mounts the provider, so a caret
   // over the old line would resolve a widget that photographs the wrong thing.
-  "feedback-widget": "0.3.1",
+  // 0.4.0 (Tenancy 2b-2a): a company's public feedback page sends no key,
+  // takes no screenshot and asks for the reporter's email — the emitted
+  // CompanyFeedbackForm passes all three, and FeedbackLauncher is new.
+  "feedback-widget": "0.4.0",
   // A devDependency of every generated project rather than a dependency, and
   // it belongs here all the same. `renderPackageJson` spelled `^0.1.1` out
   // inline, which put a fourteenth version in a place no drift test looked at —

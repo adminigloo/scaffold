@@ -1,16 +1,17 @@
 # @adminigloo/feedback
 
-The feedback platform: the intake your users' bug reports land in, and the Kanban board your team triages them on.
+A feedback board for each company: the intake its customers' reports land in (from its own website, or its own feedback page), and the Kanban board its team answers and sorts them on. Your own site gets one too, for what your users report with the feedback button.
 
-It ships three entry points:
+## What each install gets you
 
-| Entry | What it is | Runs |
-| --- | --- | --- |
-| `@adminigloo/feedback` | Client keys, the HTTP handlers the [feedback widget](../feedback-widget) talks to, and the board's server functions (list, move, archive, statuses, categories, messages) | Server |
-| `@adminigloo/feedback/schema` | The Drizzle tables to add to your schema and migrate | Server |
-| `@adminigloo/feedback/board` | `FeedbackBoard` and `TicketPanel` — React components, `"use client"` | Browser |
+| You install | You get |
+| --- | --- |
+| `@adminigloo/feedback` | **The intake** (`createFeedbackHandlers`): what the [feedback widget](../feedback-widget) talks to — by a company's website key, or by the company in the request's address (`resolveTenant`), closed to new tickets for a company that isn't taking them (`admit`). **The staff routes** (`createFeedbackAdminHandlers`): the board, a ticket's report and conversation, replies, assign, move, archive, columns, categories and website keys — one company per request. **The server functions** under both, every one of which takes the company. **The contract**: `FEEDBACK_ADMIN_ROUTES` / `FEEDBACK_PUBLIC_ROUTES` (the routes as data, for an isolation proof), `feedbackPermissions` (the keys and their default roles), `feedbackAlertKinds` / `feedbackAlertsFor` (alerts for the team), `FEEDBACK_EMAIL_TEMPLATES` / `feedbackReporterEmailFor` (emails for the reporter). |
+| `@adminigloo/feedback/schema` | The Drizzle tables to add to your schema and migrate. Shipped SQL for a host without drizzle-kit: `@adminigloo/feedback/sql/feedback-0.10.0.sql` and `…/sql/upgrade-0.9-to-0.10.sql`. |
+| `@adminigloo/feedback/board` | `FeedbackWorkspace` — the whole board connected to the staff routes by a base URL (toolbar, board, ticket panel). `FeedbackBoard` and `TicketPanel` on their own, controlled, for tickets you store elsewhere. `FeedbackAdminClient`, the browser's client for the staff routes. React, `"use client"`. |
+| `@adminigloo/feedback-widget` | The form people send feedback with: a floating button and screenshot for an app, or `FeedbackLauncher` inline on a page (a company's feedback page), and "My reports" to follow a ticket. |
 
-You can use the board on its own, over tickets you already store somewhere else. The board never reads a database. It renders the tickets and columns you pass it and tells you when someone moves one.
+The board components never read a database. `FeedbackBoard` renders the tickets and columns you pass it and tells you when someone moves one; `FeedbackWorkspace` fetches them from the routes at its `baseUrl`.
 
 ## Install
 
@@ -182,7 +183,101 @@ Toasts raised from the panel's callbacks render under its scrim at the default `
 
 Each callback may throw. The panel catches the error and passes it to `onError`, and a failed send keeps the draft so nothing typed is lost.
 
-## The server half
+## A board per company
+
+Every staff function, route and table row belongs to ONE company (its `tenantId`, your id for it). A ticket, column, category or website key of another company, asked for by id, is "not found" — the same answer as an id that never existed. Each company's board gets the default columns and categories the first time it's used, its tickets are numbered on their own (each company starts at FB-00001), and `"*"` (`FEEDBACK_PLATFORM_BOARD`) is your own site's board.
+
+### The staff routes
+
+```ts
+// app/api/app/[tenantId]/feedback/[...path]/route.ts
+import { createFeedbackAdminHandlers } from "@adminigloo/feedback";
+
+const { handle } = createFeedbackAdminHandlers({
+  db,
+  resolveTenant: (req) => companyIdFromPath(req),          // or tenantId: "*" for your own board
+  authorize: (req, permission, tenantId) => yourCheck(req, permission, tenantId), // true | { userId } | false | Response
+  staffName: (userId) => nameOf(userId),                   // the name a reporter sees on a reply
+  onEvent: (event) => emailTheReporter(event),             // staff.replied, ticket.moved
+});
+export { handle as GET, handle as POST };
+```
+
+`authorize` is asked for exactly one key per route (`FEEDBACK_ADMIN_ROUTE_PERMISSIONS`): `false` answers 403 "You don't have permission to do that.", a `Response` (your 401) is returned as it is. POSTs from another site are refused before any work. Then the page:
+
+```tsx
+<FeedbackWorkspace
+  baseUrl={`/api/app/${company.id}/feedback`}
+  canManage={can("feedback.manage")}
+  settingsHref={can("feedback.settings.manage") ? "/app/feedback/settings" : null}
+  initialTicketId={searchParams.ticket}      // an alert's link opens its ticket
+/>
+```
+
+The same component serves your own board over its own routes (`baseUrl="/api/admin/feedback"`).
+
+### The keys
+
+| Key | Lets someone | Default roles |
+| --- | --- | --- |
+| `feedback.view` | see the board, a ticket and its conversation | owner, admin, member, viewer |
+| `feedback.manage` | reply (the reporter is emailed), move, assign, archive | owner, admin, member |
+| `feedback.settings.manage` | change the columns and categories; make and switch off website keys | owner, admin |
+
+Crew holds none. Spread `feedbackPermissions` into your `definePermissions("tenant", …)`, or map the keys onto your own checks.
+
+### The intake, for a company's customers
+
+```ts
+// app/api/t/[slug]/feedback/[...path]/route.ts — a company's own feedback page, no key
+const { handle } = createFeedbackHandlers({
+  db,
+  resolveTenant: (req) => companyIdFromWebAddress(req),
+  admit: async (tenantId) => (isTakingWork(tenantId) ? { open: true } : { open: false, message: "Green Acres isn't taking requests online right now." }),
+  rateLimit: createFeedbackRateLimit(async (key, policy) => (await yourLimiter.limit({ key, policy })).allowed),
+  onEvent: (event) => alertTheTeam(event), // ticket.created, reporter.replied
+});
+```
+
+A company's feedback page sends no key, and takes **no screenshots**: an upload there is refused. Its form carries a hidden field a person never fills (`website`); a report with it filled is refused. `createFeedbackRateLimit` holds the open door to a size a business can live with (`FEEDBACK_INTAKE_LIMITS`): per form and visitor, per visitor across every company, and a feedback page's whole day; a request with no forwarded address is counted as one shared visitor. A report keeps only a category the board offers its customers (a team-only one, or an unknown one, is dropped).
+
+A closed company takes no NEW ticket — submit and upload answer 409 `feedback_closed` with your sentence, and the form's settings say so — while a reporter can still read their ticket and reply on it. A website key sent under another company's address is "not found". Without `resolveTenant`, every request needs a website key, which names its company: that is the intake a company's own website (and your app's own button) calls.
+
+Website keys per company: `issueClientKey(db, { tenantId, label })` (the plaintext is returned once; only its hash is kept), `listClientKeys(db, tenantId)`, `revokeClientKey(db, tenantId, keyId)` — or the `keys` routes.
+
+### Screenshots
+
+Only a website key's form (an app's feedback button) takes screenshots. The intake checks the bytes are really a PNG, JPEG or WebP image (never what the browser said), keeps them through your `screenshots` store, and remembers each one: a report may carry only a screenshot THIS board's upload route stored, not used by another report — an address on another store, or another company's picture, is dropped. `sweepFeedbackUploads(db, { store })` (run it daily) deletes the ones no report used within a day.
+
+With [@adminigloo/storage](../storage), keep a company's screenshots private: register `feedbackScreenshotPurpose` and `feedbackFileRecords(db, { ticketHref })` in `createStorage`, and adapt `storage.purposeStore("feedback.screenshot")` as the store (`put`, `attach` to `FEEDBACK_TICKET_RECORD`, `remove`). The screenshot then sits on its ticket, opens through the company's signed-in files route, and the ticket's permissions (`feedback.view`) decide who sees it. `screenshots` may be a function of the board, to use a different store per board.
+
+### Alerts and reporter emails
+
+`feedbackAlertKinds` is a fragment for [@adminigloo/notifications](../notifications)' registry: "A customer sends feedback" and "A customer answers on their feedback", to everyone holding `feedback.view`, in the app by default. `feedbackAlertsFor(event, { hrefs: { ticket: "/app/feedback?ticket={id}" } })` turns an intake event into its drafts.
+
+`feedbackReporterEmailFor(event, { businessName, feedbackUrl })` turns a staff event into the reporter's email (the team replied; the ticket moved), or null when the reporter left no address — hand it to [@adminigloo/comms](../comms)' `sendNow` so it goes out in the company's name, with `FEEDBACK_EMAIL_TEMPLATES` added to the company's templates once.
+
+## Upgrading from 0.9
+
+0.9 had one board for the whole install. In 0.10 every board belongs to a company.
+
+1. **The tables: run `sql/upgrade-0.9-to-0.10.sql`.** 0.9 had ONE board, your own, so the upgrade puts everything 0.9 had on `"*"`, your own site's board: its columns and categories, exactly as they were, and **every website key and every ticket** — whatever company id 0.9's issue-key script filed them under. Your site's feedback button keeps working with the key it has and keeps feeding your own board, and no company's board shows reports that were never sent to it. Column and category keys, and ticket numbers, become unique per company, and the screenshots table is created. That move runs only on a 0.9 database, so running the file again later moves nothing of the companies'. **With drizzle-kit**, run `drizzle-kit generate`, then replace the feedback statements in the migration it wrote with this file's contents: drizzle-kit can't know that the existing rows are your own board's, and its plain "add a column" can't add the company column without a default.
+2. **After the upgrade, company columns have no default.** An insert into `feedback_statuses` or `feedback_categories` that forgets the company fails instead of landing on your own board.
+3. **Every server function takes the company.** `listBoardData(db)` is now `listBoardData(db, tenantId)`, `moveTicket(db, { … })` is `moveTicket(db, tenantId, { … })` (and answers `{ moved, reason }`), `revokeClientKey(db, keyId)` is `revokeClientKey(db, tenantId, keyId)`, and so on. Pass `"*"` for the board you had. A tRPC router over the 0.9 functions can be replaced by `createFeedbackAdminHandlers({ tenantId: "*", … })` and `FeedbackWorkspace`.
+4. **Events.** Every event now carries `tenantId`; `reporter.replied` carries the reply's `messageId`; `staff.replied` and `ticket.moved` are new (staff routes only). `FeedbackRateLimitInfo.keyId` is null for a request with no key.
+5. **Errors.** The intake answers `{ error: "<a plain sentence>", code }`; the old field is still a string, so a 0.3 widget keeps working.
+
+## Not included
+
+- **Filters and search on the board**, a **"new ticket" button for the team**, and **epics** (grouping tickets) — next.
+- **Column and category editors as package screens.** The routes are here (`columns`, `categories`); the screens are your app's own.
+- **Custom domains** for a company's feedback page.
+- **Checking a reporter's email address.** The address someone types on a feedback form isn't confirmed; the team's answer is emailed to it as typed.
+- **Answering while a company's plan has ended.** Its customers can still read and reply on their tickets, but its team can't answer them until the company has a plan again (the host's plan check closes the staff routes).
+- **"My reports" on another device.** A reporter follows their tickets on the device, and the web address, they sent them from: the follow-up key lives in that browser only.
+- **Private screenshots without @adminigloo/storage.** Without it, screenshots go wherever your `screenshots` store puts them (create-app: the public Blob store, under addresses nobody can guess).
+
+## The tables
 
 Add the tables to your Drizzle schema and generate a migration:
 
@@ -191,7 +286,7 @@ Add the tables to your Drizzle schema and generate a migration:
 export * from "@adminigloo/feedback/schema";
 ```
 
-Then mount the intake the widget talks to (`GET /v1/config`, `POST /v1/upload`, `POST /v1/submit`, `POST /v1/thread`, `POST /v1/reply`, with CORS built in) in any route handler that receives a `Request`:
+The intake the widget talks to (`GET /v1/config`, `POST /v1/upload`, `POST /v1/submit`, `POST /v1/thread`, `POST /v1/reply`, with CORS built in) mounts in any route handler that receives a `Request`:
 
 ```ts
 import { createFeedbackHandlers } from "@adminigloo/feedback";
@@ -202,8 +297,8 @@ export const POST = feedback.handle;
 export const OPTIONS = feedback.handle;
 ```
 
-Issue a client key for the widget with `issueClientKey(db, { tenantId, label })`. Only its SHA-256 hash is stored, and the plaintext is returned once. Revoke a key with `revokeClientKey(db, keyId)`.
+**Screenshots: only the board's own uploads.** A report keeps a screenshot address only if this board's upload route stored it (see "Screenshots" above), so nobody can plant an image from somewhere else for whoever triages the ticket to open. Any store works (`screenshots`, or 0.9's `storeFile`); without one, reports are submitted without images.
 
-**Screenshots must be stored on Vercel Blob.** The intake accepts screenshot and attachment URLs only on `*.public.blob.vercel-storage.com`. This stops one tenant from planting arbitrary images that whoever triages the ticket would then open. A `storeFile` that uploads anywhere else (S3, R2) makes every submit with a screenshot fail validation. Without a `storeFile`, reports are submitted without images.
+The board's server functions — `listBoardData`, `getTicket`, `createTicket`, `moveTicket`, `moveTickets`, `archiveTicket`, `createStatus`, `reorderStatuses`, `listCategories`, `addTicketMessage`, `assignTicket`, and the rest — take your `db` and the company, and return plain data, so you can call them from route handlers, server actions or tRPC procedures. Gate them with your own check; the staff routes above already do.
 
-The board's server functions — `listBoardData`, `moveTicket`, `moveTickets`, `archiveTicket`, `createStatus`, `reorderStatuses`, `listCategories`, `addTicketMessage`, `assignTicket`, and the rest — take your `db` and return plain data, so you can call them from tRPC procedures, server actions or route handlers. Gate them with your own admin check.
+The tests run on PGlite (a real Postgres, in-process), including a pass where one company calls every function and every route with another company's ids.

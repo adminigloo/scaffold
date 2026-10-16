@@ -57,7 +57,7 @@ export const TENANCY_2A_NOT_INCLUDED: readonly string[] = [
  * list every README that 2b-1 touched carries.
  */
 export const TENANCY_2B1_NOT_INCLUDED: readonly string[] = [
-  "**The feedback board per company, and the complete board** — Tenancy 2b-2. It will keep screenshots as these private files and send its alerts through these notifications. Until then, feedback screenshots stay on the public Blob store as in 2a.",
+  "**The complete feedback board** (filters, search, a \"new ticket\" button for the team, epics) — Tenancy 2b-2b. The board per company, its alerts and its private screenshots are here (Tenancy 2b-2a).",
   "**The AI assistant per company** — Tenancy 2b-3.",
   "**Website analytics, SEO/AEO and book-a-call (booking) per company** — Tenancy 2b-4.",
   "**Text (SMS) and push alerts.** Alerts come in the app and by email — S9.",
@@ -146,6 +146,53 @@ export function notIncludedFor(companies: boolean): readonly string[] {
   return companies
     ? all.filter((item) => !SINGLE_ONLY_ITEMS.has(item))
     : all.filter((item) => !COMPANIES_ONLY_ITEMS.has(item));
+}
+
+/** What the feedback boards don't do yet (Tenancy 2b-2a): the next chunk's, said plainly. */
+export const FEEDBACK_2B2A_NOT_INCLUDED: readonly string[] = [
+  "**Filters and search on the feedback board**, a **\"new ticket\" button for the team**, and **epics** (grouping tickets) — Tenancy 2b-2b.",
+  "**Column and category editors as package screens.** They are this project's own settings page (src/components/FeedbackSettings.tsx), yours to change.",
+  "**Custom domains** for a feedback page.",
+  "**Checking a reporter's email address.** The address someone types on a feedback form isn't confirmed; the team's answer goes to it as typed.",
+  "**Answering while a business's plan has ended.** Its customers can still read and reply on their tickets; its team can't answer until it has a plan again.",
+  "**\"My reports\" on another device.** A reporter follows their tickets on the device and the feedback page they sent them from.",
+];
+
+/**
+ * The "Feedback" section (Tenancy 2b-2a): the boards this project has — each
+ * company's own and this site's own, or the one board of a single business —
+ * and what they don't do yet. Empty without feedback.
+ */
+export function feedbackSection(answers: ProjectManifest["answers"]): string[] {
+  if (!answers.includeFeedback) return [];
+  const companies = answers.tenantNoun !== "none";
+  const shell = answers.adminShell !== "none";
+  const noun = companies ? tenantLabel(answers).toLowerCase() : "business";
+  const lines: string[] = ["### Feedback", ""];
+  if (companies) {
+    lines.push(
+      `- **Each ${noun}'s own board** (/app/feedback): what its customers send, as columns to drag between, a ticket's conversation, replies, assignments and archive. Its columns, categories, feedback page address and website keys are at /app/feedback/settings (owners and admins change them; members answer and sort; viewers look; crew don't see it).`,
+      `- **Its customers' feedback page** (/t/{web address}/feedback): they send feedback with their name and email, and follow their ticket under "My reports". A suspended ${noun}, or one whose plan ended, takes no new feedback and still lets them read and answer theirs.`,
+      ...(answers.includeComms
+        ? [`- **The reporter is emailed** when the team replies or moves their ticket, in the ${noun}'s name with its reply-to; the wording is in its Messages.`]
+        : [`- This project was generated without messages (comms), so reporters aren't emailed: they read the team's answer under "My reports".`]),
+      ...(answers.includeNotifications ? [`- **Alerts**: a new ticket and a customer's answer, to everyone who can see the board.`] : []),
+      answers.includeStorage
+        ? `- **Screenshots** from a ${noun}'s own website are kept privately, on their ticket, for the ${noun}'s people who can see the board. Its feedback page takes none.`
+        : `- **Screenshots** from a ${noun}'s own website go to the public Blob store under addresses nobody can guess (this project has no private file storage, --storage). Its feedback page takes none.`,
+    );
+  }
+  lines.push(
+    shell
+      ? `- **This site's own board** (/admin/feedback, settings at /admin/feedback/settings), for your staff: what people send with the feedback button on every page of this app. Issue its key with \`pnpm feedback:issue-key\` and set ADMINIGLOO_FEEDBACK_KEY.`
+      : `- **This site's own board**, for your staff, over /api/admin/feedback (this project has no admin panel to show it in): what people send with the feedback button on every page of this app. Issue its key with \`pnpm feedback:issue-key\` and set ADMINIGLOO_FEEDBACK_KEY.`,
+    "",
+    "Not included yet:",
+    "",
+    ...FEEDBACK_2B2A_NOT_INCLUDED.map((item) => `- ${item}`),
+    "",
+  );
+  return lines;
 }
 
 /**
@@ -376,6 +423,7 @@ export function renderProjectReadme(manifest: ProjectManifest): string {
     );
   }
 
+  lines.push(...feedbackSection(answers));
   lines.push(...alertsAndFilesSection(answers));
   lines.push("### Not included", "", ...notIncludedFor(companies).map((item) => `- ${item}`), "");
 

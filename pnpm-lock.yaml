@@ -443,6 +443,9 @@ importers:
         specifier: workspace:^
         version: link:../license
     devDependencies:
+      '@electric-sql/pglite':
+        specifier: ^0.5.8
+        version: 0.5.8
       '@types/react':
         specifier: ^19.2.7
         version: 19.2.18

@@ -188,9 +188,10 @@ export const HELP = `
   --ai / --no-ai       Include streaming route conventions.
   --email / --no-email Include transactional email.
   --feedback           In-app feedback: the end-user widget, the key-authenticated
-    / --no-feedback    intake API, and — with an admin shell — the staff queue and
-                       Kanban board. Off by default: the widget does not mount
-                       until a client key is issued and pasted in.
+    / --no-feedback    intake API, this site's own Kanban board (under /admin with
+                       an admin shell) and, in a project with companies, each
+                       company's own board and feedback page. Off by default:
+                       the widget does not mount until its key is issued.
   --seo-reports        SEO & AEO self-audits: the site crawls its own sitemap and
     / --no-seo-reports scores how search and answer engines read it, receipts in
                        your own database. The report page rides the admin shell.
@@ -579,10 +580,10 @@ export function nextSteps(answers: Answers, targetDir: string): string {
       // that turns it on. The widget mount is a configuration check, so
       // nothing anywhere errors while the key is absent — which means nothing
       // anywhere would ever have told you this command exists.
-      "The feedback widget mounts once a client key exists. With DATABASE_URL",
-      "set and migrations run:",
+      "This site's own feedback button mounts once its key exists. With",
+      "DATABASE_URL set and migrations run:",
       "",
-      "  pnpm feedback:issue-key <tenant-slug>",
+      "  pnpm feedback:issue-key",
       "",
       "It prints the key once; put it in ADMINIGLOO_FEEDBACK_KEY in .env.local.",
       "Screenshot uploads also want BLOB_READ_WRITE_TOKEN — without it, reports",

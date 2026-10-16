@@ -329,6 +329,7 @@ function DescribeStep() {
   return (
     <div className="aif-form">
       {feedback.submitError ? <div className="aif-error">{feedback.submitError}</div> : null}
+      {feedback.closedMessage && !feedback.submitError ? <div className="aif-error">{feedback.closedMessage}</div> : null}
 
       <div className="aif-field">
         <label className="aif-label" htmlFor="aif-description">
@@ -379,6 +380,57 @@ function DescribeStep() {
           </select>
         </div>
       </div>
+
+      {/* The honeypot (0.4.0): off screen and out of the tab order, so a
+          person never fills it; something filling in every field does, and
+          the platform refuses that report. */}
+      <div aria-hidden="true" style={{ position: "absolute", left: "-10000px", width: 1, height: 1, overflow: "hidden" }}>
+        <label>
+          Website
+          <input
+            type="text"
+            name="website"
+            tabIndex={-1}
+            autoComplete="off"
+            value={feedback.website}
+            onChange={(event) => feedback.setWebsite(event.target.value)}
+          />
+        </label>
+      </div>
+
+      {feedback.askContact ? (
+        // Optional, and said so: someone who leaves no address still gets
+        // the answer under "My reports" on this device (0.4.0).
+        <div className="aif-row">
+          <div className="aif-field">
+            <label className="aif-label" htmlFor="aif-reporter-name">
+              Your name (optional)
+            </label>
+            <input
+              id="aif-reporter-name"
+              className="aif-select"
+              autoComplete="name"
+              maxLength={120}
+              value={feedback.reporterName}
+              onChange={(event) => feedback.setReporterName(event.target.value)}
+            />
+          </div>
+          <div className="aif-field">
+            <label className="aif-label" htmlFor="aif-reporter-email">
+              Email, to hear back (optional)
+            </label>
+            <input
+              id="aif-reporter-email"
+              className="aif-select"
+              type="email"
+              autoComplete="email"
+              maxLength={255}
+              value={feedback.reporterEmail}
+              onChange={(event) => feedback.setReporterEmail(event.target.value)}
+            />
+          </div>
+        </div>
+      ) : null}
 
       {preview ? (
         <div className="aif-field">

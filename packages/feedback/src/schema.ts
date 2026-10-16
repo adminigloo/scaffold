@@ -5,9 +5,21 @@ export type FeedbackPriority = "low" | "medium" | "high" | "critical";
 export type FeedbackTicketStatus = "open" | "in_progress" | "resolved" | "closed";
 
 /**
+ * The platform's own board (0.10.0): the site's own support queue, fed by the
+ * in-app feedback button and worked by the site's staff at /admin/feedback.
+ * Not a company — no company id is ever "*". On upgrade, a 0.9 install's
+ * columns and categories (there was one board then) become this board.
+ */
+export const FEEDBACK_PLATFORM_BOARD = "*";
+
+/**
  * One row per issued widget key. The row IS the license: issuing a key is how
  * a component sale becomes real, and revoking it is how a lapsed contract
  * stops working — no deploy, no code change on the buyer's side.
+ *
+ * 0.10.0: a key is a company's WEBSITE KEY — the widget on that company's own
+ * site sends it, and every ticket it submits lands on that company's board.
+ * Issued, listed and revoked by the company itself.
  */
 export const feedbackClientKeys = pgTable(
   "feedback_client_keys",
@@ -44,14 +56,23 @@ export const feedbackClientKeys = pgTable(
 /**
  * The board's columns, in order. Rows here ARE the Kanban board: adding one
  * adds a column, reordering sortOrder reorders the board, and the ticket's
- * plain-text `status` points at a `key` here. Seeded lazily with the four
- * defaults on first board read, so installing 0.2.0 needs no seed step.
+ * plain-text `status` points at a `key` here. Seeded with the four defaults
+ * the first time a company's board is used, so installing needs no seed step.
  */
 export const feedbackStatuses = pgTable(
   "feedback_statuses",
   {
     id: idColumn(),
-    /** Stable machine name the ticket rows reference: "open", "in_progress". */
+    /**
+     * Whose board this column is on (0.10.0). Every company has its own
+     * columns: a company that renames "Open" to "New" renames its own and
+     * nobody else's. NO DEFAULT, on purpose: an insert that forgets the
+     * company fails instead of landing on the platform's own board. (The
+     * upgrade from 0.9 fills it with '*' for the columns that already exist,
+     * then drops the default it used to do so.)
+     */
+    tenantId: text("tenant_id").notNull(),
+    /** Stable machine name the ticket rows reference: "open", "in_progress". Unique per company. */
     key: text("key").notNull(),
     /** What the column header says: "Open", "In progress". */
     label: text("label").notNull(),
@@ -85,7 +106,9 @@ export const feedbackStatuses = pgTable(
     allowAiTransition: boolean("allow_ai_transition").notNull().default(false),
     createdAt: createdAt(),
   },
-  (table) => [uniqueIndex("feedback_statuses_key_idx").on(table.key)],
+  // Unique PER COMPANY (0.10.0): two companies may both have an "open" column.
+  // 0.9's index on the key alone is dropped by the upgrade.
+  (table) => [uniqueIndex("feedback_statuses_tenant_key_idx").on(table.tenantId, table.key)],
 );
 
 /**
@@ -96,15 +119,18 @@ export const feedbackStatuses = pgTable(
  * "escalated" category can exist for triage without ever being offered to
  * the person filing a bug.
  *
- * NO SEED ROWS, unlike statuses: a board needs columns to exist at all, but
- * the widget already falls back to the built-in category list when this
- * table is empty — so an empty table means "the defaults", not "no dropdown".
+ * Seeded with the default list the first time a company's board is used
+ * (0.10.0), like the columns, so an owner edits real rows from day one. A
+ * company with no rows still offers the built-in list, so an empty table
+ * never means "no dropdown".
  */
 export const feedbackCategories = pgTable(
   "feedback_categories",
   {
     id: idColumn(),
-    /** Stable machine name the ticket rows reference: "bug", "billing". */
+    /** Whose dropdown this is (0.10.0). No default: see feedback_statuses.tenant_id. */
+    tenantId: text("tenant_id").notNull(),
+    /** Stable machine name the ticket rows reference: "bug", "billing". Unique per company. */
     key: text("key").notNull(),
     /** What the dropdown says: "Bug report", "Billing question". */
     label: text("label").notNull(),
@@ -115,20 +141,26 @@ export const feedbackCategories = pgTable(
     showToCustomer: boolean("show_to_customer").notNull().default(true),
     createdAt: createdAt(),
   },
-  (table) => [uniqueIndex("feedback_categories_key_idx").on(table.key)],
+  (table) => [uniqueIndex("feedback_categories_tenant_key_idx").on(table.tenantId, table.key)],
 );
 
 /**
- * A submitted feedback report, scoped to the tenant whose key submitted it.
- * Deliberately self-contained: reporter identity is denormalised text because
- * the reporter is an end user of the BUYER's app, not a principal in ours.
+ * A submitted feedback report, on the board of the company it was sent to (by
+ * its website key, or its public feedback page). Deliberately self-contained:
+ * reporter identity is denormalised text because the reporter is a customer
+ * of the company, not a person who signs in here.
  */
 export const feedbackTickets = pgTable(
   "feedback_tickets",
   {
     id: idColumn(),
     tenantId: text("tenant_id").notNull(),
-    /** `FB-00001` style, globally unique so a number alone identifies a ticket in conversation. */
+    /**
+     * `FB-00001` style, counted PER COMPANY (0.10.0): each company's first
+     * ticket is FB-00001, so a company's customers never learn how many
+     * tickets other companies have. A number names a ticket only inside its
+     * company, and every lookup by number names the company too.
+     */
     ticketNumber: text("ticket_number").notNull(),
     /** First line of the description, capped — set at insert, never recomputed. */
     title: text("title").notNull(),
@@ -136,9 +168,9 @@ export const feedbackTickets = pgTable(
     priority: text("priority").$type<FeedbackPriority>().notNull().default("medium"),
     category: text("category"),
     /**
-     * Plain text pointing at feedback_statuses.key, not $type-narrowed to the
-     * default union: 0.2.0 made statuses configurable, so a custom column key
-     * a client added is a valid value, not a type error.
+     * Plain text pointing at feedback_statuses.key (of the same company), not
+     * $type-narrowed to the default union: statuses are configurable, so a
+     * custom column key a company added is a valid value, not a type error.
      */
     status: text("status").notNull().default("open"),
     screenshotUrl: text("screenshot_url"),
@@ -195,7 +227,9 @@ export const feedbackTickets = pgTable(
     createdAt: createdAt(),
   },
   (table) => [
-    uniqueIndex("feedback_tickets_number_idx").on(table.ticketNumber),
+    // Per company (0.10.0); 0.9's install-wide index on the number alone is
+    // dropped by the upgrade.
+    uniqueIndex("feedback_tickets_tenant_number_idx").on(table.tenantId, table.ticketNumber),
     index("feedback_tickets_tenant_idx").on(table.tenantId),
     index("feedback_tickets_status_idx").on(table.status),
     index("feedback_tickets_created_idx").on(table.createdAt),
@@ -206,10 +240,15 @@ export const feedbackTickets = pgTable(
 );
 
 /**
- * The conversation on a ticket — staff notes and, later, reporter replies.
- * `senderType` is what renders differently; `senderName` is display text
- * because neither side's identity system belongs to this schema (staff live
- * in the platform's user tables, reporters in the buyer's app).
+ * The conversation on a ticket — staff replies, reporter replies, and the
+ * board's own notes ("Assigned to …"). `senderType` is what renders
+ * differently; `senderName` is display text because neither side's identity
+ * system belongs to this schema.
+ *
+ * NO tenant_id of its own (0.10.0), on purpose: a message belongs to its
+ * ticket, and every read and write in this package reaches a message THROUGH
+ * its ticket, with the ticket's company in the WHERE (a join, or the ticket
+ * looked up inside its company first).
  */
 export const feedbackMessages = pgTable(
   "feedback_messages",
@@ -224,4 +263,36 @@ export const feedbackMessages = pgTable(
     createdAt: createdAt(),
   },
   (table) => [index("feedback_messages_ticket_idx").on(table.ticketId, table.createdAt)],
+);
+
+/**
+ * Every screenshot the intake took (0.10.0), so that a report can only point
+ * at a picture THIS board's upload route stored — never at an address someone
+ * typed — and so a picture nobody sent a report with is deleted: the upload
+ * comes before the report, and a person who closes the form leaves one
+ * behind. `ticket_id` is set when the report that uses it arrives; a row
+ * still without one after a day is swept (`sweepFeedbackUploads`), the
+ * stored file with it.
+ */
+export const feedbackUploads = pgTable(
+  "feedback_uploads",
+  {
+    id: idColumn(),
+    tenantId: text("tenant_id").notNull(),
+    /** What the report will carry: the stored file's address (public) or its signed-in route (private). */
+    url: text("url").notNull(),
+    /** The file's id in the host's file storage, when it keeps one (private screenshots). */
+    fileId: text("file_id"),
+    /** "screenshot" | "annotated" */
+    kind: text("kind").notNull(),
+    /** From the bytes, never from what the browser said. */
+    contentType: text("content_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    ticketId: text("ticket_id"),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex("feedback_uploads_tenant_url_idx").on(table.tenantId, table.url),
+    index("feedback_uploads_created_idx").on(table.createdAt),
+  ],
 );

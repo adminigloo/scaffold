@@ -31,6 +31,11 @@ export function upgradeNotesFor(answers: Answers, fromVersion: string): string[]
   const companies = answers.tenantNoun !== "none";
   const noun = tenantLabel(answers).toLowerCase();
   const crossed = (version: string) => (compareVersions(fromVersion, version) ?? -1) < 0;
+  // 0.26.0 — Tenancy 2b-2a: a feedback board per company (review H1: the
+  // upgrade must keep the site's own board, its tickets and its key).
+  if (crossed("0.26.0") && answers.includeFeedback) {
+    notes.push(...feedbackUpgradeNotes(answers));
+  }
   // 0.25.0 — billing 0.3: every company is charged a plan (review H4: an
   // upgraded project would otherwise close every company older than the
   // trial the moment it deploys).
@@ -85,7 +90,9 @@ export const UPGRADE_NOTES_MARKER = "<!-- adminigloo:upgrade-notes -->";
  * Tenancy 2b-1.
  */
 export function renderDeploymentUpgradeNotes(answers: Answers): string {
-  const notes = upgradeNotesFor(answers, "0.23.0");
+  // The 2b-1 section's own notes: the 0.26 (feedback) ones get a section of their own below.
+  const later = new Set(upgradeNotesFor(answers, "0.25.0"));
+  const notes = upgradeNotesFor(answers, "0.23.0").filter((note) => !later.has(note));
   const companies = answers.tenantNoun !== "none";
   const shell = answers.adminShell !== "none";
   // What 2a wrote that 2b-1 retires, for this project's answers (checked
@@ -105,5 +112,40 @@ export function renderDeploymentUpgradeNotes(answers: Answers): string {
     "",
     ...(notes.length > 0 ? notes.map((note) => `- ${note}`) : ["- Nothing more: this project has neither alerts nor files."]),
     "",
+    ...(answers.includeFeedback
+      ? [
+          "### From create-app 0.25 to 0.26 (a feedback board per business)",
+          "",
+          "`upgrade` raises feedback and the feedback widget and removes the retired feedback router (`src/server/routers/feedback.ts`). After it:",
+          "",
+          ...feedbackUpgradeNotes(answers).map((note) => `- ${note}`),
+          "",
+        ]
+      : []),
   ].join("\n");
+}
+
+/**
+ * Feedback's steps from create-app 0.25 to 0.26 (Tenancy 2b-2a, review H1):
+ * the old board — every ticket and the site's feedback key — becomes this
+ * site's own, through feedback's shipped upgrade SQL, because drizzle-kit's
+ * generated migration can't tell which rows are the site's.
+ */
+export function feedbackUpgradeNotes(answers: Answers): string[] {
+  const companies = answers.tenantNoun !== "none";
+  const noun = tenantLabel(answers).toLowerCase();
+  return [
+    "Feedback boards belong to a business now, and your old board becomes this site's own. Run `pnpm db:generate`, " +
+      "then open the migration it wrote and replace its feedback_* statements with the contents of " +
+      "node_modules/@adminigloo/feedback/sql/upgrade-0.9-to-0.10.sql: that file moves every old ticket and the site's " +
+      "feedback key onto this site's own board (/admin/feedback), whatever business the old issue-key command filed " +
+      "them under, so the feedback button keeps working and no business sees reports that weren't sent to it. Then " +
+      "`pnpm db:migrate`, and `pnpm db:seed` for the new staff.feedback.* keys.",
+    ...(companies
+      ? [
+          `The old \`pnpm feedback:issue-key <slug>\` made a ${noun} for the slug you gave it if none existed. If that ` +
+            `${noun} is only there because of the key, delete it from the operator console.`,
+        ]
+      : []),
+  ];
 }

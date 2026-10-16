@@ -64,6 +64,7 @@ import {
   renderStaffAccess,
   renderTenantRoles,
 } from "./features-emit.js";
+import { renderDeploymentFeedback, renderFeedbackCron, renderFeedbackGlue } from "./feedback-emit.js";
 import {
   renderCompanyAlertsTest,
   renderCompanyCronsTest,
@@ -327,7 +328,7 @@ export async function planEmit(
       // Tenancy 2b-1: the alerts cron, the two Blob stores, the allowance,
       // the link key and what files cost — generated, empty without them.
       .split(ALERTS_FILES_MARKER)
-      .join(renderDeploymentAlertsFiles(answers))
+      .join(renderDeploymentAlertsFiles(answers) + renderDeploymentFeedback(answers))
       // What a project made by an earlier create-app has to do by hand when
       // it runs `upgrade` (review BUY-01), for THIS project's features.
       .split(UPGRADE_NOTES_MARKER)
@@ -400,11 +401,25 @@ export async function planEmit(
   // project: one key per job (D12) — and, since Tenancy 2b-1, alerts and
   // files. A companies project checks company roles instead
   // (src/server/company-routes.ts), so it never gets this file.
+  // Tenancy 2b-2a: and in BOTH modes with feedback, because this site's OWN
+  // feedback board (/admin/feedback, the in-app button's) is worked by the
+  // site's staff on staff keys whether or not companies have boards too.
   if (
-    !isCompanies(answers) &&
-    (answers.includeInvoicing || answers.includeComms || answers.includeNotifications || answers.includeStorage)
+    (!isCompanies(answers) &&
+      (answers.includeInvoicing || answers.includeComms || answers.includeNotifications || answers.includeStorage)) ||
+    answers.includeFeedback
   ) {
     files.set(join("src", "server", "staff-access.ts"), renderStaffAccess(answers));
+  }
+  // THE FEEDBACK BOARDS' GLUE (Tenancy 2b-2a), both modes, generated: whose
+  // board a route is (a company's, by the path; this site's own, fixed), who
+  // hears about a new ticket (alerts, with --notifications) and whether the
+  // reporter is emailed (comms, which sends as the company) are questions
+  // about OTHER answers. See feedback-emit.ts.
+  if (answers.includeFeedback) {
+    files.set(join("src", "server", "feedback.ts"), renderFeedbackGlue(answers));
+    // The sweep of screenshots no report used (review M2).
+    files.set(join("app", "api", "cron", "feedback", "route.ts"), renderFeedbackCron());
   }
   // ALERTS AND FILES (Tenancy 2b-1, 13.5), both modes, generated: who the
   // people are, which packages produce alerts, which records files belong
@@ -499,7 +514,12 @@ export async function planEmit(
   // Tenancy 2b-1: the isolation proof covers the alert and file routes too
   // (D17), so a companies project with either has it even with no
   // field-service feature.
-  if (isCompanies(answers) && (hasFieldService(answers) || answers.includeNotifications || answers.includeStorage)) {
+  // Tenancy 2b-2a: and the feedback board's routes, so a companies project
+  // with feedback has it even with nothing else.
+  if (
+    isCompanies(answers) &&
+    (hasFieldService(answers) || answers.includeNotifications || answers.includeStorage || answers.includeFeedback)
+  ) {
     files.set(join("src", "test", "company-rows.ts"), renderCompanyRows(answers));
     files.set(
       join("src", "server", "__tests__", "feature-isolation.test.ts"),
@@ -940,9 +960,10 @@ export function renderPackageJson(answers: Answers): string {
             "db:seed:shop": "tsx --env-file=.env.local scripts/seed-shop.ts",
           }
         : {}),
-      // The licence artifact of the feedback feature: creates the tenant if
-      // its slug is new, prints the plaintext key exactly once, stores only
-      // the hash. A script entry rather than a documented `pnpm tsx` line,
+      // This site's own feedback button's key (its tickets land on the
+      // site's own board, /admin/feedback): prints the plaintext exactly once,
+      // stores only the hash. Companies make their own website keys on their
+      // feedback settings page. A script entry rather than a documented `pnpm tsx` line,
       // because the widget stays dark until this runs and a command nobody is
       // told about is a feature nobody has.
       ...(answers.includeFeedback
@@ -1021,6 +1042,10 @@ export function renderVercelJson(answers: Answers): string {
   }
   if (answers.includeStorage) {
     crons.push({ path: "/api/cron/files", schedule: "45 14 * * *" });
+  }
+  // Tenancy 2b-2a review (M2): screenshots no report used, deleted after a day.
+  if (answers.includeFeedback) {
+    crons.push({ path: "/api/cron/feedback", schedule: "30 14 * * *" });
   }
   const config = {
     $schema: "https://openapi.vercel.sh/vercel.json",
@@ -1338,9 +1363,9 @@ export function renderEnvLocal(answers: Answers): string {
     lines.push(
       "",
       "# --- Feedback ---------------------------------------------------------------",
-      "# The widget mounts once a client key is here. Issue one — after the",
+      "# This site's own feedback button mounts once its key is here. Issue one — after the",
       "# database exists and migrations have run — with:",
-      "#   pnpm feedback:issue-key <tenant-slug>",
+      "#   pnpm feedback:issue-key",
       "# It is printed exactly once; only its hash is stored.",
       "# ADMINIGLOO_FEEDBACK_KEY=",
       "# Screenshot storage (Vercel -> Storage -> Blob). Without it, reports",
@@ -1386,7 +1411,8 @@ export function renderEnvLocal(answers: Answers): string {
     answers.includeScheduling ||
     answers.includeEstimator ||
     answers.includeNotifications ||
-    answers.includeStorage
+    answers.includeStorage ||
+    answers.includeFeedback
   ) {
     lines.push(
       "",
@@ -1783,7 +1809,7 @@ export function renderEnvModule(answers: Answers): string {
       "BLOB_READ_WRITE_TOKEN: process.env.BLOB_READ_WRITE_TOKEN",
     );
     features.push(
-      `{ name: "Feedback widget", vars: ["ADMINIGLOO_FEEDBACK_KEY"], disables: "Mounting the widget in this app. The intake API still answers, so any other app holding a key can still submit. Issue a key with pnpm feedback:issue-key." }`,
+      `{ name: "Feedback widget", vars: ["ADMINIGLOO_FEEDBACK_KEY"], disables: "Mounting the widget in this app. The intake API still answers, so any other app holding a key can still submit. Issue this site's key with pnpm feedback:issue-key." }`,
       `{ name: "Feedback screenshots", vars: ["BLOB_READ_WRITE_TOKEN"], disables: "Storing screenshots. Uploads answer 503 and reports still arrive, without images — the widget says so rather than failing the submit." }`,
     );
   }
@@ -1844,7 +1870,8 @@ export function renderEnvModule(answers: Answers): string {
     answers.includeScheduling ||
     answers.includeEstimator ||
     answers.includeNotifications ||
-    answers.includeStorage
+    answers.includeStorage ||
+    answers.includeFeedback
   ) {
     // The shared secret the cron routes check. Declared here rather than in an
     // env fragment of @__SCOPE_NAME__/comms or /scheduling because it is not a
@@ -2195,6 +2222,20 @@ export const PACKAGE_PERMISSION_FRAGMENTS: readonly PackagePermissionFragment[] 
       "office sees the company's files, owners and admins add and delete " +
       "them. A record's own files follow that record's permissions.",
   },
+  // THE FEEDBACK BOARD, IN A COMPANIES PROJECT (Tenancy 2b-2a). Each company
+  // works its own customers' feedback, so the keys belong to the company's
+  // roles. This site's OWN board (the in-app button's) stays on the staff
+  // ladder in both modes (staff.feedback.*), mapped in src/server/feedback.ts.
+  {
+    package: "feedback",
+    binding: "feedbackPermissions",
+    scope: "tenant",
+    installedBy: (answers) => answers.tenantNoun !== "none" && answers.includeFeedback,
+    why:
+      "Each company works its own customers' feedback, so these are company " +
+      "keys: everyone but crew sees the board, members answer and sort it, " +
+      "owners and admins change its columns, categories and website keys.",
+  },
 ];
 
 export class PermissionScopeMismatchError extends Error {
@@ -2426,6 +2467,33 @@ export function renderPermissionsCatalog(answers: Answers): string {
     defaultFor: ["admin"],
   },`
     : "";
+  // THIS SITE'S OWN feedback board's staff keys (Tenancy 2b-2a), in BOTH
+  // modes: the board the in-app button feeds is the site's, worked by its
+  // staff at /admin/feedback, whether or not companies have boards of their
+  // own. One key per job (D12), replacing the shell's staff.dashboard.view.
+  // src/server/feedback.ts maps the package's three permissions onto these.
+  const feedbackStaffKeys = answers.includeFeedback
+    ? `
+  "staff.feedback.view": {
+    label: "See this site's feedback",
+    description: "The feedback board: every ticket people sent with the feedback button, what they wrote and saw, and the conversation.",
+    category: "Feedback",
+    defaultFor: ["admin", "cs_lead", "cs_agent"],
+  },
+  "staff.feedback.manage": {
+    label: "Answer and sort feedback",
+    description: "Reply to the people who sent feedback, move tickets between columns, assign and archive them.",
+    category: "Feedback",
+    defaultFor: ["admin", "cs_lead", "cs_agent"],
+  },
+  "staff.feedback.settings": {
+    label: "Change the feedback board",
+    description: "The board's columns and categories, and the website keys that put the feedback button on other sites.",
+    category: "Feedback",
+    // Not cs_agent: a switched-off key silences a site's button.
+    defaultFor: ["admin", "cs_lead"],
+  },`
+    : "";
   const staffSpread = [...staffFragments, "appStaffPermissions"];
   const tenantSpread = [...tenantFragments, "appTenantPermissions"];
 
@@ -2532,7 +2600,7 @@ const appStaffPermissions = {
     category: "${plural}",
     // Sealed: an override must not hand this to one person quietly.
     sealed: true,
-  },${schedulingStaffKeys}${estimatorStaffKeys}${invoicingStaffKeys}${commsStaffKeys}${alertsStaffKeys}${filesStaffKeys}
+  },${schedulingStaffKeys}${estimatorStaffKeys}${invoicingStaffKeys}${commsStaffKeys}${alertsStaffKeys}${filesStaffKeys}${feedbackStaffKeys}
 } as const;
 
 export const staffCatalog = definePermissions(
@@ -4484,9 +4552,6 @@ export function renderAppRouter(answers: Answers): string {
     'import { createTRPCRouter, publicProcedure, requireTenant } from "../trpc";',
   ];
   if (answers.includeAi) imports.splice(1, 0, 'import { aiRouter } from "./ai";');
-  if (answers.includeFeedback) {
-    imports.splice(1, 0, 'import { feedbackRouter } from "./feedback";');
-  }
   if (answers.includeSeoReports) {
     imports.splice(1, 0, 'import { seoRouter } from "./seo";');
   }
@@ -4522,15 +4587,10 @@ export function renderAppRouter(answers: Answers): string {
   // the requireStaff rungs live, and it has to exist wherever tickets can
   // arrive — the triage pages are just one caller, added when there is a
   // shell to render them in.
-  const feedback = answers.includeFeedback
-    ? `
-  // Reading and working the tickets the intake route writes. Every procedure
-  // is staff-scoped on \`staff.dashboard.view\` — the key that says you may use
-  // the shell — rather than a key of its own; mint one when the queue grows
-  // actions that not every staff member should hold.
-  feedback: feedbackRouter,
-`
-    : "";
+  // No feedback router (Tenancy 2b-2a): the board runs on the package's own
+  // HTTP handlers (src/server/feedback.ts), the same handlers a company's
+  // board mounts, and the feature isolation proof drives their routes.
+  const feedback = "";
 
   const seo = answers.includeSeoReports
     ? `
@@ -5017,6 +5077,18 @@ export function renderSiteNav(answers: Answers): string {
   // Tenancy 2b-1: the company's Files screen, after Messages. (Alerts need
   // no link: the bell is in the header, and its menu opens the alerts page
   // and Alert settings.)
+  // Tenancy 2b-2a: the company's feedback board, after Messages.
+  if (!single && answers.includeFeedback) {
+    companyFeatureLinks.push({
+      href: "/app/feedback",
+      label: "Feedback",
+      permission: "feedback.view",
+      why:
+        `What the ${label}'s customers sent from its feedback page or its own ` +
+        "website, as a board to answer and sort; its columns, categories and " +
+        "website keys are under Feedback settings.",
+    });
+  }
   if (!single && answers.includeStorage) {
     companyFeatureLinks.push({
       href: "/app/files",
@@ -5452,55 +5524,35 @@ export function renderAdminNav(answers: Answers): string {
     });
   }
 
-  // The triage surfaces from the feedback-admin overlay, which is copied on
-  // the same two-condition shape as catalog-admin: the feedback answer AND a
-  // shell to put the pages in. This function only runs when there is a shell,
-  // so the answer alone decides here. Both entries sit on the shell's own key
-  // — the queue holds nothing a staff viewer may not see, and a key of its
-  // own is worth minting when triage grows actions not every staff member
-  // should hold.
+  // THIS SITE'S OWN feedback board (Tenancy 2b-2a), from the feedback-admin
+  // overlay, copied on the same two-condition shape as catalog-admin: the
+  // feedback answer AND a shell to put the pages in. The board the in-app
+  // button feeds — never a company's (a company works its own at
+  // /app/feedback). Each entry on its own staff key, one per job (D12's rule,
+  // replacing the shell's staff.dashboard.view).
   if (answers.includeFeedback) {
     groups.push({
       heading: "Feedback",
       items: [
         {
           href: "/admin/feedback",
-          label: "Queue",
-          permission: "staff.dashboard.view",
-          why:
-            "Every ticket the widget submitted, newest first, with the " +
-            "screenshot, click trail and browser errors that arrived with " +
-            "it. From the feedback-admin overlay, so a project without the " +
-            "feedback answer has neither this page nor this entry.",
-        },
-        {
-          href: "/admin/feedback/board",
           label: "Board",
-          permission: "staff.dashboard.view",
+          permission: "staff.feedback.view",
           why:
-            "The same tickets as columns, with drag-to-move and the ticket " +
-            "workspace panel — conversation, status, assignee. A second view " +
-            "over one queue, which is why it sits directly under it.",
+            "This site's own feedback, as a board: drag a ticket between " +
+            "columns, open it for the report, the screenshot, what the person " +
+            "clicked and the conversation, and answer them. Fed by the " +
+            "feedback button on every page of this app.",
         },
         {
-          href: "/admin/feedback/statuses",
-          label: "Columns",
-          permission: "staff.dashboard.view",
+          href: "/admin/feedback/settings",
+          label: "Board settings",
+          permission: "staff.feedback.settings",
           why:
-            "The board's column editor (0.5.0): rows in feedback_statuses ARE " +
-            "the columns, and this is the screen that edits them. Under the " +
-            "views it configures, on the same key — configuring columns is " +
-            "triage work until a team says otherwise.",
-        },
-        {
-          href: "/admin/feedback/categories",
-          label: "Categories",
-          permission: "staff.dashboard.view",
-          why:
-            "The widget's dropdown editor (0.7.0): rows in feedback_categories " +
-            "ARE what a reporter can call their report, and showToCustomer is " +
-            "the curation — a staff-only category exists for triage without " +
-            "ever being offered to the person filing a bug.",
+            "The board's columns, the categories people choose from, and the " +
+            "website keys that put this board's feedback button on another " +
+            "site. On its own key: a switched-off key silences that site's " +
+            "button, and a column change reshapes everyone's board.",
         },
       ],
     });

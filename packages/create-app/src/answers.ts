@@ -678,6 +678,15 @@ export function overlayNamesFor(answers: Answers): readonly string[] {
     names.push("feedback-admin");
   }
 
+  // `feedback-companies` (Tenancy 2b-2a): each company's own board at
+  // /app/feedback with its settings, its routes under /api/app/{id}/feedback,
+  // and its customers' feedback page at /t/{web address}/feedback. No shell
+  // condition — a company's area is not the platform's /admin — and nothing of
+  // it in a single-business project, whose one board is the site's own.
+  if (answers.includeFeedback && answers.tenantNoun !== "none") {
+    names.push("feedback-companies");
+  }
+
   // THE THREE NEWEST SUITE FEATURES, each split on the feedback shape: the
   // server half (router, helpers, API routes) needs only its answer, because
   // it is reachable over tRPC or HTTP whether or not there is a shell; the
@@ -1012,6 +1021,11 @@ export function capabilitiesFor(answers: Answers): readonly string[] {
     answers.includeScheduling || answers.includeEstimator || answers.includeInvoicing || answers.includeComms;
   if (companies && fieldFeature) {
     keys.push("companies.feature-area", "companies.feature-isolation-proof");
+  } else if (companies && answers.includeFeedback) {
+    // Tenancy 2b-2a: each company's feedback board is a feature route the
+    // isolation proof drives, so a companies project with feedback alone has
+    // the proof too.
+    keys.push("companies.feature-isolation-proof");
   }
   if (companies && (answers.includeScheduling || answers.includeEstimator || answers.includeInvoicing)) {
     keys.push("companies.public-pages");

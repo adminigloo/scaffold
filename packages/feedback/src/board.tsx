@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   version as reactVersion,
@@ -10,6 +11,15 @@ import {
   type ReactElement,
 } from "react";
 import { DARK_PALETTE, LIGHT_PALETTE, paletteDeclarations } from "./board-tokens";
+import {
+  FeedbackAdminClient,
+  FeedbackAdminError,
+  type FeedbackBoardWire,
+  type FeedbackMessageWire,
+  type FeedbackTicketDetailWire,
+} from "./board-client";
+
+export * from "./board-client";
 
 /**
  * The Kanban board — the `./board` entry, and the only client code in this
@@ -165,7 +175,7 @@ const HOISTED_STYLES = Number.parseInt(reactVersion, 10) >= 19;
  *  Declared ONLY on the outermost element of each surface (the board's root,
  *  the panel's layer around scrim + dialog): a token set on an inner element
  *  would re-declare the defaults beneath a host's override. */
-const TOKEN_SCOPE = ":where(.aib-root, .aib-panel-layer)";
+const TOKEN_SCOPE = ":where(.aib-root, .aib-panel-layer, .aib-toolbar)";
 
 /*
  * The board's own token set, `--aib-*`, built from `board-tokens.ts`. Dark is
@@ -187,7 +197,7 @@ ${TOKEN_SCOPE} { ${paletteDeclarations(LIGHT_PALETTE)} color-scheme: light;
 ${TOKEN_SCOPE}:where([data-aib-theme="dark"]) { ${paletteDeclarations(DARK_PALETTE)} color-scheme: dark; }
 
 /* Host-overridable without a specificity fight, like the tokens. */
-:where(.aib-root, .aib-panel-layer) { color: var(--aib-ink);
+:where(.aib-root, .aib-panel-layer, .aib-toolbar) { color: var(--aib-ink);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
 .aib-root:focus { outline: none; }
 /* Containing blocks for the screen-reader-only text (.aib-sr is absolutely
@@ -395,6 +405,22 @@ ${TOKEN_SCOPE}:where([data-aib-theme="dark"]) { ${paletteDeclarations(DARK_PALET
 .aib-errs { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
 .aib-err { font-size: 12px; color: var(--aib-danger); overflow-wrap: anywhere; }
 .aib-err b { color: var(--aib-ink); }
+
+/* The connected workspace's toolbar (0.10.0): a sibling of the board, so it
+   carries the token scope itself rather than nesting the board inside it. */
+.aib-toolbar { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.aib-toolbar-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.aib-toolbar-note { font-size: 13px; color: var(--aib-ink-muted); }
+.aib-tool-btn { border: 1px solid var(--aib-ink-faint); border-radius: 8px; background: var(--aib-surface); color: var(--aib-ink);
+  font: inherit; font-size: 13px; padding: 7px 12px; cursor: pointer; min-height: 44px; text-decoration: none;
+  display: inline-flex; align-items: center; box-sizing: border-box; }
+.aib-tool-btn:hover { background: var(--aib-surface-2); }
+.aib-tool-btn:disabled { color: var(--aib-ink-faint); cursor: default; }
+.aib-tool-btn:focus-visible { outline: 2px solid var(--aib-accent); outline-offset: 2px; }
+.aib-tool-primary { border-color: transparent; background: var(--aib-accent); color: var(--aib-on-accent); font-weight: 600; }
+.aib-tool-primary:hover { background: var(--aib-accent-strong); }
+.aib-notice { border: 1px solid var(--aib-warn); border-radius: 10px; padding: 10px 12px; font-size: 13px;
+  background: var(--aib-surface); color: var(--aib-ink); display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 `;
 
 function injectStyles(): void {
@@ -1597,5 +1623,289 @@ export function FeedbackBoard({
         </div>
       ) : null}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The connected workspace (0.10.0) — the board, its toolbar and the ticket
+// panel, talking to the staff routes through a base URL.
+// ---------------------------------------------------------------------------
+
+export interface FeedbackWorkspaceProps {
+  /**
+   * Where the staff routes are mounted: `/api/app/${company.id}/feedback` for
+   * a company's board, `/api/admin/feedback` for the platform's own. The same
+   * component serves both; only this differs.
+   */
+  baseUrl: string;
+  /** Shown as the sender on messages this viewer writes, until the server's copy arrives. */
+  currentUser?: string;
+  /**
+   * Offer the controls that change tickets (moving, replying, assigning,
+   * archiving). Only what is OFFERED: the server refuses them anyway to
+   * someone without the permission. Default true.
+   */
+  canManage?: boolean;
+  /** A link to the board's settings (columns, categories, website keys), shown in the toolbar. */
+  settingsHref?: string | null;
+  /** A ticket to open on arrival — an alert's link (`?ticket=…`). */
+  initialTicketId?: string | null;
+  /** Told when the open ticket changes (null: closed), so a page can keep it in its address. */
+  onOpenTicket?: (ticketId: string | null) => void;
+  /** See `BoardTheme`. Default `auto`. */
+  theme?: BoardTheme;
+  /** A client to use instead of one over `baseUrl` (tests). */
+  client?: FeedbackAdminClient;
+}
+
+const READ_ONLY_MESSAGE = "You can look at the board, but changing tickets needs permission to answer feedback.";
+
+function messageOf(error: unknown): string {
+  if (error instanceof FeedbackAdminError) return error.message;
+  return "Something went wrong. Please try again.";
+}
+
+/** The panel's detail, from the ticket route's answer. */
+function detailOf(ticket: FeedbackTicketDetailWire | null): TicketDetailView | null {
+  if (!ticket) return null;
+  return {
+    description: ticket.description,
+    context: (ticket.context as TicketContextView | null) ?? null,
+    errors: (ticket.errors as TicketErrorView[]) ?? [],
+  };
+}
+
+/**
+ * A company's whole feedback board, connected: fetches the columns and
+ * tickets, moves cards (one or a selection), opens a ticket into the panel
+ * with its report and conversation, sends replies, assigns, archives, and
+ * sweeps finished columns — every change through the staff routes at
+ * `baseUrl`, then a fresh read, because the server's copy is the board.
+ *
+ *   <FeedbackWorkspace baseUrl={`/api/app/${company.id}/feedback`} canManage={can.includes("feedback.manage")} />
+ *
+ * Not included (next): server-side filters and search, a "new ticket" button
+ * for staff, and epics.
+ */
+export function FeedbackWorkspace({
+  baseUrl,
+  currentUser = "You",
+  canManage = true,
+  settingsHref = null,
+  initialTicketId = null,
+  onOpenTicket,
+  theme = "auto",
+  client: given,
+}: FeedbackWorkspaceProps): ReactElement {
+  useBoardStyles();
+  const client = useMemo(() => given ?? new FeedbackAdminClient(baseUrl), [given, baseUrl]);
+
+  const [board, setBoard] = useState<FeedbackBoardWire | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
+  const [sweeping, setSweeping] = useState(false);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<FeedbackTicketDetailWire | null>(null);
+  const [messages, setMessages] = useState<FeedbackMessageWire[]>([]);
+  const loadSeq = useRef(0);
+
+  const refresh = useCallback(async () => {
+    const seq = ++loadSeq.current;
+    try {
+      const next = await client.board({ archived: showArchived });
+      if (seq !== loadSeq.current) return;
+      setBoard(next);
+      setLoadError(null);
+    } catch (error) {
+      if (seq !== loadSeq.current) return;
+      setLoadError(messageOf(error));
+    }
+  }, [client, showArchived]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  // Coming back to the tab is when someone expects new feedback to be there.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onFocus = () => void refresh();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [refresh]);
+
+  const loadTicket = useCallback(
+    async (ticketId: string) => {
+      try {
+        const [ticket, thread] = await Promise.all([client.ticket(ticketId), client.messages(ticketId)]);
+        setDetail(ticket);
+        setMessages(thread);
+      } catch (error) {
+        setNotice(messageOf(error));
+        setOpenId(null);
+      }
+    },
+    [client],
+  );
+
+  const open = useCallback(
+    (ticketId: string | null) => {
+      setOpenId(ticketId);
+      onOpenTicket?.(ticketId);
+      setDetail(null);
+      setMessages([]);
+      if (ticketId === null) return;
+      void loadTicket(ticketId);
+      // Opening the panel IS reading it: the card's reply mark clears the way
+      // an inbox does — by looking, not by a chore.
+      void client
+        .markRead(ticketId)
+        .then(() => refresh())
+        .catch(() => undefined);
+    },
+    [client, loadTicket, onOpenTicket, refresh],
+  );
+
+  // The ticket an alert's link names, once.
+  const opened = useRef(false);
+  useEffect(() => {
+    if (opened.current || !initialTicketId) return;
+    opened.current = true;
+    open(initialTicketId);
+  }, [initialTicketId, open]);
+
+  const refuseReadOnly = (): never => {
+    throw new FeedbackAdminError(READ_ONLY_MESSAGE, 403, "forbidden");
+  };
+
+  const handleMove = async (ticketId: string, statusKey: string) => {
+    if (!canManage) refuseReadOnly();
+    await client.move(ticketId, statusKey);
+    await refresh();
+  };
+
+  const statuses: BoardStatusView[] = board?.statuses ?? [];
+  const tickets: BoardTicketView[] = board?.tickets ?? [];
+  const openCard: BoardTicketView | null =
+    tickets.find((ticket) => ticket.id === openId) ?? (detail && detail.id === openId ? detail : null);
+  const archivable = board?.archivableCount ?? 0;
+
+  return (
+    <>
+      <div className="aib-toolbar" data-aib-theme={theme === "auto" ? undefined : theme}>
+        <div className="aib-toolbar-row">
+          <button type="button" className="aib-tool-btn" onClick={() => setShowArchived((current) => !current)}>
+            {showArchived ? "Hide archived" : "Show archived"}
+          </button>
+          {canManage && archivable > 0 ? (
+            <button
+              type="button"
+              className="aib-tool-btn aib-tool-primary"
+              disabled={sweeping}
+              onClick={() => {
+                setSweeping(true);
+                void client
+                  .archiveDone()
+                  .then(() => refresh())
+                  .catch((error: unknown) => setNotice(messageOf(error)))
+                  .finally(() => setSweeping(false));
+              }}
+            >
+              {sweeping ? "Archiving…" : `Archive finished (${archivable})`}
+            </button>
+          ) : null}
+          {settingsHref ? (
+            <a className="aib-tool-btn" href={settingsHref}>
+              Columns, categories and website keys
+            </a>
+          ) : null}
+        </div>
+        {notice ? (
+          <div className="aib-notice" role="status">
+            <span>{notice}</span>
+            <button type="button" className="aib-tool-btn" onClick={() => setNotice(null)}>
+              OK
+            </button>
+          </div>
+        ) : null}
+        {loadError ? (
+          <div className="aib-notice" role="alert">
+            <span>The board didn&rsquo;t load: {loadError}</span>
+            <button type="button" className="aib-tool-btn" onClick={() => void refresh()}>
+              Try again
+            </button>
+          </div>
+        ) : null}
+        {board === null && !loadError ? <p className="aib-toolbar-note">Loading the board…</p> : null}
+        {board !== null && board.tickets.length === 0 ? (
+          <p className="aib-toolbar-note">
+            {showArchived ? "Nothing here yet, archived or not." : "No feedback yet. It appears here as soon as someone sends some."}
+          </p>
+        ) : null}
+      </div>
+
+      {board !== null ? (
+        <FeedbackBoard
+          statuses={statuses}
+          tickets={tickets}
+          theme={theme}
+          onMove={handleMove}
+          onOpen={(ticket) => open(ticket.id)}
+          {...(canManage
+            ? {
+                onMoveMany: async (ticketIds: string[], statusKey: string) => {
+                  const result = await client.moveMany(ticketIds, statusKey);
+                  await refresh();
+                  return result.failed.length > 0 ? { failed: result.failed } : undefined;
+                },
+              }
+            : {})}
+          onMoveError={(error) => setNotice(messageOf(error))}
+        />
+      ) : null}
+
+      {openId && openCard ? (
+        <TicketPanel
+          ticket={openCard}
+          messages={messages}
+          statuses={statuses}
+          detail={detailOf(detail)}
+          currentUser={currentUser}
+          theme={theme}
+          onClose={() => open(null)}
+          onSend={async (body) => {
+            if (!canManage) refuseReadOnly();
+            await client.reply(openId, body);
+            setMessages(await client.messages(openId));
+          }}
+          onAssign={async (assignee) => {
+            if (!canManage) refuseReadOnly();
+            await client.assign(openId, assignee);
+            const [thread] = await Promise.all([client.messages(openId), refresh()]);
+            setMessages(thread);
+          }}
+          onMove={async (statusKey) => {
+            await handleMove(openId, statusKey);
+          }}
+          {...(canManage
+            ? {
+                onArchive: async () => {
+                  if (openCard.archivedAt != null) {
+                    await client.unarchive(openId);
+                  } else {
+                    await client.archive(openId);
+                    // An archived ticket leaves the default board; close the
+                    // panel rather than leave it over a card that vanished.
+                    if (!showArchived) open(null);
+                  }
+                  await refresh();
+                },
+              }
+            : {})}
+          onError={(error) => setNotice(messageOf(error))}
+        />
+      ) : null}
+    </>
   );
 }

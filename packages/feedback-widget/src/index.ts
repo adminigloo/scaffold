@@ -1,10 +1,14 @@
 export { FeedbackProvider, useFeedback } from "./FeedbackContext.js";
 export { FeedbackModal } from "./FeedbackModal.js";
 export { FeedbackButton } from "./FeedbackButton.js";
+export { FeedbackLauncher } from "./FeedbackLauncher.js";
+export { reportsInstallId } from "./reports.js";
 export { isFeedbackWidgetTarget } from "./hostLayers.js";
 export type { FeedbackContextValue, FeedbackStep, ThreadData } from "./FeedbackContext.js";
 export type { StoredReport } from "./reports.js";
+export { errorSentence } from "./transport.js";
 export type {
+  FeedbackConfigResult,
   ReplyResult,
   ThreadMessage,
   ThreadResult,

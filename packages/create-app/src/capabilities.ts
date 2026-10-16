@@ -337,12 +337,16 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
       "The key-authenticated API route AND the widget mount that feeds it. " +
       "Both, because either alone is half a capability: handlers nobody can " +
       "reach from a page, or a button posting into a 404.",
+    // Tenancy 2b-2a: the route mounts the glue's builder, and the glue builds
+    // the package's handlers — both, or the route posts into nothing.
     provenBy: (plan) =>
       mentions(
         plan,
         ["app", "api", "igloo", "[...path]", "route.ts"],
-        "createFeedbackHandlers(",
-      ) && exists(plan, "src", "components", "FeedbackWidget.tsx"),
+        "buildFeedbackIntakeHandlers(",
+      ) &&
+      mentions(plan, ["src", "server", "feedback.ts"], "createFeedbackHandlers(") &&
+      exists(plan, "src", "components", "FeedbackWidget.tsx"),
   },
   {
     capability: "feedback.triage",

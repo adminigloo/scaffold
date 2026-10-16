@@ -41,8 +41,8 @@ project's isolation test.
 | `notifications-widget` | Per company | The bell, the alerts page and Alert settings. |
 | `storage` | Per company | Each company's photos and files, kept private, and its logo (Tenancy 2b-1). |
 | `storage-widget` | Per company | Photos and files on a record, the Files screen and the storage meter. |
-| `feedback` | Not yet: 2b-2 feedback | The feedback board is the site's own until then. |
-| `feedback-widget` | Not yet: 2b-2 feedback | The feedback button and board screens, with the board above. |
+| `feedback` | Per company | Each company's feedback board: its tickets, columns, categories, website keys and its customers' feedback page (Tenancy 2b-2a). The site's own board stays the site's. |
+| `feedback-widget` | Per company | The feedback form on a company's feedback page and its own website, and the site's own feedback button. |
 | `assistant` | Not yet: 2b-3 assistant | The AI assistant is the site's own until then. |
 | `assistant-widget` | Not yet: 2b-3 assistant | The assistant's chat and its settings screen, with the assistant. |
 | `ai` | Not yet: 2b-3 assistant | AI usage is counted for the whole site until then. |

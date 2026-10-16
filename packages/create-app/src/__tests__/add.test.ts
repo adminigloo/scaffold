@@ -113,17 +113,14 @@ describe("create-adminigloo-app add <feature>", () => {
     });
   }
 
-  // Feedback, since Tenancy 2b-1: alerts and files are served by their
-  // packages' handlers now, with no tRPC router of their own.
-  it("mounts the router and registers the schema for a feature with both", async () => {
+  // Feedback: since Tenancy 2b-2a it, too, is served by its package's
+  // handlers (src/server/feedback.ts), with no tRPC router of its own.
+  it("writes the feature's glue and registers its schema", async () => {
     await generate(BASE);
     await applyAdd(await planAdd(TEMPLATE_DIR, dir, "feedback"));
 
-    const appRouter = await readFile(
-      join(dir, "src", "server", "routers", "_app.ts"),
-      "utf8",
-    );
-    expect(appRouter).toContain("feedbackRouter");
+    const glue = await readFile(join(dir, "src", "server", "feedback.ts"), "utf8");
+    expect(glue).toContain("createFeedbackHandlers(");
 
     const schema = await readFile(join(dir, "src", "db", "schema.ts"), "utf8");
     expect(schema).toMatch(/feedback/);
@@ -142,19 +139,20 @@ describe("create-adminigloo-app add <feature>", () => {
   // preserved and the new version lands beside it as .new.
   it("writes <file>.new instead of overwriting a file you edited", async () => {
     await generate(BASE);
-    const routerPath = join(dir, "src", "server", "routers", "_app.ts");
-    const edited = `${await readFile(routerPath, "utf8")}\n// my own comment\n`;
-    await writeFile(routerPath, edited, "utf8");
+    // The root layout: adding feedback mounts the widget there.
+    const layoutPath = join(dir, "app", "layout.tsx");
+    const edited = `${await readFile(layoutPath, "utf8")}\n// my own comment\n`;
+    await writeFile(layoutPath, edited, "utf8");
 
     const plan = await planAdd(TEMPLATE_DIR, dir, "feedback");
     await applyAdd(plan);
 
     // The edit survives untouched...
-    expect(await readFile(routerPath, "utf8")).toBe(edited);
+    expect(await readFile(layoutPath, "utf8")).toBe(edited);
     // ...and the wired version is offered for merge.
-    expect(plan.conflicts.has(join("src", "server", "routers", "_app.ts"))).toBe(true);
-    const dotNew = await readFile(`${routerPath}.new`, "utf8");
-    expect(dotNew).toContain("feedbackRouter");
+    expect(plan.conflicts.has(join("app", "layout.tsx"))).toBe(true);
+    const dotNew = await readFile(`${layoutPath}.new`, "utf8");
+    expect(dotNew).toContain("FeedbackWidget");
   });
 
   // MERGE, don't overwrite, package.json — you own your scripts and deps.

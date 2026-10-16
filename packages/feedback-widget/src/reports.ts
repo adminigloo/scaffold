@@ -31,8 +31,24 @@ const MAX_STORED = 20;
  * of the client key — already visible in every request this page makes, so
  * it discloses nothing the network tab does not.
  */
-function storageKey(clientKey: string): string {
-  return `aif-reports-${clientKey.slice(-8)}`;
+function storageKey(installId: string): string {
+  return `aif-reports-${installId.slice(-8)}`;
+}
+
+/**
+ * Which list this install's reports go in (0.4.0): the website key when there
+ * is one (the same list as every earlier version), else the form's address —
+ * a company's own feedback page has no key, and two companies' pages on one
+ * site must not share a list. Hashed, so the address isn't stored as is.
+ */
+export function reportsInstallId(config: { readonly baseUrl: string; readonly clientKey?: string | undefined }): string {
+  if (config.clientKey) return config.clientKey;
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < config.baseUrl.length; i++) {
+    hash ^= config.baseUrl.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return `p-${hash.toString(16).padStart(8, "0")}`;
 }
 
 function isStoredReport(value: unknown): value is StoredReport {

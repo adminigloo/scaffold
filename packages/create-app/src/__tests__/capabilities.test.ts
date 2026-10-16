@@ -216,12 +216,19 @@ describe("the feedback overlays are what make feedback.* true", () => {
       join("app", "api", "igloo", "[...path]", "route.ts"),
     );
     expect(route, "--feedback emits no intake route").toBeDefined();
-    expect(route).toContain("createFeedbackHandlers(");
+    // Tenancy 2b-2a: the route mounts the glue's builder; the glue builds the
+    // package's handlers.
+    expect(route).toContain("buildFeedbackIntakeHandlers(");
+    expect(withFeedback.files.get(join("src", "server", "feedback.ts"))).toContain("createFeedbackHandlers(");
     // The layout mounts the wrapper and the wrapper exists. Half of this is a
     // GENERATED file changing shape on the answer — the first one an optional
     // feature has ever changed — so it is asserted here rather than assumed.
+    // The provider is in SiteFeedback since Tenancy 2b-2a (it stays off a company's /t pages).
     expect(
       withFeedback.files.get(join("src", "components", "FeedbackWidget.tsx")),
+    ).toContain("<SiteFeedback");
+    expect(
+      withFeedback.files.get(join("src", "components", "SiteFeedback.tsx")),
     ).toContain("FeedbackProvider");
     expect(withFeedback.files.get(join("app", "layout.tsx"))).toContain(
       "<FeedbackWidget>",
@@ -247,6 +254,7 @@ describe("the feedback overlays are what make feedback.* true", () => {
     const plan = await planEmit(TEMPLATE_DIR, "/out", answers({ includeFeedback: true }));
     for (const path of [
       join("app", "api", "igloo", "[...path]", "route.ts"),
+      join("src", "server", "feedback.ts"),
       join("src", "components", "FeedbackWidget.tsx"),
     ]) {
       const source = plan.files.get(path) ?? "";
@@ -260,22 +268,22 @@ describe("the feedback overlays are what make feedback.* true", () => {
     expect(envModule).toContain("BLOB_READ_WRITE_TOKEN");
   });
 
-  it("mounts a router that reads what the route writes", async () => {
+  it("mounts the board's routes that read what the intake writes", async () => {
     // The error-log rule: an intake surface whose tickets nothing reads is a
-    // table filling up in silence. The router must exist AND be mounted, in
-    // every project that takes feedback — including one with no admin shell,
-    // where tRPC is the only reader there is.
+    // table filling up in silence. Since Tenancy 2b-2a the reader is the
+    // package's own staff handlers (no tRPC router), mounted in every project
+    // that takes feedback — including one with no admin shell.
     const plan = await planEmit(
       TEMPLATE_DIR,
       "/out",
       answers({ includeFeedback: true, adminShell: "none" }),
     );
-    expect(
-      plan.files.get(join("src", "server", "routers", "feedback.ts")),
-    ).toContain("listBoardData");
-    expect(
-      plan.files.get(join("src", "server", "routers", "_app.ts")),
-    ).toContain("feedback: feedbackRouter");
+    expect(plan.files.get(join("app", "api", "admin", "feedback", "[...path]", "route.ts"))).toContain(
+      "buildPlatformFeedbackAdminHandlers(",
+    );
+    expect(plan.files.get(join("src", "server", "feedback.ts"))).toContain("createFeedbackAdminHandlers(");
+    expect(plan.files.has(join("src", "server", "routers", "feedback.ts"))).toBe(false);
+    expect(plan.files.get(join("src", "server", "routers", "_app.ts"))).not.toContain("feedbackRouter");
   });
 
   it("copies the triage pages only where there is a shell to hold them", async () => {
