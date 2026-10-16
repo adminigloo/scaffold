@@ -577,7 +577,7 @@ describe("what the project installs and says (17)", () => {
       ["notifications-widget", "^0.1.0"],
       ["storage", "^0.2.0"],
       ["storage-widget", "^0.1.0"],
-      ["tenancy", "^0.6.0"],
+      ["tenancy", "^0.7.0"],
       ["tenancy-widget", "^0.2.1"],
       ["scheduling", "^0.6.0"],
       ["scheduling-widget", "^0.3.0"],

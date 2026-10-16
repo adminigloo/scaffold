@@ -342,6 +342,13 @@ export interface SubscriptionAction {
 export function primaryActionFor(
   subscription: SubscriptionState,
   now: Date = new Date(),
+  /**
+   * Free months an operator gave (billing 0.3): a subscription with no Stripe
+   * object, outside simulated mode. They end on their own date; "keep this
+   * subscription" would turn them into a plan that never ends and is never
+   * paid (review C1), so the way to keep going is choosing a plan.
+   */
+  options: { readonly freeMonths?: boolean } = {},
 ): SubscriptionAction {
   if (subscription.status === "canceled") {
     return {
@@ -383,6 +390,15 @@ export function primaryActionFor(
   // Before the ordinary cancel, and before the trial line. Somebody who has
   // already scheduled a cancellation and is offered "Cancel subscription" will
   // press it again and then wonder which of the two took effect.
+  if (subscription.cancelAtPeriodEnd && options.freeMonths === true) {
+    return {
+      kind: "none",
+      label: "",
+      hint: "These are free months, and they end on their own date. To keep going after that, choose a plan below.",
+      consequential: false,
+    };
+  }
+
   if (subscription.cancelAtPeriodEnd) {
     return {
       kind: "resume",

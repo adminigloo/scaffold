@@ -305,6 +305,25 @@ Three more, after commit through `onEvent`: `company.settings.updated`
 `company.branding.updated`. Scheduling's time zone follows the company's by
 listening for `company.settings.updated` with `"timeZone"` changed.
 
+### Each company's plan (0.7)
+
+Both seams take an optional `plan` — `createPlanGate` from
+`@adminigloo/billing`, or your own `{ allows, isOpen, closedMessage }`:
+
+```ts
+const routes = createCompanyRouteSeams({ tenancy, principal, plan: planGate });
+const pub = createPublicCompanySeams({ tenancy, plan: planGate });
+```
+
+While a company's plan is closed (its trial ran out, its plan ended, or its
+card kept failing), a member who holds a permission is still refused new work
+with the gate's sentence ("This company's plan has ended. An owner can choose
+a plan in Billing to keep using this."), while reading, billing and the team
+stay open; its public pages say it isn't taking requests online, in the same
+words as a suspended company. The plan is asked only after membership and the
+permission pass, so a stranger learns nothing about whether a company has
+paid. Without `plan`, nothing changes.
+
 ## Alerts and files (Tenancy 2b-1)
 
 Tenancy 0.6 is what `@adminigloo/notifications` and `@adminigloo/storage`

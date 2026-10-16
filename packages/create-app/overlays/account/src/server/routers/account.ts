@@ -353,6 +353,16 @@ async function scheduleCancellation(
     });
   }
 
+  // FREE MONTHS END ON THEIR OWN DATE (billing 0.3, review C1): resuming free
+  // months an operator gave would make them a plan that never ends and is
+  // never paid. Choosing a plan is how a company keeps going.
+  if (!cancelAtPeriodEnd && subscription.freeMonths === true) {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "Free months end on their own date. To keep going after that, choose a plan.",
+    });
+  }
+
   if (subscription.cancelAtPeriodEnd === cancelAtPeriodEnd) {
     // Not an error and not a write. Two clicks on one button, or two people on
     // two screens, must not produce a second audit row claiming a change that

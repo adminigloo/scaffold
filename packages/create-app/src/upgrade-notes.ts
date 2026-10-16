@@ -31,6 +31,17 @@ export function upgradeNotesFor(answers: Answers, fromVersion: string): string[]
   const companies = answers.tenantNoun !== "none";
   const noun = tenantLabel(answers).toLowerCase();
   const crossed = (version: string) => (compareVersions(fromVersion, version) ?? -1) < 0;
+  // 0.25.0 — billing 0.3: every company is charged a plan (review H4: an
+  // upgraded project would otherwise close every company older than the
+  // trial the moment it deploys).
+  if (crossed("0.25.0") && companies && (answers.businessModel === "subscription" || answers.businessModel === "both")) {
+    notes.push(
+      `Every ${noun} now needs a plan. BEFORE you deploy this, set PLANS_ENFORCED_FROM to today's date (YYYY-MM-DD) ` +
+        `in Vercel (Production and Preview): every existing ${noun} then gets a fresh free trial from today instead of ` +
+        `being closed the moment this goes live. Give anyone who should keep going for free months with Give free months ` +
+        `(Admin -> ${tenantLabel(answers)} plans), and set your prices in src/plans.ts.`,
+    );
+  }
   // 0.24.0 — Tenancy 2b-1: alerts and files.
   if (crossed("0.24.0")) {
     if (answers.includeStorage) {

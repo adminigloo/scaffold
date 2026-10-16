@@ -39,8 +39,8 @@ export { isCrossOriginRequest } from "./server/http.js";
 
 // Tenancy 2a: the seams the feature packages take (scheduling, the
 // estimator, invoicing, comms), the cron walker, and the public face's wire.
-export { createCompanyRouteSeams, createPublicCompanySeams } from "./server/company-seams.js";
-export type { CompanyRouteSeams, PublicCompanySeams } from "./server/company-seams.js";
+export { createCompanyRouteSeams, createPublicCompanySeams, keptOpenWhilePlanClosed } from "./server/company-seams.js";
+export type { CompanyRouteSeams, PublicCompanySeams, CompanyPlanGate } from "./server/company-seams.js";
 export { runForEachCompany } from "./server/company-runs.js";
 export type { CompanyRunOptions, CompanyRunReport } from "./server/company-runs.js";
 

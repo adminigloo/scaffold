@@ -1,0 +1,5 @@
+---
+"@adminigloo/create-app": minor
+---
+
+A SaaS that charges each company a plan. In a companies project that sells subscriptions, `src/server/plan-gate.ts` is asked at every checkpoint (the tRPC company rung and page gates, every feature route, every public page): a new company gets a free trial (BILLING_TRIAL_DAYS, 14 by default; PLANS_ENFORCED_FROM for a project that ran before), and a company whose trial or plan has ended can see everything but do no new work until it picks a plan. Plans now sell the real things: team members (checked on invite), GB of photos and files (checked on upload) and online estimate requests a month (checked on the estimate page and widget). "Change plan" changes the existing subscription with a price preview instead of opening a second checkout (the double charge), a returning company reuses its Stripe customer, and a new "Company plans" admin page lists each company's standing with Give free months. A banner above every page says where the company stands. Projects that don't sell plans get an open stand-in, unchanged in behaviour.

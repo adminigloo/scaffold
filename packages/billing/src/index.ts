@@ -109,3 +109,26 @@ export type { BillingPermission } from "./permissions.js";
  * ./schema.js re-exports it so "@adminigloo/billing/schema" is unchanged.
  */
 export type { PlanInterval } from "./plans.js";
+
+/**
+ * Billing 0.3: where a company stands with its plan, and the one gate every
+ * company checkpoint asks (the tRPC rung, the feature routes' company seams,
+ * the public pages' admit), so a plan applies to every package at once.
+ */
+export {
+  planStanding,
+  openWhilePlanClosed,
+  planClosedMessage,
+  planClosedPublicMessage,
+  createPlanGate,
+  gatePermissionSet,
+  gatePermissionLoaders,
+} from "./standing.js";
+export type {
+  PlanStanding,
+  PlanStandingState,
+  PlanStandingInput,
+  StandingSubscription,
+  PlanGate,
+  CreatePlanGateOptions,
+} from "./standing.js";

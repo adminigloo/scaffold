@@ -175,7 +175,7 @@ async function main(): Promise<void> {
   console.log("                                        subscriber should hold");
   console.log("  planGrantDiff(held, plans.tier('pro')) an upgrade that keeps");
   console.log("                                        used_value intact");
-  console.log("  planAllows(tier, 'support', 'priority')");
+  console.log("  planGrantDiff(held, plans.tier('starter'))  a downgrade, the same way");
   console.log("");
 
   // A parting shot, after everything else, so it is the last thing on screen.

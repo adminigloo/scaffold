@@ -60,6 +60,26 @@ export interface PlanChooserProps {
   readonly canManage: boolean;
   /** The tier they are already on, so it is marked rather than offered again. */
   readonly currentTierKey: string | null;
+  /**
+   * Does this __TENANT_LABEL_LOWER__ already pay through Stripe? Then picking a plan CHANGES
+   * that subscription (with a price preview to confirm) instead of starting a
+   * second one — the double charge billing 0.3 fixed.
+   */
+  readonly hasPaidPlan: boolean;
+}
+
+/** What a plan change costs, as the server worked it out. */
+interface ChangePreview {
+  readonly tierKey: string;
+  /** The currency the preview was priced in: the change is confirmed in the same one. */
+  readonly currency: string;
+  readonly planName: string;
+  readonly samePrice: boolean;
+  readonly prorationDate: number;
+  readonly today: "charge" | "credit" | "none";
+  readonly dueNow: string;
+  readonly then: string;
+  readonly interval: "month" | "year";
 }
 
 export function PlanChooser(props: PlanChooserProps) {
@@ -92,9 +112,33 @@ export function PlanChooser(props: PlanChooserProps) {
     },
   });
 
-  const busy = subscribe.isPending || simulate.isPending || leaving;
+  // CHANGING PLAN (billing 0.3): preview, confirm, change — on the one
+  // subscription this __TENANT_LABEL_LOWER__ already has.
+  const [preview, setPreview] = useState<ChangePreview | null>(null);
+  const [changeNote, setChangeNote] = useState<string | null>(null);
+  const previewChange = api.billing.previewPlanChange.useMutation({
+    onSuccess: (result, variables) => {
+      setChangeNote(null);
+      setPreview({ ...result, tierKey: variables.tierKey, currency: variables.currency });
+    },
+  });
+  const changePlan = api.billing.changePlan.useMutation({
+    onSuccess: (result) => {
+      setPreview(null);
+      setChangeNote(
+        result.applied
+          ? "Done. The new plan shows here within a few seconds."
+          : "The payment for the change didn't go through, so you're still on your current plan. Update your card under Payment methods and try again.",
+      );
+      router.refresh();
+    },
+  });
+
+  const busy =
+    subscribe.isPending || simulate.isPending || leaving || previewChange.isPending || changePlan.isPending;
   const simulated = props.mode.kind === "simulated";
-  const error = subscribe.error ?? simulate.error;
+  const changing = props.hasPaidPlan && !simulated;
+  const error = subscribe.error ?? simulate.error ?? previewChange.error ?? changePlan.error;
 
   return (
     <div className="flex flex-col gap-4">
@@ -155,8 +199,50 @@ export function PlanChooser(props: PlanChooserProps) {
       )}
 
       {error && (
-        <Notice tone="danger" title="That plan could not be started" role="alert">
+        <Notice tone="danger" title={changing ? "That plan couldn't be changed" : "That plan could not be started"} role="alert">
           {error.message}
+        </Notice>
+      )}
+
+      {changeNote && (
+        <Notice tone="info" title="Plan change" role="status">
+          {changeNote}
+        </Notice>
+      )}
+
+      {preview && (
+        <Notice tone="info" title={`Switch to ${preview.planName}?`} role="status">
+          <span className="block">
+            {preview.samePrice
+              ? "You're already on this plan."
+              : preview.today === "charge"
+                ? `You'll pay ${preview.dueNow} today, then ${preview.then} a ${preview.interval}.`
+                : preview.today === "credit"
+                  ? `${preview.dueNow} comes off your next bills, then it's ${preview.then} a ${preview.interval}.`
+                  : `Nothing to pay today, then ${preview.then} a ${preview.interval}.`}
+          </span>
+          {!preview.samePrice && (
+            <span className="mt-2 flex flex-wrap gap-2">
+              <Button
+                variant="primary"
+                disabled={busy}
+                onClick={() =>
+                  changePlan.mutate({
+                    tenantId: props.tenantId,
+                    tierKey: preview.tierKey,
+                    interval: preview.interval,
+                    currency: preview.currency,
+                    prorationDate: preview.prorationDate,
+                  })
+                }
+              >
+                {changePlan.isPending ? "Changing…" : `Switch to ${preview.planName}`}
+              </Button>
+              <Button variant="secondary" disabled={busy} onClick={() => setPreview(null)}>
+                Keep my plan
+              </Button>
+            </span>
+          )}
         </Notice>
       )}
 
@@ -223,7 +309,9 @@ export function PlanChooser(props: PlanChooserProps) {
                     disabled={busy}
                     className="self-start"
                     onClick={() =>
-                      simulated
+                      changing
+                        ? previewChange.mutate({ tenantId: props.tenantId, tierKey: tier.key, interval, currency })
+                        : simulated
                         ? simulate.mutate({
                             tenantId: props.tenantId,
                             tierKey: tier.key,
@@ -240,9 +328,11 @@ export function PlanChooser(props: PlanChooserProps) {
                   >
                     {busy
                       ? "Working…"
-                      : simulated
-                        ? `Simulate ${tier.name}`
-                        : `Subscribe to ${tier.name}`}
+                      : changing
+                        ? `Switch to ${tier.name}`
+                        : simulated
+                          ? `Simulate ${tier.name}`
+                          : `Subscribe to ${tier.name}`}
                   </Button>
                 )}
               </CardBody>

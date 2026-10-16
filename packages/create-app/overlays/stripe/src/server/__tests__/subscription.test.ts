@@ -83,11 +83,14 @@ describe("applySubscription", () => {
 });
 
 describe("resolvePlanForSubscription", () => {
-  it("resolves a tier from the metadata the checkout stamped", async () => {
+  it("resolves a tier from the metadata the checkout stamped, when the price is not one we published", async () => {
+    // Billing 0.3 reads the PRICE first (after a plan change it is what the
+    // company actually pays for); the metadata answers when the price is not
+    // cached on any plans row — a deployment whose plans were never synced.
     const resolved = await resolvePlanForSubscription({
       planMetadata: "pro",
       variantMetadata: undefined,
-      priceId: "price_1",
+      priceId: null,
       interval: "month",
       currency: "USD",
     });

@@ -283,7 +283,11 @@ export function renderTenancyServer(answers: Answers): string {
   // file — company-setup imports the feature glue, which imports this module,
   // and a static import would be a load-time cycle in which one side reads
   // the other half-initialised. Never throws (onCompanyEvent logs).
-  onEvent: (event) => import("./company-setup").then((m) => m.onCompanyEvent(event)),`
+  onEvent: (event) => import("./company-setup").then((m) => m.onCompanyEvent(event)),
+  // Inviting people stops at the plan's seats (billing 0.3). Nothing in a
+  // project that doesn't sell plans: src/server/plan-gate.ts is generated in
+  // two variants, and this spread is empty in the open one.
+  ...seatLimitOption,`
     : "";
   return `import { resolveAppEnv } from "${scope}/env";
 import { auditEntry } from "${scope}/observability";
@@ -295,7 +299,8 @@ import { env } from "@/env";
 import { tenantCatalog } from "@/permissions/catalog";${companies ? `\nimport { TENANT_ROLES } from "@/permissions/roles";` : ""}
 import { NOUN } from "@/tenancy";
 import { auditRegistry } from "./audit";
-import { log } from "./logger";
+import { log } from "./logger";${companies ? `
+import { seatLimitOption } from "./plan-gate";` : ""}
 import { setupChecklist } from "./setup-checklist";
 import { tenancyLogoStore } from "./tenancy-logo";
 import { tenantSettings } from "./tenant-settings";

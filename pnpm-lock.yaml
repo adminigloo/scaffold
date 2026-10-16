@@ -202,6 +202,9 @@ importers:
         specifier: workspace:^
         version: link:../permissions
     devDependencies:
+      '@electric-sql/pglite':
+        specifier: ^0.5.8
+        version: 0.5.8
       drizzle-orm:
         specifier: 'catalog:'
         version: 0.45.2(@electric-sql/pglite@0.5.8)(@neondatabase/serverless@1.1.0)

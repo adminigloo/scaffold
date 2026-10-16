@@ -2709,6 +2709,14 @@ vi.mock("@/env", async (importOriginal) => {
   };
 });
 
+// The room here is FILES_ALLOWANCE_MB, set per case above. In a project that
+// sells plans, a company's plan would decide it instead; that is proved in
+// company-plans.test.ts, so here the plan always defers to the setting.
+vi.mock("@/server/plan-gate", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/server/plan-gate")>()),
+  storageAllowanceBytes: async (_tenantId: string, fallback: number | null) => fallback,
+}));
+
 /**
  * THE PROJECT'S FILES, over memory stores: the same purposes, records, rules
  * and member check (createFilesStorage), so the routes, the logo and the

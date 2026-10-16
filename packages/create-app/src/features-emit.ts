@@ -114,6 +114,7 @@ export function renderCompanyRoutes(answers: Answers): string {
   type PublicCompanySeams,
 } from "${scope}/tenancy/server";
 import { ensureCompanySetup } from "./company-setup";
+import { companyPlanOption } from "./plan-gate";
 import { tenancy } from "./tenancy";
 import { requestPrincipal } from "./tenancy-handlers";
 
@@ -155,9 +156,14 @@ import { requestPrincipal } from "./tenancy-handlers";
 export const companyRoutes: CompanyRouteSeams = createCompanyRouteSeams({
   tenancy,
   principal: () => requestPrincipal(),
+  // Each ${noun}'s plan (billing 0.3): a closed plan refuses new work with
+  // "This ${noun}'s plan has ended…" and keeps reading, billing and the team
+  // open. Empty in a project that doesn't sell plans (src/server/plan-gate.ts).
+  ...companyPlanOption,
 });
 
-export const publicCompanies: PublicCompanySeams = createPublicCompanySeams({ tenancy });
+// A closed plan closes the public pages too, in the same words as a suspended ${noun}.
+export const publicCompanies: PublicCompanySeams = createPublicCompanySeams({ tenancy, ...companyPlanOption });
 
 /** What a test swaps: who is calling (the project's isolation proof calls every route as somebody else). */
 export interface FeatureHandlerOverrides {
@@ -173,7 +179,7 @@ export interface FeatureHandlerOverrides {
  */
 export function companyAuthorizer(overrides: FeatureHandlerOverrides = {}): CompanyRouteSeams["authorize"] {
   const seams = overrides.principal
-    ? createCompanyRouteSeams({ tenancy, principal: overrides.principal })
+    ? createCompanyRouteSeams({ tenancy, principal: overrides.principal, ...companyPlanOption })
     : companyRoutes;
   return async (req, permission, tenantId) => {
     const verdict = await seams.authorize(req, permission, tenantId);

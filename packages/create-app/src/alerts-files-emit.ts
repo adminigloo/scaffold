@@ -1291,6 +1291,7 @@ export function renderFiles(answers: Answers): string {
     ...(companies ? [`import { SITE_NAME } from "@/seo";`] : []),
     `import { reportError } from "./error-reporter";`,
     `import { log } from "./logger";`,
+    `import { storageAllowanceBytes } from "./plan-gate";`,
   ];
 
   const stillValid = companies
@@ -1584,7 +1585,9 @@ export function createFilesStorage(
     // GENERATED: the records files can belong to, one per installed feature.
     // The record's own permissions decide who sees its files (D12).
     records: [${records.length > 0 ? `\n${records.join("\n")}\n    ` : ""}],
-    allowanceBytes: (tenantId) => filesAllowanceBytes(tenantId),
+    // The plan's storage when this project sells plans (billing 0.3), else
+    // FILES_ALLOWANCE_MB. src/server/plan-gate.ts decides; no \`if\` here.
+    allowanceBytes: (tenantId) => storageAllowanceBytes(tenantId, filesAllowanceBytes(tenantId)),
     // Signed links only when a key is known (configuration, not a feature).
     ...(secret ? { signing: { secret, stillValid: options.stillValid ?? memberStillValid } } : {}),
 ${onUsage}

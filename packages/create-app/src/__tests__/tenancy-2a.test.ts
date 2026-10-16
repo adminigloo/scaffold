@@ -382,7 +382,8 @@ describe("routes ↔ pages (11.3–11.4)", () => {
     const embed = glue.slice(glue.indexOf("export function buildEstimatorEmbedHandlers"), glue.indexOf("export async function setupEstimatorFor"));
     expect(embed).not.toContain("resolveTenant");
     expect(embed).not.toContain("tenantId:");
-    expect(embed).toContain("admit: admitPublic");
+    // Billing 0.3: the estimate request is admitted by the company AND its plan's monthly estimates.
+    expect(embed).toContain("admit: admitEstimateRequest");
   });
 
   it("can reach every company page from somewhere: the nav, a page's link, or a pattern href", async () => {
@@ -415,7 +416,7 @@ describe("the company modules (11.5)", () => {
     const p = await plan(COMPANY_FULL);
     const routes = code(file(p, "src", "server", "company-routes.ts"));
     expect(routes).toContain("createCompanyRouteSeams({");
-    expect(routes).toContain("createPublicCompanySeams({ tenancy })");
+    expect(routes).toContain("createPublicCompanySeams({ tenancy, ...companyPlanOption })");
     const authorizer = routes.slice(routes.indexOf("export function companyAuthorizer"));
     expect(authorizer.indexOf("await seams.authorize(req, permission, tenantId)")).toBeLessThan(
       authorizer.indexOf("await ensureCompanySetup(tenantId)"),
@@ -588,7 +589,9 @@ describe("the feature glue, companies variants (11.5)", () => {
   it("the estimator: the company seams, the AI ceiling on all three handlers, links via the company", async () => {
     const glue = code(file(await plan(COMPANY_FULL), "src", "server", "estimator.ts"));
     expect(glue.match(/aiBudgetCeilingCents: ESTIMATOR_AI_CEILING_CENTS/g)).toHaveLength(3);
-    expect(glue.match(/admit: admitPublic/g)).toHaveLength(2);
+    // Billing 0.3: both customer paths admit through the plan's monthly estimates too.
+    expect(glue.match(/admit: admitEstimateRequest/g)).toHaveLength(2);
+    expect(glue).toContain("if (!admitted.open || !isNewEstimateRequest(req)) return admitted;");
     expect(glue).toContain("quoteUrl: async (token, tenantId) => (await companyLinks(tenantId)).quote(token)");
     expect(glue).toContain("key: `estimator:${context.tenantId}:${bucket}:${caller}`");
     const config = await readFile(join(OVERLAYS_DIR, "estimator", "src", "server", "estimator-config.ts"), "utf8");
@@ -1109,7 +1112,7 @@ describe("what the project claims and documents (11.13)", () => {
     const manifest = JSON.parse(file(await plan(COMPANY_FULL), "package.json")) as { dependencies: Record<string, string> };
     for (const [pkg, range] of [
       // Tenancy 2b-1 moved every line it changed (versions.ts says why).
-      ["tenancy", "^0.6.0"],
+      ["tenancy", "^0.7.0"],
       ["tenancy-widget", "^0.2.1"],
       ["scheduling", "^0.6.0"],
       ["scheduling-widget", "^0.3.0"],

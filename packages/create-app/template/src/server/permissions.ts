@@ -1,6 +1,7 @@
 import { createDrizzlePermissionLoaders } from "__SCOPE__/permissions/server";
 import { tenancyMembershipGate } from "__SCOPE__/tenancy/server";
 import { db } from "@/db";
+import { gateLoaders } from "./plan-gate";
 
 /**
  * The two permission loaders the procedure ladder and every page read, and
@@ -23,6 +24,14 @@ import { db } from "@/db";
  * account is suspended" from the tenant rung instead of "not a member".
  * Imported from the package directly rather than through src/server/tenancy.ts,
  * so this module never joins the import cycle that one sits in.
+ *
+ * THE PLAN (billing 0.3). `gateLoaders` is the one place a company's plan
+ * reaches the tRPC rung and every page gate: while a company's plan is closed
+ * (its trial ran out, its plan ended, or its card kept failing), its people
+ * keep only reading, billing, the team and company settings. In a project
+ * that doesn't sell plans, src/server/plan-gate.ts hands the loaders back
+ * untouched. Staff permissions are never trimmed.
  */
-export const { loadTenantPermissions, loadStaffPermissions, explainTenantDenial } =
-  createDrizzlePermissionLoaders(db, { membership: tenancyMembershipGate });
+export const { loadTenantPermissions, loadStaffPermissions, explainTenantDenial } = gateLoaders(
+  createDrizzlePermissionLoaders(db, { membership: tenancyMembershipGate }),
+);

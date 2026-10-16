@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { AuthHeader } from "@/components/AuthHeader";
+import { PlanBannerSlot } from "@/components/PlanBannerSlot";
 import { SiteFooter } from "@/components/SiteFooter";
 
 /**
@@ -47,6 +48,11 @@ export default function SiteLayout({ children }: { children: ReactNode }) {
         </div>
       </header>
 
+      {/* Where the company stands with its plan (billing 0.3): a free trial's
+          days left, a failed payment, a plan that has ended. Generated in two
+          variants (src/components/PlanBannerSlot.tsx); nothing in a project
+          that doesn't sell plans, and nothing while a plan is paid up. */}
+      <PlanBannerSlot />
       <div className="flex-1">{children}</div>
 
       <SiteFooter />

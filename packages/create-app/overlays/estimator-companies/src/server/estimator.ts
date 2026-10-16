@@ -19,6 +19,7 @@ import {
 } from "@/server/company-routes";
 import { ALERTS_SETTINGS_HREF } from "@/server/alerts-links";
 import { reportError } from "@/server/error-reporter";
+import { estimateQuota } from "@/server/plan-gate";
 import {
   ESTIMATOR_AI_CEILING_CENTS,
   ESTIMATOR_AI_SITE_CEILING_CENTS,
@@ -160,6 +161,38 @@ export function buildEstimatorAdminHandlers(overrides: FeatureHandlerOverrides =
 }
 
 /**
+ * A NEW online estimate request: the photo, its reading and the submit (review
+ * H3). Never a quote the business already sent: its customer can always open,
+ * accept or decline it, whatever this month's count is.
+ */
+function isNewEstimateRequest(req: Request): boolean {
+  if (req.method !== "POST") return false;
+  let pathname: string;
+  try {
+    pathname = new URL(req.url).pathname;
+  } catch {
+    return false;
+  }
+  return /\/v1\/(photo|takeoff|submit)\/?$/.test(pathname);
+}
+
+/**
+ * A customer's estimate request, admitted: the company is taking requests
+ * (active, and its plan open — `admitPublic`), AND it hasn't had its plan's
+ * online estimate requests for this month (billing 0.3, `estimateQuota`;
+ * always open in a project that doesn't sell plans). Staff can still make
+ * estimates themselves.
+ */
+async function admitEstimateRequest(
+  tenantId: string,
+  req: Request,
+): Promise<{ readonly open: true } | { readonly open: false; readonly message: string }> {
+  const admitted = await admitPublic(tenantId, req);
+  if (!admitted.open || !isNewEstimateRequest(req)) return admitted;
+  return estimateQuota(tenantId);
+}
+
+/**
  * The customer side, for the company whose web address the path names: what
  * /t/{web address}/estimate and its quote pages talk to. A quote token is read
  * inside that company only.
@@ -168,7 +201,7 @@ export function buildEstimatorPublicHandlers() {
   return createEstimatorHandlers({
     db,
     resolveTenant: resolvePublicTenant,
-    admit: admitPublic,
+    admit: admitEstimateRequest,
     company: estimatorCompany,
     aiBudgetCeilingCents: ESTIMATOR_AI_CEILING_CENTS,
     // Every company's readings together, under one daily ceiling for the
@@ -196,7 +229,7 @@ export function buildEstimatorPublicHandlers() {
 export function buildEstimatorEmbedHandlers() {
   return createEstimatorHandlers({
     db,
-    admit: admitPublic,
+    admit: admitEstimateRequest,
     company: estimatorCompany,
     aiBudgetCeilingCents: ESTIMATOR_AI_CEILING_CENTS,
     // Every company's readings together, under one daily ceiling for the

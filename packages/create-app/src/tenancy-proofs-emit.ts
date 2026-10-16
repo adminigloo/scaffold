@@ -61,6 +61,9 @@ export const ROUTER_SCOPES: readonly RouterScopeRow[] = [
   { key: "billing", scope: "staff", installedBy: sells, source: "stripe/src/server/routers/billing.ts" },
   { key: "billing.subscribeToPlan", scope: "tenant", installedBy: sells, source: "stripe/src/server/routers/billing.ts" },
   { key: "billing.simulateSubscription", scope: "tenant", installedBy: sells, source: "stripe/src/server/routers/billing.ts" },
+  // Changing plan on the company's one subscription (billing 0.3).
+  { key: "billing.previewPlanChange", scope: "tenant", installedBy: sells, source: "stripe/src/server/routers/billing.ts" },
+  { key: "billing.changePlan", scope: "tenant", installedBy: sells, source: "stripe/src/server/routers/billing.ts" },
 ];
 
 /**
@@ -109,6 +112,14 @@ export const TENANT_PROCEDURES: readonly {
     allow: { limit: "a page size (1-24) over the caller's own company's invoices; it names no row" },
   },
   { path: "billing.subscribeToPlan", installedBy: sells, globals: { tierKey: "starter", interval: "month", currency: "usd" } },
+  // Billing 0.3: both act on B's OWN subscription (looked up by ctx.tenantId), never on an id in the input.
+  { path: "billing.previewPlanChange", installedBy: sells, globals: { tierKey: "starter", interval: "month", currency: "usd" } },
+  {
+    path: "billing.changePlan",
+    installedBy: sells,
+    globals: { tierKey: "starter", interval: "month", currency: "usd", prorationDate: 1800000000 },
+    allow: { prorationDate: "the Unix time the caller's own preview gave, so the charge matches it; it names no row" },
+  },
   {
     path: "billing.simulateSubscription",
     installedBy: sells,

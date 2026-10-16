@@ -64,3 +64,7 @@ export type { EnsurePlanPriceInput, EnsuredPlanPrice } from "./plan-price.js";
 export { stripeServer, stripeClient, STRIPE_MODE_BOUND_KEYS } from "./env.js";
 
 export { stripePermissions } from "./permissions.js";
+
+// stripe 0.3: change a company's plan on its existing subscription (never a second one).
+export { previewPlanChange, changePlan, PlanChangeError, prepareCompanyCheckout, PRORATION_DATE_MAX_AGE_SECONDS } from "./plan-change.js";
+export type { PlanChangeInput, PlanChangePreview, ChangePlanInput, ChangePlanResult, CompanyCheckout, CompanyCheckoutInput } from "./plan-change.js";

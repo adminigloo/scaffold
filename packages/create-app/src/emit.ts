@@ -39,6 +39,8 @@ import {
   renderTenantIsolationTest,
 } from "./tenancy-proofs-emit.js";
 import { renderProjectReadme } from "./readme-emit.js";
+import { plansEnforced, renderPlanBannerSlot, renderPlanGate } from "./plans-emit.js";
+import { renderCompanyPlansTest } from "./plans-proof-emit.js";
 import { renderDeploymentUpgradeNotes, UPGRADE_NOTES_MARKER } from "./upgrade-notes.js";
 import { assertNoPrerenderedAuthRoutes } from "./prerender.js";
 import {
@@ -467,6 +469,18 @@ export async function planEmit(
   // the four core roles, plus Crew from scheduling in a companies project.
   // Read by the tenancy service AND by the seed, in both modes.
   files.set(join("src", "permissions", "roles.ts"), renderTenantRoles(answers));
+  // PLANS FOR EVERY PACKAGE (billing 0.3), in every project: the one plan
+  // check src/server/permissions.ts, the company routes, the tenancy service
+  // and the files glue all ask, and the banner above every page. The real
+  // gate in a companies project that sells subscriptions; an open stand-in
+  // everywhere else, so none of those files carries an `if`. See plans-emit.ts.
+  files.set(join("src", "server", "plan-gate.ts"), renderPlanGate(answers));
+  files.set(join("src", "components", "PlanBannerSlot.tsx"), renderPlanBannerSlot(answers));
+  // The proof that a company's plan holds at every checkpoint, in every project
+  // that sells plans (the open stand-in elsewhere has nothing to prove).
+  if (plansEnforced(answers)) {
+    files.set(join("src", "server", "__tests__", "company-plans.test.ts"), renderCompanyPlansTest(answers));
+  }
   // EACH COMPANY RUNS THE FEATURES ITSELF (Tenancy 2a), companies only: whose
   // request a feature route is (the company id or web address in its path),
   // each company's links on this deployment, its first-time setup, and the
@@ -1383,6 +1397,19 @@ export function renderEnvLocal(answers: Answers): string {
     );
   }
 
+  if (plansEnforced(answers)) {
+    lines.push(
+      "",
+      "# --- Plans ------------------------------------------------------------------",
+      "# How long a new company's free trial lasts, in days (default 14; 0 for none).",
+      "# BILLING_TRIAL_DAYS=14",
+      "# On a project that ran BEFORE plans were enforced: the day you deployed this",
+      "# (YYYY-MM-DD). Every existing company gets a fresh free trial from that day",
+      "# instead of being closed the moment you deploy. Leave unset on a new project.",
+      "# PLANS_ENFORCED_FROM=",
+    );
+  }
+
   if (answers.includeStorage) {
     lines.push(
       "",
@@ -1418,6 +1445,15 @@ const OPTIONAL_ENV_NOTES: Readonly<Record<string, readonly string[]>> = {
   BOOTSTRAP_ADMIN_EMAIL: [
     "Becomes the first administrator on a deployment, once they sign in with",
     "this address verified. Also set it as a GitHub variable for the deploy seed.",
+  ],
+  BILLING_TRIAL_DAYS: [
+    "How many days a new company can use everything before choosing a plan",
+    "(14 when unset; 0 for no free trial).",
+  ],
+  PLANS_ENFORCED_FROM: [
+    "Only on a project that ran BEFORE plans were enforced: the day you deployed",
+    "this (YYYY-MM-DD), so every existing company gets a fresh free trial from",
+    "then instead of being closed at once. Leave empty on a new project.",
   ],
 };
 
@@ -1780,6 +1816,26 @@ export function renderEnvModule(answers: Answers): string {
       `{ name: "Company logos", vars: ["BLOB_READ_WRITE_TOKEN"], disables: "Company logos (and feedback screenshots): the one public store. It must be a different store from the private one, with its own token." }`,
       `{ name: "Storage allowance", vars: ["FILES_ALLOWANCE_MB"], disables: "Nothing. How much each company may store, in MB (5120, 5 GB, when unset). The billing chunk will set this per plan." }`,
       `{ name: "File links", vars: ["FILES_LINK_SECRET"], disables: "Nothing while CLERK_SECRET_KEY is set: Copy link signs with a key made from it. With neither, links to files can't be made; everything else works." }`,
+    );
+  }
+
+  // PLANS (billing 0.3): the free trial's length, and the day plans were first
+  // enforced on a project that ran before (so existing companies get a trial
+  // from then, not a closed door). Both optional.
+  if (plansEnforced(answers)) {
+    serverSpreads.push(
+      'BILLING_TRIAL_DAYS: z.coerce.number().int("a whole number of days").min(0).max(365).optional()',
+      // A REAL date (review H4): "2026-13-01" matches the shape and would
+      // silently give no grace at all.
+      'PLANS_ENFORCED_FROM: z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/, "a date like 2026-10-16").refine((v) => !Number.isNaN(Date.parse(v + "T00:00:00Z")) && new Date(v + "T00:00:00Z").toISOString().slice(0, 10) === v, "a real date like 2026-10-16").optional()',
+    );
+    runtime.push(
+      "BILLING_TRIAL_DAYS: process.env.BILLING_TRIAL_DAYS",
+      "PLANS_ENFORCED_FROM: process.env.PLANS_ENFORCED_FROM",
+    );
+    features.push(
+      `{ name: "Free trial", vars: ["BILLING_TRIAL_DAYS"], disables: "Nothing. How many days a new company can use everything before choosing a plan (14 when unset; 0 for no trial)." }`,
+      `{ name: "Plans on an existing project", vars: ["PLANS_ENFORCED_FROM"], disables: "Nothing on a new project. On one that ran before plans were enforced, set it to the day you deployed this, so every existing company gets a fresh free trial instead of being closed at once." }`,
     );
   }
 
@@ -5377,6 +5433,21 @@ export function renderAdminNav(answers: Answers): string {
             "missed webhook leaves it authoritative and wrong with nothing " +
             "else to reconcile against.",
         },
+        // Where each company stands with its plan, and Give free months
+        // (billing 0.3). Companies only: one business has no plans to list.
+        ...(isCompanies(answers)
+          ? [
+              {
+                href: "/admin/billing/companies",
+                label: `${tenantLabel(answers)} plans`,
+                permission: "staff.tenants.view",
+                why:
+                  "Where each customer stands with its plan, and Give free " +
+                  "months (billing 0.3). From catalog-admin, on the same " +
+                  "condition as the billing screen.",
+              },
+            ]
+          : []),
       ],
     });
   }
@@ -6710,88 +6781,64 @@ export const plans = definePlans({
    * and makes \`checkEntitlement\` answer "your plan does not include seats at
    * all" when the truth is that somebody missed a line.
    *
-   * A quota's label is rendered AFTER the number: "10 members".
+   * WHAT A PLAN SELLS (billing 0.3): every plan includes every feature this
+   * project has, and the tiers differ by HOW MUCH — the limits
+   * src/server/plan-gate.ts enforces. A feature here that nothing enforced
+   * would be selling something that doesn't exist, so each line names what
+   * checks it.
+   *
+   * A quota's label is rendered AFTER the number: "10 team members".
    */
   features: {
-    // \`labelOne\` because the free tier holds one of each, and without it the
-    // first tier on the page reads "1 projects".
-    seats: { kind: "quota", label: "members", labelOne: "member" },
-    projects: { kind: "quota", label: "projects", labelOne: "project" },
-    exports: {
-      kind: "quota",
-      label: "exports a month",
-      labelOne: "export a month",
-    },
-    sso: { kind: "flag", label: "Single sign-on" },
-    support: {
-      kind: "option",
-      label: "Support",
-      // Best first. A tier offers a SUBSET of these, and offering anything not
-      // in this list is refused at construction — which is what stops a value
-      // nobody implemented being sold on the pricing page.
-      values: ["priority", "email", "community"],
-    },
+    // Checked when someone is invited (the tenancy service's seat limit).
+    seats: { kind: "quota", label: "team members", labelOne: "team member" },${answers.includeStorage ? `
+    // Checked on every upload (the files glue asks src/server/plan-gate.ts).
+    storage_gb: { kind: "quota", label: "GB of photos and files", labelOne: "GB of photos and files" },` : ""}${answers.includeEstimator ? `
+    // Checked when a customer asks for an estimate online (the estimate page
+    // and the website widget); estimates staff make by hand never count.
+    estimates: { kind: "quota", label: "online estimate requests a month", labelOne: "online estimate request a month" },` : ""}
   },
 
   /**
    * The array order IS the pricing page's order, and \`sortOrder\` is derived
    * from it. There is nothing here to keep in step.
+   *
+   * THE PRICES ARE PLACEHOLDERS — set your own. A new ${label} starts on a free
+   * trial (BILLING_TRIAL_DAYS, 14 by default) with the highlighted plan's
+   * limits, so nobody needs a card to start.
    */
   tiers: [
     {
-      key: "free",
-      name: "Free",
-      description: "Everything one ${label} needs to try this properly.",
-      // A free plan is 0, never absent. \`plans.price_minor\` is 0 and not NULL
-      // for the same reason: NULL propagates through every price computation
-      // and renders a free plan as "no price" rather than as "Free".
-      prices: { month: { gbp: 0n, usd: 0n }, year: { gbp: 0n, usd: 0n } },
-      features: {
-        seats: 3,
-        projects: 1,
-        exports: 100,
-        sso: false,
-        support: ["community"],
-      },
-    },
-    {
       key: "starter",
       name: "Starter",
-      description: "For ${article(label)} ${label} that has outgrown the free tier.",
+      description: "For ${article(label)} ${label} just getting going.",
       prices: {
-        month: { gbp: 700n, usd: 900n },
+        month: { gbp: 3900n, usd: 4900n },
         // Two months free, which is why the yearly figure is ten times the
         // monthly one rather than twelve.
-        year: { gbp: 7000n, usd: 9000n },
+        year: { gbp: 39000n, usd: 49000n },
       },
       features: {
-        seats: 10,
-        projects: 5,
-        exports: 500,
-        sso: false,
-        support: ["email", "community"],
+        seats: 3,${answers.includeStorage ? `
+        storage_gb: 5,` : ""}${answers.includeEstimator ? `
+        estimates: 100,` : ""}
       },
     },
     {
       key: "pro",
       name: "Pro",
-      description: "Unlimited seats, priority support and single sign-on.",
+      description: "For a growing team.",
       // At most one tier may claim this. Two "most popular" badges on one page
-      // is not a recommendation.
+      // is not a recommendation. It is also the plan the free trial tries.
       highlight: true,
       prices: {
-        month: { gbp: 2400n, usd: 2900n },
-        year: { gbp: 24000n, usd: 29000n },
+        month: { gbp: 7900n, usd: 9900n },
+        year: { gbp: 79000n, usd: 99000n },
       },
       features: {
-        // NULL is unlimited, and it is not a large number. One unlimited row
-        // wins the feature in \`resolveEntitlements\`; a sentinel like 999999
-        // would be capped by anything summing beside it.
-        seats: null,
-        projects: null,
-        exports: 5000,
-        sso: true,
-        support: ["priority", "email", "community"],
+        seats: 10,${answers.includeStorage ? `
+        storage_gb: 25,` : ""}${answers.includeEstimator ? `
+        estimates: 500,` : ""}
       },
     },
     {
@@ -6801,14 +6848,16 @@ export const plans = definePlans({
       // NO PRICES AT ALL, which is a real tier and not a missing one. It
       // projects no \`plans\` row, because there is nothing to charge and nothing
       // for Stripe to hold a price for — so a pricing page renders a "contact
-      // us" button here instead of an amount.
+      // us" button here instead of an amount. It has no price for Give free
+      // months to record against, so put a company on it by hand.
       prices: {},
       features: {
-        seats: null,
-        projects: null,
-        exports: null,
-        sso: true,
-        support: ["priority", "email", "community"],
+        // NULL is unlimited, and it is not a large number. One unlimited row
+        // wins the feature in \`resolveEntitlements\`; a sentinel like 999999
+        // would be capped by anything summing beside it.
+        seats: null,${answers.includeStorage ? `
+        storage_gb: null,` : ""}${answers.includeEstimator ? `
+        estimates: null,` : ""}
       },
     },
     {
@@ -6821,15 +6870,13 @@ export const plans = definePlans({
       // of, so the next plan change removes the lot.
       isActive: false,
       prices: {
-        month: { gbp: 500n, usd: 600n },
-        year: { gbp: 5000n, usd: 6000n },
+        month: { gbp: 2900n, usd: 3900n },
+        year: { gbp: 29000n, usd: 39000n },
       },
       features: {
-        seats: 5,
-        projects: 3,
-        exports: 250,
-        sso: false,
-        support: ["community"],
+        seats: 3,${answers.includeStorage ? `
+        storage_gb: 5,` : ""}${answers.includeEstimator ? `
+        estimates: 50,` : ""}
       },
     },
   ],

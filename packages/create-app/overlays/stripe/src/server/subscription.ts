@@ -162,6 +162,11 @@ export const subscriptionAuditedActions = {
   "billing.subscription.resumed": {
     label: "Cancelled a scheduled cancellation, so the subscription renews again",
   },
+  "billing.subscription.comped": {
+    label: "Gave a company free months of a plan — no money moved",
+    /** Sensitive: a plan with no payment behind it, given by a person. */
+    sensitive: true,
+  },
   "billing.subscription.resynced": {
     label: "Re-pulled subscription state from Stripe into the firm's own tables",
     /**
@@ -728,13 +733,13 @@ export interface ResolvePlanInput {
  * Work out which plan a Stripe subscription is for — or say, out loud, that it
  * is not one.
  *
- * TWO ROUTES IN, AND THE ORDER IS THE POINT.
+ * TWO ROUTES IN, AND THE ORDER IS THE POINT (billing 0.3 put the price first).
  *
- *  1. THE METADATA. `subscribeToPlan` stamps the tier key onto the Subscription
+ *  2. THE METADATA. `subscribeToPlan` stamps the tier key onto the Subscription
  *     at creation, and Stripe hands it back on every event. It is the cheapest
  *     answer and the only one that still works on a deployment whose `plans`
  *     rows have never been synced to Stripe.
- *  2. THE CACHED PRICE ID. `plans.stripe_price_id` is the id `ensurePlanPrice`
+ *  1. THE CACHED PRICE ID. `plans.stripe_price_id` is the id `ensurePlanPrice`
  *     wrote. This is what catches a subscription somebody created in the Stripe
  *     dashboard against a price we published, which carries no metadata of ours
  *     at all — and that subscription is real money, so it has to be mirrored.
@@ -759,6 +764,32 @@ export async function resolvePlanForSubscription(
   input: ResolvePlanInput,
   handle: Db | Tx = db,
 ): Promise<PlanResolution> {
+  // THE PRICE FIRST (billing 0.3): after a plan change, the price on the
+  // subscription is what the company is actually paying for. Its metadata is
+  // only updated once the change has gone through, so reading the metadata
+  // first could name the old plan for one event, or a plan never paid for.
+  if (input.priceId !== null) {
+    const [row] = await handle
+      .select({ key: planTable.key })
+      .from(planTable)
+      .where(eq(planTable.stripePriceId, input.priceId))
+      .limit(1);
+
+    if (row) {
+      const tier = plans.tierForRow(row.key);
+      if (tier !== undefined) {
+        return { kind: "plan", tierKey: tier.key, planKey: row.key };
+      }
+      return {
+        kind: "unknown",
+        why:
+          `plans row "${row.key}" caches Stripe price ${input.priceId}, and no ` +
+          `tier in src/plans.ts projects that row. It is an orphan — see ` +
+          `reconcilePlans, which reports exactly this.`,
+      };
+    }
+  }
+
   const declared = input.planMetadata?.trim();
   if (declared !== undefined && declared.length > 0) {
     const tier = plans.tier(declared);
@@ -789,28 +820,6 @@ export async function resolvePlanForSubscription(
       tierKey: tier.key,
       planKey: planRowKey(tier.key, input.interval, input.currency.toLowerCase()),
     };
-  }
-
-  if (input.priceId !== null) {
-    const [row] = await handle
-      .select({ key: planTable.key })
-      .from(planTable)
-      .where(eq(planTable.stripePriceId, input.priceId))
-      .limit(1);
-
-    if (row) {
-      const tier = plans.tierForRow(row.key);
-      if (tier !== undefined) {
-        return { kind: "plan", tierKey: tier.key, planKey: row.key };
-      }
-      return {
-        kind: "unknown",
-        why:
-          `plans row "${row.key}" caches Stripe price ${input.priceId}, and no ` +
-          `tier in src/plans.ts projects that row. It is an orphan — see ` +
-          `reconcilePlans, which reports exactly this.`,
-      };
-    }
   }
 
   const variant = input.variantMetadata?.trim();

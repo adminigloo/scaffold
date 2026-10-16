@@ -200,6 +200,11 @@ export interface AccountSubscription {
   readonly stripeSubscriptionId: string | null;
   /** True while this row occupies the tenant's one live-subscription slot. */
   readonly live: boolean;
+  /**
+   * Free months an operator gave (billing 0.3): no Stripe object, recorded by
+   * Give free months. They end on their own date and can't be resumed.
+   */
+  readonly freeMonths?: boolean;
 }
 
 /**
@@ -243,6 +248,7 @@ export async function readSubscriptionForTenant(
       trialEndsAt: subscriptions.trialEndsAt,
       stripeCustomerId: subscriptions.stripeCustomerId,
       stripeSubscriptionId: subscriptions.stripeSubscriptionId,
+      lastEventId: subscriptions.lastEventId,
       planKey: plans.key,
       planName: plans.name,
       planPriceMinor: plans.priceMinor,
@@ -259,5 +265,10 @@ export async function readSubscriptionForTenant(
   const chosen = rows.find((row) => live.includes(row.status)) ?? rows[0];
   if (chosen === undefined) return null;
 
-  return { ...chosen, live: live.includes(chosen.status) };
+  const { lastEventId, ...row } = chosen;
+  return {
+    ...row,
+    live: live.includes(chosen.status),
+    freeMonths: chosen.stripeSubscriptionId === null && (lastEventId ?? "").startsWith("comp:"),
+  };
 }

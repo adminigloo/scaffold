@@ -67,7 +67,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // files keep logos per company), and `tenancyAlertKinds` /
   // `tenancyAlertsFor` are the team alerts. The emitted alerts glue calls
   // all of them; none exist in 0.5.x.
-  tenancy: "0.6.0",
+  tenancy: "0.7.0",
   permissions: "0.2.0",
   // 0.2.0 rather than 0.1.x because `requireTenant(...).input(...)` did not
   // compile before it. `^0.1.0` would resolve to a build a generated project
@@ -86,7 +86,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // caret somehow admitted them: the period moved onto the subscription ITEM
   // two API versions ago, and code reading the old field mirrors every
   // subscription with no period at all.
-  stripe: "0.2.1",
+  stripe: "0.3.0",
   // 0.2.0 for the variant- and product-name rules. The product builder refuses
   // to start a save that `validateProduct` cannot clear, so a project resolving
   // 0.1.x gets a validator with no opinion about a blank variant name — which
@@ -100,7 +100,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // the generator wrote. The same release changed `grantsForPlan` and
   // `planGrantDiff` to take a `PlanTier`, and a caret over 0.1.x would resolve
   // to the signatures nothing here calls.
-  billing: "0.2.1",
+  billing: "0.3.0",
   ai: "0.1.5",
   // 0.3.0 (Tenancy 2a, D8): a per-message From name and Reply-To, so a
   // company's email carries its name on the platform's verified address.

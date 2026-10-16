@@ -61,11 +61,32 @@ type Standing =
   | { readonly userId: string; readonly can: (permission: string) => boolean | Promise<boolean> }
   | { readonly refuse: 401 | 403; readonly message: string };
 
+/**
+ * The company's plan, as far as a checkpoint needs it (billing 0.3's
+ * `createPlanGate` is one). Structural, so tenancy never imports billing and a
+ * host can answer from its own billing.
+ */
+export interface CompanyPlanGate {
+  /** May someone who holds this permission use it now, as far as the plan goes? */
+  readonly allows: (tenantId: string, permission: string) => Promise<boolean>;
+  /** Are the company's features and public pages open? */
+  readonly isOpen: (tenantId: string) => Promise<boolean>;
+  /** The sentence a refused action shows ("This company's plan has ended…"). */
+  readonly closedMessage: (tenantId: string) => Promise<string>;
+}
+
 export function createCompanyRouteSeams(options: {
   readonly tenancy: TenancyService;
   readonly principal: (req: Request) => Promise<{ readonly userId: string } | null>;
   /** Where the id sits: the segment right after this. Default "/api/app/". */
   readonly prefix?: string;
+  /**
+   * Billing 0.3: the company's plan. When given, a member who holds the
+   * permission is still refused (403, the gate's sentence) while the plan is
+   * closed — except for what the gate keeps open (reading, billing, the team).
+   * Omitted: no plan check, as before.
+   */
+  readonly plan?: CompanyPlanGate;
 }): CompanyRouteSeams {
   if (!options?.tenancy) throw new TypeError("createCompanyRouteSeams needs the tenancy service (`tenancy`).");
   if (typeof options.principal !== "function") {
@@ -133,7 +154,13 @@ export function createCompanyRouteSeams(options: {
       }
       const s = await standing;
       if ("refuse" in s) return refusal(s.refuse, s.message);
-      return (await s.can(permission)) ? { userId: s.userId } : false;
+      if (!(await s.can(permission))) return false;
+      // The plan is asked only for a member who holds the permission, so a
+      // stranger's probe never learns whether a company has paid.
+      if (options.plan && !(await options.plan.allows(tenantId, permission))) {
+        return refusal(403, await options.plan.closedMessage(tenantId));
+      }
+      return { userId: s.userId };
     },
   };
 }
@@ -145,6 +172,22 @@ export interface PublicCompanySeams {
   readonly resolveTenant: (req: Request) => Promise<string | null>;
   /** Open for an active company; closed, with a plain sentence, for a suspended or unknown one. */
   readonly admit: (tenantId: string, req: Request) => Promise<{ readonly open: true } | { readonly open: false; readonly message: string }>;
+}
+
+/**
+ * The public requests a company's closed plan never closes (review M5): the
+ * links it already sent — `/quote/{token}`, `/visit/{token}`,
+ * `/invoice/{token}` and what hangs off them. Its customers can still see,
+ * accept, reschedule and pay; a closed plan stops new requests only.
+ */
+export function keptOpenWhilePlanClosed(req: Request): boolean {
+  let pathname: string;
+  try {
+    pathname = new URL(req.url).pathname;
+  } catch {
+    return false;
+  }
+  return /\/v1\/(quote|visit|invoice)\/[^/]+/.test(pathname);
 }
 
 /** The shape of a web address (current or retired); anything else is never looked up. */
@@ -166,6 +209,18 @@ export function createPublicCompanySeams(options: {
   readonly tenancy: TenancyService;
   /** Default "/api/t/". */
   readonly prefix?: string;
+  /**
+   * Billing 0.3: a company whose plan is closed takes no requests online. Its
+   * pages say so in the same words as a suspended one, with how to reach it.
+   */
+  readonly plan?: Pick<CompanyPlanGate, "isOpen">;
+  /**
+   * Which public requests stay open while a company's plan is closed. Default
+   * `keptOpenWhilePlanClosed`: the links a company already sent its customers
+   * (a quote, a visit, an invoice) keep working, so its customers can still
+   * accept, reschedule and pay what they were sent; only NEW requests close.
+   */
+  readonly keepsOpen?: (req: Request) => boolean;
 }): PublicCompanySeams {
   if (!options?.tenancy) throw new TypeError("createPublicCompanySeams needs the tenancy service (`tenancy`).");
   const { tenancy } = options;
@@ -192,14 +247,18 @@ export function createPublicCompanySeams(options: {
     },
     async admit(tenantId, req) {
       const cached = cache.has(req) ? await cache.get(req)! : null;
+      const keepsOpen = options.keepsOpen ?? keptOpenWhilePlanClosed;
+      const planOpen = async () => (!options.plan || keepsOpen(req) ? true : options.plan.isOpen(tenantId));
       if (cached && cached.company.id === tenantId) {
-        return cached.status === "active" ? { open: true } : { open: false, message: closedMessage(cached.company) };
+        if (cached.status !== "active") return { open: false, message: closedMessage(cached.company) };
+        return (await planOpen()) ? { open: true } : { open: false, message: closedMessage(cached.company) };
       }
       // A tenant reached another way (an embed key): its own lookup. An
       // unknown or deleted id is closed, never open by default.
       const profile = await tenancy.companyProfile(tenantId);
       if (!profile) return { open: false, message: UNKNOWN_CLOSED };
-      return profile.status === "active" ? { open: true } : { open: false, message: closedMessage(profile) };
+      if (profile.status !== "active") return { open: false, message: closedMessage(profile) };
+      return (await planOpen()) ? { open: true } : { open: false, message: closedMessage(profile) };
     },
   };
 }

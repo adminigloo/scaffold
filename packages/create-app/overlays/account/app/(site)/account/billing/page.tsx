@@ -188,6 +188,7 @@ export default async function AccountBillingPage() {
           tenantId={tenant.id}
           tenantName={tenant.name}
           canManage={canManage}
+          freeMonths={subscription.freeMonths === true}
         />
       )}
 
@@ -227,6 +228,9 @@ export default async function AccountBillingPage() {
             mode={mode}
             canManage={canManage}
             currentTierKey={currentTier?.key ?? null}
+            // A __TENANT_LABEL_LOWER__ that already pays through Stripe changes its plan in
+            // place (billing 0.3), never through a second checkout.
+            hasPaidPlan={subscription?.live === true && subscription.stripeSubscriptionId !== null}
           />
         </CardBody>
       </Card>
@@ -292,8 +296,11 @@ function SubscriptionCard({
   tenantId,
   tenantName,
   canManage,
+  freeMonths,
 }: {
   readonly subscription: AccountSubscription;
+  /** Free months an operator gave: they end on their own date (billing 0.3). */
+  readonly freeMonths: boolean;
   /**
    * Threaded down rather than read off the subscription row, because the
    * mutation behind the button NAMES its tenant in the input and that is what
@@ -305,7 +312,7 @@ function SubscriptionCard({
   readonly canManage: boolean;
 }) {
   const banner = describeSubscription(subscription);
-  const action = primaryActionFor(subscription);
+  const action = primaryActionFor(subscription, new Date(), { freeMonths });
 
   return (
     <div className="flex flex-col gap-3">

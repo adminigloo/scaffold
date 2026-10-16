@@ -531,6 +531,13 @@ export function optionalEnvFor(answers: Answers): readonly string[] {
     vars.push("ESTIMATOR_TIME_ZONE");
     if (answers.includeAi) vars.push("ESTIMATOR_TAKEOFF_MODEL");
   }
+  // PLANS (billing 0.3), in a companies project that sells subscriptions (the
+  // same test as plans-emit.ts's `plansEnforced`, inlined to keep this module
+  // free of the emitters): the free trial's length, and the day plans were
+  // first enforced on a project that ran before.
+  if (answers.tenantNoun !== "none" && (answers.businessModel === "subscription" || answers.businessModel === "both")) {
+    vars.push("BILLING_TRIAL_DAYS", "PLANS_ENFORCED_FROM");
+  }
   // Deduped, not sorted: two features naming one variable (the blob token)
   // must not print it twice, and order is the order the reader meets them.
   return [...new Set(vars)];

@@ -8,18 +8,26 @@ import {
   type PlanInterval,
 } from "__SCOPE__/billing";
 import { plans as planTable } from "__SCOPE__/billing/schema";
+import { companyStripeCustomer, liveStripeSubscription } from "__SCOPE__/billing/server";
+import { formatMinor } from "__SCOPE__/catalog";
 import { createLogger } from "__SCOPE__/observability";
 import {
+  changePlan as changeStripePlan,
   checkoutReturnUrls,
   createCheckoutSession,
   ensurePlanPrice,
+  PlanChangeError,
+  prepareCompanyCheckout,
+  previewPlanChange as previewStripePlanChange,
   subscriptionSnapshot,
 } from "__SCOPE__/stripe";
 import { db } from "@/db";
 import { env } from "@/env";
 import { plans } from "@/plans";
 import { checkoutMode } from "@/server/checkout-mode";
+import { planStandingOf } from "@/server/plan-gate";
 import { stripe } from "@/server/stripe";
+import { tenancy } from "@/server/tenancy";
 import {
   applySubscription,
   listMirroredSubscriptions,
@@ -172,6 +180,24 @@ export const billingRouter = createTRPCRouter({
       }
       const client = stripe;
 
+      // NEVER A SECOND SUBSCRIPTION (billing 0.3). A __TENANT_LABEL_LOWER__ that already pays
+      // changes its plan in place (`previewPlanChange` / `changePlan`);
+      // a new checkout here would make a second subscription and charge for both.
+      const live = await liveStripeSubscription(db, ctx.tenantId);
+      if (live) throw alreadyPaysRefusal(live.status);
+      // ...and ask STRIPE too (review H2): your copy of a new subscription
+      // arrives by webhook seconds later, and in that gap (a second tab, or
+      // paying and coming straight back) a check of the tables alone says "no
+      // plan". This also finds or makes the __TENANT_LABEL_LOWER__'s ONE Stripe customer (a
+      // returning one keeps its saved card and invoices) and closes its other
+      // open checkouts, so two tabs can never both be paid.
+      const prepared = await prepareCompanyCheckout(client, {
+        tenantId: ctx.tenantId,
+        knownCustomerId: await companyStripeCustomer(db, ctx.tenantId),
+        email: ctx.principal.email,
+      });
+      if (prepared.existingSubscription) throw alreadyPaysRefusal(prepared.existingSubscription.status);
+
       const { tier, row, priceMinor } = planRowOrThrow(input);
 
       // The cached Stripe ids, read from the TABLE. The record projects the
@@ -235,9 +261,7 @@ export const billingRouter = createTRPCRouter({
           line_items: [{ price: published.priceId, quantity: 1 }],
           success_url: returnUrls.success_url,
           cancel_url: returnUrls.cancel_url,
-          ...(ctx.principal.email === null
-            ? {}
-            : { customer_email: ctx.principal.email }),
+          customer: prepared.customerId,
           // A free tier is a real tier and a real subscription. Without this
           // Stripe demands a card for a £0 subscription and the checkout dead-ends.
           payment_method_collection: "if_required",
@@ -395,6 +419,211 @@ export const billingRouter = createTRPCRouter({
       );
 
       return result;
+    }),
+
+  /**
+   * What changing plan costs, BEFORE anything changes (billing 0.3).
+   *
+   * THE DOUBLE-CHARGE FIX. "Change plan" used to open a fresh checkout, which
+   * made a second Stripe customer and a second subscription: the business paid
+   * for both plans and could cancel only one. A __TENANT_LABEL_LOWER__ that already pays now
+   * changes the plan ON its one subscription. This asks Stripe what the switch
+   * costs today (prorated) so the owner sees "You'll pay $12.50 today, then
+   * $99.00 a month" and confirms; `changePlan` then makes exactly that change,
+   * with the same proration date, so the charge is the one that was shown.
+   *
+   * A mutation rather than a query: it may publish the new plan's price to
+   * Stripe first, as `subscribeToPlan` does.
+   */
+  previewPlanChange: requireTenant("subscriptions.manage")
+    .meta({ scope: "tenant" })
+    .input(
+      z.object({
+        tierKey: z.string().min(1),
+        interval: subscribableInterval,
+        currency: z.string().trim().toLowerCase().min(3).max(3),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const client = stripeOrThrow();
+      const live = await liveStripeSubscription(db, ctx.tenantId);
+      if (!live) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "This __TENANT_LABEL_LOWER__ has no paid plan to change yet. Choose a plan to subscribe.",
+        });
+      }
+      const { tier, row, priceMinor } = planRowOrThrow(input);
+      const published = await publishedPlanPrice(client, tier, row, priceMinor);
+      try {
+        const preview = await previewStripePlanChange(client, {
+          subscriptionId: live.stripeSubscriptionId,
+          newPriceId: published.priceId,
+        });
+        return {
+          planName: tier.name,
+          samePrice: preview.samePrice,
+          prorationDate: preview.prorationDate,
+          /** "charge": pay `dueNow` today. "credit": `dueNow` comes off the next bills. "none": nothing today. */
+          today: preview.dueNowMinor > 0 ? ("charge" as const) : preview.dueNowMinor < 0 ? ("credit" as const) : ("none" as const),
+          dueNow: formatMinor(BigInt(Math.abs(preview.dueNowMinor)), preview.currency),
+          then: formatMinor(priceMinor, row.currency),
+          interval: input.interval,
+        };
+      } catch (error) {
+        throw planChangeRefusal(error);
+      }
+    }),
+
+  /**
+   * Change the plan on the __TENANT_LABEL_LOWER__'s existing subscription — never a second one.
+   *
+   * `prorationDate` is the preview's, so Stripe charges what the owner agreed
+   * to. If that charge fails, Stripe keeps the old plan (`applied: false`) and
+   * the screen says so; nothing names the new plan until it's paid for. The
+   * subscription's next webhook moves the entitlements, exactly as for any
+   * other change, so the plan's limits follow within seconds.
+   */
+  changePlan: requireTenant("subscriptions.manage")
+    .meta({ scope: "tenant" })
+    .input(
+      z.object({
+        tierKey: z.string().min(1),
+        interval: subscribableInterval,
+        currency: z.string().trim().toLowerCase().min(3).max(3),
+        prorationDate: z.number().int().positive(),
+      }),
+    )
+    .mutation(async ({ ctx, input }): Promise<{ readonly applied: boolean }> => {
+      const client = stripeOrThrow();
+      const live = await liveStripeSubscription(db, ctx.tenantId);
+      if (!live) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "This __TENANT_LABEL_LOWER__ has no paid plan to change yet. Choose a plan to subscribe.",
+        });
+      }
+      const { tier, row, priceMinor } = planRowOrThrow(input);
+      const published = await publishedPlanPrice(client, tier, row, priceMinor);
+      try {
+        const result = await changeStripePlan(client, {
+          subscriptionId: live.stripeSubscriptionId,
+          newPriceId: published.priceId,
+          prorationDate: input.prorationDate,
+          metadata: { [PLAN_METADATA_KEY]: tier.key, planRowKey: row.key, userId: ctx.principal.userId },
+          // One change per plan per preview: a double click changes the plan once.
+          idempotencyKey: `plan_change:${ctx.tenantId}:${row.key}:${input.prorationDate}`,
+        });
+        logger.info(
+          { tenantId: ctx.tenantId, userId: ctx.principal.userId, planKey: row.key, applied: result.applied },
+          result.applied ? "plan changed on the existing subscription" : "plan change held: the prorated charge didn't go through",
+        );
+        return { applied: result.applied };
+      } catch (error) {
+        throw planChangeRefusal(error);
+      }
+    }),
+
+  /**
+   * Every __TENANT_LABEL_LOWER__ and where it stands with its plan — for the operator console
+   * (billing 0.3). In a project that doesn't sell plans, `plan` is null.
+   */
+  companies: requireStaff("staff.tenants.view")
+    .meta({ scope: "staff" })
+    .input(
+      z.object({
+        q: z.string().trim().max(100).optional(),
+        page: z.number().int().min(1).max(1000).default(1),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      const list = await tenancy.listCompanies({
+        actorUserId: ctx.principal.userId,
+        ...(input.q ? { q: input.q } : {}),
+        kind: "org",
+        page: input.page,
+        pageSize: 25,
+      });
+      const rows = await Promise.all(
+        list.companies.map(async (company) => {
+          const plan = await planStandingOf(company.id);
+          return {
+            id: company.id,
+            name: company.name,
+            status: company.status,
+            members: company.members,
+            plan: plan === null
+              ? null
+              : { state: plan.state, open: plan.open, tierKey: plan.tierKey, until: plan.until?.toISOString() ?? null },
+          };
+        }),
+      );
+      return { companies: rows, total: list.total, page: list.page, pageSize: list.pageSize };
+    }),
+
+  /**
+   * Give a __TENANT_LABEL_LOWER__ free months of a plan — a friend, a first client, a
+   * make-good (billing 0.3). Recorded like any subscription, with no Stripe
+   * object and no card, ending by itself after `months`; the audit log names
+   * who gave it. Refused for a __TENANT_LABEL_LOWER__ that already pays through Stripe (change
+   * or cancel that first), and for a plan with no monthly price row to record
+   * it against (Enterprise, as shipped).
+   */
+  compPlan: requireStaff(RESYNC_PERMISSION)
+    .meta({ scope: "staff" })
+    .input(
+      z.object({
+        tenantId: z.string().min(1),
+        tierKey: z.string().min(1),
+        months: z.number().int().min(1).max(36),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (await liveStripeSubscription(db, input.tenantId)) {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: "This __TENANT_LABEL_LOWER__ already pays through Stripe. Change or cancel that plan first.",
+        });
+      }
+      const tier = plans.tier(input.tierKey);
+      if (tier === undefined) {
+        throw new TRPCError({ code: "NOT_FOUND", message: `There is no plan called "${input.tierKey}".` });
+      }
+      const row =
+        plans.rows.find((candidate) => candidate.tierKey === tier.key && candidate.interval === "month") ??
+        plans.rows.find((candidate) => candidate.tierKey === tier.key);
+      if (row === undefined) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: `${tier.name} has no price to record free months against. Give a plan that has one.`,
+        });
+      }
+      const now = new Date();
+      const endsAt = new Date(now.getTime() + input.months * 30 * 24 * 60 * 60 * 1000);
+      const result = await applySubscription({
+        tenantId: input.tenantId,
+        tierKey: tier.key,
+        planKey: row.key,
+        stripeSubscriptionId: null,
+        stripeCustomerId: null,
+        status: "active",
+        currentPeriodStart: now,
+        currentPeriodEnd: endsAt,
+        // Ends by itself: the plan's rows expire at `endsAt`, no event needed.
+        cancelAtPeriodEnd: true,
+        canceledAt: null,
+        trialEndsAt: null,
+        observedAt: now,
+        observedBy: `comp:${ctx.principal.userId}`,
+        source: "simulated",
+        action: "billing.subscription.comped",
+        actorUserId: ctx.principal.userId,
+      });
+      logger.warn(
+        { tenantId: input.tenantId, by: ctx.principal.userId, tierKey: tier.key, months: input.months },
+        "FREE MONTHS GIVEN — no money collected",
+      );
+      return { status: result.status, endsAt: endsAt.toISOString() };
     }),
 
   /**
@@ -705,4 +934,96 @@ async function cachePlanIds(
       updatedAt: new Date(),
     })
     .where(eq(planTable.key, planKey));
+}
+
+/** The Stripe client, or the plain refusal a deployment without keys gives. */
+function stripeOrThrow(): NonNullable<typeof stripe> {
+  if (!stripe) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      // The owner's words; the operator's (STRIPE_SECRET_KEY, /setup) are on /setup.
+      message: "Paying for a plan isn't switched on for this site yet. Please try again later.",
+    });
+  }
+  return stripe;
+}
+
+/**
+ * The plan's price, published to Stripe if it isn't yet — the same steps
+ * `subscribeToPlan` takes, shared so a plan change can never charge a price
+ * a new subscription wouldn't.
+ */
+async function publishedPlanPrice(
+  client: NonNullable<typeof stripe>,
+  tier: NonNullable<ReturnType<typeof plans.tier>>,
+  row: (typeof plans.rows)[number],
+  priceMinor: bigint,
+): Promise<{ readonly productId: string; readonly priceId: string }> {
+  const [cached] = await db
+    .select({ stripeProductId: planTable.stripeProductId, stripePriceId: planTable.stripePriceId })
+    .from(planTable)
+    .where(eq(planTable.key, row.key))
+    .limit(1);
+  if (!cached) {
+    logger.error({ planKey: row.key }, "plans table has no row for this plan: run pnpm db:seed:plans");
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      // The owner's words; the fix (pnpm db:seed:plans) is in the log line above.
+      message: "This plan isn't ready to buy yet. Please try again later.",
+    });
+  }
+  const published = await ensurePlanPrice(client, {
+    planKey: row.key,
+    tierKey: tier.key,
+    name: row.name,
+    description: row.description,
+    interval: row.interval,
+    unitAmountMinor: priceMinor,
+    currency: row.currency,
+    cachedProductId: cached.stripeProductId,
+    cachedPriceId: cached.stripePriceId,
+  });
+  await cachePlanIds(row.key, published);
+  return published;
+}
+
+/** A plan change Stripe can't make, in words: a cancelled subscription, or one edited by hand in Stripe. */
+function planChangeRefusal(error: unknown): unknown {
+  if (error instanceof PlanChangeError) {
+    return new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message:
+        error.code === "not_changeable"
+          ? "This plan can't be changed right now because the subscription isn't active. Choose a plan to start a new one."
+          : error.code === "stale_preview"
+            ? error.message
+            : "This plan can't be switched here. Contact support and we'll change it for you.",
+      cause: error,
+    });
+  }
+  return error;
+}
+
+/**
+ * "You already have a plan", in words that say what to do (review M7): a
+ * plan whose payment failed is fixed by updating the card, not by a second
+ * checkout or a plan change.
+ */
+function alreadyPaysRefusal(status: string): TRPCError {
+  if (status === "past_due" || status === "unpaid") {
+    return new TRPCError({
+      code: "CONFLICT",
+      message: "The last payment for this plan didn't go through. Update the card under Payment methods to keep it running.",
+    });
+  }
+  if (status === "incomplete") {
+    return new TRPCError({
+      code: "CONFLICT",
+      message: "A checkout for this plan was started but not finished. Finish it, or wait a few minutes and try again.",
+    });
+  }
+  return new TRPCError({
+    code: "CONFLICT",
+    message: "This __TENANT_LABEL_LOWER__ already pays for a plan. Use Change plan, so it's never charged twice.",
+  });
 }
