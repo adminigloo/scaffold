@@ -45,6 +45,8 @@ export { runForEachCompany } from "./server/company-runs.js";
 export type { CompanyRunOptions, CompanyRunReport } from "./server/company-runs.js";
 
 export { TenancyError, TENANCY_ERROR_STATUS } from "./server/errors.js";
+// Tenancy 2b-1: how long a handler waits for its events before answering (8.1).
+export { DEFAULT_SETTLE_EVENTS_MS } from "./server/context.js";
 export type { TenancyErrorCode, TenancyErrorDetails } from "./server/errors.js";
 
 export {
@@ -108,6 +110,7 @@ export type {
   TenancyDb,
   TenancyEvent,
   TenancyEventListener,
+  TenancyEventPerson,
   TenancyMode,
   TenancyNoun,
   TenancyService,

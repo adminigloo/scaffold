@@ -30,6 +30,7 @@ nothing but this.
 | --- | --- | --- |
 | `@adminigloo/scheduling-widget` | `<VisitPicker>` and `<ManageVisit>`: a customer books a visit in the business's time zone and gets a confirmation with calendar links; from the email link they see, move or cancel it, up to the business's cutoff. | Two pages that render them, and the server handlers (`@adminigloo/scheduling`) mounted at one route. |
 | `@adminigloo/scheduling-widget/admin` | `<ScheduleCalendar>`, `<CrewDay>` and `<SchedulingSettings>`: the staff calendar with drag-to-move and the request inbox, today's route for a crew, and every setting the owner needs. | Three admin pages, the staff handlers mounted behind your sign-in, and the `authorize` check. |
+| `+ @adminigloo/notifications` and `@adminigloo/storage` on the server (Tenancy 2b-1) | An alert's link opens its visit on the calendar (`initialVisitId`); "Photos and files" on a visit and "Photos" on each stop of today's route; Schedule settings pointing to Alert settings for who hears about new requests. | Pass `initialVisitId` from the page's `?visit=`, the visit files page's address as `visitFilesHref` / `filesHref`, and `alertsHref` to the staff handlers. See [Alerts and files](#alerts-and-files-tenancy-2b-1). |
 
 ## Install
 
@@ -261,6 +262,8 @@ way to "This visit starts within 24 hours, so it can't be changed online. Call
 | `pollMs` | | Background refresh, default 60000; `0` turns it off. It also refreshes when the window regains focus. |
 | `bookingPageUrl` | | Shown in the empty state. |
 | `onVisitChange(visit)` | | After any change made here. |
+| `initialVisitId` | | Tenancy 2b-1: open this visit's panel once it's loaded. One outside the days on screen is fetched and the calendar moves to its day; one that isn't found shows "That visit couldn't be found." and no panel. |
+| `visitFilesHref` | | Tenancy 2b-1: a pattern with `{id}` ("/app/schedule/visits/{id}/files"). The visit panel shows **Photos and files** linking there. Absent: no link. |
 | `locale`, `theme`, `nonce`, `className`, `style` | | |
 
 - **A banner says what's true about this deployment** (from `GET status`):
@@ -303,6 +306,8 @@ way to "This visit starts within 24 hours, so it can't be changed online. Call
 person's crew as the server works it out; when it can't, the page says to ask
 the office to link them to a crew), `date` (default: today), `canManage` (the
 stop buttons; default `true`), `pollMs` (background refresh, default 120000),
+`filesHref` (Tenancy 2b-1: a pattern with `{id}`; each stop shows **Photos**,
+a 44 px button, so a crew member adds photos from the job),
 plus `baseUrl` or `transport` and the usual `locale`, `theme`, `nonce`,
 `className`, `style`.
 
@@ -328,7 +333,9 @@ props. The same banner as the calendar sits on top.
 
 - **Business:** name; time zone (US zones by name first, then "Other…" for every
   zone; "Changing it keeps every visit at the same clock time."); contact phone and
-  email; up to five addresses for new-request alerts. Changing the zone with
+  email; up to five addresses for new-request alerts (with alerts installed,
+  "Who gets new-request alerts is chosen in Alert settings." and a link
+  instead, and a save never sends the list). Changing the zone with
   visits booked says how many will move, and offers "Email those customers the
   corrected time".
 - **Online booking:** on or off; auto-confirm ("On: requests go straight onto the
@@ -505,6 +512,86 @@ return (
 
 A foreign host passes the same props from its own business record.
 
+## Alerts and files (Tenancy 2b-1)
+
+With `@adminigloo/notifications` and `@adminigloo/storage` on the server,
+scheduling-widget 0.3 adds three small things. Every one is a prop; without
+them, 0.2's screens.
+
+```tsx
+// app/app/schedule/page.tsx: an alert links to "/app/schedule?date=2026-11-03&visit=…"
+const visit = typeof searchParams.visit === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(searchParams.visit) ? searchParams.visit : undefined;
+<ScheduleCalendar baseUrl={`/api/app/${company.id}/schedule`} initialVisitId={visit} visitFilesHref="/app/schedule/visits/{id}/files" />
+
+// app/app/schedule/today/page.tsx
+<CrewDay baseUrl={`/api/app/${company.id}/schedule`} filesHref="/app/schedule/visits/{id}/files" />
+```
+
+- **`initialVisitId`** opens that visit's panel without a click. A visit
+  from another week is fetched (`visit-get`) and the calendar moves to its
+  day; one that's gone (removed, or another company's) shows a plain notice.
+- **`visitFilesHref`** (calendar) and **`filesHref`** (today's route): the
+  visit's photos-and-files page, `{id}` filled in and URL-encoded. The page
+  itself is `@adminigloo/storage-widget`'s `<RecordFiles>`; this package
+  only links to it (a widget never imports another).
+- **Alert settings.** When the server says who gets new-request alerts is
+  chosen elsewhere (`SettingsWire.alertRecipients`, from the staff
+  handlers' `alertsHref`), the Business card shows "Who gets new-request
+  alerts is chosen in Alert settings." with **Open Alert settings**, and no
+  save sends the old address list.
+
+### Not included (Tenancy 2b-1)
+
+- **The feedback board per company, and the complete board** — Tenancy 2b-2.
+  It will keep screenshots as these private files and send its alerts through
+  these notifications. Until then, feedback screenshots stay on the public
+  Blob store as in 2a.
+- **The AI assistant per company** — Tenancy 2b-3.
+- **Website analytics, SEO/AEO and book-a-call (booking) per company** —
+  Tenancy 2b-4.
+- **Text (SMS) and push alerts.** Alerts come in the app and by email — S9.
+- **Plans, limits and billing enforcement** — the billing chunk. Each
+  company's storage allowance is one setting for everyone
+  (`FILES_ALLOWANCE_MB`) until then; the seam the billing chunk fills is
+  there.
+- **Stripe Connect** (customers paying a company by card).
+- **Custom domains.**
+- **Virus scanning of uploads.** Files are checked for their type and size
+  only.
+- **Uploads over 4 MB, and uploads straight from the browser to storage.**
+  Phone photos are made smaller before they're sent; other files over 4 MB are
+  refused with a plain sentence.
+- **Serving files straight from S3 or R2 by presigned link.** Every private
+  file is sent through the site's own route.
+- **Thumbnails.** Photos are shown at their (shrunk) size.
+- **Turning a kind of alert off.** Each kind comes in the app, or in the app
+  and by email; who gets the work alerts is the owner's choice.
+- **Alerts from your other companies in the bell.** The bell shows the
+  company you're working in.
+- **A daily or weekly digest of alerts.**
+- **Customers seeing files** (photos on their quote or invoice page).
+- **Editing the wording of the team alert email** beyond the Messages screen
+  (it is the `team_alert` message there).
+- **Carrying 2a's per-feature alert address lists over.** With alerts
+  installed, the people (and extra addresses) are chosen again in Alert
+  settings; the old lists are no longer read.
+- **Alert settings in a single-business project without an admin shell.** Its
+  staff get the bell; the office emails keep 2a's lists.
+- **A transactional outbox.** Alerts are written right after the change they
+  report (D8); the events package (S2) brings the outbox.
+- **Crew alerts when the office moves, reassigns or cancels their visit.**
+  Only a customer's change alerts the crew.
+- **An alert when a customer opens a quote** (invoices only).
+- **A history of cron runs, and an alert when a cron fails.**
+- **Alerts for the platform owner** (a new company, a company out of
+  storage). A company's storage refusal is reported in `/admin/errors` once a
+  day.
+- **Giving one company more storage than the others.** `FILES_ALLOWANCE_MB`
+  is one number until the billing chunk.
+- **Checking an address before it gets a company's alert emails.** The owner
+  adds up to five per group; the company's team sending allowance bounds what
+  they get.
+
 ## Not included
 
 - **Recurring visit plans** (weekly cleaning, quarterly service). Book each visit.
@@ -514,8 +601,8 @@ A foreign host passes the same props from its own business record.
 - **Deposits and payments.**
 - **One calendar with `@adminigloo/booking`.** Booking (calls) and scheduling
   (visits) are separate, so one person on both can be double-booked.
-- **Per-company boards and widgets for feedback, notifications, files, the
-  assistant, analytics, SEO/AEO and book-a-call**: Tenancy 2b. (These screens
+- **What Tenancy 2b-1 leaves out**: see
+  [Not included (Tenancy 2b-1)](#not-included-tenancy-2b-1). (These screens
   serve each company since 0.2: see [Companies](#companies-tenancy-2a).)
 - **A scheduling embed** (a script for the company's own website). The booking
   page's address is shown to copy.
@@ -528,6 +615,7 @@ A foreign host passes the same props from its own business record.
 - **Route optimisation.** Stops are in time order, with no reordering suggestions.
 - **Partial days off.** Days off are whole days.
 - **Visits that cross midnight.**
-- **Job photos, checklists or signatures** on the crew's route.
+- **Checklists or signatures** on the crew's route. (Photos: **Photos** on
+  each stop, with `filesHref`.)
 - **Translations.** The words are English; `locale` changes date and time formats.
 - **A license gate.**

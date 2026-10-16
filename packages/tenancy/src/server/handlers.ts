@@ -11,6 +11,8 @@ import {
   LOGO_BODY_MAX_BYTES,
   matchRoute,
   readJson,
+  readLogoForm,
+  settleBeforeAnswering,
 } from "./http.js";
 import { TENANCY_ROUTES, type TenancyRateBucket, type TenancyRouteKind } from "./routes.js";
 import {
@@ -295,14 +297,9 @@ export function createTenancyHandlers(options: CreateTenancyHandlersOptions): Te
         return jsonResponse(200, { company: companyToWire(out.company), brand: out.brand ? { ...out.brand } : null });
       }
       case "logo-upload": {
-        const length = Number(req.headers.get("content-length") ?? "0");
-        if (Number.isFinite(length) && length > LOGO_BODY_MAX_BYTES) throw new TenancyError("logo_invalid", "Use a PNG, JPG or WebP image under 1 MB.");
-        let form: FormData;
-        try {
-          form = await req.formData();
-        } catch {
-          throw new TenancyError("invalid", "Send the logo as a file upload.");
-        }
+        // Counted as it streams, refused at the cap, THEN parsed (review
+        // SEC-01): a chunked upload declares no length to check.
+        const form = await readLogoForm(req);
         const file = form.get("file");
         if (!file || typeof file === "string") throw new TenancyError("invalid", "Send the logo as a file upload.");
         const bytes = new Uint8Array(await file.arrayBuffer());
@@ -379,54 +376,69 @@ export function createTenancyHandlers(options: CreateTenancyHandlersOptions): Te
       }
       const { kind, params } = matched.found;
       const route = TENANCY_ROUTES.find((r) => r.kind === kind)!;
-      try {
-        if (route.method === "POST" && isCrossOriginRequest(req)) return codeResponse("cross_site", noun);
-        const principal = await options.principal(req);
-        if (!principal) return codeResponse("signed_out", noun);
-
-        if (route.bucket && options.limit) {
-          const charges: { bucket: TenancyRateBucket; key: string }[] = [];
-          if (COMPANY_BUCKETS.has(route.bucket)) {
-            const tenantId = params["tenantId"] ?? "";
-            // Membership FIRST (review T1-06): a stranger who knows a company's
-            // id must not be able to spend its invite or logo budget and lock
-            // the owner out for an hour.
-            const verdict = await tenancy.membership({ userId: principal.userId, tenantId });
-            if (verdict === "not-a-member") return codeResponse("not_a_member", noun);
-            if (verdict === "company-suspended") return codeResponse("company_suspended", noun);
-            // Then the PERMISSION (review R2 SEC-T1-D): a viewer's refused
-            // invitations used to spend the company's budget too, so any member
-            // could keep the owner from inviting, hour after hour. The service
-            // still decides again under the company lock (D7); this is only
-            // "may this person spend the company's budget at all".
-            if (route.permission && !(await tenancy.hasPermission({ userId: principal.userId, tenantId, permission: route.permission }))) {
-              return codeResponse("forbidden", noun);
-            }
-            // An invitation is also charged to its SENDER, hourly and daily
-            // (review R2 SEC-T1-B): otherwise one free account multiplied the
-            // company budget by every company it made.
-            if (route.bucket === "invite") {
-              charges.push({ bucket: "invite-sender", key: `user:${principal.userId}` });
-              charges.push({ bucket: "invite-sender-day", key: `user:${principal.userId}` });
-            }
-            charges.push({ bucket: route.bucket, key: `tenant:${tenantId}` });
-          } else {
-            charges.push({ bucket: route.bucket, key: `user:${principal.userId}` });
-          }
-          for (const charge of charges) {
-            const verdict = await options.limit(charge);
-            if (!verdict.allowed) {
-              const retry = Math.max(1, Math.ceil(verdict.retryAfterSeconds ?? 60));
-              return codeResponse("rate_limited", noun, { "retry-after": String(retry) });
-            }
-          }
-        }
-        return await run(req, kind, params, principal.userId);
-      } catch (error) {
-        if (error instanceof TenancyError) return errorResponse(error.code, error.message, error.details);
-        await reportQuietly(error, req);
-        return codeResponse("internal", noun);
-      }
+      const response = await answer(req, route, kind, params);
+      // Tenancy 2b-1 (8.1): a POST is answered only after the events it
+      // emitted have settled (bounded), so a listener on a serverless
+      // platform isn't frozen mid-way with the response sent.
+      if (route.method === "POST") await settleBeforeAnswering(tenancy);
+      return response;
     },
   };
+
+  /** One route's answer: the same-origin, sign-in and rate checks, then the service (hoisted; `handle` settles events after it). */
+  async function answer(
+    req: Request,
+    route: (typeof TENANCY_ROUTES)[number],
+    kind: TenancyRouteKind,
+    params: Readonly<Record<string, string>>,
+  ): Promise<Response> {
+    try {
+      if (route.method === "POST" && isCrossOriginRequest(req)) return codeResponse("cross_site", noun);
+      const principal = await options.principal(req);
+      if (!principal) return codeResponse("signed_out", noun);
+
+      if (route.bucket && options.limit) {
+        const charges: { bucket: TenancyRateBucket; key: string }[] = [];
+        if (COMPANY_BUCKETS.has(route.bucket)) {
+          const tenantId = params["tenantId"] ?? "";
+          // Membership FIRST (review T1-06): a stranger who knows a company's
+          // id must not be able to spend its invite or logo budget and lock
+          // the owner out for an hour.
+          const verdict = await tenancy.membership({ userId: principal.userId, tenantId });
+          if (verdict === "not-a-member") return codeResponse("not_a_member", noun);
+          if (verdict === "company-suspended") return codeResponse("company_suspended", noun);
+          // Then the PERMISSION (review R2 SEC-T1-D): a viewer's refused
+          // invitations used to spend the company's budget too, so any member
+          // could keep the owner from inviting, hour after hour. The service
+          // still decides again under the company lock (D7); this is only
+          // "may this person spend the company's budget at all".
+          if (route.permission && !(await tenancy.hasPermission({ userId: principal.userId, tenantId, permission: route.permission }))) {
+            return codeResponse("forbidden", noun);
+          }
+          // An invitation is also charged to its SENDER, hourly and daily
+          // (review R2 SEC-T1-B): otherwise one free account multiplied the
+          // company budget by every company it made.
+          if (route.bucket === "invite") {
+            charges.push({ bucket: "invite-sender", key: `user:${principal.userId}` });
+            charges.push({ bucket: "invite-sender-day", key: `user:${principal.userId}` });
+          }
+          charges.push({ bucket: route.bucket, key: `tenant:${tenantId}` });
+        } else {
+          charges.push({ bucket: route.bucket, key: `user:${principal.userId}` });
+        }
+        for (const charge of charges) {
+          const verdict = await options.limit(charge);
+          if (!verdict.allowed) {
+            const retry = Math.max(1, Math.ceil(verdict.retryAfterSeconds ?? 60));
+            return codeResponse("rate_limited", noun, { "retry-after": String(retry) });
+          }
+        }
+      }
+      return await run(req, kind, params, principal.userId);
+    } catch (error) {
+      if (error instanceof TenancyError) return errorResponse(error.code, error.message, error.details);
+      await reportQuietly(error, req);
+      return codeResponse("internal", noun);
+    }
+  }
 }

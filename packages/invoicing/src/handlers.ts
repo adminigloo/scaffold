@@ -11,6 +11,7 @@ import {
   readJsonBody,
   segmentsAfter,
 } from "./http.js";
+import { emitInvoicingEvent, type InvoicingEventOptions } from "./events.js";
 import { getInvoiceByToken, markInvoiceViewed, type InvoicingDb } from "./index.js";
 import type { InvoicingPublicRouteKind } from "./routes.js";
 import { invoices } from "./schema.js";
@@ -39,7 +40,7 @@ import type { BusinessWire, InvoiceStatusWire, PaymentMethodWire, PublicInvoiceR
 
 export type InvoicingAdmission = { readonly open: true } | { readonly open: false; readonly message: string };
 
-export interface CreateInvoicingHandlersOptions {
+export interface CreateInvoicingHandlersOptions extends InvoicingEventOptions {
   db: InvoicingDb;
   /** A fixed tenant (a single business). Pass this or `resolveTenant`. */
   tenantId?: string;
@@ -105,6 +106,15 @@ export function createInvoicingHandlers(options: CreateInvoicingHandlersOptions)
   };
   const answer = (body: unknown, status = 200) => json(body, status, PUBLIC_HEADERS);
   const refuse = (error: unknown) => failure(error, PUBLIC_HEADERS);
+  /** The business for this request; a throwing seam is reported and read as "no business". */
+  const businessFor = async (tenantId: string, kind: string): Promise<ResolvedInvoicingBusiness> => {
+    try {
+      return resolveInvoicingBusiness(options.business ? await options.business(tenantId) : null);
+    } catch (error) {
+      report(error, tenantId, kind);
+      return resolveInvoicingBusiness(null);
+    }
+  };
 
   async function handle(req: Request): Promise<Response> {
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: { "cache-control": "no-store", ...PUBLIC_HEADERS } });
@@ -137,24 +147,37 @@ export function createInvoicingHandlers(options: CreateInvoicingHandlersOptions)
         // 404 for a token that isn't this company's (or a draft), like the
         // GET, so a stranger's POST can't probe which tokens exist elsewhere.
         const [row] = (await options.db
-          .select({ status: invoices.status })
+          .select({ id: invoices.id, status: invoices.status })
           .from(invoices)
           .where(and(eq(invoices.viewToken, matched.token), eq(invoices.tenantId, tenantId)))
-          .limit(1)) as Array<{ status: string }>;
+          .limit(1)) as Array<{ id: string; status: string }>;
         if (!row || row.status === "draft") return refuse(notFound());
         const viewed = await markInvoiceViewed(options.db, matched.token, { tenantId });
+        // Tenancy 2b-1 (11.1): the FIRST view only (`markInvoiceViewed`
+        // answered true: sent → viewed, committed), awaited before the answer
+        // and contained. A second view, a preview (the business's own link
+        // never posts here) and a draft tell nobody. No token in the event.
+        if (viewed) {
+          const scoped = tenantId;
+          await emitInvoicingEvent(
+            options.db,
+            {
+              type: "invoice.viewed",
+              tenantId: scoped,
+              invoiceId: row.id,
+              actor: { type: "customer", id: null },
+              format: async () => moneyFormatOf(await businessFor(scoped, matched.kind)),
+              now: options.now?.() ?? new Date(),
+            },
+            { onEvent: options.onEvent, onEventError: options.onEventError, report: (error) => report(error, scoped, matched.kind) },
+          );
+        }
         return answer({ viewed });
       }
 
       const found = await getInvoiceByToken(options.db, matched.token, { tenantId });
       if (!found) return refuse(notFound());
-      let business: ResolvedInvoicingBusiness;
-      try {
-        business = resolveInvoicingBusiness(options.business ? await options.business(tenantId) : null);
-      } catch (error) {
-        report(error, tenantId, matched.kind);
-        business = resolveInvoicingBusiness(null);
-      }
+      const business = await businessFor(tenantId, matched.kind);
       const inv = found.invoice;
       const body: PublicInvoiceResponse = {
         invoice: {

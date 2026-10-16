@@ -204,7 +204,16 @@ export function parseSettingsWire(raw: unknown): EstimatorSettingsWire | null {
     // Tenancy 2a: an older server sends neither; that reads as 0.2's screen.
     managedByCompany: isObject(raw.managedByCompany) ? { href: strOrNull(raw.managedByCompany.href) } : null,
     aiBudgetCeilingCents: numOrNull(raw.aiBudgetCeilingCents),
+    // Tenancy 2b-1: an older server sends nothing here, which reads as "the
+    // list is edited here" (null), 0.3's screen. Only a path on this site or
+    // an http(s) address is kept as the link, never a script URL.
+    alertRecipients: isObject(raw.alertRecipients) ? { href: safeLink(raw.alertRecipients.href) } : null,
   };
+}
+
+/** A link the server sent for a screen to follow: a path on this site or an http(s) address; else null. */
+function safeLink(raw: unknown): string | null {
+  return isString(raw) && /^(\/(?!\/)|https?:\/\/)/i.test(raw) ? raw : null;
 }
 
 function parseSettingsResponse(body: unknown): { settings: EstimatorSettingsWire } | null {

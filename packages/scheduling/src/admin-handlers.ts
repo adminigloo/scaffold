@@ -176,6 +176,17 @@ export interface CreateSchedulingAdminHandlersOptions {
    * company seam supplied the basics. Default null.
    */
   companySettingsHref?: string | null;
+  /**
+   * Where Alert settings are, when the host routes office alerts there
+   * (Tenancy 2b-1, D6), e.g. "/app/alerts/settings". Default null.
+   *
+   * Given, Schedule settings stops offering its own "Send new-request alerts
+   * to" list (`SettingsWire.alertRecipients` carries the link), and a save
+   * DROPS `staffNotifyEmails` from the patch: never a 422 (2a D6's rule: an
+   * old client must keep working), and a body of only it saves nothing. The
+   * comms listener's `officeRecipients` decides who hears instead.
+   */
+  alertsHref?: string | null;
   /** Told about an unexpected error (the answer is still a plain 500) and about a company seam that threw. */
   onError?: (error: unknown, context: { tenantId: string | null; route: string }) => void;
   now?: () => Date;
@@ -452,6 +463,11 @@ export function createSchedulingAdminHandlers(options: CreateSchedulingAdminHand
     const params = new URL(req.url).searchParams;
     const today = todayIn(now, settings.timeZone);
     const id = matched.id ?? "";
+    /** How settings go on the wire: the company's link (2a) and where Alert settings are (2b-1). */
+    const wireOptions = {
+      companySettingsHref: options.companySettingsHref ?? null,
+      alertsHref: typeof options.alertsHref === "string" ? options.alertsHref : null,
+    };
 
     const mutation = async (result: { visit: BookingRow; warnings: string[] } | null): Promise<Response> => {
       if (!result) throw notFound();
@@ -744,15 +760,24 @@ export function createSchedulingAdminHandlers(options: CreateSchedulingAdminHand
         return json({ expired: result.expired } satisfies ExpireResponse);
       }
       case "settings-get":
-        return json({ settings: toSettingsWire(settings, { companySettingsHref: options.companySettingsHref ?? null }) });
+        return json({ settings: toSettingsWire(settings, wireOptions) });
       case "settings-update": {
         const body = await readJsonBody(req);
         // Not a setting: whether to email upcoming visits' customers about a
         // time-zone correction (the settings screen asks when there are any).
         const notifyCustomers = body["notifyCustomers"] === true;
-        const wireOptions = { companySettingsHref: options.companySettingsHref ?? null };
+        if (wireOptions.alertsHref !== null && Object.prototype.hasOwnProperty.call(body, "staffNotifyEmails")) {
+          // Tenancy 2b-1, D6: who hears about new requests is chosen in Alert
+          // settings, so the old list is DROPPED, never refused (2a D6's rule:
+          // an old client keeps working). A body of only it saves nothing and
+          // answers the settings as they are.
+          delete body["staffNotifyEmails"];
+          if (Object.keys(body).every((key) => key === "notifyCustomers")) {
+            return json({ settings: toSettingsWire(settings, wireOptions) });
+          }
+        }
         if (settings.managedByCompany) {
-          // D6: the company owns the name, zone and contact. They are dropped
+          // 2a D6: the company owns the name, zone and contact. They are dropped
           // from the patch, never refused: the widget doesn't send them, and
           // a refusal would only break an old client. A body of only those
           // saves nothing and answers the settings as they are.

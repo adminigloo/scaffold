@@ -317,7 +317,7 @@ describe("public: the HTTP rules", () => {
     expect([limited.status, (await readJson(limited)).error.code]).toEqual([429, "rate_limited"]);
   });
 
-  it("the CSRF matrix: cross-site browser POSTs are refused before any work; servers and same-site pass", async () => {
+  it("the CSRF matrix: cross-site and same-site browser POSTs are refused before any work; servers and same-origin pass", async () => {
     let resolved = 0;
     const api = await publicApi();
     const { handle } = createSchedulingHandlers({
@@ -332,7 +332,7 @@ describe("public: the HTTP rules", () => {
     const cases: Array<[Record<string, string>, number]> = [
       [{ "sec-fetch-site": "cross-site" }, 403],
       [{ "sec-fetch-site": "same-origin" }, 404],
-      [{ "sec-fetch-site": "same-site" }, 404],
+      [{ "sec-fetch-site": "same-site" }, 403], // a sibling subdomain (review SEC-04)
       [{ "sec-fetch-site": "none" }, 404],
       [{ origin: "https://evil.test" }, 403],
       [{ origin: "null" }, 403],

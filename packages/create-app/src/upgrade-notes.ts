@@ -1,0 +1,98 @@
+import { tenantLabel, type Answers } from "./answers.js";
+
+/** "1.2.3" → [1, 2, 3]; anything else → null. */
+export function parseVersion(text: string): readonly [number, number, number] | null {
+  const match = /^\^?~?(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?$/.exec(text.trim());
+  if (!match) return null;
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+/** -1, 0 or 1; null when either isn't a plain version (or caret range). */
+export function compareVersions(a: string, b: string): number | null {
+  const left = parseVersion(a);
+  const right = parseVersion(b);
+  if (!left || !right) return null;
+  for (let i = 0; i < 3; i += 1) {
+    const l = left[i] ?? 0;
+    const r = right[i] ?? 0;
+    if (l !== r) return l < r ? -1 : 1;
+  }
+  return 0;
+}
+
+/**
+ * What a person has to do about the versions crossed, beyond the files
+ * (review BUY-01): the steps no file can take — a store to connect, rows to
+ * hand to a business, lists to choose again. Keyed by the version that
+ * brought them, so a project already past it isn't told again.
+ */
+export function upgradeNotesFor(answers: Answers, fromVersion: string): string[] {
+  const notes: string[] = [];
+  const companies = answers.tenantNoun !== "none";
+  const noun = tenantLabel(answers).toLowerCase();
+  const crossed = (version: string) => (compareVersions(fromVersion, version) ?? -1) < 0;
+  // 0.24.0 — Tenancy 2b-1: alerts and files.
+  if (crossed("0.24.0")) {
+    if (answers.includeStorage) {
+      notes.push(
+        "Photos and files are private now. In Vercel, connect a SECOND Blob store with access Private, " +
+          "with the environment variable prefix BLOB_PRIVATE (it gives BLOB_PRIVATE_READ_WRITE_TOKEN), and redeploy " +
+          '(DEPLOYMENT.md, "Photos and files"). Keep the store you have: it holds the logos. Until the private one is ' +
+          "connected, new photos and files can't be added, and the screens say so.",
+        "The files cron (/api/cron/files) moves the photos and files the old version kept at public addresses into " +
+          "the private store, a batch every run; /setup says how many are left, and /admin/errors is told when a run " +
+          "didn't finish. Same files, same links.",
+        companies
+          ? `Files your staff added on the old /admin/files page belong to no ${noun}, and no screen lists them now. ` +
+              `To give them to one ${noun}, run once (its id is on /admin/companies): ` +
+              `update stored_files set tenant_id = '<${noun} id>' where tenant_id = '*';  ` +
+              `They are then on that ${noun}'s Files page. Either way the files cron makes them private.`
+          : "Files staff added on the old Files page are the business's again after one statement, run once: " +
+              "update stored_files set tenant_id = 'primary' where tenant_id = '*';  " +
+              "Until then the Files page doesn't list them. Either way the files cron makes them private.",
+      );
+    }
+    if (answers.includeNotifications) {
+      notes.push(
+        `Alerts are ${companies ? `each ${noun}'s own` : "each person's own"} now, and who hears about new work is chosen in Alert settings ` +
+          `(${companies ? "/app/alerts/settings" : answers.adminShell !== "none" ? "/admin/alerts/settings" : "the admin panel"}). ` +
+          "The old per-feature \"send new-request alerts to\" lists aren't read any more: choose the people again there. " +
+          "The old inbox's entries aren't shown.",
+      );
+    }
+  }
+  return notes;
+}
+
+/** Where DEPLOYMENT.md's "Upgrading" section lists what each version crossed asks of a person. */
+export const UPGRADE_NOTES_MARKER = "<!-- adminigloo:upgrade-notes -->";
+
+/**
+ * DEPLOYMENT.md §9's version notes, for this project's features (review
+ * BUY-01): what `upgrade` prints, written down where the developer who runs
+ * it will look again. Today one release: Tenancy 2a (create-app 0.23) to
+ * Tenancy 2b-1.
+ */
+export function renderDeploymentUpgradeNotes(answers: Answers): string {
+  const notes = upgradeNotesFor(answers, "0.23.0");
+  const companies = answers.tenantNoun !== "none";
+  const shell = answers.adminShell !== "none";
+  // What 2a wrote that 2b-1 retires, for this project's answers (checked
+  // against the real 2a generator's output by the upgrade run).
+  const retired = [
+    ...(answers.includeNotifications
+      ? ["src/server/notify.ts", "src/server/routers/notifications.ts", ...(companies && shell ? ["app/admin/inbox/page.tsx"] : [])]
+      : []),
+    ...(answers.includeStorage
+      ? ["src/server/blob-store.ts", "src/server/routers/files.ts", "app/api/files/route.ts", ...(companies && shell ? ["app/admin/files/page.tsx"] : [])]
+      : []),
+  ];
+  return [
+    "### From Tenancy 2a (create-app 0.23) to Tenancy 2b-1 (alerts and files)",
+    "",
+    `\`upgrade\` raises every package to its 2b-1 version${retired.length > 0 ? ` and removes the files 2b-1 retired (${retired.map((path) => `\`${path}\``).join(", ")}), replaced by this version's alerts and files` : ""}. After it:`,
+    "",
+    ...(notes.length > 0 ? notes.map((note) => `- ${note}`) : ["- Nothing more: this project has neither alerts nor files."]),
+    "",
+  ].join("\n");
+}

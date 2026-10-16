@@ -39,6 +39,7 @@ import {
   renderTenantIsolationTest,
 } from "./tenancy-proofs-emit.js";
 import { renderProjectReadme } from "./readme-emit.js";
+import { renderDeploymentUpgradeNotes, UPGRADE_NOTES_MARKER } from "./upgrade-notes.js";
 import { assertNoPrerenderedAuthRoutes } from "./prerender.js";
 import {
   COMPANY_CRONS_MARKER,
@@ -62,11 +63,31 @@ import {
   renderTenantRoles,
 } from "./features-emit.js";
 import {
+  renderCompanyAlertsTest,
   renderCompanyCronsTest,
   renderCompanyEmailTest,
+  renderCompanyFilesTest,
   renderCompanyRows,
   renderFeatureIsolationTest,
+  renderGlueImportsTest,
+  renderStaffFilesTest,
 } from "./feature-proofs-emit.js";
+import {
+  ALERTS_FILES_MARKER,
+  renderDeploymentAlertsFiles,
+  hasFileRecords,
+  renderAlerts,
+  renderAlertsBellSlot,
+  renderAlertsCron,
+  renderAlertsLinks,
+  renderAlertsRoutes,
+  renderFiles,
+  renderFilesRoutes,
+  renderRecordFilesSlot,
+  renderSetupFilesSlot,
+  renderVisitFiles,
+  teamTemplateKeys,
+} from "./alerts-files-emit.js";
 
 /** A companies project (`--tenant-noun` anything but `none`): each company runs the features itself. */
 function isCompanies(answers: Answers): boolean {
@@ -300,7 +321,15 @@ export async function planEmit(
       .split(COMPANY_EMAIL_MARKER)
       .join(notes.email)
       .split(PRO_CRONS_MARKER)
-      .join(notes.proCrons);
+      .join(notes.proCrons)
+      // Tenancy 2b-1: the alerts cron, the two Blob stores, the allowance,
+      // the link key and what files cost — generated, empty without them.
+      .split(ALERTS_FILES_MARKER)
+      .join(renderDeploymentAlertsFiles(answers))
+      // What a project made by an earlier create-app has to do by hand when
+      // it runs `upgrade` (review BUY-01), for THIS project's features.
+      .split(UPGRADE_NOTES_MARKER)
+      .join(renderDeploymentUpgradeNotes(answers));
     for (const region of DEPLOYMENT_SINGLE_REGIONS) text = replaceDeploymentRegion(text, region, notes.regions[region]);
     files.set("DEPLOYMENT.md", text);
   }
@@ -366,10 +395,43 @@ export async function planEmit(
     files.set(join("src", "server", "invoicing.ts"), renderInvoicingGlue(answers));
   }
   // The staff ladder invoicing and messages climb in a single-business
-  // project: one key per job (D12). A companies project checks company roles
-  // instead (src/server/company-routes.ts), so it never gets this file.
-  if (!isCompanies(answers) && (answers.includeInvoicing || answers.includeComms)) {
+  // project: one key per job (D12) — and, since Tenancy 2b-1, alerts and
+  // files. A companies project checks company roles instead
+  // (src/server/company-routes.ts), so it never gets this file.
+  if (
+    !isCompanies(answers) &&
+    (answers.includeInvoicing || answers.includeComms || answers.includeNotifications || answers.includeStorage)
+  ) {
     files.set(join("src", "server", "staff-access.ts"), renderStaffAccess(answers));
+  }
+  // ALERTS AND FILES (Tenancy 2b-1, 13.5), both modes, generated: who the
+  // people are, which packages produce alerts, which records files belong
+  // to, and where each opens are all questions about OTHER answers, and the
+  // route files and pages that import these modules carry no `if` about them.
+  // See alerts-files-emit.ts.
+  if (answers.includeNotifications) {
+    files.set(join("src", "server", "alerts.ts"), renderAlerts(answers));
+    files.set(join("src", "server", "alerts-routes.ts"), renderAlertsRoutes(answers));
+    files.set(join("app", "api", "cron", "alerts", "route.ts"), renderAlertsCron(answers));
+  }
+  if (answers.includeStorage) {
+    files.set(join("src", "server", "files.ts"), renderFiles(answers));
+    files.set(join("src", "server", "files-routes.ts"), renderFilesRoutes(answers));
+  }
+  // The slots, in EVERY project (or every project with a record files can
+  // belong to): the header renders the bell, /setup its file-store rows and
+  // the record pages their "Photos and files" without an `if` — each slot is
+  // the real thing or null, chosen here.
+  files.set(join("src", "components", "AlertsBellSlot.tsx"), renderAlertsBellSlot(answers));
+  files.set(join("src", "components", "SetupFilesSlot.tsx"), renderSetupFilesSlot(answers));
+  if (hasFileRecords(answers)) {
+    files.set(join("src", "components", "RecordFilesSlot.tsx"), renderRecordFilesSlot(answers));
+  }
+  if (answers.includeScheduling) {
+    files.set(join("src", "server", "visit-files.ts"), renderVisitFiles(answers));
+  }
+  if (answers.includeScheduling || answers.includeEstimator) {
+    files.set(join("src", "server", "alerts-links.ts"), renderAlertsLinks(answers));
   }
   // Who hears about each visit. Generated because the answer is "the comms
   // listener" with --comms and "nobody" without it, and the routes that call
@@ -420,12 +482,35 @@ export async function planEmit(
   // installed feature: every feature ROUTE refuses another company's ids,
   // every cron serves every active company and skips a suspended one, and
   // each company's email goes out under its own name and reply-to.
-  if (isCompanies(answers) && hasFieldService(answers)) {
+  // Tenancy 2b-1: the isolation proof covers the alert and file routes too
+  // (D17), so a companies project with either has it even with no
+  // field-service feature.
+  if (isCompanies(answers) && (hasFieldService(answers) || answers.includeNotifications || answers.includeStorage)) {
     files.set(join("src", "test", "company-rows.ts"), renderCompanyRows(answers));
     files.set(
       join("src", "server", "__tests__", "feature-isolation.test.ts"),
       renderFeatureIsolationTest(answers),
     );
+  }
+  // The alerts and files proofs (Tenancy 2b-1, 14.2–14.3), through the
+  // project's own glue.
+  if (isCompanies(answers) && answers.includeNotifications) {
+    files.set(join("src", "server", "__tests__", "company-alerts.test.ts"), renderCompanyAlertsTest(answers));
+  }
+  if (isCompanies(answers) && answers.includeStorage) {
+    files.set(join("src", "server", "__tests__", "company-files.test.ts"), renderCompanyFilesTest(answers));
+  }
+  // The single business's half of review SEC-03: its files run on the staff
+  // ladder, so its member check (src/server/files.ts) is a different function
+  // from a company's, and only this proof notices when that check stops
+  // asking whether the link's maker may still see the file.
+  if (!isCompanies(answers) && answers.includeStorage) {
+    files.set(join("src", "server", "__tests__", "files-staff.test.ts"), renderStaffFilesTest(answers));
+  }
+  // Every glue module loads first and alone (13.10): a cycle read
+  // half-initialised fails here, by name, instead of in production.
+  if (answers.includeNotifications || answers.includeStorage) {
+    files.set(join("src", "server", "__tests__", "glue-imports.test.ts"), renderGlueImportsTest(answers));
   }
   if (isCompanies(answers) && (answers.includeScheduling || answers.includeEstimator || answers.includeComms)) {
     files.set(join("src", "server", "__tests__", "company-crons.test.ts"), renderCompanyCronsTest(answers));
@@ -731,10 +816,11 @@ export function renderPackageJson(answers: Answers): string {
     deps["@vercel/blob"] = "^2.8.0";
   }
   if (answers.includeStorage) {
-    // The file library's adapter in src/server/blob-store.ts — same rule and
-    // same vendor as feedback's screenshots, declared by the app because the
-    // storage package never imports an SDK. Assigning the same range twice
-    // when both features are on is a no-op by design.
+    // The SDK src/server/files.ts hands to @__SCOPE_NAME__/storage's Vercel Blob
+    // adapter (its `blobSdk` bridge, 6.2) — same rule and same vendor as
+    // feedback's screenshots, declared by the app because the storage
+    // package never imports an SDK. Assigning the same range twice when both
+    // features are on is a no-op by design.
     deps["@vercel/blob"] = "^2.8.0";
   }
   if (answers.businessModel !== "none") {
@@ -912,6 +998,15 @@ export function renderVercelJson(answers: Answers): string {
   }
   if (answers.includeEstimator) {
     crons.push({ path: "/api/cron/estimator", schedule: "30 13 * * *" });
+  }
+  // Tenancy 2b-1 (13.8): the alerts cron (the time-based alerts, the email
+  // retries, clean-up) after the features' own, and the files cron (the
+  // purge, the move to private, the private-store check).
+  if (answers.includeNotifications) {
+    crons.push({ path: "/api/cron/alerts", schedule: "15 14 * * *" });
+  }
+  if (answers.includeStorage) {
+    crons.push({ path: "/api/cron/files", schedule: "45 14 * * *" });
   }
   const config = {
     $schema: "https://openapi.vercel.sh/vercel.json",
@@ -1272,7 +1367,13 @@ export function renderEnvLocal(answers: Answers): string {
         : []),
     );
   }
-  if (answers.includeComms || answers.includeScheduling || answers.includeEstimator) {
+  if (
+    answers.includeComms ||
+    answers.includeScheduling ||
+    answers.includeEstimator ||
+    answers.includeNotifications ||
+    answers.includeStorage
+  ) {
     lines.push(
       "",
       "# --- Cron -------------------------------------------------------------------",
@@ -1282,15 +1383,23 @@ export function renderEnvLocal(answers: Answers): string {
     );
   }
 
-  if (answers.includeStorage && !answers.includeFeedback) {
-    // When feedback is also on, its block above already introduces the same
-    // variable; a second copy would be the duplicate the reader trips on.
+  if (answers.includeStorage) {
     lines.push(
       "",
-      "# --- File storage -----------------------------------------------------------",
-      "# The library at /admin/files turns on with this (Vercel -> Storage -> Blob).",
-      "# Until then the page says so in one sentence; nothing errors.",
-      "# BLOB_READ_WRITE_TOKEN=",
+      "# --- Photos and files -------------------------------------------------------",
+      "# Nothing needed locally: with neither token set, `pnpm dev` keeps files on",
+      "# this computer (.data/files, git-ignored).",
+      "# TWO Blob stores on a deployment, because a Vercel Blob store is private or",
+      "# public as a whole: the PRIVATE one for photos and files (Vercel -> Storage",
+      "# -> Create -> Blob, access Private, connected with the prefix BLOB_PRIVATE),",
+      "# and the public one for company logos. They must be different tokens.",
+      "# BLOB_PRIVATE_READ_WRITE_TOKEN=",
+      ...(answers.includeFeedback ? [] : ["# BLOB_READ_WRITE_TOKEN="]),
+      "# How much each company may store, in MB (default 5120, 5 GB).",
+      "# FILES_ALLOWANCE_MB=5120",
+      "# The key \"Copy link\" signs with (32+ characters). Without it one is made",
+      "# from CLERK_SECRET_KEY.",
+      "# FILES_LINK_SECRET=",
     );
   }
 
@@ -1453,6 +1562,27 @@ export function renderScaffoldRecord(manifest: ProjectManifest): string {
  * key from a project with no Stripe, or omit it from one that needs it — and
  * the second failure only surfaces at the first payment.
  */
+/**
+ * The env check that refuses ONE token in both Blob slots (Tenancy 2b-1,
+ * 13.7; review G9). A Vercel Blob store is public or private as a whole, so
+ * the public store's token pasted where the private one belongs would publish
+ * every photo and file. Written after `defineEnv` because Zod checks each
+ * variable alone; an environment check, not a feature switch.
+ */
+const TWO_STORES_CHECK = `
+/**
+ * TWO BLOB STORES, TWO TOKENS (Tenancy 2b-1, review G9). A Vercel Blob store
+ * is public or private as a whole: the same token in both would keep every
+ * private photo and file in the public store. Refused at boot (and so at
+ * \`next build\`), in words.
+ */
+if (env.BLOB_PRIVATE_READ_WRITE_TOKEN !== undefined && env.BLOB_PRIVATE_READ_WRITE_TOKEN === env.BLOB_READ_WRITE_TOKEN) {
+  throw new Error(
+    "BLOB_PRIVATE_READ_WRITE_TOKEN is the same as BLOB_READ_WRITE_TOKEN. The private store needs its own token: connect a second Blob store with access Private.",
+  );
+}
+`;
+
 export function renderEnvModule(answers: Answers): string {
   const takesMoney = answers.businessModel !== "none";
   const scope = answers.scope;
@@ -1623,20 +1753,43 @@ export function renderEnvModule(answers: Answers): string {
   }
 
   if (answers.includeStorage) {
-    // The same blob token feedback's screenshots use — one store per project.
-    // Guarded so a project with both features declares the variable once:
-    // Zod would not mind the duplicate key, but the person reading the file
-    // would rightly ask which one wins.
+    // The public store's token is the one feedback's screenshots use — one
+    // public store per project. Guarded so a project with both features
+    // declares the variable once: Zod would not mind the duplicate key, but
+    // the person reading the file would rightly ask which one wins.
     if (!answers.includeFeedback) {
       serverSpreads.push("BLOB_READ_WRITE_TOKEN: z.string().min(1).optional()");
       runtime.push("BLOB_READ_WRITE_TOKEN: process.env.BLOB_READ_WRITE_TOKEN");
     }
+    // TENANCY 2b-1 (13.7): the PRIVATE store's own token (photos and files),
+    // how much each company may store, and the key signed links are made
+    // with. All optional: a laptop keeps files on its own disk, the allowance
+    // has a default, and the link key falls back to one made from Clerk's.
+    serverSpreads.push(
+      "BLOB_PRIVATE_READ_WRITE_TOKEN: z.string().min(1).optional()",
+      'FILES_ALLOWANCE_MB: z.coerce.number().int("a whole number of megabytes").min(1).max(1048576).optional()',
+      'FILES_LINK_SECRET: z.string().min(32, "at least 32 characters").optional()',
+    );
+    runtime.push(
+      "BLOB_PRIVATE_READ_WRITE_TOKEN: process.env.BLOB_PRIVATE_READ_WRITE_TOKEN",
+      "FILES_ALLOWANCE_MB: process.env.FILES_ALLOWANCE_MB",
+      "FILES_LINK_SECRET: process.env.FILES_LINK_SECRET",
+    );
     features.push(
-      `{ name: "File storage", vars: ["BLOB_READ_WRITE_TOKEN"], disables: "Uploads. /admin/files says so in one sentence; listing and deleting existing rows still work, and nothing else is affected." }`,
+      `{ name: "Photos and files", vars: ["BLOB_PRIVATE_READ_WRITE_TOKEN"], disables: "Photos and files on visits, estimates and invoices, and customers' estimate photos. Without it they can't be added, and the screens say so. While developing, files are kept on this computer (.data/files) until a Blob store is connected." }`,
+      `{ name: "Company logos", vars: ["BLOB_READ_WRITE_TOKEN"], disables: "Company logos (and feedback screenshots): the one public store. It must be a different store from the private one, with its own token." }`,
+      `{ name: "Storage allowance", vars: ["FILES_ALLOWANCE_MB"], disables: "Nothing. How much each company may store, in MB (5120, 5 GB, when unset). The billing chunk will set this per plan." }`,
+      `{ name: "File links", vars: ["FILES_LINK_SECRET"], disables: "Nothing while CLERK_SECRET_KEY is set: Copy link signs with a key made from it. With neither, links to files can't be made; everything else works." }`,
     );
   }
 
-  if (answers.includeComms || answers.includeScheduling || answers.includeEstimator) {
+  if (
+    answers.includeComms ||
+    answers.includeScheduling ||
+    answers.includeEstimator ||
+    answers.includeNotifications ||
+    answers.includeStorage
+  ) {
     // The shared secret the cron routes check. Declared here rather than in an
     // env fragment of @__SCOPE_NAME__/comms or /scheduling because it is not a
     // credential either package consumes — it is a statement about THIS
@@ -1646,6 +1799,16 @@ export function renderEnvModule(answers: Answers): string {
     // unconfigured deployment cannot be driven by a stranger.
     serverSpreads.push("CRON_SECRET: z.string().min(1).optional()");
     runtime.push("CRON_SECRET: process.env.CRON_SECRET");
+  }
+  if (answers.includeNotifications) {
+    features.push(
+      `{ name: "Alerts cron", vars: ["CRON_SECRET"], disables: "The daily alerts run: /api/cron/alerts answers 401 until the secret is set. Alerts in the app still arrive the moment something happens; an alert email that couldn't go at once, the 'about to lapse' and 'overdue' alerts, and the clean-up of old read alerts wait for it." }`,
+    );
+  }
+  if (answers.includeStorage) {
+    features.push(
+      `{ name: "Files cron", vars: ["CRON_SECRET"], disables: "The daily files run: /api/cron/files answers 401 until the secret is set. A deleted file whose stored copy couldn't be removed at once is removed by it, old public photos are moved to the private store, and the private store is checked." }`,
+    );
   }
   if (answers.includeComms) {
     // In a companies project the crons serve EVERY company (Tenancy 2a), so
@@ -1785,7 +1948,7 @@ export const env = defineEnv({
   // above can switch it off.
   modeBoundKeys: [${modeBound.join(", ")}],
 });
-
+${answers.includeStorage ? TWO_STORES_CHECK : ""}
 /**
  * Inputs for the /setup page, exported so it reads the SAME schemas boot
  * validation uses. A setup page with its own copy of the list drifts the first
@@ -1951,6 +2114,30 @@ export const PACKAGE_PERMISSION_FRAGMENTS: readonly PackagePermissionFragment[] 
       "Each company has its own messages, so these are company keys: everyone " +
       "but crew reads them, owners and admins change the wording and send " +
       "what's due.",
+  },
+  // ALERTS AND FILES, IN A COMPANIES PROJECT (Tenancy 2b-1). Every company
+  // hears about its own work and keeps its own files, so the keys belong to
+  // the company's roles. A single business maps them onto staff keys in its
+  // glue (staff.alerts.*, staff.files.*) and never spreads these.
+  {
+    package: "notifications",
+    binding: "notificationsPermissions",
+    scope: "tenant",
+    installedBy: (answers) => answers.tenantNoun !== "none" && answers.includeNotifications,
+    why:
+      "Each company hears about its own work, so these are company keys: " +
+      "everyone (crew included) gets their own alerts, owners and admins " +
+      "choose who hears about new work.",
+  },
+  {
+    package: "storage",
+    binding: "storagePermissions",
+    scope: "tenant",
+    installedBy: (answers) => answers.tenantNoun !== "none" && answers.includeStorage,
+    why:
+      "Each company keeps its own files, so these are company keys: the " +
+      "office sees the company's files, owners and admins add and delete " +
+      "them. A record's own files follow that record's permissions.",
   },
 ];
 
@@ -2150,6 +2337,39 @@ export function renderPermissionsCatalog(answers: Answers): string {
     defaultFor: ["admin"],
   },`
     : "";
+  // Alerts' and files' staff keys (Tenancy 2b-1, 13.5): one key per job on
+  // the scheduling pattern. src/server/alerts.ts and src/server/files.ts map
+  // the packages' permissions onto these.
+  const alertsStaffKeys = single && answers.includeNotifications
+    ? `
+  "staff.alerts.view": {
+    label: "Get alerts",
+    description: "See your own alerts in the bell, and choose which ones also come by email.",
+    category: "Alerts",
+    defaultFor: ["admin", "cs_lead", "cs_agent"],
+  },
+  "staff.alerts.manage": {
+    label: "Choose who hears about new work",
+    description: "Pick who gets alerts about new estimate requests, visit requests and invoices.",
+    category: "Alerts",
+    defaultFor: ["admin"],
+  },`
+    : "";
+  const filesStaffKeys = single && answers.includeStorage
+    ? `
+  "staff.files.view": {
+    label: "See files",
+    description: "The business's own files and how much storage is used. Photos and files on visits, estimates and invoices also need permission to see those.",
+    category: "Files",
+    defaultFor: ["admin", "cs_lead"],
+  },
+  "staff.files.manage": {
+    label: "Manage files",
+    description: "Add files to the business's files and delete any file, whatever it's attached to.",
+    category: "Files",
+    defaultFor: ["admin"],
+  },`
+    : "";
   const staffSpread = [...staffFragments, "appStaffPermissions"];
   const tenantSpread = [...tenantFragments, "appTenantPermissions"];
 
@@ -2256,7 +2476,7 @@ const appStaffPermissions = {
     category: "${plural}",
     // Sealed: an override must not hand this to one person quietly.
     sealed: true,
-  },${schedulingStaffKeys}${estimatorStaffKeys}${invoicingStaffKeys}${commsStaffKeys}
+  },${schedulingStaffKeys}${estimatorStaffKeys}${invoicingStaffKeys}${commsStaffKeys}${alertsStaffKeys}${filesStaffKeys}
 } as const;
 
 export const staffCatalog = definePermissions(
@@ -2622,6 +2842,19 @@ export function renderCommsSenders(answers: Answers): string {
   const scope = answers.scope;
   const companies = isCompanies(answers);
   const noun = tenantLabel(answers).toLowerCase();
+  // TENANCY 2b-1 (12.1): a customer email that failed for good becomes an
+  // alert. DYNAMIC on purpose (13.10 rule 4): alerts.ts imports this module
+  // (its email copies go out through these senders), and tenancy.ts reaches
+  // company-setup the same way.
+  const onFailed = answers.includeNotifications
+    ? `
+  // A customer's reminder, quote or invoice email that FAILED FOR GOOD
+  // becomes an alert for whoever manages messages (Tenancy 2b-1). Imported
+  // when first needed, not at the top of this file: alerts.ts imports this
+  // module, and a static import back would be a load-time cycle.
+  onFailed: (failure) => import("./alerts").then((m) => m.alertOnCommsFailure(failure)),`
+    : "";
+  const teamKeys = teamTemplateKeys(answers);
 
   const header = `/**
  * The app's comms senders, injected into ${scope}/comms. A sender is a function
@@ -2706,6 +2939,14 @@ export async function companyIdentity(tenantId: string): Promise<SenderIdentity 
  *
  *   an established ${noun}      100 an hour, 500 a day
  *   one made in the last week   20 an hour, 100 a day
+ *   its TEAM emails             60 an hour, 300 a day, counted on their own
+ *
+ * THE TEAM'S OWN EMAILS COUNT APART (Tenancy 2b-1, review BO-10): the office
+ * notices and the alert emails go only to the ${noun}'s own people (and at
+ * most five addresses per alert group), so a morning of alerts must never
+ * hold a customer's invoice. The customer allowance exists to stop mail to
+ * strangers; the team one stops a runaway loop. TEAM_TEMPLATE_KEYS says which
+ * templates are the team's (generated from the installed packages).
  *
  * A held email isn't lost: it is logged in the ${noun}'s Messages as "held",
  * an invoice's Send says the allowance was reached, and a queued reminder is
@@ -2718,7 +2959,14 @@ export async function companyIdentity(tenantId: string): Promise<SenderIdentity 
 export const COMMS_SEND_ALLOWANCE = {
   established: { hour: 100, day: 500 },
   newCompany: { hour: 20, day: 100 },
+  team: { hour: 60, day: 300 },
 } as const;
+
+/**
+ * The templates that are the ${noun}'s TEAM email, not a customer's: GENERATED
+ * from the installed packages' office notices${answers.includeNotifications ? ", and the alert email" : ""}.
+ */
+export const TEAM_TEMPLATE_KEYS: ReadonlySet<string> = new Set<string>([${teamKeys.map((key) => JSON.stringify(key)).join(", ")}]);
 
 /** How long a ${noun} counts as new, for the lower allowance. */
 const NEW_COMPANY_MS = 7 * 24 * 60 * 60 * 1000;
@@ -2730,31 +2978,39 @@ const createdAt = new Map<string, number>();
 /** When each ${noun} last hit its allowance was reported, so a held backlog reports once an hour, not per email. */
 const reportedAt = new Map<string, number>();
 
-export async function companySendAllowance(message: { readonly tenantId: string }): Promise<boolean> {
+export async function companySendAllowance(message: { readonly tenantId: string; readonly templateKey?: string }): Promise<boolean> {
   const { tenantId } = message;
-  let made = createdAt.get(tenantId);
-  if (made === undefined) {
-    const profile = await tenancy.companyProfile(tenantId);
-    // An unknown ${noun} gets the new one's allowance: nothing to trust yet.
-    made = profile ? profile.createdAt.getTime() : Date.now();
-    if (profile) createdAt.set(tenantId, made);
+  // Whose email this is — the team's or a customer's — is the MESSAGE'S
+  // template (runtime data), not a feature switch.
+  const team = message.templateKey !== undefined && TEAM_TEMPLATE_KEYS.has(message.templateKey);
+  let caps: { readonly hour: number; readonly day: number } = COMMS_SEND_ALLOWANCE.team;
+  if (!team) {
+    let made = createdAt.get(tenantId);
+    if (made === undefined) {
+      const profile = await tenancy.companyProfile(tenantId);
+      // An unknown ${noun} gets the new one's allowance: nothing to trust yet.
+      made = profile ? profile.createdAt.getTime() : Date.now();
+      if (profile) createdAt.set(tenantId, made);
+    }
+    caps = Date.now() - made < NEW_COMPANY_MS ? COMMS_SEND_ALLOWANCE.newCompany : COMMS_SEND_ALLOWANCE.established;
   }
-  const caps = Date.now() - made < NEW_COMPANY_MS ? COMMS_SEND_ALLOWANCE.newCompany : COMMS_SEND_ALLOWANCE.established;
+  const which = team ? "team" : "customer";
   for (const [bucket, limit, windowMs] of [
     ["hour", caps.hour, HOUR_MS],
     ["day", caps.day, DAY_MS],
   ] as const) {
-    const result = await limiter.limit({ key: \`comms-out:\${bucket}:\${tenantId}\`, policy: { limit, windowMs } });
+    const key = team ? \`comms-out-team:\${bucket}:\${tenantId}\` : \`comms-out:\${bucket}:\${tenantId}\`;
+    const result = await limiter.limit({ key, policy: { limit, windowMs } });
     if (!result.allowed) {
-      const last = reportedAt.get(tenantId) ?? 0;
+      const last = reportedAt.get(\`\${which}:\${tenantId}\`) ?? 0;
       if (Date.now() - last > HOUR_MS) {
-        reportedAt.set(tenantId, Date.now());
-        log.warn({ tenantId, bucket, limit }, "comms: a ${noun} reached its sending allowance; its emails are held");
+        reportedAt.set(\`\${which}:\${tenantId}\`, Date.now());
+        log.warn({ tenantId, bucket, limit, allowance: which }, "comms: a ${noun} reached its sending allowance; its emails are held");
         void reportError({
-          error: new Error(\`A ${noun} reached its sending allowance (\${limit} emails a\${bucket === "hour" ? "n hour" : " day"}); its emails are held until it refills.\`),
+          error: new Error(\`A ${noun} reached its \${which} sending allowance (\${limit} emails a\${bucket === "hour" ? "n hour" : " day"}); those emails are held until it refills.\`),
           source: "route",
           tenantId,
-          context: { feature: "comms", route: "allowance", bucket },
+          context: { feature: "comms", route: "allowance", bucket, allowance: which },
         });
       }
       return false;
@@ -2777,7 +3033,7 @@ ${identity}
  * throws. \`add email\` (pnpm dlx @adminigloo/create-app add email) rewrites
  * this file with Resend wired in.
  */
-export const commsSenders: CommsSenders = { identity: companyIdentity };
+export const commsSenders: CommsSenders = { identity: companyIdentity${onFailed ? `,${onFailed}\n` : " "}};
 
 /** False: an email "sent" from this project is logged as skipped. Promise none. */
 export const commsEmailConfigured: boolean = false;
@@ -2820,7 +3076,7 @@ function sendersOver(mailer: EmailSender): CommsSenders {
   return {
     identity: companyIdentity,
     // Each ${noun}'s sending allowance (above): asked before every email leaves.
-    allowance: companySendAllowance,
+    allowance: companySendAllowance,${onFailed.replace(/\n  /g, "\n    ")}
     // The template is plain text; comms hands over \`html\` already converted
     // (escaped first, then paragraphs and links), so a customer's name can
     // never become markup. The ${noun}'s name and reply-to ride on each
@@ -2888,7 +3144,7 @@ ${header}
  * and nothing throws. \`add email\` (pnpm dlx @adminigloo/create-app add email)
  * rewrites this file with Resend wired in.
  */
-export const commsSenders: CommsSenders = {};
+export const commsSenders: CommsSenders = {${onFailed ? `${onFailed}\n` : ""}};
 
 /** False: an email "sent" from this project is logged as skipped. Promise none. */
 export const commsEmailConfigured: boolean = false;
@@ -2921,7 +3177,7 @@ const mailer = createEmailSender({
   replyTo: env.EMAIL_REPLY_TO,
 });
 
-export const commsSenders: CommsSenders = {
+export const commsSenders: CommsSenders = {${onFailed}
   // The template is plain text; comms hands over \`html\` already converted
   // (escaped first, then paragraphs and links), so a customer's name can
   // never become markup. Never interpolate \`message.body\` into HTML yourself.
@@ -3106,6 +3362,13 @@ export function renderSchedulingNotify(answers: Answers): string {
   // 2a) — features-emit.ts writes that variant.
   if (isCompanies(answers)) return renderSchedulingNotifyCompanies(answers);
   const scope = answers.scope;
+  const alerts = answers.includeNotifications;
+  // ALERTS FIRST (Tenancy 2b-1, 4.5): the alert rows are written before the
+  // office email, so it finds them to claim. Inside an arrow (13.10 rule 3).
+  const alertListener = alerts ? ["(event) => alertOnSchedulingEvent(event)"] : [];
+  // The office email goes to Alert settings' choice where there is an Alert
+  // settings page to make it on (a shell); otherwise 2a's list (13.4).
+  const routed = alerts && answers.adminShell !== "none";
   const header = `/**
  * Who hears about each visit — the listeners every scheduling event is handed
  * to, after the write that caused it has committed.
@@ -3136,18 +3399,18 @@ export async function onSchedulingEvent(event: SchedulingEvent): Promise<void> {
 
   if (!answers.includeComms) {
     return `import type { DeliveryStatus, SchedulingEvent, SchedulingEventListener } from "${scope}/scheduling";
-import { log } from "@/server/logger";
+${alerts ? `import { alertOnSchedulingEvent } from "@/server/alerts";\n` : ""}import { log } from "@/server/logger";
 import { schedulingDeliveryStatus } from "@/server/scheduling-config";
 
 ${header}
 
 /**
- * EMPTY: ${answers.projectName} was generated without ${scope}/comms, so no
+ * ${alerts ? "THE ALERTS ONLY" : "EMPTY"}: ${answers.projectName} was generated without ${scope}/comms, so no
  * email is sent about a visit. Customers keep the manage link the booking
- * page hands them, and staff see requests in /admin/schedule.
+ * page hands them, and staff see requests in /admin/schedule${alerts ? " (and get the\n * alerts, in the app)" : ""}.
  * \`add comms\` (and \`add email\`) wires the emails in.
  */
-const LISTENERS: readonly SchedulingEventListener[] = [];
+const LISTENERS: readonly SchedulingEventListener[] = [${alertListener.join(", ")}];
 
 /** False: the booking page promises no email and shows the manage link to keep instead. */
 export const SCHEDULING_EMAILS_ENABLED: boolean = false;
@@ -3187,7 +3450,7 @@ import { getSchedulingSettings, type DeliveryStatus, type SchedulingEvent, type 
 import { SCHEDULING_COMMS_REF_TYPE, createSchedulingCommsListener } from "${scope}/scheduling/comms";
 import { db } from "@/db";
 import { env } from "@/env";
-import { commsEmailConfigured, commsSenders } from "@/server/comms-senders";
+${alerts ? `import { ${routed ? "alertOnSchedulingEvent, officeRecipientsFor, officeSentFor" : "alertOnSchedulingEvent"} } from "@/server/alerts";\n` : ""}import { commsEmailConfigured, commsSenders } from "@/server/comms-senders";
 import { log } from "@/server/logger";
 import { schedulingDeliveryStatus, schedulingLinks } from "@/server/scheduling-config";
 import { SCHEDULING_TENANT } from "@/server/scheduling-staff";
@@ -3229,12 +3492,21 @@ export const schedulingComms = createSchedulingCommsListener({
   senders: commsSenders,
   manageUrl: (token) => schedulingUrls.manage(token),
   bookUrl: schedulingUrls.book,${adminUrl}
-  staffEmails: env.BOOTSTRAP_ADMIN_EMAIL ? [env.BOOTSTRAP_ADMIN_EMAIL] : [],
+  staffEmails: env.BOOTSTRAP_ADMIN_EMAIL ? [env.BOOTSTRAP_ADMIN_EMAIL] : [],${routed ? `
+  // WHO GETS THE OFFICE EMAIL (Tenancy 2b-1, D6): the people Alert settings
+  // name for visit requests and customers' changes (every staff administrator until someone is
+  // chosen), each claimed once — never two emails for one event. The saved
+  // list in the feature's settings is no longer read; \`staffEmails\` above is
+  // read ONLY when this throws (review BO-02).
+  officeRecipients: (notice) => officeRecipientsFor(notice),
+  // A failed office email goes back to the alerts cron, sent once as a team
+  // alert (review BO-02).
+  officeSent: (notice, result) => officeSentFor(notice, result),` : ""}
   reminderRuns: REMINDER_RUNS,
   onError: (error, context) => log.error({ err: error, ...context }, "scheduling: an email step failed"),
 });
 
-const LISTENERS: readonly SchedulingEventListener[] = [schedulingComms.onEvent];
+const LISTENERS: readonly SchedulingEventListener[] = [${[...alertListener, "schedulingComms.onEvent"].join(", ")}];
 
 /**
  * Told to the booking widget through the public handler's \`emailsEnabled\`:
@@ -3368,6 +3640,10 @@ export function renderEstimatorNotify(answers: Answers): string {
   // A companies project: every company's estimate emails are its own.
   if (isCompanies(answers)) return renderEstimatorNotifyCompanies(answers);
   const scope = answers.scope;
+  const alerts = answers.includeNotifications;
+  // ALERTS FIRST (Tenancy 2b-1, 4.5), inside an arrow (13.10 rule 3).
+  const alertListener = alerts ? ["(event) => alertOnEstimatorEvent(event)"] : [];
+  const routed = alerts && answers.adminShell !== "none";
   const header = `/**
  * Who hears about each estimate — the listeners every estimator event is
  * handed to, after the write that caused it has committed.
@@ -3398,18 +3674,18 @@ export async function onEstimatorEvent(event: EstimatorEvent): Promise<void> {
 
   if (!answers.includeComms) {
     return `import type { EstimatorDelivery, EstimatorEvent, EstimatorEventListener } from "${scope}/estimator";
-import { estimatorDeliveryStatus } from "@/server/estimator-config";
+${alerts ? `import { alertOnEstimatorEvent } from "@/server/alerts";\n` : ""}import { estimatorDeliveryStatus } from "@/server/estimator-config";
 import { log } from "@/server/logger";
 
 ${header}
 
 /**
- * EMPTY: ${answers.projectName} was generated without ${scope}/comms, so no
- * email is sent about an estimate. New leads wait in /admin/estimates, and
+ * ${alerts ? "THE ALERTS ONLY" : "EMPTY"}: ${answers.projectName} was generated without ${scope}/comms, so no
+ * email is sent about an estimate. New leads wait in /admin/estimates${alerts ? " (and\n * staff get the alerts, in the app)" : ""}, and
  * staff copy a quote's link to the customer from the estimate ("Copy link").
  * \`add comms\` (and \`add email\`) wires the emails in.
  */
-const LISTENERS: readonly EstimatorEventListener[] = [];
+const LISTENERS: readonly EstimatorEventListener[] = [${alertListener.join(", ")}];
 
 /** False: the estimate page promises no email. */
 export const ESTIMATOR_EMAILS_ENABLED: boolean = false;
@@ -3435,7 +3711,7 @@ ${dispatch}`;
 import { createEstimatorCommsListener } from "${scope}/estimator/comms";
 import { db } from "@/db";
 import { env } from "@/env";
-import { commsEmailConfigured, commsSenders } from "@/server/comms-senders";
+${alerts ? `import { ${routed ? "alertOnEstimatorEvent, officeRecipientsFor, officeSentFor" : "alertOnEstimatorEvent"} } from "@/server/alerts";\n` : ""}import { commsEmailConfigured, commsSenders } from "@/server/comms-senders";
 import { estimatorDeliveryStatus, estimatorLinks } from "@/server/estimator-config";
 import { ESTIMATOR_TENANT } from "@/server/estimator-staff";
 import { log } from "@/server/logger";
@@ -3476,12 +3752,21 @@ export const estimatorComms = createEstimatorCommsListener({
   senders: commsSenders,
   quoteUrl: (token) => estimatorUrls.quote(token),
   adminEstimateUrl: (estimateId) => estimatorUrls.adminEstimate(estimateId),${bookUrl}
-  staffEmails: env.BOOTSTRAP_ADMIN_EMAIL ? [env.BOOTSTRAP_ADMIN_EMAIL] : [],
+  staffEmails: env.BOOTSTRAP_ADMIN_EMAIL ? [env.BOOTSTRAP_ADMIN_EMAIL] : [],${routed ? `
+  // WHO GETS THE OFFICE EMAIL (Tenancy 2b-1, D6): the people Alert settings
+  // name for new estimate requests and quote answers (every staff administrator until someone is
+  // chosen), each claimed once — never two emails for one event. The saved
+  // list in the feature's settings is no longer read; \`staffEmails\` above is
+  // read ONLY when this throws (review BO-02).
+  officeRecipients: (notice) => officeRecipientsFor(notice),
+  // A failed office email goes back to the alerts cron, sent once as a team
+  // alert (review BO-02).
+  officeSent: (notice, result) => officeSentFor(notice, result),` : ""}
   followUpRuns: FOLLOW_UP_RUNS,
   onError: (error, context) => log.error({ err: error, ...context }, "estimator: an email step failed"),
 });
 
-const LISTENERS: readonly EstimatorEventListener[] = [estimatorComms.onEvent];
+const LISTENERS: readonly EstimatorEventListener[] = [${[...alertListener, "estimatorComms.onEvent"].join(", ")}];
 
 /**
  * Told to the estimate page through the public handler's \`emailsEnabled\`:
@@ -3540,7 +3825,9 @@ export function renderEstimatorServices(answers: Answers): string {
   const estimatorTypes = [
     "type CreateEstimatorAdminHandlersOptions",
     "type CreateEstimatorHandlersOptions",
-    "type EstimatorPhotoStore",
+    // Only the variant without storage declares a photo store here; with
+    // storage it is files.ts's, re-exported.
+    ...(storage ? [] : ["type EstimatorPhotoStore"]),
     ...(invoicing ? ["type LinkedInvoice"] : []),
     "type PhotoReadingOffReason",
     ...(scheduling ? ["type LinkedVisit"] : []),
@@ -3564,11 +3851,10 @@ export function renderEstimatorServices(answers: Answers): string {
     ...(ai ? [`import { createAnthropicTakeoffRunner } from "${scope}/estimator/anthropic";`] : []),
     ...(invoicing ? [`import { createInvoice, invoiceInputFromEstimate, invoices, InvoicingError } from "${scope}/invoicing";`] : []),
     ...(scheduling ? [`import { getSchedulingSettings, schedulingBookings } from "${scope}/scheduling";`] : []),
-    ...(storage ? [`import { deleteFile, storeFile } from "${scope}/storage";`] : []),
-    ...(storage || scheduling || invoicing ? [`import { db } from "@/db";`] : []),
+    ...(scheduling || invoicing ? [`import { db } from "@/db";`] : []),
     `import { env } from "@/env";`,
     ...(ai ? [`import { anthropic, MODEL_RATES, recordAiUsage } from "@/server/ai";`] : []),
-    ...(storage ? [`import { getBlobStore } from "@/server/blob-store";`] : []),
+
     ...(companies && scheduling ? [`import { companyLinks } from "@/server/company-links";`] : []),
     ...(companies && invoicing ? [`import { companyAuthorizer, type FeatureHandlerOverrides } from "@/server/company-routes";`] : []),
     ...(configImports.length > 0 ? [`import { ${configImports.join(", ")} } from "@/server/estimator-config";`] : []),
@@ -3591,46 +3877,37 @@ export const ESTIMATOR_TIME_ZONE_HINTS: readonly (string | undefined)[] = [env.E
 
   const photos = storage
     ? `/**
- * Where a customer's photo is kept: this project's file storage, as a row in
- * stored_files (kind "estimator.photo") with the bytes in the blob store
- * behind src/server/blob-store.ts. The estimator package never sees the vendor.
+ * Where a customer's photo is kept (Tenancy 2b-1, 10.5): PRIVATELY, with its
+ * estimate, in this project's file storage — \`files.purposeStore("estimator.photo")\`
+ * in src/server/files.ts, the private store's "estimator.photo" purpose.
+ * Counted, never refused because the ${companies ? "company" : "business"} is full (it is a lead), and
+ * capped at a fifth of the room so strangers can't fill what the crew's job
+ * photos need; served only through the staff screens. Once the lead is sent
+ * the photo is filed on its estimate ("Estimate 1042 · Pat Rivera").
  *
  * KEPT so the business sees the steps before anybody drives out — the photo
- * is on the estimate in /admin/estimates/[id], beside what the AI saw in it.
- * One a customer uploaded and never sent is deleted after two days by
- * /api/cron/estimator.
+ * is on the estimate's page, beside what the AI saw in it. One a customer
+ * uploaded and never sent is deleted after two days by /api/cron/estimator.
  *
- * Undefined while BLOB_READ_WRITE_TOKEN is unset: photos are then read (with
- * --ai) and not kept, and the staff screens say "Photos can't be kept: no file
- * storage is connected."
+ * Undefined while the private store isn't connected: photos are then read
+ * (with --ai) and not kept, and the staff screens say so.
+ *
+ * STAFF's own photos of an estimate are kept apart (review SEC-02):
+ * \`estimatorStaffPhotoStore\`, the private store's "estimator.staff-photo"
+ * purpose, counted and refused like the crew's job photos and never by the
+ * customers' share — so strangers sending leads with photos can't stop the
+ * business adding its own. The staff handlers get it as \`staffPhotoStore\`.
  */
-const blobStore = getBlobStore();
-
-export const estimatorPhotoStore: EstimatorPhotoStore | undefined = blobStore
-  ? {
-      put: async ({ tenantId, bytes, contentType, filename }) => {
-        const row = await storeFile(db, blobStore, {
-          tenantId,
-          ownerId: "estimator",
-          kind: "estimator.photo",
-          filename,
-          contentType,
-          sizeBytes: bytes.byteLength,
-          body: bytes,
-        });
-        return { fileId: row.id, url: row.url };
-      },
-      delete: async ({ tenantId, fileId }) => {
-        await deleteFile(db, blobStore, { id: fileId, tenantId });
-      },
-    }
-  : undefined;`
+export { estimatorPhotoStore, estimatorStaffPhotoStore } from "@/server/files";`
     : `/**
  * Where a customer's photo would be kept. Nowhere: ${answers.projectName} was
  * generated without file storage, so a photo is read (with --ai) and not kept,
  * and the staff screens say so. \`add storage\` wires it in.
  */
-export const estimatorPhotoStore: EstimatorPhotoStore | undefined = undefined;`;
+export const estimatorPhotoStore: EstimatorPhotoStore | undefined = undefined;
+
+/** Where staff's own estimate photos would be kept: nowhere, for the same reason. */
+export const estimatorStaffPhotoStore: EstimatorPhotoStore | undefined = undefined;`;
 
   const reading = ai
     ? `/**
@@ -4029,6 +4306,15 @@ export function renderAuditRegistry(answers: Answers): string {
   ];
   const fragments = ["adminAuditedActions", "tenancyAuditedActions"];
 
+  if (answers.includeNotifications) {
+    // Who hears about new work (Tenancy 2b-1, review SEC-04): every saved
+    // list in Alert settings, and an outside address added to one (sensitive:
+    // it gets every lead's name, phone and address from then on). Written by
+    // src/server/alerts-routes.ts through the package's `audit` seam.
+    imports.push(`import { notificationsAuditedActions } from "${scope}/notifications";`);
+    fragments.push("notificationsAuditedActions");
+  }
+
   if (answers.includeScheduling && answers.tenantNoun === "none") {
     // Giving a crew member their route (the crew-only staff role) and taking
     // it away — a single business's crew. Declared beside the decision in
@@ -4145,12 +4431,6 @@ export function renderAppRouter(answers: Answers): string {
   if (answers.includeFeedback) {
     imports.splice(1, 0, 'import { feedbackRouter } from "./feedback";');
   }
-  if (answers.includeStorage) {
-    imports.splice(1, 0, 'import { filesRouter } from "./files";');
-  }
-  if (answers.includeNotifications) {
-    imports.splice(1, 0, 'import { notificationsRouter } from "./notifications";');
-  }
   if (answers.includeSeoReports) {
     imports.splice(1, 0, 'import { seoRouter } from "./seo";');
   }
@@ -4205,22 +4485,12 @@ export function renderAppRouter(answers: Answers): string {
 `
     : "";
 
-  const notifications = answers.includeNotifications
-    ? `
-  // Each signed-in person's own inbox. The recipient comes from the session,
-  // never from input — a guessed id reads nothing and marks nothing.
-  notifications: notificationsRouter,
-`
-    : "";
-
-  const storage = answers.includeStorage
-    ? `
-  // The staff file library. Listing and deleting only — the upload is the
-  // /api/files route handler, per the large-payloads rule at the top of this
-  // file.
-  files: filesRouter,
-`
-    : "";
+  // Alerts and files have no router here (Tenancy 2b-1, D16; 2a D3's
+  // reason): the bell, the alerts page, Alert settings, a record's photos and
+  // files and the Files screen speak HTTP to the packages' own handlers
+  // (/api/app/{id}/alerts and /files, or /api/admin/… for one business) —
+  // the wire the widgets are built against, one path rather than a tRPC copy
+  // of it that drifts. The 0.1 `notifications` and `files` routers are gone.
 
   const assistant = answers.includeAssistant
     ? `
@@ -4321,7 +4591,7 @@ export const appRouter = createTRPCRouter({
   // writes actually live. Mounted even in a project generated without the admin
   // shell, so the panel can be added later without re-deriving its boundary.
   admin: adminRouter,
-${ai}${feedback}${seo}${notifications}${storage}${assistant}${aeo}${shop}});
+${ai}${feedback}${seo}${assistant}${aeo}${shop}});
 
 export type AppRouter = typeof appRouter;
 `;
@@ -4374,6 +4644,23 @@ export function renderSchemaModule(answers: Answers): string {
   );
   const reExports = owners.map((owner) => `export * from "${scope}/${owner}/schema";`);
   const spread = owners.map((owner) => `  ...${binding(owner)},`);
+  // Names two schema modules both export, which TypeScript refuses to pass on
+  // through two `export *` lines (TS2308). An explicit re-export settles it.
+  // Today: alerts and files each name their own table-name error
+  // InvalidTableNameError (neither is a table, so drizzle never reads it).
+  const clashes =
+    answers.includeNotifications && answers.includeStorage
+      ? [
+          "",
+          "/**",
+          " * Alerts and files each name their own table-name error",
+          " * InvalidTableNameError (neither is a table). Two `export *` lines can't",
+          " * both pass the name on, so this one says which does; import either",
+          " * package's own from that package.",
+          " */",
+          `export { InvalidTableNameError } from "${scope}/storage/schema";`,
+        ]
+      : [];
 
   return `/**
  * ${answers.projectName} schema.
@@ -4407,7 +4694,7 @@ export function renderSchemaModule(answers: Answers): string {
  */
 ${imports.join("\n")}
 
-${reExports.join("\n")}
+${[...reExports, ...clashes].join("\n")}
 
 /** Every table above, as the one object \`createDb\` needs. */
 export const schema = {
@@ -4669,6 +4956,17 @@ export function renderSiteNav(answers: Answers): string {
       label: "Messages",
       permission: "comms.view",
       why: `The emails the ${label}'s customers get, their wording, and what went out.`,
+    });
+  }
+  // Tenancy 2b-1: the company's Files screen, after Messages. (Alerts need
+  // no link: the bell is in the header, and its menu opens the alerts page
+  // and Alert settings.)
+  if (!single && answers.includeStorage) {
+    companyFeatureLinks.push({
+      href: "/app/files",
+      label: "Files",
+      permission: "files.view",
+      why: `The photos and files the ${label} keeps, what each is attached to, and how much room is left.`,
     });
   }
   const app: GeneratedLink[] =
@@ -5028,19 +5326,21 @@ export function renderAdminNav(answers: Answers): string {
         },
   ];
 
-  // The inbox belongs beside the dashboard, not in a feature group: it is the
-  // first screen a shift starts on, and events from EVERY feature write it.
-  // From the notifications-admin overlay, which this function only runs
-  // alongside — no shell, no entry, no page.
-  if (answers.includeNotifications) {
+  // The alerts page belongs beside the dashboard, not in a feature group: it
+  // is the first screen a shift starts on, and events from EVERY feature write
+  // it. From the notifications-admin overlay — a single business's (a
+  // company's alerts are in its own area) — which this function only runs
+  // alongside: no shell, no entry, no page. Tenancy 2b-1 renamed it from
+  // Inbox; /admin/inbox redirects here.
+  if (answers.includeNotifications && answers.tenantNoun === "none") {
     overviewItems.push({
-      href: "/admin/inbox",
-      label: "Inbox",
-      permission: "staff.dashboard.view",
+      href: "/admin/alerts",
+      label: "Alerts",
+      permission: "staff.alerts.view",
       why:
-        "Your own notifications, resolved from the session server-side. " +
-        "Rows are written by events at the moment they happen, so this page " +
-        "answers \"what happened while I was away\" without four screens.",
+        "Your own alerts — new estimate requests, visit requests, customers' " +
+        "changes, invoices opened, paid or overdue — with how you get each " +
+        "one and who hears about new work in Alert settings.",
     });
   }
 
@@ -5152,15 +5452,18 @@ export function renderAdminNav(answers: Answers): string {
         "this page nor this entry.",
     });
   }
-  if (answers.includeStorage) {
+  // A single business's Files screen (storage-admin). A company's files are
+  // in its own area (/app/files), never the platform's admin.
+  if (answers.includeStorage && answers.tenantNoun === "none") {
     operations.push({
       href: "/admin/files",
       label: "Files",
-      permission: "staff.dashboard.view",
+      permission: "staff.files.view",
       why:
-        "The firm's file library from the storage package: rows in " +
-        "stored_files, bytes in the blob store behind the adapter, and " +
-        "deleting one removes both.",
+        "The business's photos and files from the storage package — on its " +
+        "visits, estimates and invoices, and its own — with what each is " +
+        "attached to and how much room is left. Deleting one removes the " +
+        "stored copy too.",
     });
   }
   if (answers.includeAssistant) {

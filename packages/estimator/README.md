@@ -73,6 +73,8 @@ sent (`settings_incomplete`). A product that would price at $0 is answered as
 | `+ ./comms` (with `@adminigloo/comms`) | Seven plain-text emails, a follow-up queued for the cron and withdrawn on any answer, and no quote link ever left in the delivery log. | Comms' three tables, your mail sender, and the cron route (see [Emails](#emails-comms)). |
 | `+ ./anthropic` (with `@anthropic-ai/sdk`) | The photo reading: one small call per photo on Claude Haiku 4.5. | Your `new Anthropic()` client (the package never reads a key). |
 | `+ @adminigloo/estimator-widget` | `<EstimateTool>`, `<QuoteView>`, and the admin: price book, queue, editor, settings, embed keys. | The two routes below. |
+| `+ @adminigloo/notifications` (Tenancy 2b-1) | The bell's alerts about leads and quote answers (`estimatorAlertKinds`, `estimatorAlertsFor`), and the office emails sent to the people chosen in Alert settings (`officeRecipients`, `officeSent`). See [Alerts and files](#alerts-and-files-tenancy-2b-1). | Pass the fragment to `defineAlertRegistry` and the drafts to `alerts.notify` before the comms listener runs. |
+| `+ @adminigloo/storage` (Tenancy 2b-1) | Customers' estimate photos kept privately with their estimate (`estimatorPhotoPurpose`), staff's own photos kept apart from them (`estimatorStaffPhotoPurpose`), both filed on the estimate (`attach`), and other files on an estimate (`estimatorFileRecords`), the estimate's permissions deciding who sees them. A full store answered in the estimator's own words. | Add both purposes and the record type to `createStorage`, pass `storage.purposeStore("estimator.photo")` as the `photoStore` and `storage.purposeStore("estimator.staff-photo")` as the admin handlers' `staffPhotoStore`. |
 | `create-adminigloo-app --estimator` | All of the above, wired, for one business. | — |
 
 ## Not included
@@ -95,9 +97,10 @@ sent (`settings_incomplete`). A product that would price at $0 is answered as
   address as typed.
 - Turning an estimate into a job or project, beyond booking the visit and
   invoicing it.
-- Per-company boards and widgets for feedback, notifications, files, the
-  assistant, analytics, SEO/AEO and book-a-call: Tenancy 2b. (The estimator
-  itself is per company since 0.4: see [Companies](#companies-tenancy-2a).)
+- What Tenancy 2b-1 leaves out (alerts, and photos and files per company,
+  are in 0.5): see [Not included (Tenancy 2b-1)](#not-included-tenancy-2b-1).
+  (The estimator itself is per company since 0.4: see
+  [Companies](#companies-tenancy-2a).)
 - Payments to companies, plans and billing per company, custom domains,
   impersonation, per-company SEO and search indexing of company pages.
 - Logo and colour inside emails. Emails carry the company's name and reply-to;
@@ -654,9 +657,12 @@ asked.
 
 **Kept for the business.** A customer's photo (and any staff add) is stored
 through a `photoStore` you pass in, linked to the estimate on submit, and shown
-in the editor. A visitor may leave at most 12 photos a day that they never
-send (the business at most 500; `photoLimits` on the handler), counted in the
-database. Unsubmitted photos are deleted after 48 hours (`purgeOrphanPhotos`,
+in the editor. A visitor may leave at most 12 photos in any 24 hours, sent
+with a lead or not (the business at most 500 from all its visitors;
+`photoLimits` on the handler), counted in the database. A photo is named in
+plain words on the way to the store ("Customer photo.jpg", "Estimate
+photo.jpg" for one staff added): `filename` is a name a person reads, not a
+unique key, so keep the bytes under a key of your own. Unsubmitted photos are deleted after 48 hours (`purgeOrphanPhotos`,
 from the cron; pass `timeBudgetMs` and it keeps going, a batch at a time,
 until they are gone or the time is up).
 
@@ -665,8 +671,15 @@ const photoStore: EstimatorPhotoStore = {
   put: async ({ tenantId, bytes, contentType, filename }) => {/* save; return { fileId, url } */},
   delete: async ({ tenantId, fileId }) => {/* remove */},
   urlFor: ({ url }) => url, // optional: a signed URL for staff
+  attach: async ({ tenantId, fileId, record }) => {/* optional (0.5): file it on its estimate */},
 };
 ```
+
+With `@adminigloo/storage` 0.2 the store is `storage.purposeStore("estimator.photo")`
+(see [Alerts and files](#alerts-and-files-tenancy-2b-1)): the photo is kept
+privately, put on its estimate once the lead is saved (`attach`), and a store
+that is full, or refuses the file, is answered with the estimator's own
+sentence, never an error page.
 
 **The AI does no math.** The model is asked only to count risers and judge one
 riser's height, and answers a tiny strict JSON
@@ -771,7 +784,11 @@ const { handle } = createEstimatorAdminHandlers({ db, tenantId: "primary", autho
 (both with `version`). With `x-adminigloo-key` it serves the embed on the
 business's own website: the key's allowed websites are checked and CORS
 answers that page. Without a key it serves the business's own pages
-(same-origin, every POST checked against cross-site requests). The lead form's
+(same-origin: a POST from any other page is refused, a page on another
+subdomain of the same domain included, since it carries the signed-in
+session cookie; your own website uses the key). Every body is read with a
+cap, counted as it arrives (a photo body about 900 KB), so a server with no
+platform limit is never made to hold a huge request. The lead form's
 honeypot and minimum fill time run before any database work.
 
 **The rate limit.** `rateLimit(req, bucket, { tenantId, keyId })` is asked per
@@ -1003,6 +1020,195 @@ widget says it isn't taking estimates).
 `authorize(req, permission, tenantId)` (returning `{ userId }`, `false`, or a
 `Response`), `admit`, `company` and `staffEmails` from its own tables.
 
+## Alerts and files (Tenancy 2b-1)
+
+0.5 lets a company hear about its leads in the app (a bell, with
+`@adminigloo/notifications`) and keep its estimate photos privately
+(`@adminigloo/storage`). Everything here is optional: a host passing none of
+it gets 0.4's behaviour. The estimator imports neither package; the shapes are
+declared here and match theirs exactly.
+
+### The alert kinds
+
+| Kind | Alert settings says | Default | The email |
+| --- | --- | --- | --- |
+| `estimator.lead` | "Someone asks for an estimate" | In the app and by email | the estimator's office email (`estimate_lead_staff`) |
+| `estimator.quote.accepted` | "A customer accepts a quote" | In the app and by email | the office notice (`quote_staff_notice`) |
+| `estimator.quote.declined` | "A customer declines a quote" | In the app and by email | the office notice |
+| `estimator.quote.expired` | "A quote lapses unanswered" | In the app and by email | the office notice |
+
+All are under "Estimates", for the "New estimate requests and quote answers"
+group (key `estimates`, chosen from people with `estimator.view`); until the
+owner chooses people for it, it is the company's owner. Staff-made changes
+alert nobody.
+
+`estimatorAlertsFor(event, { hrefs: { estimate: "/app/estimates/{id}" }, locale })`
+is pure (the event has everything):
+
+| Event | Title | Body |
+| --- | --- | --- |
+| a lead | "New estimate request: Pat Rivera, $480 – $620 + tax (EST-2026-0001)": the price as the office email and the customer were told it (before tax, "+ tax" when tax applies) and the estimate's number | up to three lines ("Modular aluminum ramp × 1"), "and 2 more", the address, "Phone: (801) 555-0101" |
+| accepted | "Pat Rivera accepted quote 1042 ($549.50)" | "Their note: …" when they left one |
+| declined | "Pat Rivera declined quote 1042" | "Their note: …" |
+| lapsed | "Quote 1042 for Pat Rivera lapsed unanswered" | none |
+
+The range is the one the customer saw, in whole units of the business's money
+(`locale` is the business's); when the low and high are the same it is the
+estimate's total, and a lead with no price yet says "no price yet".
+
+```ts
+import { estimatorAlertKinds, estimatorAlertsFor } from "@adminigloo/estimator";
+
+const ALERT_REGISTRY = defineAlertRegistry([estimatorAlertKinds /* , … the other packages' fragments */]);
+
+// Alerts FIRST, then the comms listener: the office email claims the alert's email.
+const onEvent = async (event: EstimatorEvent) => {
+  const settings = await getEstimatorSettings(db, event.tenantId);
+  await alerts.notify(estimatorAlertsFor(event, { hrefs: { estimate: "/app/estimates/{id}" }, locale: settings.locale }));
+  await estimatorComms.onEvent(event);
+};
+```
+
+### Office emails through the one setting
+
+```ts
+const estimatorComms = createEstimatorCommsListener({
+  db, senders, quoteUrl, company,
+  staffEmails: async (id) => (await company(id))?.inbox ?? [], // used only if officeRecipients throws
+  officeRecipients: (notice) => alerts.claimEmails(notice),
+  officeSent: async (notice, result) => {
+    if (result.status === "failed" && result.retryable) await alerts.releaseClaim({ ...notice, to: result.to });
+  },
+});
+```
+
+Exactly as scheduling's: `officeRecipients(notice)` decides who gets the lead
+email and the quote notices (the saved "Lead alerts" list is not read, `[]`
+sends nothing, a throw is reported as `office-recipients` and the email goes
+to `staffEmails`). The notice carries the alert's `kind` and `dedupeKey`
+(the mapper's own), the event's id and `assignedUserIds: []`. Each email goes
+through comms' `deliverNow` with 2a's template, reply-to (the customer) and
+idempotency key, and `officeSent` hears `sent`, `skipped` or `failed` and
+whether trying again could help; a send past `sendTimeoutMs` is not handed
+over (it may have gone) and is reported as `office-timeout`. Without
+`officeRecipients`, 0.4 exactly.
+
+**Settings.** `createEstimatorAdminHandlers({ …, alertsHref: "/app/alerts/settings" })`:
+`GET settings` answers `alertRecipients: { href }`, the "Lead alerts" panel
+links to Alert settings instead of its address list, and a save drops
+`leadNotifyEmails` (never an error; a body of only that saves nothing).
+
+### Photos and files
+
+```ts
+import { estimatorFileRecords, estimatorPhotoPurpose, estimatorStaffPhotoPurpose } from "@adminigloo/estimator";
+
+const storage = createStorage({
+  /* … */
+  purposes: [...STORAGE_BUILT_IN_PURPOSES, estimatorPhotoPurpose, estimatorStaffPhotoPurpose],
+  records: [...estimatorFileRecords(db, { estimateHref: "/app/estimates/{id}" })],
+});
+createEstimatorHandlers({ /* … */ photoStore: storage.purposeStore("estimator.photo") });
+createEstimatorAdminHandlers({
+  /* … */
+  photoStore: storage.purposeStore("estimator.photo"),
+  staffPhotoStore: storage.purposeStore("estimator.staff-photo"),
+});
+```
+
+- **`estimatorPhotoPurpose`** (`estimator.photo`, "Estimate photo"): private;
+  JPEG, PNG or WebP up to 4 MB; counted in the company's storage but never
+  refused because the company is full (a customer's photo is a lead), and
+  never more than a fifth of the room, so visitors can't fill the space the
+  crew's job photos need. It isn't listed on the Files screen until it is on
+  its estimate, and it is removed from the estimate's Photos panel, not from
+  Files.
+- **`estimatorStaffPhotoPurpose`** (`estimator.staff-photo`, "Estimate photo
+  added by staff"): the photos staff add to an estimate, through the admin
+  handlers' `staffPhotoStore`. Kept apart from customers' photos, so a share
+  filled by strangers' leads never refuses the business's own photos;
+  counted and refused like the crew's job photos. Without `staffPhotoStore`,
+  staff photos go to `photoStore` as in 0.4. A staff photo added before you
+  pass it stays where it is: storage's purpose stores open and remove any of
+  the company's files by id, so it still shows and goes.
+- **Photos go on their estimate.** Once a lead with photos is saved, and once
+  staff add a photo, each is put on its estimate (`attach`), so the Files
+  screen says "Estimate 1042 · Pat Rivera" and the estimate's permissions
+  decide who opens it. A store that won't is reported (step `photo-attach`)
+  and changes nothing else.
+- **A full store is the estimator's own sentence.** A storage refusal
+  (`name: "StorageError"`, checked by name, never `instanceof`) becomes:
+  full → `photo_limit` ("You've added as many photos as we can take today.
+  Send your estimate without more, and the business can ask for them."; staff
+  read where room can be made: "The owner can free some up on the Files
+  screen, or remove photos from estimates" when the company is full, and
+  "Remove photos you don't need from your estimates" when the share kept
+  for estimate photos is, since Files can't remove those); the wrong type or
+  too big → `photo_invalid` with the usual sentence; storage switched off →
+  `photos_disabled`. The public photo route answers 4xx, never 500; a photo
+  reading keeps going without the copy; the lead still goes in.
+- **`estimatorFileRecords`**: one record type, `estimator.estimate`
+  ("Estimate", "Estimates"). `estimator.view` sees an estimate's files,
+  `estimator.estimates.manage` adds and removes them; nobody is assigned.
+  `find` is one query in the company, labelled "Estimate 1042 · Pat Rivera".
+
+**A foreign host** without these packages passes its own `photoStore` (with
+or without `attach`) and, if it has its own inbox, reads the alert drafts as
+plain data; `officeRecipients` may read its own table of who hears about new
+leads.
+
+### Not included (Tenancy 2b-1)
+
+- **The feedback board per company, and the complete board** — Tenancy 2b-2.
+  It will keep screenshots as these private files and send its alerts through
+  these notifications. Until then, feedback screenshots stay on the public
+  Blob store as in 2a.
+- **The AI assistant per company** — Tenancy 2b-3.
+- **Website analytics, SEO/AEO and book-a-call (booking) per company** —
+  Tenancy 2b-4.
+- **Text (SMS) and push alerts.** Alerts come in the app and by email — S9.
+- **Plans, limits and billing enforcement** — the billing chunk. Each
+  company's storage allowance is one setting for everyone
+  (`FILES_ALLOWANCE_MB`) until then; the seam the billing chunk fills is
+  there.
+- **Stripe Connect** (customers paying a company by card).
+- **Custom domains.**
+- **Virus scanning of uploads.** Files are checked for their type and size
+  only.
+- **Uploads over 4 MB, and uploads straight from the browser to storage.**
+  Phone photos are made smaller before they're sent; other files over 4 MB are
+  refused with a plain sentence.
+- **Serving files straight from S3 or R2 by presigned link.** Every private
+  file is sent through the site's own route.
+- **Thumbnails.** Photos are shown at their (shrunk) size.
+- **Turning a kind of alert off.** Each kind comes in the app, or in the app
+  and by email; who gets the work alerts is the owner's choice.
+- **Alerts from your other companies in the bell.** The bell shows the
+  company you're working in.
+- **A daily or weekly digest of alerts.**
+- **Customers seeing files** (photos on their quote or invoice page).
+- **Editing the wording of the team alert email** beyond the Messages screen
+  (it is the `team_alert` message there).
+- **Carrying 2a's per-feature alert address lists over.** With alerts
+  installed, the people (and extra addresses) are chosen again in Alert
+  settings; the old lists are no longer read.
+- **Alert settings in a single-business project without an admin shell.** Its
+  staff get the bell; the office emails keep 2a's lists.
+- **A transactional outbox.** Alerts are written right after the change they
+  report (D8); the events package (S2) brings the outbox.
+- **Crew alerts when the office moves, reassigns or cancels their visit.**
+  Only a customer's change alerts the crew.
+- **An alert when a customer opens a quote** (invoices only).
+- **A history of cron runs, and an alert when a cron fails.**
+- **Alerts for the platform owner** (a new company, a company out of
+  storage). A company's storage refusal is reported in `/admin/errors` once a
+  day.
+- **Giving one company more storage than the others.** `FILES_ALLOWANCE_MB`
+  is one number until the billing chunk.
+- **Checking an address before it gets a company's alert emails.** The owner
+  adds up to five per group; the company's team sending allowance bounds what
+  they get.
+
 ## Upgrading from 0.2
 
 Run your migration generator (`drizzle-kit generate` and `migrate`). For a host
@@ -1150,4 +1356,9 @@ supply lines and labor hours, and check it in *Test a quote*.
 `pnpm test` runs on PGlite (real Postgres in WASM) and an in-memory fake for
 0.2's suites; no network and no model calls. The acceptance test is
 `src/__tests__/business-scenario.test.ts`; `review-fixes.test.ts` holds one
-test per finding of the 2026-10-12 review.
+test per finding of the 2026-10-12 review. Tenancy 2b-1's are `alerts.test.ts`
+(the mapper and the office emails agree on kind and key for every event and
+actor, `{range}`, `officeRecipients` / `officeSent` on the real comms tables,
+`alertsHref`), `files.test.ts` (the record type and the photo purpose) and
+`photo-storage.test.ts` (each storage refusal from the photo route, the staff
+route and a reading, and `attach` after commit).

@@ -42,7 +42,7 @@
   "peerDependencies": {
     "drizzle-orm": "catalog:peers",
     "zod": "catalog:peers",
-    "@adminigloo/comms": "^0.3.0"
+    "@adminigloo/comms": "^0.4.0"
   },
   "devDependencies": {
     "@adminigloo/comms": "workspace:^",

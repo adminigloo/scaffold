@@ -6,6 +6,7 @@ import type { BrandColorReport } from "../color.js";
 import type { SetupChecklist } from "../checklist.js";
 import type { TenantRoleSet } from "../roles.js";
 import type { TenantSettingsRegistry } from "../settings.js";
+import type { TenancyEvent, TenancyEventListener } from "../events.js";
 import type {
   AuditLineWire,
   ChecklistWire,
@@ -30,14 +31,24 @@ export interface TenancyNoun {
   readonly plural: string;
 }
 
-/** Where logos are stored (create-app adapts its blob store). */
+/**
+ * Where logos are stored (create-app: storage 0.2's `logoStore()`).
+ *
+ * Tenancy 2b-1 (8.3): both calls are told the COMPANY, because a store that
+ * keeps files per company (storage 0.2: a row per company, an allowance per
+ * company) can't file a logo under the right company from a pathname alone.
+ * Additive: a 0.5 store that ignores both still works.
+ */
 export interface LogoStore {
   put(input: {
     readonly pathname: string;
     readonly bytes: Uint8Array;
     readonly contentType: string;
+    /** Tenancy 0.6: the company the logo is for (a store that keeps files per company needs it). */
+    readonly tenantId: string;
   }): Promise<{ readonly url: string; readonly key: string }>;
-  delete(key: string): Promise<void>;
+  /** Tenancy 0.6 passes the company as `context`. */
+  delete(key: string, context?: { readonly tenantId: string }): Promise<void>;
 }
 
 /**
@@ -72,37 +83,12 @@ export interface TenancyAuditEvent {
 /** Called INSIDE the transaction (D17): the audit row commits with the change, or neither does. */
 export type TenancyAuditSink = (tx: TenancyDb, event: TenancyAuditEvent) => Promise<void>;
 
-export type TenancyEvent =
-  | { readonly type: "company.created"; readonly tenantId: string; readonly userId: string }
-  | { readonly type: "member.joined"; readonly tenantId: string; readonly userId: string; readonly via: "invitation" | "verified-email" }
-  | { readonly type: "member.removed" | "member.left"; readonly tenantId: string; readonly userId: string; readonly by: string }
-  | {
-      readonly type: "member.role.changed";
-      readonly tenantId: string;
-      readonly userId: string;
-      readonly from: RoleKey | null;
-      readonly to: RoleKey;
-      readonly by: string;
-    }
-  | { readonly type: "ownership.transferred"; readonly tenantId: string; readonly from: string; readonly to: string }
-  | { readonly type: "company.suspended" | "company.reactivated"; readonly tenantId: string; readonly by: string }
-  | { readonly type: "invitation.sent"; readonly tenantId: string; readonly invitationId: string; readonly by: string }
-  /**
-   * Tenancy 2a: a settings section saved (`changed`: the same field list as
-   * its audit row). Scheduling's zone convergence listens for section
-   * "company" with "timeZone" in `changed` (D5).
-   */
-  | {
-      readonly type: "company.settings.updated";
-      readonly tenantId: string;
-      readonly section: string;
-      readonly changed: readonly string[];
-      readonly by: string;
-    }
-  | { readonly type: "company.profile.updated"; readonly tenantId: string; readonly changed: readonly ("name" | "slug")[]; readonly by: string }
-  | { readonly type: "company.branding.updated"; readonly tenantId: string; readonly by: string };
-
-export type TenancyEventListener = (event: TenancyEvent) => void | Promise<void>;
+/**
+ * The events (Tenancy 2b-1: declared in the root-safe `../events.ts`, so the
+ * root's alert mapper can name them; re-exported here, so every `./server`
+ * import keeps working).
+ */
+export type { TenancyEvent, TenancyEventInput, TenancyEventListener, TenancyEventPerson } from "../events.js";
 
 export interface CreateTenancyServiceOptions {
   readonly db: TenancyDb;
@@ -649,11 +635,35 @@ export interface TenancyService {
    * NO permission check, like `readSettings`. null for an unknown or deleted id.
    */
   companyProfile(tenantId: string): Promise<CompanyProfile | null>;
-  /** The company's active members as people (no permission check): never the site's whole user table. */
-  listMemberPeople(tenantId: string): Promise<readonly MemberPerson[]>;
+  /**
+   * The company's active members as people (no permission check): never the
+   * site's whole user table.
+   *
+   * Tenancy 2b-1 (8.2): with `holding`, only the active members whose
+   * resolved permission set in this company (their role's grants and their
+   * own overrides, exactly as a request resolves it) includes that key. THREE
+   * queries whatever the team size, so an alert costs the same for a team of
+   * 3 or 30 (notifications' `people()` is this). Without it, 2a's behaviour.
+   */
+  listMemberPeople(tenantId: string, options?: { readonly holding?: string }): Promise<readonly MemberPerson[]>;
   /**
    * Every company a cron should serve: companies mode → kind 'org', personal
    * mode → kind 'personal'; never suspended or deleted; ordered by id.
    */
   activeCompanyIds(): Promise<readonly string[]>;
+
+  // Tenancy 2b-1
+  /**
+   * Wait for the `onEvent` listeners pending NOW (at most `timeoutMs`,
+   * default 5000), never throwing. `emit` stays fire-and-forget for direct
+   * service callers; the HTTP handlers await this before answering any POST.
+   *
+   * WHY. On a serverless platform a promise left running after the response
+   * is often frozen, and the listener that got cut off was the one that
+   * mattered: "Cam joined the team", or a removed member's alerts being
+   * forgotten. The scheduling and estimator events already promise "awaited,
+   * in order"; this brings tenancy's handlers to the same place, without
+   * making a slow listener fail or hold the act it reports on past the bound.
+   */
+  settleEvents(timeoutMs?: number): Promise<void>;
 }

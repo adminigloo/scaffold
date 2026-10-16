@@ -165,7 +165,7 @@ jobs:
           # own area (/app) and public pages (/t/{web address}).
           - id: estimator-field-service
             flags: --estimator --scheduling --invoicing --comms --email --storage --ai --admin full
-            overlays: admin-minimal, admin-full, ai, comms-companies, companies, email, estimator, estimator-companies, invoicing-companies, scheduling, scheduling-companies, storage, storage-admin
+            overlays: admin-minimal, admin-full, ai, comms-companies, companies, email, estimator, estimator-companies, invoicing-companies, scheduling, scheduling-companies, storage, storage-companies, storage-visits-companies
 
           # Overlays: the same four field-service features for ONE business
           # (--tenant-noun none, Tenancy 2a): the fixed business, the staff
@@ -173,7 +173,7 @@ jobs:
           # handlers and widgets, like scheduling and the estimator.
           - id: field-service-single
             flags: --tenant-noun none --admin minimal --estimator --scheduling --invoicing --comms --email
-            overlays: admin-minimal, comms-admin, comms-single, email, estimator, estimator-admin, estimator-single, invoicing-admin, invoicing-single, scheduling, scheduling-admin, scheduling-single, storage, storage-admin
+            overlays: admin-minimal, comms-admin, comms-single, email, estimator, estimator-admin, estimator-single, invoicing-admin, invoicing-single, scheduling, scheduling-admin, scheduling-single, storage, storage-admin, storage-single, storage-visits-admin
 
           # Overlays: the estimator with the least around it — the minimal
           # shell, no comms (no emails, no follow-ups), no storage (photos read

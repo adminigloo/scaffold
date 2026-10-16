@@ -241,8 +241,10 @@ export interface SettingsWire {
   updatedAt: Instant | null;
   /** The name, zone and contact come from the company profile (Tenancy 2a): show them read-only, linking here. null = editable here. */
   managedByCompany: { href: string | null } | null;
+  /** Who gets the new-request alerts is chosen in Alert settings (Tenancy 2b-1): show this link instead of the address list. null = the list is edited here. */
+  alertRecipients: { href: string | null } | null;
 }
-export type SettingsPatch = Partial<Omit<SettingsWire, "saved" | "updatedAt" | "managedByCompany">> & {
+export type SettingsPatch = Partial<Omit<SettingsWire, "saved" | "updatedAt" | "managedByCompany" | "alertRecipients">> & {
   notifyCustomers?: boolean; // with a new timeZone: email each upcoming visit's customer the corrected time
 };
 

@@ -68,8 +68,9 @@ describe("keeping photos", () => {
     const bytes = jpeg(768, 576, { tag: "order" });
     const sha256 = await sha256Hex(bytes);
     const row = await storePhoto(t.db, store, { tenantId, bytes, mediaType: "image/jpeg", width: 768, height: 576, sha256, source: "public", now: NOW });
-    expect(row).toMatchObject({ tenantId, estimateId: null, sizeBytes: bytes.length, sha256, url: expect.stringMatching(/estimate-photo-[0-9a-f]{12}\.jpg$/) });
-    expect(store.files.get(row.fileId)?.filename).toBe(`estimate-photo-${sha256.slice(0, 12)}.jpg`);
+    expect(row).toMatchObject({ tenantId, estimateId: null, sizeBytes: bytes.length, sha256, url: expect.stringMatching(/Customer photo\.jpg$/) });
+    // A name a person reads on the Files screen, never a hash (review BO-12).
+    expect(store.files.get(row.fileId)?.filename).toBe("Customer photo.jpg");
 
     await expect(
       storePhoto(failingPhotoInsert(t.db), store, { tenantId, bytes, mediaType: "image/jpeg", width: 768, height: 576, sha256, source: "public" }),

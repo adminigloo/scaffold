@@ -277,10 +277,15 @@ export const SETTINGS_INCOMPLETE_MESSAGE = "Add your business name and tax rate 
  * Settings → the wire (`EstimatorSettingsWire`). Without `includeCosts` (the
  * caller lacks `estimator.costs.view`) the default labor rate is null: it is
  * what an hour of the business's work costs (review ADV-3).
+ *
+ * `alertsHref` (Tenancy 2b-1, D6): given, who hears about new leads is chosen
+ * in the host's Alert settings, and the wire says so (`alertRecipients:
+ * { href }`) so the screen shows a link instead of a list nobody reads any
+ * more. Absent or null: null, 2a's screen.
  */
 export function toSettingsWire(
   settings: EstimatorSettings,
-  options: { includeCosts?: boolean; companySettingsHref?: string | null } = {},
+  options: { includeCosts?: boolean; companySettingsHref?: string | null; alertsHref?: string | null } = {},
 ): EstimatorSettingsWire {
   return {
     businessName: settings.businessName,
@@ -306,6 +311,7 @@ export function toSettingsWire(
     updatedAt: settings.updatedAt ? settings.updatedAt.toISOString() : null,
     managedByCompany: settings.managedByCompany ? { href: options.companySettingsHref ?? null } : null,
     aiBudgetCeilingCents: settings.aiBudgetCeilingCents,
+    alertRecipients: typeof options.alertsHref === "string" ? { href: options.alertsHref } : null,
   };
 }
 

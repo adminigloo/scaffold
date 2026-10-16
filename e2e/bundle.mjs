@@ -41,6 +41,11 @@ const WIDGETS = [
   { name: "estimator-widget", globalName: "EstimatorWidget" },
   { name: "invoicing-widget", globalName: "InvoicingWidget" },
   { name: "comms-widget", globalName: "CommsWidget" },
+  // Tenancy 2b-1: the bell, the alerts page and Alert settings; a record's
+  // photos and files, the Files screen and the usage meter. Admin-only
+  // packages: their `.` entry carries the shared transport and words.
+  { name: "notifications-widget", globalName: "NotificationsWidget" },
+  { name: "storage-widget", globalName: "StorageWidget" },
 ];
 
 /** A widget package's two entries, re-exported as one module esbuild can bundle. */
@@ -67,6 +72,19 @@ export const tenancy2aScenarioTarget = {
   outfile: join(here, "fixtures", "tenancy-2a-scenario.bundle.js"),
   alias: singleReact,
   // Development React under StrictMode: effects run twice, as in every buyer's `next dev`.
+  nodeEnv: "development",
+};
+
+/**
+ * The host page of the Tenancy 2b-1 scenario (contract 16): the 2a screens
+ * plus the bell, the alerts pages, the Files screen and a record's photos and
+ * files, in one bundle, one React. fixtures/tenancy-2b1-scenario-server.ts
+ * serves it as /widgets.js.
+ */
+export const tenancy2b1ScenarioTarget = {
+  entry: join(here, "fixtures", "tenancy-2b1-scenario-host.tsx"),
+  outfile: join(here, "fixtures", "tenancy-2b1-scenario.bundle.js"),
+  alias: singleReact,
   nodeEnv: "development",
 };
 
@@ -100,6 +118,7 @@ export const targets = [
     alias: singleReact,
   })),
   tenancy2aScenarioTarget,
+  tenancy2b1ScenarioTarget,
 ];
 
 /**

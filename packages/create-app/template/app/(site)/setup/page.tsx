@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { describeEnv, resolveAppEnv } from "__SCOPE__/env";
 import { envDescription } from "@/env";
 import { Card, Notice, PageHeader } from "@/components/ui";
+import { SetupFilesSlot } from "@/components/SetupFilesSlot";
 import { currentPrincipal } from "@/server/auth";
 import { loadStaffPermissions } from "@/server/permissions";
 
@@ -33,6 +34,12 @@ const WHAT_IT_UNLOCKS: Record<string, string> = {
   RESEND_API_KEY: "Sending email. Without it, sends are logged as skipped.",
   EMAIL_FROM: "The sender address on outgoing mail.",
   ANTHROPIC_API_KEY: "AI routes.",
+  BLOB_PRIVATE_READ_WRITE_TOKEN:
+    "Photos and files on visits, estimates and invoices, and customers' estimate photos. Without it they can't be added, and the screens say so.",
+  BLOB_READ_WRITE_TOKEN: "Company logos (and feedback screenshots).",
+  FILES_ALLOWANCE_MB:
+    "How much each company may store (default 5120, 5 GB, which assumes Vercel Pro: on Hobby, Blob is 1 GB and 2,000 uploads a month for the whole site). The billing chunk will set this per plan.",
+  FILES_LINK_SECRET: "Copy a link to a file. Without it a key is made from your Clerk secret key.",
   // Optional in every project, and the copy has to say what actually changes
   // rather than implying the feature is off. Errors are recorded either way;
   // rate limits are enforced either way. What changes is where.
@@ -56,6 +63,11 @@ const WHERE_TO_GET_IT: Record<string, string> = {
   RESEND_API_KEY: "resend.com → API Keys",
   EMAIL_FROM: "any address on a domain you have verified in Resend",
   ANTHROPIC_API_KEY: "console.anthropic.com → API keys",
+  BLOB_PRIVATE_READ_WRITE_TOKEN:
+    "vercel.com → your project → Storage → Create → Blob, access Private, connected with the prefix BLOB_PRIVATE",
+  BLOB_READ_WRITE_TOKEN:
+    "vercel.com → your project → Storage → Create → Blob, access Public, connected with the usual prefix (BLOB). A store you already have is this one.",
+  FILES_LINK_SECRET: "any random string of 32 characters or more",
   SENTRY_DSN: "sentry.io → your project → Settings → Client Keys (DSN)",
   UPSTASH_REDIS_REST_URL:
     "console.upstash.com → your database → REST API → the https:// url, not the redis:// one",
@@ -142,6 +154,10 @@ export default async function SetupPage() {
       />
 
       <div className="flex flex-col gap-6">
+        {/* Which file stores this deployment connected, and whether the private
+            one really is private (Tenancy 2b-1). Generated in two variants
+            (src/components/SetupFilesSlot.tsx): nothing without file storage. */}
+        <SetupFilesSlot />
         {report.groups.map((group) => (
           <section key={group.name}>
             <h2 className="mb-2 text-[11px] font-medium uppercase tracking-wider text-ink-muted">

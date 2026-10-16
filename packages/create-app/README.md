@@ -35,7 +35,7 @@ generated app misbehaves.
 
    ```
    pnpm dlx @adminigloo/create-app igloo-back-office --tenant-noun Company --admin full \
-     --estimator --scheduling --invoicing --comms --email --storage --ai
+     --estimator --scheduling --invoicing --comms --email --storage --notifications --ai
    ```
 
    With a `--tenant-noun`, each feature belongs to EACH COMPANY (Tenancy 2a):
@@ -46,6 +46,22 @@ generated app misbehaves.
    `pnpm test` that one company can't reach another's rows through any feature
    route. With `--tenant-noun none` the same features run for your one
    business, at `/admin`.
+
+   **Alerts and files** (Tenancy 2b-1, `--notifications` and `--storage`):
+   each company gets a bell in the header and an alerts page (`/app/alerts`)
+   for its new visit requests, leads, accepted quotes, invoices opened, paid
+   or overdue, emails that didn't go and teammates joining; Alert settings
+   where each person picks "In the app" or "In the app and by email", and
+   the owner picks who hears about new work (the office emails go to exactly
+   those people, one email per lead); and private photos and files on its
+   visits, estimates and invoices, with a Files screen (`/app/files`) and a
+   storage allowance (`FILES_ALLOWANCE_MB`, 5 GB by default, which assumes
+   Vercel Pro: on Hobby, Blob is 1 GB and 2,000 uploads a month for the whole
+   site, and past either Vercel stops every file for 30 days). Files need a
+   second, private Vercel Blob store beside the public one for logos; the
+   generated `DEPLOYMENT.md` gives the steps for both. A single business gets the same in its admin shell (`/admin/alerts`,
+   `/admin/files`). The project proves in its own `pnpm test` that one
+   company can't see another's alerts or files.
 
 3. **First run**, in the new folder:
 
@@ -62,21 +78,153 @@ generated app misbehaves.
    including the Clerk production instance, its webhook and the first
    administrator on a deployed site.
 
+   **On Windows, generate into a short folder** (`C:\sites\my-site`, under
+   about 80 characters). pnpm keeps each package several folders deep inside
+   `node_modules`, and the Next.js build can't read a file whose full path is
+   over 260 characters: it stops with `Module not found: Can't resolve
+   '@adminigloo/…-widget/admin'` although the package is installed. The
+   generated `.npmrc` already keeps pnpm's folders 20 characters shorter
+   (`virtual-store-dir-max-length=40`), enough for most folders; the
+   packages' own file names are already short (`admin.js`), so the depth is
+   pnpm's and the folder's.
+
 `--help` lists every flag.
+
+## Upgrading a project
+
+Every generated project records the create-app that made it
+(`adminigloo.json`). To bring it up to this version, in the project's folder:
+
+```
+pnpm dlx @adminigloo/create-app@0.24 upgrade
+```
+
+It fetches the create-app that made the project (`npm pack`, through the
+project's own `.npmrc`, so `GITHUB_TOKEN` must be set; `--from <folder>` points
+it at an unpacked copy instead) to see exactly what that version wrote, so it
+can tell a file you changed from one you didn't. Then:
+
+- every `@adminigloo/*` package in `package.json` is raised to the version this
+  release needs (your own scripts and dependencies stay);
+- this version's new files are written, and every file you never changed is
+  rewritten;
+- the files this version no longer uses are deleted, if you never changed them;
+- each file you DID change gets the new version beside it as `<file>.new`.
+
+`.env.local` is never touched; new variables are listed. On a project nobody
+edited, the result is exactly what generating fresh with this version gives.
+
+**What still needs a hand edit**, and nothing else: each `<file>.new` (fold
+your change in, then replace the file), any retired file you had changed (it
+is left, and listed: move your change, then delete it), and any file of your
+own that imports one of the retired files. Then:
+
+```
+pnpm install
+pnpm db:generate && pnpm db:migrate && pnpm db:seed
+pnpm exec tsc --noEmit && pnpm test
+```
+
+`add <feature>` refuses a project an older create-app made, and says to run
+`upgrade` first: the new feature's files would be written for packages the
+project doesn't have yet.
+
+### From Tenancy 2a (create-app 0.23) to Tenancy 2b-1 (0.24)
+
+`upgrade` replaces 2a's old inbox (`src/server/notify.ts`,
+`src/server/routers/notifications.ts`; in a companies project also
+`/admin/inbox`) and old public file storage (`src/server/blob-store.ts`,
+`src/server/routers/files.ts`, `app/api/files/route.ts`; in a companies
+project also `/admin/files`) with this version's alerts and files, and raises
+tenancy, scheduling, the estimator, invoicing, comms, notifications and storage
+(and their widgets) to their 2b-1 versions. After it, by hand:
+
+1. **The second Blob store** (with `--storage`). Photos and files are private
+   now: in Vercel, Storage → Create → Blob, access **Private**, connected with
+   the prefix `BLOB_PRIVATE` (it gives `BLOB_PRIVATE_READ_WRITE_TOKEN`). Keep
+   the store you have: it holds the logos. Redeploy. Until then new photos and
+   files can't be added, and the screens say so. (On Vercel Hobby, read the
+   generated DEPLOYMENT.md's "Photos and files" first: Blob there is 1 GB and
+   2,000 uploads a month for the whole site.)
+2. **The older public files** move by themselves: the files cron
+   (`/api/cron/files`) copies the photos and files 2a kept at public addresses
+   (customers' estimate photos, and the old Files page's uploads) into the
+   private store, a batch every run. `/setup` says how many are left.
+3. **The old Files page's uploads** (with `--storage`) belonged to the whole
+   site (`tenant_id = '*'`), and no screen lists them now. A single business:
+   `update stored_files set tenant_id = 'primary' where tenant_id = '*';` puts
+   them back on its Files page. A companies project: `update stored_files set
+   tenant_id = '<company id>' where tenant_id = '*';` gives them to one company
+   (its id is on /admin/companies), or delete them.
+4. **Who hears about new work** (with `--notifications`) is chosen again in
+   Alert settings: 2a's per-feature "send new-request alerts to" lists aren't
+   read any more.
+
+The generated `DEPLOYMENT.md` (§9, "Upgrading") carries these steps for that
+project's own features.
+
+### Not included (Tenancy 2b-1)
+
+What a generated project does NOT do yet, so nobody sells it as doing so. The
+generated `README.md` carries the same lists (single-business projects leave
+out the items that are only about companies).
+
+- **The feedback board per company, and the complete board** — Tenancy 2b-2.
+  It will keep screenshots as these private files and send its alerts through
+  these notifications. Until then, feedback screenshots stay on the public
+  Blob store as in 2a.
+- **The AI assistant per company** — Tenancy 2b-3.
+- **Website analytics, SEO/AEO and book-a-call (booking) per company** —
+  Tenancy 2b-4.
+- **Text (SMS) and push alerts.** Alerts come in the app and by email — S9.
+- **Plans, limits and billing enforcement** — the billing chunk. Each
+  company's storage allowance is one setting for everyone
+  (`FILES_ALLOWANCE_MB`) until then; the seam the billing chunk fills is
+  there.
+- **Stripe Connect** (customers paying a company by card).
+- **Custom domains.**
+- **Virus scanning of uploads.** Files are checked for their type and size
+  only.
+- **Uploads over 4 MB, and uploads straight from the browser to storage.**
+  Phone photos are made smaller before they're sent; other files over 4 MB
+  are refused with a plain sentence.
+- **Serving files straight from S3 or R2 by presigned link.** Every private
+  file is sent through the site's own route.
+- **Thumbnails.** Photos are shown at their (shrunk) size.
+- **Turning a kind of alert off.** Each kind comes in the app, or in the app
+  and by email; who gets the work alerts is the owner's choice.
+- **Alerts from your other companies in the bell.** The bell shows the
+  company you're working in.
+- **A daily or weekly digest of alerts.**
+- **Customers seeing files** (photos on their quote or invoice page).
+- **Editing the wording of the team alert email** beyond the Messages screen
+  (it is the `team_alert` message there).
+- **Carrying 2a's per-feature alert address lists over.** With alerts
+  installed, the people (and extra addresses) are chosen again in Alert
+  settings; the old lists are no longer read.
+- **Alert settings in a single-business project without an admin shell.** Its
+  staff get the bell; the office emails keep 2a's lists.
+- **A transactional outbox.** Alerts are written right after the change they
+  report (D8); the events package (S2) brings the outbox.
+- **Crew alerts when the office moves, reassigns or cancels their visit.**
+  Only a customer's change alerts the crew.
+- **An alert when a customer opens a quote** (invoices only).
+- **A history of cron runs, and an alert when a cron fails.**
+- **Alerts for the platform owner** (a new company, a company out of
+  storage). A company's storage refusal is reported in `/admin/errors` once a
+  day.
+- **Giving one company more storage than the others.** `FILES_ALLOWANCE_MB`
+  is one number until the billing chunk.
+- **Checking an address before it gets a company's alert emails.** The owner
+  adds up to five per group; the company's team sending allowance bounds what
+  they get.
 
 ### Not included (Tenancy 2a)
 
-What a generated project does NOT do yet, so nobody sells it as doing so. The
-generated `README.md` carries the same list (single-business projects leave
-out the items that are only about companies).
+Still true after Tenancy 2b-1. (2a's "per-company boards", "payments to
+companies", "plans" and "custom domains" items are restated in the list
+above.)
 
-- **Per-company boards and widgets for feedback, notifications, files, the
-  assistant, analytics, SEO/AEO and book-a-call (booking)** — Tenancy 2b.
-- **Payments to companies** (Stripe Connect: a customer paying a company's
-  invoice by card). Invoices are paid however the payment instructions say;
-  staff record the payment.
-- **Plans, limits and billing enforcement** per company.
-- **Custom domains and subdomains.** Public pages live at `/t/{web-address}`.
 - **Impersonation** ("view as this company") from the operator console, and
   platform-wide feature reports (all companies' visits, estimates, invoices)
   in `/admin`.

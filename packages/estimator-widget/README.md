@@ -44,6 +44,7 @@ does to a number.
 | --- | --- | --- |
 | `@adminigloo/estimator-widget` | `<EstimateTool>` (inline) and the button + dialog: the customer picks what they need, answers the business's questions, adds a photo if they like (the AI's reading pre-fills the count, which they can change), sees the price and why it's a range, and sends it. `<QuoteView>`: the quote page with Accept / Decline and "Print or save as PDF". | A page for each, and the server handlers (`@adminigloo/estimator`) mounted at one route. |
 | `@adminigloo/estimator-widget/admin` | `<EstimatorAdmin>` and its parts: the queue (search, filters, archive), the estimate editor (photo, the reading beside what the customer changed, lines re-priced from the price book, send the quote, record a yes or no, invoice, book the visit), the price book with a live test quote and the cost breakdown, settings, and embed keys. | The admin pages, and the staff handlers mounted behind your sign-in with the `authorize` check. |
+| `+ @adminigloo/notifications` on the server (Tenancy 2b-1) | The "Lead alerts" panel points to Alert settings, where the owner chooses who hears about new leads, instead of keeping a second list. | `alertsHref` on the staff handlers (`@adminigloo/estimator` 0.5). See [Alerts (Tenancy 2b-1)](#alerts-tenancy-2b-1). |
 
 ## Install
 
@@ -241,7 +242,8 @@ labor rates and margins appear only for people the server lets see them.
   together): the estimate page is closed and no quote can be sent until then.
   After that: business details, time zone and brand colour (shown
   on a light and a dark page), quote validity and follow-up, tax, currency,
-  default labor rate and contingency, lead alerts, instant estimates on/off,
+  default labor rate and contingency, lead alerts (or, with alerts installed,
+  the way to Alert settings), instant estimates on/off,
   photos and the AI's daily limit, with what readings have cost.
 - **`<EmbedKeys>`** (`embedBaseUrl`): keys for other websites, shown once, the
   snippet, "Test this key", the websites each works on, revoke.
@@ -448,6 +450,81 @@ return <EstimateTool baseUrl={`/api/t/${company.slug}/estimator`} accentColor={c
 
 A foreign host passes the same props from its own business record.
 
+## Alerts (Tenancy 2b-1)
+
+When the server says who gets lead alerts is chosen in Alert settings
+(`EstimatorSettingsWire.alertRecipients`, from the staff handlers'
+`alertsHref`), `<EstimatorSettings>`'s "Lead alerts" panel shows "Who gets
+lead alerts is chosen in Alert settings." with **Open Alert settings** (no link
+when the server names no place), and no form on the page sends the old
+`leadNotifyEmails` list. Two places to choose the same people is how a lead
+gets emailed twice, or never. Without it, the address list as in 0.3.
+
+Nothing to pass: the panel follows the server.
+
+```ts
+// the staff handlers, on the server
+createEstimatorAdminHandlers({ /* … */ alertsHref: "/app/alerts/settings" });
+```
+
+A customer's estimate photo is still added through `<EstimateTool>` and shown
+in the editor's Photos panel; with `@adminigloo/storage` on the server it is
+kept privately with its estimate, and the other files on an estimate are
+`@adminigloo/storage-widget`'s `<RecordFiles>` (this package doesn't import
+it).
+
+### Not included (Tenancy 2b-1)
+
+- **The feedback board per company, and the complete board** — Tenancy 2b-2.
+  It will keep screenshots as these private files and send its alerts through
+  these notifications. Until then, feedback screenshots stay on the public
+  Blob store as in 2a.
+- **The AI assistant per company** — Tenancy 2b-3.
+- **Website analytics, SEO/AEO and book-a-call (booking) per company** —
+  Tenancy 2b-4.
+- **Text (SMS) and push alerts.** Alerts come in the app and by email — S9.
+- **Plans, limits and billing enforcement** — the billing chunk. Each
+  company's storage allowance is one setting for everyone
+  (`FILES_ALLOWANCE_MB`) until then; the seam the billing chunk fills is
+  there.
+- **Stripe Connect** (customers paying a company by card).
+- **Custom domains.**
+- **Virus scanning of uploads.** Files are checked for their type and size
+  only.
+- **Uploads over 4 MB, and uploads straight from the browser to storage.**
+  Phone photos are made smaller before they're sent; other files over 4 MB are
+  refused with a plain sentence.
+- **Serving files straight from S3 or R2 by presigned link.** Every private
+  file is sent through the site's own route.
+- **Thumbnails.** Photos are shown at their (shrunk) size.
+- **Turning a kind of alert off.** Each kind comes in the app, or in the app
+  and by email; who gets the work alerts is the owner's choice.
+- **Alerts from your other companies in the bell.** The bell shows the
+  company you're working in.
+- **A daily or weekly digest of alerts.**
+- **Customers seeing files** (photos on their quote or invoice page).
+- **Editing the wording of the team alert email** beyond the Messages screen
+  (it is the `team_alert` message there).
+- **Carrying 2a's per-feature alert address lists over.** With alerts
+  installed, the people (and extra addresses) are chosen again in Alert
+  settings; the old lists are no longer read.
+- **Alert settings in a single-business project without an admin shell.** Its
+  staff get the bell; the office emails keep 2a's lists.
+- **A transactional outbox.** Alerts are written right after the change they
+  report (D8); the events package (S2) brings the outbox.
+- **Crew alerts when the office moves, reassigns or cancels their visit.**
+  Only a customer's change alerts the crew.
+- **An alert when a customer opens a quote** (invoices only).
+- **A history of cron runs, and an alert when a cron fails.**
+- **Alerts for the platform owner** (a new company, a company out of
+  storage). A company's storage refusal is reported in `/admin/errors` once a
+  day.
+- **Giving one company more storage than the others.** `FILES_ALLOWANCE_MB`
+  is one number until the billing chunk.
+- **Checking an address before it gets a company's alert emails.** The owner
+  adds up to five per group; the company's team sending allowance bounds what
+  they get.
+
 ## Not included
 
 - **A script tag or iframe for sites that aren't React** (WordPress, Wix,
@@ -462,8 +539,8 @@ A foreign host passes the same props from its own business record.
 - **SMS.** Staff can copy the quote link and text it themselves.
 - **PDF files.** The quote page prints cleanly ("Print or save as PDF").
 - **Currency conversion.** One currency per business, shown as set.
-- **Per-company boards and widgets for feedback, notifications, files, the
-  assistant, analytics, SEO/AEO and book-a-call**: Tenancy 2b. (These screens
+- **What Tenancy 2b-1 leaves out**: see
+  [Not included (Tenancy 2b-1)](#not-included-tenancy-2b-1). (These screens
   serve each company since 0.3: see [Companies](#companies-tenancy-2a).)
 - **Payments to companies, plans and billing per company, custom domains,
   impersonation, per-company SEO and search indexing of company pages.**

@@ -1,4 +1,5 @@
 import { CrewDay } from "__SCOPE__/scheduling-widget/admin";
+import { VISIT_FILES_HREF } from "@/server/visit-files";
 
 export const dynamic = "force-dynamic";
 
@@ -14,8 +15,12 @@ export const dynamic = "force-dynamic";
  * Start, Complete and "Couldn't do it" each have an Undo. Drive times come from Google when GOOGLE_MAPS_API_KEY is
  * set, and are marked as estimates when it is not.
  *
+ * Each stop's "Photos" opens the visit's photos and files, where the crew
+ * adds the job's photos from the phone (Tenancy 2b-1; VISIT_FILES_HREF,
+ * generated: no button without file storage).
+ *
  * No page header on purpose: on a 390px screen the stops are the page.
  */
 export default function TodaysRoutePage() {
-  return <CrewDay baseUrl="/api/admin/schedule" />;
+  return <CrewDay baseUrl="/api/admin/schedule" filesHref={VISIT_FILES_HREF} />;
 }

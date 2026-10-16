@@ -24,8 +24,10 @@ function hostOf(value: string): string | null {
  * another site.
  *
  *  1. Sec-Fetch-Site, when present, is the browser's own verdict and cannot
- *     be set by a page: same-origin, same-site and none pass; cross-site
- *     does not.
+ *     be set by a page: same-origin and none pass; cross-site does not, and
+ *     neither does same-site (Tenancy 2b-1 review SEC-04): another origin
+ *     on the same domain, a sibling subdomain, whose requests carry the
+ *     session cookie.
  *  2. Otherwise the Origin header (or the Referer) must name the same host as
  *     the request URL (or X-Forwarded-Host). `Origin: null` is cross-site.
  *  3. With neither header, the request is allowed only if it carries no
@@ -35,7 +37,8 @@ export function isCrossSiteRequest(req: Request): boolean {
   const site = req.headers.get("sec-fetch-site");
   if (site !== null) {
     const verdict = site.trim().toLowerCase();
-    return !(verdict === "same-origin" || verdict === "same-site" || verdict === "none");
+    // same-site is ANOTHER origin on this domain (a sibling subdomain): refused (review SEC-04).
+    return !(verdict === "same-origin" || verdict === "none");
   }
   const origin = req.headers.get("origin");
   if (origin !== null && origin.trim().toLowerCase() === "null") return true;
@@ -110,12 +113,64 @@ export function toWireError(error: unknown): {
 /** 32 KB: a template body is at most 20,000 characters, plus its subject and the JSON around them. */
 const MAX_BODY_BYTES = 32 * 1024;
 
-/** A JSON object body. Missing → {}. Over 32 KB, not JSON, or not an object → 400 invalid. */
-export async function readJsonBody(req: Request): Promise<Record<string, unknown>> {
-  const text = await req.text();
-  if (new TextEncoder().encode(text).length > MAX_BODY_BYTES) {
-    throw new CommsHttpError("invalid", "That's too long to save.");
+/**
+ * COPIED FROM @adminigloo/storage's body.ts (`readBodyCapped`, review G10);
+ * change all or none.
+ *
+ * The body's bytes, or `tooLarge()` thrown the moment more than `cap` have
+ * arrived (Tenancy 2b-1 review SEC-01). WHY COUNT THE BYTES AS THEY STREAM:
+ * `Content-Length` is a promise the client makes, and a chunked request
+ * makes none. A platform with a body cap (Vercel's 4.5 MB) stops a big body
+ * before the code runs; a self-hosted Node server (`next start`, a host's
+ * own) has no cap at all, so `await req.text()` on a 2 GB chunked body
+ * holds 2 GB in memory before anything can say no. So a declared length
+ * over the cap is refused before a byte is read, the rest is counted as it
+ * streams, and the stream is cancelled at the cap.
+ */
+export async function readBodyCapped(req: Request, cap: number, tooLarge: () => Error): Promise<Uint8Array> {
+  const declared = req.headers.get("content-length");
+  if (declared !== null && /^\s*\d+\s*$/.test(declared) && Number(declared) > cap) throw tooLarge();
+  const body = req.body;
+  if (!body) return new Uint8Array(0);
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > cap) {
+        // Stop pulling: the rest of the body is never read into memory.
+        await reader.cancel().catch(() => undefined);
+        throw tooLarge();
+      }
+      chunks.push(value);
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      /* already released by cancel */
+    }
   }
+  const bytes = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  return bytes;
+}
+
+/**
+ * A JSON object body. Missing → {}. Over 32 KB (counted as it streams,
+ * review SEC-01), not JSON, or not an object → 400 invalid.
+ */
+export async function readJsonBody(req: Request): Promise<Record<string, unknown>> {
+  const bytes = await readBodyCapped(req, MAX_BODY_BYTES, () => new CommsHttpError("invalid", "That's too long to save."));
+  const text = new TextDecoder().decode(bytes);
   if (text.trim() === "") return {};
   let parsed: unknown;
   try {

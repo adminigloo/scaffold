@@ -18,8 +18,9 @@ function hostOf(value: string): string | null {
 /**
  * Was this POST sent by a browser from anywhere but THIS origin?
  *
- * STRICTER THAN SCHEDULING'S CHECK, ON PURPOSE (review T1-12). Scheduling
- * lets `Sec-Fetch-Site: same-site` through; here a sibling subdomain is NOT
+ * STRICT ON PURPOSE (review T1-12). Scheduling's check once let
+ * `Sec-Fetch-Site: same-site` through (since Tenancy 2b-1 review SEC-04 it,
+ * and its copies, are as strict as this); here a sibling subdomain is NOT
  * trusted. Tenancy 2 is expected to serve company pages under per-company
  * subdomains, and a page on one company's subdomain is same-site with the app:
  * a logged-in owner visiting it would carry their cookies into a POST here —
@@ -41,6 +42,26 @@ function hostOf(value: string): string | null {
  * a forged cross-site form post can't reach those routes. The logo upload is
  * multipart by nature, so it rests on this check alone, like any upload.
  */
+/**
+ * Wait for the company events a POST just emitted before answering it
+ * (Tenancy 2b-1, 8.1): bounded by the service (5 s), and never throwing. A
+ * service object without `settleEvents` (a host's own 0.5-shaped double) is
+ * answered at once, as before.
+ *
+ * WHY. On a serverless platform a promise still running after the response
+ * is often frozen. The listener that got cut off was the one that mattered:
+ * "Cam joined the team" in the owner's bell, or a removed member's alerts
+ * being forgotten. A listener's write is visible as soon as the answer is.
+ */
+export async function settleBeforeAnswering(tenancy: { readonly settleEvents?: (timeoutMs?: number) => Promise<void> }): Promise<void> {
+  if (typeof tenancy.settleEvents !== "function") return;
+  try {
+    await tenancy.settleEvents();
+  } catch {
+    /* settleEvents never throws; a host's double might, and must not change the answer */
+  }
+}
+
 export function isCrossOriginRequest(req: Request): boolean {
   const site = req.headers.get("sec-fetch-site");
   if (site !== null) return site.trim().toLowerCase() !== "same-origin";
@@ -63,6 +84,72 @@ export const JSON_BODY_MAX_BYTES = 16 * 1024;
 export const LOGO_BODY_MAX_BYTES = Math.round(1.2 * 1024 * 1024);
 
 /**
+ * COPIED FROM @adminigloo/storage's body.ts (`readBodyCapped`, review G10);
+ * change all or none.
+ *
+ * The body's bytes, or `tooLarge()` thrown the moment more than `cap` have
+ * arrived (Tenancy 2b-1 review SEC-01). WHY COUNT THE BYTES AS THEY STREAM:
+ * `Content-Length` is a promise the client makes, and a chunked request
+ * makes none. A platform with a body cap (Vercel's 4.5 MB) stops a big body
+ * before the code runs; a self-hosted Node server (`next start`, a host's
+ * own) has no cap at all, so `await req.formData()` on a 2 GB chunked
+ * upload holds 2 GB in memory before anything can say no. So a declared
+ * length over the cap is refused before a byte is read, the rest is counted
+ * as it streams, and the stream is cancelled at the cap.
+ */
+export async function readBodyCapped(req: Request, cap: number, tooLarge: () => Error): Promise<Uint8Array> {
+  const declared = req.headers.get("content-length");
+  if (declared !== null && /^\s*\d+\s*$/.test(declared) && Number(declared) > cap) throw tooLarge();
+  const body = req.body;
+  if (!body) return new Uint8Array(0);
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > cap) {
+        // Stop pulling: the rest of the body is never read into memory.
+        await reader.cancel().catch(() => undefined);
+        throw tooLarge();
+      }
+      chunks.push(value);
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      /* already released by cancel */
+    }
+  }
+  const bytes = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  return bytes;
+}
+
+/**
+ * The logo upload's form, read through `readBodyCapped` at
+ * `LOGO_BODY_MAX_BYTES` FIRST (review SEC-01) and only then parsed. Too
+ * big → `logo_invalid` (the sentence the widget shows); not a form →
+ * invalid "Send the logo as a file upload."
+ */
+export async function readLogoForm(req: Request): Promise<FormData> {
+  const bytes = await readBodyCapped(req, LOGO_BODY_MAX_BYTES, () => new TenancyError("logo_invalid", "Use a PNG, JPG or WebP image under 1 MB."));
+  try {
+    return await new Response(bytes as Uint8Array<ArrayBuffer>, { headers: { "content-type": req.headers.get("content-type") ?? "" } }).formData();
+  } catch {
+    throw new TenancyError("invalid", "Send the logo as a file upload.");
+  }
+}
+
+/**
  * A JSON object body. Too big, not JSON, or not an object → invalid. An EMPTY
  * body reads as {}, but only while it is still labelled `application/json`
  * (review R2 SEC-T1-H): the type is checked FIRST, so the bodyless routes
@@ -78,8 +165,8 @@ export async function readJson(req: Request): Promise<Record<string, unknown>> {
   if (!/^application\/json\b/i.test(type.trim())) {
     throw new TenancyError("invalid", "Send the request as JSON.");
   }
-  const text = await req.text();
-  if (text.length > JSON_BODY_MAX_BYTES) throw new TenancyError("invalid", "That request is too large.");
+  // Counted as it streams (review SEC-01): a chunked body declares no length.
+  const text = new TextDecoder().decode(await readBodyCapped(req, JSON_BODY_MAX_BYTES, () => new TenancyError("invalid", "That request is too large.")));
   if (text.trim() === "") return {};
   let parsed: unknown;
   try {

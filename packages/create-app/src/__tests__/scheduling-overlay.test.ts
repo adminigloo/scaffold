@@ -126,8 +126,13 @@ describe("the pages", () => {
     expect(file(p, "app", "(site)", "visit", "[token]", "page.tsx")).toContain(
       '<ManageVisit baseUrl="/api/schedule" token={token} bookHref="/book-visit" />',
     );
-    expect(file(p, "app", "admin", "schedule", "page.tsx")).toContain('<ScheduleCalendar baseUrl="/api/admin/schedule"');
-    expect(file(p, "app", "admin", "schedule", "today", "page.tsx")).toContain('<CrewDay baseUrl="/api/admin/schedule" />');
+    // Tenancy 2b-1: the calendar opens a visit from an alert's link
+    // (initialVisitId) and both pages link a visit's photos and files.
+    expect(code(file(p, "app", "admin", "schedule", "page.tsx"))).toMatch(/<ScheduleCalendar\s+baseUrl="\/api\/admin\/schedule"/);
+    expect(code(file(p, "app", "admin", "schedule", "page.tsx"))).toContain("visitFilesHref={VISIT_FILES_HREF}");
+    expect(file(p, "app", "admin", "schedule", "today", "page.tsx")).toContain(
+      '<CrewDay baseUrl="/api/admin/schedule" filesHref={VISIT_FILES_HREF} />',
+    );
     expect(file(p, "app", "admin", "schedule", "settings", "page.tsx")).toContain(
       '<SchedulingSettings baseUrl="/api/admin/schedule"',
     );
@@ -258,13 +263,13 @@ describe("the crons", () => {
 });
 
 describe("what the project installs and declares", () => {
-  it("installs the widget with the server package, at the 0.5 / 0.2 lines (Tenancy 2a)", async () => {
+  it("installs the widget with the server package, at the 0.6 / 0.3 lines (Tenancy 2b-1)", async () => {
     const pkgs = packagesFor(answers());
     expect(pkgs).toContain("@adminigloo/scheduling");
     expect(pkgs).toContain("@adminigloo/scheduling-widget");
     const manifest = JSON.parse(file(await plan(), "package.json")) as { dependencies: Record<string, string> };
-    expect(manifest.dependencies["@adminigloo/scheduling"]).toBe("^0.5.0");
-    expect(manifest.dependencies["@adminigloo/scheduling-widget"]).toBe("^0.2.0");
+    expect(manifest.dependencies["@adminigloo/scheduling"]).toBe("^0.6.0");
+    expect(manifest.dependencies["@adminigloo/scheduling-widget"]).toBe("^0.3.0");
   });
 
   it("declares the maps key and the starting zone as optional, and validates the zone at boot", async () => {

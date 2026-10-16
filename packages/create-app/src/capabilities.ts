@@ -368,35 +368,94 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
       "same two-condition shape as feedback.triage.",
     provenBy: (plan) => exists(plan, "app", "admin", "seo", "page.tsx"),
   },
+  // ALERTS AND FILES (Tenancy 2b-1, 13.9). Each server half proven by the
+  // call that does the work, each screen by the package component on it, in
+  // either mode's shape.
   {
     capability: "notifications.fanout",
     why:
-      "The notify helper that fans out at write time AND the recipient-scoped " +
-      "router that reads it back. The inbox PAGE is the other key; a project " +
-      "without a shell can still write and read rows over tRPC.",
+      "The alerts instance (createNotifications over the package's named " +
+      "tables, fanning out at write time) AND the routes that read it back " +
+      "(the package's handlers, behind the project's own sign-in): " +
+      "/api/app/{id}/alerts for each company, /api/admin/alerts for one " +
+      "business. 0.1's notify helper and tRPC router are retired.",
     provenBy: (plan) =>
-      mentions(plan, ["src", "server", "notify.ts"], "notify(") &&
-      exists(plan, "src", "server", "routers", "notifications.ts"),
+      mentions(plan, ["src", "server", "alerts.ts"], "createNotifications(", "tables: notificationTables") &&
+      mentions(plan, ["src", "server", "alerts-routes.ts"], "createNotificationHandlers(") &&
+      (exists(plan, "app", "api", "app", "[tenantId]", "alerts", "[...path]", "route.ts") ||
+        exists(plan, "app", "api", "admin", "alerts", "[...path]", "route.ts")),
+  },
+  {
+    capability: "notifications.bell",
+    why:
+      "The bell in the header: the AlertsBellSlot the header renders is the " +
+      "notifications widget's <AlertsBell> (it is null in a project without " +
+      "alerts).",
+    provenBy: (plan) => mentions(plan, ["src", "components", "AlertsBellSlot.tsx"], "<AlertsBell"),
   },
   {
     capability: "notifications.inbox",
-    why: "The inbox page under the shell, from the notifications-admin overlay.",
-    provenBy: (plan) => exists(plan, "app", "admin", "inbox", "page.tsx"),
+    why:
+      "The alerts page, the notifications widget's <AlertsInbox>: each " +
+      "company's /app/alerts, or a single business's /admin/alerts under the " +
+      "shell.",
+    provenBy: (plan) =>
+      mentions(plan, ["app", "(site)", "app", "alerts", "page.tsx"], "<AlertsInbox") ||
+      mentions(plan, ["app", "admin", "alerts", "page.tsx"], "<AlertsInbox"),
+  },
+  {
+    capability: "notifications.producers",
+    why:
+      "Every installed feature's events reach the alerts: the alerts module " +
+      "builds the instance and glues each installed producer to it, and the " +
+      "scheduling and estimator listeners list the alerts FIRST (before the " +
+      "comms listener), so the office email finds the rows to claim.",
+    provenBy: (plan) => {
+      const alerts = file(plan, "src", "server", "alerts.ts");
+      if (alerts === undefined || !alerts.includes("createNotifications(")) return false;
+      const producers: Array<[readonly string[], string, string]> = [
+        [["src", "server", "scheduling-notify.ts"], "alertOnSchedulingEvent", "LISTENERS: readonly SchedulingEventListener[] = [(event) => alertOnSchedulingEvent(event)"],
+        [["src", "server", "estimator-notify.ts"], "alertOnEstimatorEvent", "LISTENERS: readonly EstimatorEventListener[] = [(event) => alertOnEstimatorEvent(event)"],
+        [["src", "server", "invoicing.ts"], "alertOnInvoicingEvent", "onEvent: (event) => alertOnInvoicingEvent(event)"],
+        [["src", "server", "comms-senders.ts"], "alertOnCommsFailure", "m.alertOnCommsFailure(failure)"],
+      ];
+      const present = producers.filter(([path]) => exists(plan, ...path));
+      return (
+        present.length > 0 &&
+        present.every(([path, producer, wiring]) => alerts.includes(`export async function ${producer}(`) && mentions(plan, path, wiring))
+      );
+    },
   },
   {
     capability: "storage.files",
     why:
-      "The upload route handler AND the adapter that owns the vendor choice. " +
-      "Files can arrive over HTTP whether or not a shell lists them — the " +
-      "library page is the other key.",
+      "The files instance (createStorage over the package's named table, two " +
+      "stores, the records and the allowance) AND the public route that serves " +
+      "signed links and the logo (/api/files). The Files screen is the other " +
+      "key.",
     provenBy: (plan) =>
-      mentions(plan, ["app", "api", "files", "route.ts"], "storeFile(") &&
-      exists(plan, "src", "server", "blob-store.ts"),
+      mentions(plan, ["src", "server", "files.ts"], "createStorage(", "tables: storageTables") &&
+      exists(plan, "app", "api", "files", "[...path]", "route.ts"),
   },
   {
     capability: "storage.library",
-    why: "The staff library page under the shell, from the storage-admin overlay.",
-    provenBy: (plan) => exists(plan, "app", "admin", "files", "page.tsx"),
+    why:
+      "The Files screen, the storage widget's <FilesManager>: each company's " +
+      "/app/files, or a single business's /admin/files under the shell.",
+    provenBy: (plan) =>
+      mentions(plan, ["app", "(site)", "app", "files", "page.tsx"], "<FilesManager") ||
+      mentions(plan, ["app", "admin", "files", "page.tsx"], "<FilesManager"),
+  },
+  {
+    capability: "storage.attachments",
+    why:
+      "Photos and files on a visit, an estimate or an invoice: the " +
+      "RecordFilesSlot the record pages render is the storage widget's " +
+      "<RecordFiles> (it is null in a project without storage), and the " +
+      "files instance knows the records.",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "components", "RecordFilesSlot.tsx"], "<RecordFiles") &&
+      mentions(plan, ["src", "server", "files.ts"], "FileRecords(db"),
   },
   {
     capability: "assistant.brain",
@@ -500,12 +559,15 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
   {
     capability: "estimator.photos",
     why:
-      "A customer's photo kept with their estimate: the generated services " +
-      "module building the photo store over the storage package's storeFile, " +
-      "handed to the estimator's handlers (in the route, or in the companies " +
-      "glue that builds them).",
+      "A customer's photo kept PRIVATELY with their estimate (Tenancy 2b-1): " +
+      "the files module's estimator photo purpose store, re-exported by the " +
+      "generated services module and handed to the estimator's handlers (in " +
+      "the route, or in the companies glue that builds them). Staff's own " +
+      "photos are kept apart, under their own purpose (review SEC-02).",
     provenBy: (plan) =>
-      mentions(plan, ["src", "server", "estimator-services.ts"], "storeFile(db, blobStore") &&
+      mentions(plan, ["src", "server", "files.ts"], 'purposeStore("estimator.photo")') &&
+      mentions(plan, ["src", "server", "files.ts"], 'purposeStore("estimator.staff-photo")') &&
+      mentions(plan, ["src", "server", "estimator-services.ts"], 'export { estimatorPhotoStore, estimatorStaffPhotoStore } from "@/server/files"') &&
       (mentions(plan, ["app", "api", "estimator", "[...path]", "route.ts"], "photoStore: estimatorPhotoStore") ||
         mentions(plan, ["src", "server", "estimator.ts"], "photoStore: estimatorPhotoStore")),
   },

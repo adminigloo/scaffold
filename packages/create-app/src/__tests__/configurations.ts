@@ -126,3 +126,42 @@ export const EVERY_CONFIGURATION: readonly Configuration[] = TENANT_NOUNS.flatMa
       ),
     ),
 );
+
+/**
+ * TENANCY 2b-1's configurations (contract 13.11, 15.5), named: the founder's
+ * companies project and a single business with every feature and alerts and
+ * files, each of alerts and files alone in a companies project, the field
+ * features without files (the slots' "nothing" variants), and a single
+ * business with no admin shell (the bell only). The cartesian product above
+ * covers them too; these are the ones the 2b-1 checks read by name.
+ */
+const EVERY_FIELD_FEATURE: Partial<Answers> = {
+  includeEstimator: true,
+  includeScheduling: true,
+  includeInvoicing: true,
+  includeComms: true,
+  includeEmail: true,
+};
+const NO_FIELD_FEATURE: Partial<Answers> = {
+  includeEstimator: false,
+  includeScheduling: false,
+  includeInvoicing: false,
+  includeComms: false,
+};
+
+export const TENANCY_2B1_CONFIGURATIONS = {
+  /** `--tenant-noun Company --admin full` with every feature, `--notifications --storage --ai`. */
+  companyAll: { tenantNoun: "Company", adminShell: "full", ...EVERY_FIELD_FEATURE, includeStorage: true, includeNotifications: true, includeAi: true },
+  /** `--tenant-noun none --admin minimal` with the same. */
+  singleAll: { tenantNoun: "none", adminShell: "minimal", ...EVERY_FIELD_FEATURE, includeStorage: true, includeNotifications: true },
+  /** Alerts alone in a companies project. */
+  companyAlertsAlone: { tenantNoun: "Company", adminShell: "full", ...NO_FIELD_FEATURE, includeEmail: true, includeNotifications: true, includeStorage: false },
+  /** Files alone in a companies project. */
+  companyFilesAlone: { tenantNoun: "Company", adminShell: "full", ...NO_FIELD_FEATURE, includeNotifications: false, includeStorage: true },
+  /** Every field feature and alerts, no files: the record slots' empty variant. */
+  companyFieldNoFiles: { tenantNoun: "Company", adminShell: "full", ...EVERY_FIELD_FEATURE, includeNotifications: true, includeStorage: false },
+  /** Every field feature, neither alerts nor files: 2a's project, unchanged. */
+  companyFieldOnly: { tenantNoun: "Company", adminShell: "full", ...EVERY_FIELD_FEATURE, includeNotifications: false, includeStorage: false },
+  /** A single business with no admin shell (invoicing and messages need none): the bell, no alert settings. */
+  singleNoShell: { tenantNoun: "none", adminShell: "none", ...NO_FIELD_FEATURE, includeInvoicing: true, includeComms: true, includeEmail: true, includeNotifications: true, includeStorage: true },
+} as const satisfies Record<string, Partial<Answers>>;

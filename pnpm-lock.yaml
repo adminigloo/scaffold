@@ -520,16 +520,40 @@ importers:
 
   packages/notifications:
     dependencies:
-      '@adminigloo/db':
-        specifier: workspace:^
-        version: link:../db
+      uuidv7:
+        specifier: ^1.2.1
+        version: 1.2.1
     devDependencies:
+      '@electric-sql/pglite':
+        specifier: ^0.5.8
+        version: 0.5.8
       drizzle-orm:
         specifier: 'catalog:'
         version: 0.45.2(@electric-sql/pglite@0.5.8)(@neondatabase/serverless@1.1.0)
       zod:
         specifier: 'catalog:'
         version: 4.5.1
+
+  packages/notifications-widget:
+    devDependencies:
+      '@adminigloo/notifications':
+        specifier: workspace:^
+        version: link:../notifications
+      '@types/react':
+        specifier: ^19.2.7
+        version: 19.2.18
+      '@types/react-dom':
+        specifier: ^19.2.4
+        version: 19.2.5(@types/react@19.2.18)
+      happy-dom:
+        specifier: ^20.0.0
+        version: 20.14.6
+      react:
+        specifier: ^19.2.4
+        version: 19.2.4
+      react-dom:
+        specifier: ^19.2.4
+        version: 19.2.4(react@19.2.4)
 
   packages/observability:
     dependencies:
@@ -636,16 +660,40 @@ importers:
 
   packages/storage:
     dependencies:
-      '@adminigloo/db':
-        specifier: workspace:^
-        version: link:../db
+      uuidv7:
+        specifier: ^1.2.1
+        version: 1.2.1
     devDependencies:
+      '@electric-sql/pglite':
+        specifier: ^0.5.8
+        version: 0.5.8
       drizzle-orm:
         specifier: 'catalog:'
         version: 0.45.2(@electric-sql/pglite@0.5.8)(@neondatabase/serverless@1.1.0)
       zod:
         specifier: 'catalog:'
         version: 4.5.1
+
+  packages/storage-widget:
+    devDependencies:
+      '@adminigloo/storage':
+        specifier: workspace:^
+        version: link:../storage
+      '@types/react':
+        specifier: ^19.2.7
+        version: 19.2.18
+      '@types/react-dom':
+        specifier: ^19.2.4
+        version: 19.2.5(@types/react@19.2.18)
+      happy-dom:
+        specifier: ^20.0.0
+        version: 20.14.6
+      react:
+        specifier: ^19.2.4
+        version: 19.2.4
+      react-dom:
+        specifier: ^19.2.4
+        version: 19.2.4(react@19.2.4)
 
   packages/stripe:
     dependencies:

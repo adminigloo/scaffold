@@ -22,6 +22,13 @@
  * THE COMMS TENANT IS THE SCHEDULING TENANT: templates, sends and the queue
  * all use `event.tenantId`.
  *
+ * WHO GETS THE OFFICE NOTICE (Tenancy 2b-1, D6). Without `officeRecipients`,
+ * 2a's rule exactly: the business's saved `staffNotifyEmails`, else the
+ * host's `staffEmails`, through `sendNow`. With it, the host's alerts decide
+ * (the one Alert settings screen), each email goes through `deliverNow`, and
+ * its outcome is told to `officeSent`, so a failed office email goes back to
+ * the alerts cron instead of being lost (review BO-02).
+ *
  * NO KEY SITS IN A TABLE. A manage link is a key to the customer's visit.
  *   - An email sent now gets a freshly minted token; right after the send,
  *     that one `comms_messages` row is rewritten with the token replaced by
@@ -40,6 +47,10 @@ import {
   commsMessages,
   commsScheduled,
   commsTemplates,
+  // CONTRACT: comms 0.4's `deliverNow(db, input, senders) → { message, retryable }`
+  // (contract 12.2), built by the platform builder. The office notices go
+  // through it when `officeRecipients` is given (9.3, review BO-02).
+  deliverNow,
   enqueueMessage,
   sendNow,
   type BeforeSendResult,
@@ -47,8 +58,10 @@ import {
   type ScheduledRow,
 } from "@adminigloo/comms";
 import { and, eq, gt, inArray, sql } from "drizzle-orm";
+import { crewUserIds, schedulingOfficeNotice, type StaffNoticeKind } from "./alerts.js";
 import { resolveSchedulingSettings, type SchedulingCompany } from "./company.js";
 import { resourceNames, type SchedulingEvent, type SchedulingEventListener } from "./events.js";
+import { formatShort, formatWhen } from "./format.js";
 import { instantsOf } from "./instants.js";
 import { getBookingRow } from "./internal.js";
 import type { ReminderRuns } from "./notices.js";
@@ -56,9 +69,39 @@ import type { SchedulingSettings } from "./settings.js";
 import { toVisitSnapshot } from "./snapshot.js";
 import { forEmail, greetingName } from "./text.js";
 import type { SchedulingDb } from "./types.js";
-import { insertManageToken, issueManageToken } from "./visit-tokens.js";
+import { insertManageToken, issueMessageToken, releaseMessageToken } from "./visit-tokens.js";
 
 export type { ReminderRuns } from "./notices.js";
+
+/**
+ * What an office email is the copy of (Tenancy 2b-1, contract 3.4): handed to
+ * `officeRecipients` and `officeSent`, so the host's alerts can claim the
+ * email of exactly the alert rows the mapper (`schedulingAlertsFor`) wrote.
+ * `kind` and `dedupeKey` come from the same function the mapper uses
+ * (`schedulingOfficeNotice`).
+ */
+export interface SchedulingOfficeNotice {
+  readonly tenantId: string;
+  /** The alert kind this email is the copy of (contract 9.1). */
+  readonly kind: string;
+  /** The same key the alert mapper writes for this fact (D6, D7). */
+  readonly dedupeKey: string;
+  readonly eventId: string;
+  /**
+   * The people linked to the visit's crew (and its previous crew, on a move).
+   * NOT addressed by the office email (crew get their own copy from
+   * notifications, D6 / review BO-03): the claim uses it only so its no-rows
+   * fallback can leave assigned-only people out.
+   */
+  readonly assignedUserIds: readonly string[];
+}
+
+/** How one office email ended, per address, as `deliverNow` answered (contract 3.4). */
+export interface SchedulingOfficeSendResult {
+  readonly to: string;
+  readonly status: "sent" | "skipped" | "failed";
+  readonly retryable: boolean;
+}
 
 /** The comms `refType` every queued visit message is tagged with (with `refId` = the visit id). */
 export const SCHEDULING_COMMS_REF_TYPE = "scheduling_visit";
@@ -325,32 +368,6 @@ function lateManageLine(settings: Pick<SchedulingSettings, "contactPhone" | "con
   return `Need to change it? ${window} ${callUs(settings)}`;
 }
 
-function formatWhen(startsAt: Date, endsAt: Date, timeZone: string, locale: string): string {
-  const format = new Intl.DateTimeFormat(locale, {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    timeZone,
-    timeZoneName: "short",
-  });
-  return format.formatRange(startsAt, endsAt);
-}
-
-function formatShort(instant: Date, timeZone: string, locale: string): string {
-  return new Intl.DateTimeFormat(locale, {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    timeZone,
-    timeZoneName: "short",
-  }).format(instant);
-}
-
 function contactLineFor(settings: Pick<SchedulingSettings, "contactPhone" | "contactEmail">): string {
   const phone = settings.contactPhone?.trim();
   const email = settings.contactEmail?.trim();
@@ -360,20 +377,18 @@ function contactLineFor(settings: Pick<SchedulingSettings, "contactPhone" | "con
   return "";
 }
 
-type StaffNoticeKind = "New request" | "New booking" | "Visit moved" | "Visit cancelled" | "Request expired";
-
 /**
  * The staff notice an event warrants, or null. Never for a change staff made
  * themselves. A request that lapses unanswered is one: it is a lost sale, and
  * before, the office never found out it happened.
+ *
+ * Tenancy 2b-1: the decision lives in alerts.ts (`schedulingOfficeNotice`),
+ * shared with the alert mapper, so the bell's alert and the office email are
+ * written for exactly the same events, under the same kind and dedupe key
+ * (contract 3.4: the claim finds the rows the mapper wrote).
  */
 function staffNoticeKind(event: SchedulingEvent): StaffNoticeKind | null {
-  if (event.type === "visit.expired") return "Request expired";
-  if (event.actor.type === "staff") return null;
-  if (event.type === "visit.requested") return event.data.visit.status === "confirmed" ? "New booking" : "New request";
-  if (event.type === "visit.rescheduled" && event.actor.type === "customer") return "Visit moved";
-  if (event.type === "visit.cancelled" && event.actor.type === "customer") return "Visit cancelled";
-  return null;
+  return schedulingOfficeNotice(event)?.notice ?? null;
 }
 
 /**
@@ -583,6 +598,32 @@ export interface SchedulingCommsOptions {
    */
   staffEmails?: readonly string[] | ((tenantId: string) => readonly string[] | Promise<readonly string[]>);
   /**
+   * Who gets each office notice, when the host routes them through its
+   * alerts (Tenancy 2b-1, D6): the ONE place an owner chose who hears about
+   * new work. When given it decides: the saved `staffNotifyEmails` are not
+   * read, and `[]` sends no office email (the people chose the app only, or
+   * the email was already claimed: the same event handed over twice is never
+   * two emails). A throw is reported (step "office-recipients") and the
+   * listener falls back to `staffEmails` (the host's business address, 2a's
+   * inbox) so the office still hears (review BO-02).
+   *
+   * Each office email then goes through comms' `deliverNow` (not `sendNow`),
+   * keeping 2a's template, variables, reply-to and idempotency key, so its
+   * outcome can be told to `officeSent`.
+   */
+  officeRecipients?: (notice: SchedulingOfficeNotice) => readonly string[] | Promise<readonly string[]>;
+  /**
+   * Told, per address, how each office email ended, after `deliverNow`
+   * answered: the host turns a `failed` and retryable one back into an alert
+   * email the alerts cron sends (`alerts.releaseClaim`), so a failed office
+   * email is not lost (review BO-02). NOT told about a send that hit
+   * `sendTimeoutMs` (it may have gone; two emails are worse than a late one):
+   * that is reported (step "office-timeout"). Awaited inside its own step: a
+   * throw is reported (step "office-sent") and changes nothing. Only used
+   * with `officeRecipients`.
+   */
+  officeSent?: (notice: SchedulingOfficeNotice, result: SchedulingOfficeSendResult) => void | Promise<void>;
+  /**
    * The business as its customers know it, from the host's company profile
    * (Tenancy 2a, D5): settings are read through `resolveSchedulingSettings`,
    * so `{{businessName}}`, the contact lines and every date in the email are
@@ -653,6 +694,39 @@ interface Links {
   adminUrl: string | undefined;
 }
 
+/**
+ * The customer's message for one event, claimed once (`claimCustomerMessage`):
+ * `replay` when this event's message was handled by an earlier delivery;
+ * `failed` when its link couldn't be minted (reported); else the token for its
+ * link, if it has one, and that token's row (let go if the message never went).
+ */
+interface CustomerClaim {
+  readonly replay: boolean;
+  readonly failed: boolean;
+  readonly token: string | null;
+  readonly tokenId: string | null;
+}
+const NO_CLAIM: CustomerClaim = Object.freeze({ replay: false, failed: false, token: null, tokenId: null });
+
+/**
+ * A send the listener stopped waiting for (`sendTimeoutMs`). Its own name, so
+ * an office email that timed out (it may have gone) is told apart from one
+ * that failed before anything left: only the second may be retried.
+ */
+class SendTimedOutError extends Error {
+  readonly name = "SendTimedOutError";
+}
+
+/** Addresses as a host answered them: strings only, blanks dropped. */
+function cleanAddresses(list: readonly unknown[] | null | undefined): string[] {
+  return Array.isArray(list) ? list.filter((to): to is string => typeof to === "string" && to.trim() !== "") : [];
+}
+
+/** comms' log status, as the three words `officeSent` hears. Anything else is a failure. */
+function sendStatus(status: string): SchedulingOfficeSendResult["status"] {
+  return status === "sent" || status === "skipped" ? status : "failed";
+}
+
 /** A manage token as it appears in a link: 43 base64url characters, alone. */
 const TOKEN_IN_TEXT = "(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])";
 /** How far back `redactSent` sweeps the delivery log for a link a crashed run left behind. */
@@ -698,7 +772,7 @@ export function createSchedulingCommsListener(options: SchedulingCommsOptions): 
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(
-        () => reject(new Error(`${label} took longer than ${timeoutMs} ms; left to finish in the background`)),
+        () => reject(new SendTimedOutError(`${label} took longer than ${timeoutMs} ms; left to finish in the background`)),
         timeoutMs,
       );
     });
@@ -795,18 +869,48 @@ export function createSchedulingCommsListener(options: SchedulingCommsOptions): 
     });
   }
 
+  /**
+   * The customer's message for an event, CLAIMED ONCE (Tenancy 2b-1: the
+   * same event handed to this listener again, a retried delivery or a
+   * replayed queue, sent the customer "your visit moved" again with a new
+   * link each time; a provider that deduplicates by the idempotency key saw
+   * a different message under the same key and refused it). The claim IS
+   * the message's manage token: its row id comes from the event's id
+   * (`issueMessageToken`), so a second delivery mints nothing and answers
+   * `replay`, and the caller skips the customer's side (the email, and the
+   * reminder withdrawn and queued again, which the first delivery did).
+   *
+   * Only a message with a link is claimed: one without (declined,
+   * cancelled, lapsed) carries no token, and its repeat is the same message
+   * under the same idempotency key, which a deduplicating provider drops.
+   */
+  async function claimCustomerMessage(event: SchedulingEvent, templateKey: SchedulingTemplateKey, withLink: boolean): Promise<CustomerClaim> {
+    const visit = event.data.visit;
+    if (!withLink || !event.data.notify || !visit.customerEmail) return NO_CLAIM;
+    try {
+      const minted = await issueMessageToken(db, event.tenantId, visit.id, `visit:${visit.id}:${event.id}:customer`);
+      if (minted === "already") return { replay: true, failed: false, token: null, tokenId: null };
+      return minted ? { replay: false, failed: false, token: minted.token, tokenId: minted.id } : NO_CLAIM;
+    } catch (error) {
+      // As before: a link that can't be minted is this email's failure, reported; the rest goes on.
+      report(error, { visitId: visit.id, eventId: event.id, step: `send:${templateKey}` });
+      return { replay: false, failed: true, token: null, tokenId: null };
+    }
+  }
+
   async function sendCustomer(
     event: SchedulingEvent,
     settings: SchedulingSettings,
     links: Links,
     templateKey: SchedulingTemplateKey,
-    withLink: boolean,
+    claim: CustomerClaim = NO_CLAIM,
   ) {
     const visit = event.data.visit;
     if (!event.data.notify || !visit.customerEmail) return;
+    // A replay was told the first time; a link that couldn't be minted was reported.
+    if (claim.replay || claim.failed) return;
     await step(`send:${templateKey}`, visit.id, event.id, async () => {
-      let token: string | null = null;
-      if (withLink) token = await issueManageToken(db, event.tenantId, visit.id);
+      const token = claim.token;
       const manageUrl = token ? await manageLinkFor(token, event.tenantId, { visitId: visit.id, eventId: event.id }) : null;
       const vars = schedulingEmailVars(event, settings, {
         manageUrl,
@@ -830,26 +934,75 @@ export function createSchedulingCommsListener(options: SchedulingCommsOptions): 
         `the ${templateKey} email`,
       );
       if (token && message?.id) await redactMessage(event.tenantId, message.id, token);
+      // Not sent (failed, or skipped): its link reached nobody. The claim is
+      // let go, so the next delivery of this event tries again. A send we
+      // stopped waiting for (`bounded` threw) keeps it: it may have gone.
+      if (claim.tokenId && message && message.status !== "sent") await releaseMessageToken(db, event.tenantId, claim.tokenId);
     });
   }
 
-  /** The office's addresses: the business's saved ones, else the host's (per tenant when a function). */
-  async function staffRecipients(event: SchedulingEvent, settings: SchedulingSettings): Promise<string[]> {
-    if (settings.staffNotifyEmails.length > 0) return [...settings.staffNotifyEmails];
+  /** The host's own office addresses (2a's `staffEmails`, per tenant when a function). */
+  async function hostStaffEmails(event: SchedulingEvent): Promise<string[]> {
     const fallback = options.staffEmails;
-    if (typeof fallback !== "function") return [...(fallback ?? [])];
+    if (typeof fallback !== "function") return cleanAddresses(fallback ?? []);
     try {
-      return [...(await fallback(event.tenantId))].filter((to) => typeof to === "string" && to.trim() !== "");
+      return cleanAddresses(await fallback(event.tenantId));
     } catch (error) {
       report(error, { visitId: event.visitId, eventId: event.id, step: "staff-emails" });
       return [];
     }
   }
 
+  /** The office's addresses (2a): the business's saved ones, else the host's. */
+  async function staffRecipients(event: SchedulingEvent, settings: SchedulingSettings): Promise<string[]> {
+    if (settings.staffNotifyEmails.length > 0) return [...settings.staffNotifyEmails];
+    return hostStaffEmails(event);
+  }
+
+  /**
+   * The notice handed to `officeRecipients` and `officeSent` (3.4): the kind
+   * and key from the mapper's own function, and the visit's crew (current
+   * and previous, the mapper's `assignedUserIds`) from the same query. A
+   * crew lookup that fails is reported and leaves the list empty: the office
+   * email must not wait on it.
+   */
+  async function officeNoticeFor(
+    event: SchedulingEvent,
+    spec: { kind: string; dedupeKey: string },
+  ): Promise<SchedulingOfficeNotice> {
+    let assignedUserIds: string[] = [];
+    try {
+      assignedUserIds = await crewUserIds(db, event.tenantId, [event.data.visit.resourceId, event.data.previous?.resourceId]);
+    } catch (error) {
+      report(error, { visitId: event.visitId, eventId: event.id, step: "office-crew" });
+    }
+    return { tenantId: event.tenantId, kind: spec.kind, dedupeKey: spec.dedupeKey, eventId: event.id, assignedUserIds };
+  }
+
   async function sendStaff(event: SchedulingEvent, settings: SchedulingSettings, links: Links) {
-    const kind = staffNoticeKind(event);
-    if (!kind) return;
-    const recipients = await staffRecipients(event, settings);
+    const spec = schedulingOfficeNotice(event);
+    if (!spec) return;
+    const context = { visitId: event.visitId, eventId: event.id };
+    const routed = typeof options.officeRecipients === "function";
+    // `notice` stays set only while the addresses came from the host's
+    // alerts (the claim). The fallback addresses after a throw were claimed
+    // by nobody, so their outcome is told to nobody: releasing a claim for
+    // them could re-send an alert email the first delivery of this same
+    // event already sent (two emails are worse than a late one).
+    let notice: SchedulingOfficeNotice | null = null;
+    let recipients: string[];
+    if (routed) {
+      notice = await officeNoticeFor(event, spec);
+      try {
+        recipients = cleanAddresses(await options.officeRecipients!(notice));
+      } catch (error) {
+        report(error, { ...context, step: "office-recipients" });
+        notice = null;
+        recipients = await hostStaffEmails(event);
+      }
+    } else {
+      recipients = await staffRecipients(event, settings);
+    }
     if (recipients.length === 0) return;
     const vars = schedulingEmailVars(event, settings, {
       manageUrl: null,
@@ -858,38 +1011,79 @@ export function createSchedulingCommsListener(options: SchedulingCommsOptions): 
       locale: options.locale,
       audience: "staff",
     });
+    const input = (to: string, index: number) => ({
+      tenantId: event.tenantId,
+      to,
+      templateKey: "visit_staff_notice",
+      vars,
+      idempotencyKey: `visit:${event.visitId}:${event.id}:staff:${index}`,
+      // Reply on "New request: Pat Rivera" reaches Pat, not the office's own
+      // address (review T2A-BO-12). No address: the business's reply-to.
+      ...(event.data.visit.customerEmail ? { replyTo: event.data.visit.customerEmail } : {}),
+    });
     // Side by side, not one after another: five office addresses behind a slow
     // mail server must not add up to minutes on the customer's request.
-    await Promise.all(
-      recipients.map((to, index) =>
-        step("send:visit_staff_notice", event.visitId, event.id, () =>
-          bounded(
-            sendNow(
-              db,
-              {
-                tenantId: event.tenantId,
-                to,
-                templateKey: "visit_staff_notice",
-                vars,
-                idempotencyKey: `visit:${event.visitId}:${event.id}:staff:${index}`,
-                // Reply on "New request: Pat Rivera" reaches Pat, not the
-                // office's own address (review T2A-BO-12). No address: the
-                // business's reply-to.
-                ...(event.data.visit.customerEmail ? { replyTo: event.data.visit.customerEmail } : {}),
-              },
-              options.senders,
-            ),
-            "the office notice",
+    if (!routed) {
+      // 2a's path, exactly: no alerts on this host.
+      await Promise.all(
+        recipients.map((to, index) =>
+          step("send:visit_staff_notice", event.visitId, event.id, () =>
+            bounded(sendNow(db, input(to, index), options.senders), "the office notice"),
           ),
         ),
-      ),
+      );
+      return;
+    }
+    await Promise.all(
+      recipients.map(async (to, index) => {
+        let outcome: { message: { status: string }; retryable: boolean };
+        try {
+          outcome = await bounded(deliverNow(db, input(to, index), options.senders), "the office notice");
+        } catch (error) {
+          // A send we stopped waiting for may still go: it is NOT handed to
+          // `officeSent`, so it is never released for a second copy.
+          report(error, { ...context, step: error instanceof SendTimedOutError ? "office-timeout" : "send:visit_staff_notice" });
+          return;
+        }
+        const told = notice;
+        if (!told || !options.officeSent) return;
+        await step("office-sent", event.visitId, event.id, async () => {
+          await options.officeSent!(told, { to, status: sendStatus(outcome.message.status), retryable: outcome.retryable });
+        });
+      }),
     );
   }
 
-  async function withdrawReminder(event: SchedulingEvent) {
-    await step("withdraw", event.visitId, event.id, () =>
-      cancelScheduled(db, { tenantId: event.tenantId, refType: SCHEDULING_COMMS_REF_TYPE, refId: event.visitId }),
-    );
+  /**
+   * Withdraw the visit's queued reminders. `keepCurrent` (a confirmation or a
+   * move, which queue the reminder for the visit AS IT IS NOW right after):
+   * the one already queued for this very version (`visit:{id}:reminder:{sequence}`)
+   * stays. Cancelling it would only have the queue hand the cancelled row
+   * back under the same key, and the customer would get no reminder: a
+   * delivery of this event that comes again after its email failed did just
+   * that. Every older version's reminder goes.
+   */
+  async function withdrawReminder(event: SchedulingEvent, keepCurrent = false) {
+    await step("withdraw", event.visitId, event.id, async () => {
+      if (!keepCurrent) {
+        await cancelScheduled(db, { tenantId: event.tenantId, refType: SCHEDULING_COMMS_REF_TYPE, refId: event.visitId });
+        return;
+      }
+      const current = `visit:${event.visitId}:reminder:${event.data.visit.sequence}`;
+      // cancelScheduled's own rule (pending AND sending; see comms), less the current version's.
+      await db
+        .update(commsScheduled)
+        .set({ status: "cancelled" })
+        .where(
+          and(
+            eq(commsScheduled.tenantId, event.tenantId),
+            eq(commsScheduled.refType, SCHEDULING_COMMS_REF_TYPE),
+            eq(commsScheduled.refId, event.visitId),
+            inArray(commsScheduled.status, ["pending", "sending"]),
+            sql`${commsScheduled.dedupeKey} is distinct from ${current}`,
+          ),
+        );
+    });
   }
 
   /**
@@ -945,41 +1139,52 @@ export function createSchedulingCommsListener(options: SchedulingCommsOptions): 
       }
       const links = await linksFor(event.tenantId, context);
       const pending = event.data.visit.status === "pending";
+      // The SAME event handed over again (a retried delivery, a replayed
+      // queue) tells the customer nothing new: its message was claimed by the
+      // first delivery (`claimCustomerMessage`), and so were the reminder's
+      // withdrawal and queueing. The office side has its own claim (D6, D7).
       switch (event.type) {
         case "visit.requested":
-          if (pending) await sendCustomer(event, settings, links, "visit_requested", true);
+          if (pending) await sendCustomer(event, settings, links, "visit_requested", await claimCustomerMessage(event, "visit_requested", true));
           await sendStaff(event, settings, links);
           return;
-        case "visit.confirmed":
+        case "visit.confirmed": {
+          const claim = await claimCustomerMessage(event, "visit_confirmed", true);
+          if (claim.replay) return;
           // A confirmation re-sent to a corrected email address replaces a
           // reminder queued for the old one; for an accept there is nothing
           // to withdraw and this is one cheap query.
-          await withdrawReminder(event);
-          await sendCustomer(event, settings, links, "visit_confirmed", true);
+          await withdrawReminder(event, true);
+          await sendCustomer(event, settings, links, "visit_confirmed", claim);
           await queueReminder(event, settings, links);
           return;
+        }
         case "visit.declined":
           await withdrawReminder(event);
-          await sendCustomer(event, settings, links, "visit_declined", false);
+          await sendCustomer(event, settings, links, "visit_declined");
           return;
-        case "visit.rescheduled":
-          await withdrawReminder(event);
-          await sendCustomer(event, settings, links, "visit_rescheduled", true);
+        case "visit.rescheduled": {
+          const claim = await claimCustomerMessage(event, "visit_rescheduled", true);
+          if (!claim.replay) {
+            await withdrawReminder(event, true);
+            await sendCustomer(event, settings, links, "visit_rescheduled", claim);
+          }
           await sendStaff(event, settings, links);
-          await queueReminder(event, settings, links);
+          if (!claim.replay) await queueReminder(event, settings, links);
           return;
+        }
         case "visit.reassigned":
           // The reminder stays: the time didn't change, and neither did the sequence.
-          await sendCustomer(event, settings, links, "visit_reassigned", true);
+          await sendCustomer(event, settings, links, "visit_reassigned", await claimCustomerMessage(event, "visit_reassigned", true));
           return;
         case "visit.cancelled":
           await withdrawReminder(event);
-          await sendCustomer(event, settings, links, "visit_cancelled", false);
+          await sendCustomer(event, settings, links, "visit_cancelled");
           await sendStaff(event, settings, links);
           return;
         case "visit.expired":
           await withdrawReminder(event);
-          await sendCustomer(event, settings, links, "visit_expired", false);
+          await sendCustomer(event, settings, links, "visit_expired");
           await sendStaff(event, settings, links);
           return;
         case "visit.started":

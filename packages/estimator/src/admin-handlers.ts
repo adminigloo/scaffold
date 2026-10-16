@@ -52,6 +52,7 @@ import {
   createThrottle,
   HttpError,
   isCrossSiteRequest,
+  MAX_PHOTO_BODY_BYTES,
   MAX_PHOTO_BODY_CHARS,
   NOT_FOUND_MESSAGE,
   readJsonBody,
@@ -159,6 +160,15 @@ export interface CreateEstimatorAdminHandlersOptions {
   /** Your auth: may this request do `permission` for `tenantId`? */
   authorize: (req: Request, permission: EstimatorPermission, tenantId: string) => AuthorizeResult | Promise<AuthorizeResult>;
   photoStore?: EstimatorPhotoStore;
+  /**
+   * Where staff's OWN estimate photos are kept (Tenancy 2b-1 review SEC-02),
+   * e.g. `storage.purposeStore("estimator.staff-photo")` with
+   * `estimatorStaffPhotoPurpose` registered. Customers' photos have a share
+   * of the company's storage strangers can fill; staff's must not be refused
+   * because of it. Default `photoStore` (0.4's behaviour). Needs
+   * `photoStore` too: without it no photo is kept.
+   */
+  staffPhotoStore?: EstimatorPhotoStore;
   /** The public side has a takeoff model (for the status's "reading is off" notice). */
   photoReading?: boolean;
   /**
@@ -233,6 +243,17 @@ export interface CreateEstimatorAdminHandlersOptions {
   company?: (tenantId: string) => EstimatorCompany | null | Promise<EstimatorCompany | null>;
   /** Where the owner changes the company-owned fields (D6), e.g. "/settings/company#details". Default null. */
   companySettingsHref?: string | null;
+  /**
+   * Where Alert settings are, when the host routes office alerts there
+   * (Tenancy 2b-1, D6), e.g. "/app/alerts/settings". Default null.
+   *
+   * Given, Estimator settings stops offering its own "Lead alerts" address
+   * list (`EstimatorSettingsWire.alertRecipients` carries the link), and a
+   * save DROPS `leadNotifyEmails` from the patch: never a 422 (2a D6's rule),
+   * and a body of only it saves nothing. The comms listener's
+   * `officeRecipients` decides who hears instead.
+   */
+  alertsHref?: string | null;
   /**
    * The most a day of photo reading may cost per business on this site, in
    * cents (D14). The budget shown and spent is `min(the setting, this)`, and a
@@ -683,6 +704,7 @@ export function createEstimatorAdminHandlers(options: CreateEstimatorAdminHandle
       now,
       locale: settings.locale,
       ...(options.photoStore ? { photoStore: options.photoStore } : {}),
+      ...(options.photoStore && options.staffPhotoStore ? { staffPhotoStore: options.staffPhotoStore } : {}),
       // "Turn into an invoice" only for someone who may raise invoices (SEC-2A-02).
       seams: { convert: Boolean(options.convertToInvoice) && rights.manage, bookVisit: bookVisitUrl !== null, copyLink: Boolean(options.quoteUrl) },
     });
@@ -951,6 +973,12 @@ export function createEstimatorAdminHandlers(options: CreateEstimatorAdminHandle
     const params = new URL(req.url).searchParams;
     const id = matched.id ?? "";
     const sub = matched.sub ?? "";
+    /** How settings go on the wire: the company's link (2a) and where Alert settings are (2b-1). */
+    const wireOptions = {
+      includeCosts,
+      companySettingsHref: options.companySettingsHref ?? null,
+      alertsHref: typeof options.alertsHref === "string" ? options.alertsHref : null,
+    };
     const body = async () => (req.method === "POST" ? readJsonBody(req) : {});
     const product = async (productId: string) => json({ product: await adminProduct(tenantId, productId, settings, includeCosts) });
     const mutation = async (estimateId: string, warnings: string[] = [], status = 200) => {
@@ -981,10 +1009,17 @@ export function createEstimatorAdminHandlers(options: CreateEstimatorAdminHandle
         return json(await usage(tenantId, days, now));
       }
       case "settings-get":
-        return json({ settings: toSettingsWire(settings, { includeCosts, companySettingsHref: options.companySettingsHref ?? null }) });
+        return json({ settings: toSettingsWire(settings, wireOptions) });
       case "settings-update": {
         const patch = { ...(await body()) } as Record<string, unknown>;
-        const wireOptions = { includeCosts, companySettingsHref: options.companySettingsHref ?? null };
+        if (wireOptions.alertsHref !== null && Object.prototype.hasOwnProperty.call(patch, "leadNotifyEmails")) {
+          // Tenancy 2b-1, D6: who hears about new leads is chosen in Alert
+          // settings, so the old list is DROPPED, never refused (2a D6's
+          // rule: an old client keeps working). A body of only it saves
+          // nothing and answers the settings as they are.
+          delete patch["leadNotifyEmails"];
+          if (Object.keys(patch).length === 0) return json({ settings: toSettingsWire(settings, wireOptions) });
+        }
         if (settings.managedByCompany) {
           // D6: the company owns the name, contact, zone and colour. Dropped,
           // never refused: the widget doesn't send them, and a refusal would
@@ -1226,13 +1261,26 @@ export function createEstimatorAdminHandlers(options: CreateEstimatorAdminHandle
       }
       case "photo-add": {
         if (!options.photoStore) throw new HttpError("photos_disabled", "Photos can't be kept: no file storage is connected.");
-        const parsed = photoBodySchema.parse(await readJsonBody(req, MAX_PHOTO_BODY_CHARS));
-        const photo = await attachStaffPhoto(db, options.photoStore, tenantId, id, parsed, { now });
+        const parsed = photoBodySchema.parse(await readJsonBody(req, MAX_PHOTO_BODY_CHARS, MAX_PHOTO_BODY_BYTES));
+        // Staff's own store when given (review SEC-02): the customers' share never refuses it.
+        const photo = await attachStaffPhoto(db, options.staffPhotoStore ?? options.photoStore, tenantId, id, parsed, {
+          now,
+          // Tenancy 2b-1: the photo is added; a store that won't file it on
+          // the estimate is reported, never the staff member's problem.
+          onError: (error, context) => {
+            try {
+              if (options.onError) options.onError(error, { tenantId: context.tenantId, route: context.step });
+              else console.error("[@adminigloo/estimator] a photo step failed", { tenantId: context.tenantId, step: context.step }, error);
+            } catch {
+              /* a broken reporter must not undo the photo */
+            }
+          },
+        });
         if (!photo) throw notFound();
         return mutation(id);
       }
       case "photo-remove": {
-        if (!(await removeEstimatePhoto(db, options.photoStore, tenantId, id, sub))) throw notFound();
+        if (!(await removeEstimatePhoto(db, options.photoStore, tenantId, id, sub, options.staffPhotoStore))) throw notFound();
         return mutation(id);
       }
       case "quote-send": {

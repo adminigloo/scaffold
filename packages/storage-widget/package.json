@@ -1,0 +1,57 @@
+{
+  "name": "@adminigloo/storage-widget",
+  "version": "0.0.0",
+  "description": "The photos and files screens for AdminIgloo storage, under ./admin: the photos and files kept with a visit, an estimate or an invoice (with the phone camera at the job), the company Files screen, and how much room is left. Talks to @adminigloo/storage's handlers. React is its only peer.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adminigloo/scaffold.git",
+    "directory": "packages/storage-widget"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./admin": {
+      "types": "./dist/admin.d.ts",
+      "import": "./dist/admin.js",
+      "require": "./dist/admin.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "public"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0",
+    "@adminigloo/storage": "^0.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@adminigloo/storage": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@adminigloo/storage": "workspace:^",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.4",
+    "happy-dom": "^20.0.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "scripts": {
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  }
+}

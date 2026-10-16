@@ -5,6 +5,7 @@ import type { EstimatorEvent, EstimatorEventListener } from "./events.js";
 import {
   HttpError,
   isCrossSiteRequest,
+  MAX_PHOTO_BODY_BYTES,
   MAX_PHOTO_BODY_CHARS,
   NOT_FOUND_MESSAGE,
   readJsonBody,
@@ -431,7 +432,7 @@ export function createEstimatorHandlers(options: CreateEstimatorHandlersOptions)
         if (!settings.photosEnabled || !options.photoStore) {
           throw new HttpError("photos_disabled", "This estimator doesn't take photos.");
         }
-        const body = photoBodySchema.parse(await readJsonBody(req, MAX_PHOTO_BODY_CHARS));
+        const body = photoBodySchema.parse(await readJsonBody(req, MAX_PHOTO_BODY_CHARS, MAX_PHOTO_BODY_BYTES));
         const photo = decodePhoto(body.imageBase64, body.mediaType);
         const requester = options.requesterKey ? await options.requesterKey(req) : clientIpKey(req);
         const kept = await keepPublicPhoto(db, options.photoStore, tenantId, { ...photo, sha256: await sha256Hex(photo.bytes) }, now, {
@@ -441,7 +442,7 @@ export function createEstimatorHandlers(options: CreateEstimatorHandlersOptions)
         return respond({ photoId: kept.id } satisfies PhotoResponse, 201, cors, false);
       }
       case "takeoff": {
-        const body = takeoffBodySchema.parse(await readJsonBody(req, MAX_PHOTO_BODY_CHARS));
+        const body = takeoffBodySchema.parse(await readJsonBody(req, MAX_PHOTO_BODY_CHARS, MAX_PHOTO_BODY_BYTES));
         const requesterKey = options.requesterKey ? await options.requesterKey(req) : clientIpKey(req);
         const response = await runPhotoTakeoff(
           db,
@@ -500,6 +501,17 @@ export function createEstimatorHandlers(options: CreateEstimatorHandlersOptions)
             taxRateBp: await legacyTaxRate(tenantId, settings),
             requesterKey: options.requesterKey ? await options.requesterKey(req) : clientIpKey(req),
             ...events,
+            // Tenancy 2b-1 (review BO-13): the customer's photos are put on
+            // their estimate in the file store once the lead commits.
+            ...(options.photoStore ? { photoStore: options.photoStore } : {}),
+            onError: (error, context) => {
+              try {
+                if (options.onError) options.onError(error, { tenantId: context.tenantId, route: context.step });
+                else console.error("[@adminigloo/estimator] a photo step failed", { tenantId: context.tenantId, step: context.step }, error);
+              } catch {
+                /* contained: the lead is saved */
+              }
+            },
           },
         );
         if (options.onLead) {

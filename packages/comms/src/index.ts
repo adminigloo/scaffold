@@ -5,6 +5,7 @@ import { plainTextToEmailHtml } from "./html.js";
 import { missingVariables, renderTemplate, type TemplateVars } from "./render.js";
 import { commsMessages, commsScheduled, commsTemplates } from "./schema.js";
 import { enforceCompliance, normalizePhone, smsComplianceSchema, type SmsCompliance } from "./sms.js";
+import type { CommsFailure } from "./alerts.js";
 
 export * from "./render.js";
 export * from "./sms.js";
@@ -22,6 +23,15 @@ export type {
 export { COMMS_ADMIN_ROUTES } from "./routes.js";
 export type { CommsAdminRouteKind, CommsRoute } from "./routes.js";
 export type * from "./wire.js";
+export { COMMS_MESSAGE_FAILED_KIND, commsAlertKinds, commsFailureAlert, templateLabel } from "./alerts.js";
+export type {
+  CommsAlertChannel,
+  CommsAlertDraft,
+  CommsAlertKind,
+  CommsAlertKinds,
+  CommsAlertRouting,
+  CommsFailure,
+} from "./alerts.js";
 
 export type CommsDb = PgDatabase<any, any, any>;
 
@@ -169,6 +179,25 @@ interface CommsDeliveryConfig {
     readonly to: string;
     readonly templateKey: string;
   }) => boolean | Promise<boolean>;
+  /**
+   * Told once a message has FAILED FOR GOOD (Tenancy 2b-1, 12.1): every failed
+   * `sendNow` / `deliverNow`, and a queued message the drain gives up on
+   * (permanent, or out of attempts, or abandoned out of attempts). Not told
+   * about a failure the queue will retry, nor about a skip (no provider set
+   * up is not a failure). Awaited; a throw is swallowed (the host's own
+   * reporter's job), so it can never fail a send or a drain.
+   *
+   * WHY. Before 0.4 a failed customer email was only a log row: the owner
+   * learned the reminder never went when the customer didn't show up. The
+   * host turns this into an alert for the people who manage messages
+   * (`commsFailureAlert`), so somebody hears while there's time to call.
+   *
+   * Told AFTER the outcome is recorded (the log row, the queue row's final
+   * status), so whatever the host reads back is already the truth. A 0.1.x
+   * `sending` row the drain fails as "state unknown" is NOT told: it may well
+   * have gone, and "didn't go" would be a guess.
+   */
+  onFailed?: (failure: CommsFailure) => void | Promise<void>;
 }
 
 /** The log's words for a message the business's sending allowance held back. */
@@ -759,7 +788,62 @@ async function deliver(
  * when the cron runs.
  */
 export async function sendNow(db: CommsDb, input: SendInput, senders: CommsSenders): Promise<MessageRow> {
-  return (await deliver(db, input, senders, new Date())).message;
+  return (await deliverNow(db, input, senders)).message;
+}
+
+/**
+ * `sendNow`, plus whether trying again could change the outcome (Tenancy
+ * 2b-1, 12.2): deliver's own `permanent`, turned around. `retryable` is true
+ * only for a FAILED message whose failure might pass (the business's sending
+ * allowance held it, the provider threw or refused it, who the business sends
+ * as couldn't be read), and false for a send, a skip, and a failure that
+ * would fail the same way every time (no such template, an address that
+ * isn't one, the channel changed, texts not set up properly).
+ *
+ * WHY a second function rather than a wider `sendNow`. A caller that keeps
+ * its own retry (the alerts package's email copies, the office notices of
+ * scheduling and the estimator) needs to know whether a retry is worth
+ * making: a held message or a provider hiccup is tried again by its cron, a
+ * refused address is not. `sendNow`'s answer stays the log row, so no 0.3
+ * caller changes.
+ *
+ * A failure is told to `onFailed` before this answers.
+ */
+export async function deliverNow(
+  db: CommsDb,
+  input: SendInput,
+  senders: CommsSenders,
+): Promise<{ readonly message: MessageRow; readonly retryable: boolean }> {
+  const now = new Date();
+  const { message, permanent } = await deliver(db, input, senders, now);
+  if (message.status === "failed") {
+    await tellFailed(senders, {
+      tenantId: message.tenantId,
+      messageId: message.id,
+      scheduledId: null,
+      channel: message.channel as CommsChannel,
+      to: message.toAddress,
+      templateKey: message.templateKey ?? input.templateKey,
+      error: message.error ?? "send failed",
+      at: now,
+    });
+  }
+  return { message, retryable: message.status === "failed" && !permanent };
+}
+
+/**
+ * Hand a final failure to `onFailed`, awaited, never throwing (12.1): the
+ * host's reporter failing must not turn a logged failure into a thrown send
+ * or stop the drain's next row.
+ */
+async function tellFailed(senders: CommsSenders, failure: CommsFailure): Promise<void> {
+  const told = senders.onFailed;
+  if (!told) return;
+  try {
+    await told(failure);
+  } catch {
+    // Swallowed on purpose: see CommsDeliveryConfig.onFailed.
+  }
 }
 
 export async function listMessages(db: CommsDb, tenantId: string, limit = 100): Promise<MessageRow[]> {
@@ -1053,9 +1137,17 @@ const runDueOptionsSchema = z.object({
  */
 const OUTCOME_WRITE_TRIES = 3;
 
-type RowOutcome =
+/**
+ * What handling one claimed row came to. `messageId` is the LAST delivery-log
+ * row written for it (null when none was: a throw before the log), so a drain
+ * that gives the row up can say which log row recorded the failure (12.1).
+ * `to` and `channel` are what that log row recorded, when there is one (a
+ * beforeSend hook may have changed `to`).
+ */
+type RowOutcome = (
   | { status: "sent" | "skipped" | "failed" | "cancelled" | "expired"; lastError: string | null }
-  | { status: "retry"; lastError: string };
+  | { status: "retry"; lastError: string }
+) & { messageId: string | null; to?: string; channel?: string };
 
 /**
  * Drain the queue: send every pending message whose time has come.
@@ -1141,6 +1233,10 @@ export async function runDueMessages(
       .where(and(eq(commsScheduled.status, "sending"), isNull(commsScheduled.claimedAt), forTenants))
       .returning({ id: commsScheduled.id })) as { id: string }[];
     result.failed += legacy.length;
+    // CONTRACT: 12.1 tells `onFailed` about a permanent failure, one out of
+    // attempts and one abandoned out of attempts. These 0.1.x rows are none
+    // of those: their state is unknown and they may well have been delivered,
+    // so they are failed (a person decides) but NOT told as "didn't go".
 
     // 2. Reclaim claims abandoned by a worker that died mid-send (a platform
     // timeout, a crash). Without this a row left in `sending` stays there
@@ -1153,12 +1249,33 @@ export async function runDueMessages(
       lt(commsScheduled.claimedAt, new Date(now.getTime() - options.staleClaimMs)),
       forTenants,
     );
+    const abandonedError = `abandoned mid-send, out of attempts (${options.maxAttempts})`;
     const exhausted = (await db
       .update(commsScheduled)
-      .set({ status: "failed", lastError: `abandoned mid-send, out of attempts (${options.maxAttempts})` })
+      .set({ status: "failed", lastError: abandonedError })
       .where(and(abandoned, gte(commsScheduled.attempts, options.maxAttempts)))
-      .returning({ id: commsScheduled.id })) as { id: string }[];
+      .returning({
+        id: commsScheduled.id,
+        tenantId: commsScheduled.tenantId,
+        channel: commsScheduled.channel,
+        toAddress: commsScheduled.toAddress,
+        templateKey: commsScheduled.templateKey,
+      })) as { id: string; tenantId: string; channel: string; toAddress: string; templateKey: string }[];
     result.failed += exhausted.length;
+    // Given up for good (12.1), told with no log row of its own (messageId
+    // null): its worker died before it could write one.
+    for (const row of exhausted) {
+      await tellFailed(senders, {
+        tenantId: row.tenantId,
+        messageId: null,
+        scheduledId: row.id,
+        channel: row.channel as CommsChannel,
+        to: row.toAddress,
+        templateKey: row.templateKey,
+        error: abandonedError,
+        at: clock(),
+      });
+    }
     const revived = (await db
       .update(commsScheduled)
       .set({
@@ -1222,10 +1339,14 @@ export async function runDueMessages(
         clock,
       );
       let patch: Partial<ScheduledRow>;
+      // Whether the drain is giving this row up for good (12.1): a permanent
+      // failure, or a transient one out of attempts. A retry is not told.
+      let givenUp = false;
       if (outcome.status === "retry") {
         if (attempts >= options.maxAttempts) {
           patch = { status: "failed", lastError: `${outcome.lastError} (gave up after ${attempts} attempts)` };
           result.failed += 1;
+          givenUp = true;
         } else {
           patch = {
             status: "pending",
@@ -1238,17 +1359,33 @@ export async function runDueMessages(
       } else {
         patch = { status: outcome.status, lastError: outcome.lastError };
         result[outcome.status] += 1;
+        givenUp = outcome.status === "failed";
       }
       // Guarded on `sending` AND on the attempt count this run claimed with.
       // `sending` alone was not ownership: a run that stalled past
       // staleClaimMs came back to a row another worker had reclaimed, claimed
       // again (attempts + 1) and was mid-send on — and overwrote it, putting
       // it back to pending to be sent yet again. A cancel is left standing too.
-      await writeOutcome(
+      const recorded = await writeOutcome(
         db,
         patch,
         and(eq(commsScheduled.id, row.id), eq(commsScheduled.status, "sending"), eq(commsScheduled.attempts, attempts)),
       );
+      // Told after the outcome is written, and only when THIS run's write
+      // landed: a row cancelled mid-send, or reclaimed by another worker, was
+      // not given up by this run, so nobody hears it failed.
+      if (givenUp && recorded) {
+        await tellFailed(senders, {
+          tenantId: row.tenantId,
+          messageId: outcome.messageId,
+          scheduledId: row.id,
+          channel: (outcome.channel ?? row.channel) as CommsChannel,
+          to: outcome.to ?? row.toAddress,
+          templateKey: row.templateKey,
+          error: patch.lastError ?? "send failed",
+          at: clock(),
+        });
+      }
     }
   }
   if (result.processed >= options.limit) result.stoppedEarly = true;
@@ -1289,13 +1426,17 @@ async function dueInTurns(db: CommsDb, now: Date, forTenants: SQL | undefined, l
  * safe now (the already-sent check) but slow. Never throws: one failed write
  * must not abort the rows behind it.
  */
-async function writeOutcome(db: CommsDb, patch: Partial<ScheduledRow>, owned: SQL | undefined): Promise<void> {
+async function writeOutcome(db: CommsDb, patch: Partial<ScheduledRow>, owned: SQL | undefined): Promise<boolean> {
   for (let tries = 1; ; tries++) {
     try {
-      await db.update(commsScheduled).set(patch).where(owned);
-      return;
+      // `returning`, so the caller knows whether THIS run still owned the row
+      // (2b-1: a give-up is told only when its write landed).
+      const rows = (await db.update(commsScheduled).set(patch).where(owned).returning({ id: commsScheduled.id })) as {
+        id: string;
+      }[];
+      return rows.length > 0;
     } catch {
-      if (tries >= OUTCOME_WRITE_TRIES) return;
+      if (tries >= OUTCOME_WRITE_TRIES) return false;
       await new Promise((resolve) => setTimeout(resolve, 50 * tries));
     }
   }
@@ -1335,19 +1476,20 @@ async function handleClaimed(
       return {
         status: "sent",
         lastError: `already sent (delivery log ${already.id}) on an earlier claim whose outcome was not recorded — not sent again`,
+        messageId: already.id,
       };
     }
 
     const at = clock().getTime();
     if (row.expiresAt && row.expiresAt.getTime() <= at) {
       const reason = `expired at ${row.expiresAt.toISOString()} before it could send`;
-      await note("expired", reason);
-      return { status: "expired", lastError: reason };
+      const logged = await note("expired", reason);
+      return { status: "expired", lastError: reason, messageId: logged.id };
     }
     if (!row.expiresAt && row.sendAt.getTime() < at - options.maxLatenessMs) {
       const reason = `more than ${formatInterval(options.maxLatenessMs)} late (due ${row.sendAt.toISOString()}) — not sent`;
-      await note("expired", reason);
-      return { status: "expired", lastError: reason };
+      const logged = await note("expired", reason);
+      return { status: "expired", lastError: reason, messageId: logged.id };
     }
 
     let to = row.toAddress;
@@ -1362,8 +1504,8 @@ async function handleClaimed(
           typeof decision === "object" && "skip" in decision && decision.reason
             ? `cancelled at send time: ${decision.reason}`
             : "cancelled at send time by beforeSend";
-        await note("cancelled", reason);
-        return { status: "cancelled", lastError: reason };
+        const logged = await note("cancelled", reason);
+        return { status: "cancelled", lastError: reason, messageId: logged.id };
       }
       if (typeof decision === "object" && !("skip" in decision)) {
         if (decision.to !== undefined) to = decision.to;
@@ -1389,17 +1531,18 @@ async function handleClaimed(
       row.id,
       options.identities,
     );
-    if (message.status === "sent") return { status: "sent", lastError: null };
-    if (message.status === "skipped") return { status: "skipped", lastError: message.error };
+    const logged = { messageId: message.id, to: message.toAddress, channel: message.channel };
+    if (message.status === "sent") return { status: "sent", lastError: null, ...logged };
+    if (message.status === "skipped") return { status: "skipped", lastError: message.error, ...logged };
     const error = message.error ?? "send failed";
-    return permanent ? { status: "failed", lastError: error } : { status: "retry", lastError: error };
+    return permanent ? { status: "failed", lastError: error, ...logged } : { status: "retry", lastError: error, ...logged };
   } catch (error) {
-    if (error instanceof SentButUnloggedError) return { status: "sent", lastError: error.message };
+    if (error instanceof SentButUnloggedError) return { status: "sent", lastError: error.message, messageId: null };
     // A validation error fails the same way every time; anything else (a
     // database hiccup, a throwing hook) might not.
     const message = describeError(error).slice(0, 1000);
     return error instanceof z.ZodError
-      ? { status: "failed", lastError: message }
-      : { status: "retry", lastError: message };
+      ? { status: "failed", lastError: message, messageId: null }
+      : { status: "retry", lastError: message, messageId: null };
   }
 }

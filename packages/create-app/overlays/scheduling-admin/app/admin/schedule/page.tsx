@@ -1,6 +1,7 @@
 import { ScheduleCalendar } from "__SCOPE__/scheduling-widget/admin";
 import { PageHeader } from "@/components/ui";
 import { schedulingUrls } from "@/server/scheduling";
+import { VISIT_FILES_HREF } from "@/server/visit-files";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +23,10 @@ export const dynamic = "force-dynamic";
  *   - New visit books one for a customer on the phone, with suggested times.
  *
  * ?date=YYYY-MM-DD opens the calendar on that day — how a visit listed on an
- * estimate (/admin/estimates/[id]) links here. Anything else is ignored.
+ * estimate (/admin/estimates/[id]) links here. ?visit={id} opens that visit
+ * (how an alert about it links here; Tenancy 2b-1). Anything else is ignored.
+ * A visit's "Photos and files" opens its own page (VISIT_FILES_HREF,
+ * generated: nothing without file storage).
  *
  * Unanswered requests are released after the hours set in Schedule settings.
  */
@@ -31,15 +35,23 @@ export default async function SchedulePage({
 }: {
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const { date } = await searchParams;
+  const { date, visit } = await searchParams;
   const initialDate = typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : undefined;
+  // An id's shape only; the calendar asks the business's routes for it.
+  const initialVisitId = typeof visit === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(visit) ? visit : undefined;
   return (
     <>
       <PageHeader
         title="Schedule"
         description="Every crew's visits, in your business's time zone. Online requests wait in Requests until you accept or decline them; drag a visit to move it."
       />
-      <ScheduleCalendar baseUrl="/api/admin/schedule" bookingPageUrl={schedulingUrls.book} initialDate={initialDate} />
+      <ScheduleCalendar
+        baseUrl="/api/admin/schedule"
+        bookingPageUrl={schedulingUrls.book}
+        initialDate={initialDate}
+        initialVisitId={initialVisitId}
+        visitFilesHref={VISIT_FILES_HREF}
+      />
     </>
   );
 }

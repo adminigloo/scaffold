@@ -61,7 +61,13 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // basics through companyProfile, runs the crons through runForEachCompany
   // over activeCompanyIds, composes its roles with defineTenantRoles (Crew) and
   // renders public pages through resolvePublicCompany. None exist in 0.4.x.
-  tenancy: "0.5.0",
+  // 0.6.0 (Tenancy 2b-1): every event carries an id and a time (the alerts'
+  // dedupe keys), member events name the person, `listMemberPeople({ holding
+  // })` is who gets an alert, the logo store is told the company (private
+  // files keep logos per company), and `tenancyAlertKinds` /
+  // `tenancyAlertsFor` are the team alerts. The emitted alerts glue calls
+  // all of them; none exist in 0.5.x.
+  tenancy: "0.6.0",
   permissions: "0.2.0",
   // 0.2.0 rather than 0.1.x because `requireTenant(...).input(...)` did not
   // compile before it. `^0.1.0` would resolve to a build a generated project
@@ -105,8 +111,24 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // caret over nothing older can resolve wrong; these exist to move IN STEP
   // with the workspace versions the drift test reads.
   "seo-reports": "0.1.0",
-  notifications: "0.1.0",
-  storage: "0.1.0",
+  // 0.2.0 (Tenancy 2b-1): alerts per company and per person. The emitted
+  // src/server/alerts.ts builds createNotifications over the named tables,
+  // the kind registry and the host seams, and the routes mount
+  // createNotificationHandlers; 0.1 had a firm-wide inbox and none of these.
+  notifications: "0.2.0",
+  // First release (Tenancy 2b-1): the bell, the alerts page and Alert
+  // settings, over notifications 0.2's wire. Pinned in step with the
+  // workspace, as every first release here is.
+  "notifications-widget": "0.1.0",
+  // 0.2.0 (Tenancy 2b-1): private files per company. The emitted
+  // src/server/files.ts builds createStorage with two stores, purposes,
+  // records, the allowance, signed links and the logo store, and the routes
+  // mount createStorageHandlers / createStorageLinkHandlers; 0.1 had a
+  // public-only, firm-wide file table behind a two-method adapter.
+  storage: "0.2.0",
+  // First release (Tenancy 2b-1): photos and files on a record, the Files
+  // screen and the usage meter, over storage 0.2's wire.
+  "storage-widget": "0.1.0",
   // 0.2.0 was the answering engine (loop, registry, chat handler, conversations
   // + page-doc + pending-action tables); 0.2.1-0.2.2 hardened it; 0.3.x knowledge retrieval; 0.4.0 write-action confirm flow; 0.5.0 retention + erasure; 0.6.0 eval loop; 0.7.0 embeddings+RRF — valid history
   // replay for tool-using turns, type-based abort detection, neutral provider
@@ -164,14 +186,20 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // table — none of which exist (or have these shapes) in 0.2.x.
   // 0.4.0 (Tenancy 2a): company, admit on both paths, the AI ceiling, async
   // links and inbox, checklist items, route tables. None exist in 0.3.
-  estimator: "0.4.0",
+  // 0.5.0 (Tenancy 2b-1): the alert kinds and mapper, `officeRecipients` /
+  // `officeSent` on the comms listener, `alertsHref`, the estimate as a
+  // file record and the private photo purpose. The alerts and files glue
+  // imports all of them.
+  estimator: "0.5.0",
   // 0.2.0: the estimate page, the quote page and the four staff pages render
   // its components (EstimateTool, QuoteView, EstimatesQueue, EstimateEditor,
   // PriceBook, EstimatorSettings, EmbedKeys). It speaks 0.3's wire, so it
   // moves with estimator 0.3 and never with 0.2; 0.1.x had only the modal.
   // 0.3.0: pattern hrefs a server page can pass ("/app/estimates/{id}"), the
   // closed-by-the-business message, the logo, the ceiling hint, #embed.
-  "estimator-widget": "0.3.0",
+  // 0.4.0 (Tenancy 2b-1): who hears about new leads is handed to Alert
+  // settings, so the old list isn't offered beside the new one.
+  "estimator-widget": "0.4.0",
   // 0.3.0: the emitted public procedures call findPublicSlots (PublicSlots only —
   // 0.2's slots route returned the previous customer's street address) and
   // requestPublicBooking with a requesterKey (server-derived times and crew,
@@ -196,19 +224,26 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // resolveSchedulingSettings (the zone convergence), seeds Crew from
   // SCHEDULING_CREW_ROLE, lists the checklist items and the isolation proof
   // drives SCHEDULING_ADMIN_ROUTES / _PUBLIC_ROUTES — none of which exist in 0.4.
-  scheduling: "0.5.0",
+  // 0.6.0 (Tenancy 2b-1): the alert kinds and mapper, the expiring sweep,
+  // `officeRecipients` / `officeSent`, `alertsHref` and the visit as a
+  // file record. The alerts and files glue imports all of them.
+  scheduling: "0.6.0",
   // First release. The booking page, the manage page and the three staff
   // pages render its components; it speaks 0.4's wire, so it moves with
   // scheduling 0.4 and never with 0.3.
   // 0.2.0: the company pages pass accentColor and inviteHref, and the settings
   // screen shows the company-owned fields read-only — none of it in 0.1.
-  "scheduling-widget": "0.2.0",
+  // 0.3.0 (Tenancy 2b-1): the calendar opens a visit from ?visit= and links
+  // its photos and files, and today's route has a Photos button per stop.
+  "scheduling-widget": "0.3.0",
   // Tenancy 1's screens (onboarding, the switcher, the team page, company
   // settings, the operator console). In the BASE set: the team page is in
   // every project, single-business ones included.
   // 0.2.0 (Tenancy 2a): CompanyBrandBar and CompanyUnavailable on every
-  // company's public pages, and any role the server offers (Crew).
-  "tenancy-widget": "0.2.0",
+  // company's public pages, and any role the server offers (Crew). 0.2.1
+  // (Tenancy 2b-1): its tenancy peer is ^0.6.0 — pinned, so a project's
+  // lockfile can't keep a 0.2.0 whose peer still names tenancy 0.5.
+  "tenancy-widget": "0.2.1",
   // 0.2.0 (sweep): line items after creation, atomic idempotent payments,
   // reversals, a status transition table and tenant-scoped reads — the emitted
   // admin page and router call addInvoiceItem/reversePayment/markInvoiceViewed
@@ -217,19 +252,28 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // (createInvoicingAdminHandlers, createInvoicingHandlers) behind the widget,
   // token reads scoped to a company, the settings fragment, the invoice email
   // in ./comms. The 0.2 tRPC router is retired, so nothing older can serve it.
-  invoicing: "0.3.0",
+  // 0.4.0 (Tenancy 2b-1): `onEvent` (an invoice opened, an invoice paid),
+  // the overdue sweep, the alert kinds and mappers, and the invoice as a file
+  // record. The alerts and files glue imports all of them.
+  invoicing: "0.4.0",
   // First release (Tenancy 2a): the ledger, one invoice's editor and the
-  // customer's invoice page, over invoicing 0.3's wire.
-  "invoicing-widget": "0.1.0",
+  // customer's invoice page, over invoicing 0.3's wire. 0.1.1 (Tenancy 2b-1):
+  // its invoicing peer is ^0.4.0 — pinned for the same lockfile reason.
+  "invoicing-widget": "0.1.1",
   // 0.2.0 (sweep): SMS compliance is required with an SMS sender, the queue is
   // bounded and cancellable, and the emitted router calls setTemplateActive and
   // requireEmailSubject — none exist in 0.1.x.
   // 0.3.0 (Tenancy 2a): each company's emails go out under its own name and
   // reply-to (identity), the drain takes tenantIds, and the Messages console is
   // the package's createCommsAdminHandlers. The 0.2 tRPC console is retired.
-  comms: "0.3.0",
+  // 0.4.0 (Tenancy 2b-1): `onFailed` (a customer email that didn't go
+  // becomes an alert), `deliverNow` (the office emails' outcomes),
+  // `templateLabel` and the failed-email alert kind.
+  comms: "0.4.0",
   // First release (Tenancy 2a): the Messages console, over comms 0.3's wire.
-  "comms-widget": "0.1.0",
+  // 0.1.1 (Tenancy 2b-1): its comms peer is ^0.4.0, and it names the team
+  // alert email — pinned for the same lockfile reason.
+  "comms-widget": "0.1.1",
   aeo: "0.1.1",
 };
 

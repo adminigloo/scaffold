@@ -103,6 +103,28 @@ describe("Tenancy 2a exports", () => {
   });
 });
 
+describe("Tenancy 2b-1 exports (8.5)", () => {
+  it("the root offers the team's alert kinds and the mapper, client-safe", async () => {
+    const root = await import("../index.js");
+    expect(root.tenancyAlertKinds.kinds.map((k) => k.key)).toEqual(["tenancy.member.joined", "tenancy.member.left"]);
+    expect(typeof root.tenancyAlertsFor).toBe("function");
+    expect(root.TENANCY_MEMBER_JOINED_KIND).toBe("tenancy.member.joined");
+    expect(root.TENANCY_MEMBER_LEFT_KIND).toBe("tenancy.member.left");
+  });
+
+  it("TenancyEvent is declared in a root-safe module that imports nothing at runtime", () => {
+    // Types only: `src/events.ts` and `src/alerts.ts` may import types, never a module.
+    expect(specifiersIn(resolve(SRC, "events.ts"))).toEqual([]);
+    expect(specifiersIn(resolve(SRC, "alerts.ts"))).toEqual([]);
+  });
+
+  it("./server keeps its names and adds the settle bound", async () => {
+    const server = await import("../server.js");
+    expect(typeof server.createTenancyService).toBe("function");
+    expect(server.DEFAULT_SETTLE_EVENTS_MS).toBe(5000);
+  });
+});
+
 describe("the package root", () => {
   it("imports nothing that cannot go into a browser bundle", () => {
     const externals = externalsFrom(resolve(SRC, "index.ts"));

@@ -34,7 +34,7 @@
   },
   "peerDependencies": {
     "react": "^18.0.0 || ^19.0.0",
-    "@adminigloo/comms": "^0.3.0"
+    "@adminigloo/comms": "^0.4.0"
   },
   "peerDependenciesMeta": {
     "@adminigloo/comms": {

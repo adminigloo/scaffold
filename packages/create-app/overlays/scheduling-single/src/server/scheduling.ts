@@ -39,6 +39,7 @@ import {
   crewAccessChange,
 } from "@/server/scheduling-staff";
 import { ensureSchedulingEmailTemplates } from "@/server/scheduling-notify";
+import { ALERTS_CREW_STAFF_KEYS } from "@/server/alerts-links";
 
 /**
  * The app's side of __SCOPE__/scheduling: which maps provider, which
@@ -180,11 +181,14 @@ async function ensureCrewAccess(tx: Tx): Promise<void> {
     .where(and(eq(roleTemplate.scope, "staff"), eq(roleTemplate.tenantId, FIRM_WIDE)));
   for (const template of templates) {
     if (!template.isSystem) continue;
-    // The crew role is this module's, not the seed's: its one key is granted
-    // here. Every other system role gets what the catalog says it holds.
+    // The crew role is this module's, not the seed's: its keys are granted
+    // here — its route, and (Tenancy 2b-1, with alerts) its own bell, so a
+    // customer moving a crew's visit reaches the crew in the app too.
+    // ALERTS_CREW_STAFF_KEYS is generated: [] without alerts. Every other
+    // system role gets what the catalog says it holds.
     const keys =
       template.key === CREW_ROLE.key
-        ? CREW_ROLE_KEYS
+        ? [...CREW_ROLE_KEYS, ...ALERTS_CREW_STAFF_KEYS]
         : staffCatalog.defaultsFor(template.key).filter((key) => SCHEDULING_STAFF_KEY_LIST.includes(key));
     for (const permission of keys) {
       await tx.insert(roleTemplateGrant).values({ templateId: template.id, permission, effect: "allow" }).onConflictDoNothing();

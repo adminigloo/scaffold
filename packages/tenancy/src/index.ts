@@ -54,6 +54,19 @@ export { defineTenantRoles, DEFAULT_TENANT_ROLES, InvalidTenantRoleError } from 
 export type { TenantRoleSet } from "./roles.js";
 export type { PublicCompanyWire } from "./wire.js";
 
+// Tenancy 2b-1: the team's alert kinds and the mapper from tenancy's events
+// to alert drafts (8.4), and the event type they read. Root, client-safe and
+// structural: no notifications import, no table, no driver.
+export { tenancyAlertKinds, tenancyAlertsFor, TENANCY_MEMBER_JOINED_KIND, TENANCY_MEMBER_LEFT_KIND } from "./alerts.js";
+export type {
+  TenancyAlertChannel,
+  TenancyAlertDraft,
+  TenancyAlertKind,
+  TenancyAlertKinds,
+  TenancyAlertRouting,
+} from "./alerts.js";
+export type { TenancyEvent, TenancyEventListener, TenancyEventPerson } from "./events.js";
+
 // Tenancy 1 (companies): the client-safe rules. Names and web addresses,
 // brand-colour contrast, the settings registry, the checklist types and the
 // audit vocabulary. Pure — `zod` is the only new import (settings.ts).

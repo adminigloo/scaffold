@@ -113,18 +113,20 @@ describe("create-adminigloo-app add <feature>", () => {
     });
   }
 
+  // Feedback, since Tenancy 2b-1: alerts and files are served by their
+  // packages' handlers now, with no tRPC router of their own.
   it("mounts the router and registers the schema for a feature with both", async () => {
     await generate(BASE);
-    await applyAdd(await planAdd(TEMPLATE_DIR, dir, "notifications"));
+    await applyAdd(await planAdd(TEMPLATE_DIR, dir, "feedback"));
 
     const appRouter = await readFile(
       join(dir, "src", "server", "routers", "_app.ts"),
       "utf8",
     );
-    expect(appRouter).toContain("notificationsRouter");
+    expect(appRouter).toContain("feedbackRouter");
 
     const schema = await readFile(join(dir, "src", "db", "schema.ts"), "utf8");
-    expect(schema).toMatch(/notifications/);
+    expect(schema).toMatch(/feedback/);
   });
 
   it("adds the feature's package to package.json", async () => {
@@ -144,7 +146,7 @@ describe("create-adminigloo-app add <feature>", () => {
     const edited = `${await readFile(routerPath, "utf8")}\n// my own comment\n`;
     await writeFile(routerPath, edited, "utf8");
 
-    const plan = await planAdd(TEMPLATE_DIR, dir, "notifications");
+    const plan = await planAdd(TEMPLATE_DIR, dir, "feedback");
     await applyAdd(plan);
 
     // The edit survives untouched...
@@ -152,7 +154,7 @@ describe("create-adminigloo-app add <feature>", () => {
     // ...and the wired version is offered for merge.
     expect(plan.conflicts.has(join("src", "server", "routers", "_app.ts"))).toBe(true);
     const dotNew = await readFile(`${routerPath}.new`, "utf8");
-    expect(dotNew).toContain("notificationsRouter");
+    expect(dotNew).toContain("feedbackRouter");
   });
 
   // MERGE, don't overwrite, package.json — you own your scripts and deps.

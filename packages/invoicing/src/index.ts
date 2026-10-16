@@ -68,6 +68,37 @@ export type { InvoicingAdminRouteKind, InvoicingPublicRouteKind, InvoicingRoute 
 export { invoicingChecklistItems } from "./checklist.js";
 export type { InvoicingChecklistItem } from "./checklist.js";
 export type * from "./wire.js";
+// Tenancy 2b-1: events (viewed, paid), the overdue sweep, the alert kinds and
+// their mappers, and the invoice as a record files belong to. All
+// structural: nothing here imports notifications or storage.
+export type {
+  InvoiceEventSnapshot,
+  InvoicingEvent,
+  InvoicingEventListener,
+  InvoicingEventOptions,
+  InvoicingEventType,
+} from "./events.js";
+export {
+  INVOICING_INVOICE_OVERDUE_KIND,
+  INVOICING_INVOICE_PAID_KIND,
+  INVOICING_INVOICE_VIEWED_KIND,
+  INVOICING_ROUTING,
+  OVERDUE_SINCE_DAYS,
+  invoicingAlertKinds,
+  invoicingAlertsFor,
+  invoicingOverdueAlert,
+  listOverdueInvoices,
+} from "./alerts.js";
+export type {
+  InvoicingAlertChannel,
+  InvoicingAlertDraft,
+  InvoicingAlertKind,
+  InvoicingAlertKinds,
+  InvoicingAlertRouting,
+  OverdueInvoice,
+} from "./alerts.js";
+export { INVOICING_INVOICE_RECORD, invoicingFileRecords } from "./files.js";
+export type { InvoicingFileRecordType } from "./files.js";
 
 export type InvoicingDb = PgDatabase<any, any, any>;
 

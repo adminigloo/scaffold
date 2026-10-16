@@ -1,5 +1,6 @@
 import { InvoiceEditor } from "__SCOPE__/invoicing-widget/admin";
 import { CompanyGate } from "@/components/CompanyGate";
+import { RecordFilesSlot } from "@/components/RecordFilesSlot";
 
 export const dynamic = "force-dynamic";
 
@@ -12,6 +13,10 @@ export const dynamic = "force-dynamic";
  *
  * The invoice is read through THIS company's routes; an id from another
  * company is "not found" there, whatever the URL says.
+ *
+ * Under it, the invoice's photos and files (Tenancy 2b-1): a signed work
+ * order, a receipt — the team's, never sent to the customer. RecordFilesSlot
+ * is generated: nothing without file storage.
  */
 export default async function CompanyInvoicePage({ params }: { readonly params: Promise<{ readonly id: string }> }) {
   const { id } = await params;
@@ -20,6 +25,13 @@ export default async function CompanyInvoicePage({ params }: { readonly params: 
       {({ company }) => (
         <main className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
           <InvoiceEditor baseUrl={`/api/app/${company.id}/invoices`} invoiceId={id} backHref="/app/invoices" />
+          <div className="mt-8">
+            <RecordFilesSlot
+              baseUrl={`/api/app/${company.id}/files`}
+              record={{ type: "invoicing.invoice", id }}
+              hint="Your team sees these; they aren't sent to the customer."
+            />
+          </div>
         </main>
       )}
     </CompanyGate>

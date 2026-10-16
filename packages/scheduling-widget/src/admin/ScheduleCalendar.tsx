@@ -76,6 +76,15 @@ export interface ScheduleCalendarProps extends ChromeProps {
   /** Shown in the empty state. */
   bookingPageUrl?: string;
   onVisitChange?: (visit: VisitSnapshot) => void;
+  /**
+   * Open this visit's panel once it's loaded (Tenancy 2b-1: an alert's link,
+   * "/app/schedule?visit=…"); one outside the loaded range is fetched
+   * (`visit-get`) and the calendar moves to its day. A visit that isn't found:
+   * a notice, no panel.
+   */
+  initialVisitId?: string;
+  /** Pattern with {id}: the visit panel shows "Photos and files" linking here. Absent: no link. */
+  visitFilesHref?: string;
 }
 
 type View = "day" | "week";
@@ -154,6 +163,7 @@ export function ScheduleCalendar(props: ScheduleCalendarProps) {
   const [prompt, setPrompt] = useState<ProposedMove | null>(null);
   const [services, setServices] = useState<ServiceWire[] | null>(null);
   const [preview, setPreview] = useState<{ id: string; target: Target } | null>(null);
+  const [missingVisit, setMissingVisit] = useState(false);
   const toasts = useToasts();
   const status = useAdminStatus(transport);
   // Unknown (an older server) behaves as before: the email choices are offered.
@@ -274,6 +284,49 @@ export function ScheduleCalendar(props: ScheduleCalendarProps) {
 
   const findVisit = (id: string): VisitSnapshot | null =>
     data?.visits.find((v) => v.id === id) ?? data?.pending.find((v) => v.id === id) ?? null;
+
+  // ---------------------------------------------------------------------------
+  // Opening on one visit (Tenancy 2b-1: an alert's link, "?visit=…")
+  // ---------------------------------------------------------------------------
+
+  // Once per id: the first calendar answer says whether the visit is on
+  // screen; if it isn't (another week, a request from last month), it is
+  // fetched on its own and the calendar moves to its day. The panel opens on
+  // the fetched copy at once (the panel keeps the last copy it had while the
+  // new range loads). Not found (removed, or not this company's): a notice
+  // and no panel, never an error page.
+  const initialHandled = useRef<string | null>(null);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const initialVisitId = props.initialVisitId;
+  useEffect(() => {
+    if (!initialVisitId || !data || initialHandled.current === initialVisitId) return;
+    initialHandled.current = initialVisitId;
+    const loaded = data.visits.find((v) => v.id === initialVisitId) ?? data.pending.find((v) => v.id === initialVisitId);
+    if (loaded) {
+      setMissingVisit(false);
+      setOpenId(loaded.id);
+      return;
+    }
+    void transport.getVisit(initialVisitId).then((res) => {
+      if (!mounted.current) return;
+      if (!res.ok) {
+        setMissingVisit(true);
+        return;
+      }
+      const visit = res.data.visit;
+      setMissingVisit(false);
+      lastPanelVisit.current = visit;
+      userNavigated.current = true;
+      setDate(visit.date);
+      setOpenId(visit.id);
+    });
+  }, [data, initialVisitId, transport]);
 
   /** Put the server's copy of a visit in place, and refresh the rest in the background. */
   const applyVisit = useCallback(
@@ -817,6 +870,13 @@ export function ScheduleCalendar(props: ScheduleCalendarProps) {
           </Notice>
         ) : null}
         {!data && !loadError ? <Loading label="Loading the schedule…" /> : null}
+        {missingVisit ? (
+          <div data-aisw-visit-missing="">
+            <Notice tone="warn">
+              That visit couldn&apos;t be found. It may have been removed, or it belongs to another schedule.
+            </Notice>
+          </div>
+        ) : null}
         {data && resources.length === 0 ? (
           <Notice tone="info">No crews yet. Add one under Schedule settings, then visits can be booked.</Notice>
         ) : null}
@@ -851,6 +911,7 @@ export function ScheduleCalendar(props: ScheduleCalendarProps) {
           customerEmails={!emailsOff}
           locale={locale}
           nowMs={nowMs}
+          {...(props.visitFilesHref ? { filesHref: props.visitFilesHref } : {})}
           onClose={() => setOpenId(null)}
           onChanged={(change: PanelChange) => {
             applyVisit(change.visit);

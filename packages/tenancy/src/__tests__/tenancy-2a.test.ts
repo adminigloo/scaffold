@@ -603,7 +603,9 @@ describe("the three new events (4.8)", () => {
     await vi.waitFor(() => expect(committed).toHaveLength(1));
     await settle();
 
-    expect(events).toEqual([
+    // Tenancy 2b-1 stamps every event with `id` and `occurredAt` (8.1);
+    // tenancy-2b1.test.ts asserts them. Here, 2a's fields, exactly.
+    expect(events.map(({ id: _id, occurredAt: _at, ...rest }) => rest)).toEqual([
       { type: "company.settings.updated", tenantId: s.tenantId, section: "company", changed: ["timeZone", "contactPhone"], by: s.owner },
       { type: "company.profile.updated", tenantId: s.tenantId, changed: ["name"], by: s.owner },
       { type: "company.profile.updated", tenantId: s.tenantId, changed: ["name", "slug"], by: s.owner },

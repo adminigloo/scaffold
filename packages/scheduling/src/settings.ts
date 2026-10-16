@@ -433,8 +433,16 @@ export function publicPolicyFor(
  * Settings → the wire (`SettingsWire`). `companySettingsHref` is where the
  * owner changes the company-owned fields when `settings.managedByCompany`
  * (Tenancy 2a, D6); the wire's `managedByCompany` is null otherwise.
+ *
+ * `alertsHref` (Tenancy 2b-1, D6): given, who hears about new requests is
+ * chosen in the host's Alert settings, and the wire says so
+ * (`alertRecipients: { href }`) so the screen shows a link instead of an
+ * address list nobody reads any more. Absent or null: null, 2a's screen.
  */
-export function toSettingsWire(settings: SchedulingSettings, options: { readonly companySettingsHref?: string | null } = {}): SettingsWire {
+export function toSettingsWire(
+  settings: SchedulingSettings,
+  options: { readonly companySettingsHref?: string | null; readonly alertsHref?: string | null } = {},
+): SettingsWire {
   return {
     timeZone: settings.timeZone,
     businessName: settings.businessName,
@@ -463,5 +471,6 @@ export function toSettingsWire(settings: SchedulingSettings, options: { readonly
     saved: settings.saved,
     updatedAt: settings.updatedAt ? settings.updatedAt.toISOString() : null,
     managedByCompany: settings.managedByCompany ? { href: options.companySettingsHref ?? null } : null,
+    alertRecipients: typeof options.alertsHref === "string" ? { href: options.alertsHref } : null,
   };
 }

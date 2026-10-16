@@ -1,5 +1,6 @@
 import { EstimateEditor } from "__SCOPE__/estimator-widget/admin";
 import { CompanyGate } from "@/components/CompanyGate";
+import { RecordFilesSlot } from "@/components/RecordFilesSlot";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +19,15 @@ export const dynamic = "force-dynamic";
  * (`canManage`): no Send quote, no edits, no photo added — rather than buttons
  * the server would refuse.
  */
+/**
+ * The estimate's "Other files" card (Tenancy 2b-1; reviews BO-13, BO-22):
+ * the editor above already has its own "Photos" panel — the job's photos the
+ * estimate reads — so this card is for everything else (a site plan, a
+ * permit). RecordFilesSlot is generated: nothing without file storage.
+ */
+const ESTIMATE_FILES_HINT =
+  "Photos of the job go in Photos above, so the estimate can read them. Your team sees these; they aren't sent to the customer.";
+
 export default async function CompanyEstimatePage({ params }: { readonly params: Promise<{ readonly id: string }> }) {
   const { id } = await params;
   return (
@@ -31,6 +41,14 @@ export default async function CompanyEstimatePage({ params }: { readonly params:
             estimateHref="/app/estimates/{id}"
             canManage={can.includes("estimator.estimates.manage")}
           />
+          <div className="mt-8">
+            <RecordFilesSlot
+              baseUrl={`/api/app/${company.id}/files`}
+              record={{ type: "estimator.estimate", id }}
+              title="Other files"
+              hint={ESTIMATE_FILES_HINT}
+            />
+          </div>
         </main>
       )}
     </CompanyGate>

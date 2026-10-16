@@ -1,126 +1,102 @@
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
-import type { PgDatabase } from "drizzle-orm/pg-core";
-import { z } from "zod";
-import { notifications } from "./schema.js";
-
 /**
- * The in-app inbox as a primitive.
+ * @adminigloo/notifications 0.2: alerts for each company, for each person in
+ * it (Tenancy 2b-1, section 4).
  *
- * Three design rules, each the residue of a bug somebody else ships:
+ * What the business owner gets: a bell with THEIR company's alerts (a new
+ * lead, a quote answered, a visit moved, an invoice paid, an email that
+ * didn't go, a teammate who joined), each person's choice of "In the app" or
+ * "In the app and by email", ONE place where the owner says who hears about
+ * new work, and alert emails under the company's name.
  *
- * FAN-OUT AT WRITE TIME. `notify` takes the recipient list and inserts one
- * row each. The alternative — one event row plus a read-time "who should see
- * this" query — re-answers an authorization question on every poll and gets
- * it differently after every role change, including for events from before
- * the change.
+ * Three rules from 0.1 carry over (./instance.ts): fan-out at write time;
+ * reads scoped to the company AND the person in the WHERE clause; notifying
+ * never breaks the thing it announces.
  *
- * READS ARE RECIPIENT-SCOPED IN THE WHERE CLAUSE, not by trusting the
- * caller. `markNotificationRead` takes the recipient alongside the id, so a
- * guessed id belonging to somebody else updates zero rows instead of one.
- *
- * NOTIFYING MUST NEVER BREAK THE THING IT ANNOUNCES. This module only
- * writes rows; it throws only on real database failure. The pattern for
- * producers is to call it fire-and-forget with their own catch — a feedback
- * submit that fails because the inbox insert failed has inverted its job.
+ * Neither this package nor its schema imports tenancy, auth, permissions,
+ * comms or @adminigloo/db (D14): the company, the person and the permission
+ * come from the host's seams, and every table name is the host's to choose.
  */
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type NotificationsDb = PgDatabase<any, any, any>;
+// 4.2 The registry.
+export {
+  defineAlertKinds,
+  defineAlertRegistry,
+  DuplicateAlertKindError,
+  InvalidAlertKindError,
+  type AlertChannel,
+  type AlertKindsFragment,
+  type AlertKindSpec,
+  type AlertRegistry,
+  type AlertRoutingSpec,
+} from "./registry.js";
 
-export const notifySchema = z.object({
-  recipientIds: z.array(z.string().min(1)).min(1).max(500),
-  kind: z.string().min(1).max(80),
-  title: z.string().min(1).max(200),
-  body: z.string().max(2000).optional(),
-  href: z.string().max(500).optional(),
-});
+// 4.3 The instance.
+export { createNotifications } from "./instance.js";
+export {
+  AlertsInputError,
+  AlertsUnavailableError,
+  type AlertDraft,
+  type AlertEmailDelivery,
+  type AlertEmailMessage,
+  type AlertEmailOutcome,
+  type AlertPerson,
+  type AlertReader,
+  type AlertRow,
+  type CleanupOptions,
+  type CreateNotificationsOptions,
+  type DeliverPendingEmailsOptions,
+  type DeliverPendingEmailsResult,
+  type Notifications,
+  type NotificationsDb,
+  type NotifyReport,
+  type RoutingChoice,
+} from "./types.js";
+export { breakLinks } from "./links.js";
 
-export type NotifyInput = z.infer<typeof notifySchema>;
+// 4.1, for a host that wires everything from the root (the drizzle schema
+// file should still import the tables from "@adminigloo/notifications/schema").
+export {
+  defineNotificationTables,
+  InvalidTableNameError,
+  notificationsSql,
+  notificationTables,
+  type DefineNotificationTablesOptions,
+  type NotificationTables,
+} from "./schema.js";
 
-/** Insert one row per recipient. Deduplicates the recipient list first. */
-export async function notify(db: NotificationsDb, input: NotifyInput): Promise<number> {
-  const parsed = notifySchema.parse(input);
-  const recipients = [...new Set(parsed.recipientIds)];
-  await db.insert(notifications).values(
-    recipients.map((recipientId) => ({
-      recipientId,
-      kind: parsed.kind,
-      title: parsed.title,
-      body: parsed.body ?? null,
-      href: parsed.href ?? null,
-    })),
-  );
-  return recipients.length;
-}
+// 4.6 Permissions.
+export { notificationsPermissions, type NotificationsPermission, type NotificationsPermissionDefinition } from "./permissions.js";
 
-export interface NotificationRow {
-  id: string;
-  kind: string;
-  title: string;
-  body: string | null;
-  href: string | null;
-  readAt: Date | null;
-  createdAt: Date;
-}
+// 4.7 Handlers and the route table.
+export {
+  createNotificationHandlers,
+  type CreateNotificationHandlersOptions,
+  type NotificationHandlers,
+  type NotificationsAuthorizeResult,
+} from "./handlers.js";
+export { notificationsAuditedActions, type NotificationsAuditAction, type NotificationsAuditEvent } from "./audit.js";
+export {
+  NOTIFICATIONS_ADMIN_ROUTE_PERMISSIONS,
+  NOTIFICATIONS_ADMIN_ROUTES,
+  type NotificationsAdminRouteKind,
+  type NotificationsRoute,
+} from "./routes.js";
 
-export async function listNotifications(
-  db: NotificationsDb,
-  recipientId: string,
-  options: { limit?: number; unreadOnly?: boolean } = {},
-): Promise<NotificationRow[]> {
-  const limit = options.limit ?? 30;
-  const where = options.unreadOnly
-    ? and(eq(notifications.recipientId, recipientId), isNull(notifications.readAt))
-    : eq(notifications.recipientId, recipientId);
-  return db
-    .select({
-      id: notifications.id,
-      kind: notifications.kind,
-      title: notifications.title,
-      body: notifications.body,
-      href: notifications.href,
-      readAt: notifications.readAt,
-      createdAt: notifications.createdAt,
-    })
-    .from(notifications)
-    .where(where)
-    .orderBy(desc(notifications.createdAt), desc(notifications.id))
-    .limit(limit);
-}
+// 4.8 The wire.
+export type * from "./wire.js";
 
-/** The badge number. Its own query because it runs on every shell render. */
-export async function unreadCount(db: NotificationsDb, recipientId: string): Promise<number> {
-  const rows: Array<{ count: number }> = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(notifications)
-    .where(and(eq(notifications.recipientId, recipientId), isNull(notifications.readAt)));
-  return rows[0]?.count ?? 0;
-}
+// 4.9 The alert email.
+export { TEAM_ALERT_EMAIL_TEMPLATE } from "./template.js";
+export { renderAlertEmail } from "./render.js";
 
-/** Recipient-scoped: somebody else's id updates nothing and reports false. */
-export async function markNotificationRead(
-  db: NotificationsDb,
-  input: { id: string; recipientId: string },
-): Promise<boolean> {
-  const rows = await db
-    .update(notifications)
-    .set({ readAt: new Date() })
-    .where(
-      and(
-        eq(notifications.id, input.id),
-        eq(notifications.recipientId, input.recipientId),
-        isNull(notifications.readAt),
-      ),
-    )
-    .returning({ id: notifications.id });
-  return rows.length > 0;
-}
-
-export async function markAllRead(db: NotificationsDb, recipientId: string): Promise<number> {
-  const rows = await db
-    .update(notifications)
-    .set({ readAt: new Date() })
-    .where(and(eq(notifications.recipientId, recipientId), isNull(notifications.readAt)))
-    .returning({ id: notifications.id });
-  return rows.length;
-}
+// 4.10 0.1's API, kept (deprecated).
+export {
+  listNotifications,
+  markAllRead,
+  markNotificationRead,
+  notify,
+  notifySchema,
+  unreadCount,
+  type NotificationRow,
+  type NotifyInput,
+} from "./legacy.js";

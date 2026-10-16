@@ -9,9 +9,17 @@ import {
   addNextSteps,
   applyAdd,
   planAdd,
+  readProjectManifest,
   UnknownFeatureError,
   type FeatureName,
 } from "./add.js";
+import {
+  applyUpgrade,
+  fetchPreviousGenerator,
+  loadPreviousGenerator,
+  planUpgrade,
+  upgradeNextSteps,
+} from "./upgrade.js";
 
 export {
   parseArgs,
@@ -109,8 +117,22 @@ export {
   UnknownFeatureError,
   ManifestUnreadableError,
   FeatureAlreadyPresentError,
+  ProjectBehindError,
+  projectIsBehind,
 } from "./add.js";
-export type { AddPlan, FeatureName } from "./add.js";
+export type { AddPlan, FeatureName, RaisedPin } from "./add.js";
+export {
+  planUpgrade,
+  applyUpgrade,
+  upgradeNextSteps,
+  loadPreviousGenerator,
+  fetchPreviousGenerator,
+  extractTarGz,
+  PreviousGeneratorError,
+  UpgradeVersionMismatchError,
+} from "./upgrade.js";
+export type { UpgradePlan, PreviousGenerator, PackFn } from "./upgrade.js";
+export { upgradeNotesFor, compareVersions } from "./upgrade-notes.js";
 
 const ADD_HELP = `
 create-adminigloo-app add <feature> — turn a feature on in an existing project.
@@ -121,6 +143,9 @@ create-adminigloo-app add <feature> — turn a feature on in an existing project
   project's adminigloo.json, wires the feature in exactly as generating with it
   would have — its router, its schema, its admin page, its env — and never
   overwrites a file you have edited (those land as <file>.new to merge).
+
+  A project an earlier create-app made is refused: run \`upgrade\` first (see
+  \`upgrade --help\`), then add.
 
   <feature>     ${ADDABLE_FEATURES.join(" | ")}
   --dir <path>  The project to add to. Defaults to the current directory.
@@ -165,6 +190,85 @@ async function addMain(rawArgs: readonly string[]): Promise<number> {
   }
 }
 
+const UPGRADE_HELP = `
+create-adminigloo-app upgrade — bring a project an earlier create-app made up
+to this version.
+
+  pnpm dlx @adminigloo/create-app upgrade [--dir <path>] [--from <folder>]
+
+  Reads the project's adminigloo.json and fetches the create-app version that
+  made it (npm pack, through the project's own .npmrc) to see exactly what it
+  wrote — so it can tell a file you changed from one you didn't. Then:
+
+    - raises every package in package.json to the version this release needs,
+      keeping your own scripts and dependencies;
+    - writes this version's new files;
+    - rewrites each file you never changed;
+    - deletes the files this version no longer uses, if you never changed them;
+    - writes <file>.new beside each file you DID change, and lists them, with
+      any retired file you had changed: those, and nothing else, are yours to
+      merge by hand.
+
+  .env.local is never touched; new variables are listed. Then pnpm install,
+  pnpm db:generate && pnpm db:migrate && pnpm db:seed, and the steps it prints
+  for the versions crossed (DEPLOYMENT.md has them too).
+
+  --dir <path>     The project. Defaults to the current directory.
+  --from <folder>  The create-app that made the project, already unpacked (a
+                   folder with dist/, template/ and overlays/), instead of
+                   fetching it.
+  --help, -h       Show this.
+`.trimStart();
+
+/** `upgrade` reads only --dir and --from. */
+async function upgradeMain(rawArgs: readonly string[]): Promise<number> {
+  let dir: string | undefined;
+  let from: string | undefined;
+  for (let i = 0; i < rawArgs.length; i += 1) {
+    const arg = rawArgs[i];
+    if (arg === undefined) continue;
+    if (arg === "--help" || arg === "-h") {
+      stdout.write(UPGRADE_HELP);
+      return 0;
+    }
+    if (arg === "--dir" || arg.startsWith("--dir=")) {
+      dir = arg === "--dir" ? rawArgs[i + 1] : arg.slice("--dir=".length);
+      if (arg === "--dir") i += 1;
+    } else if (arg === "--from" || arg.startsWith("--from=")) {
+      from = arg === "--from" ? rawArgs[i + 1] : arg.slice("--from=".length);
+      if (arg === "--from") i += 1;
+    }
+  }
+
+  let cleanup: (() => Promise<void>) | null = null;
+  try {
+    const projectDir = resolve(cwd(), dir ?? ".");
+    // Up to date already: nothing to fetch.
+    const first = await planUpgrade(templateDir(), projectDir, { previous: null }).catch(() => null);
+    if (first?.upToDate) {
+      stdout.write(upgradeNextSteps(first));
+      return 0;
+    }
+    let previousDir = from === undefined ? undefined : resolve(cwd(), from);
+    if (previousDir === undefined) {
+      const manifest = await readProjectManifest(projectDir);
+      stdout.write(`\nFetching ${manifest.generator.name}@${manifest.generator.version}, which made this project, to compare with…\n`);
+      const fetched = await fetchPreviousGenerator(manifest.generator, projectDir);
+      cleanup = fetched.cleanup;
+      previousDir = fetched.dir;
+    }
+    const plan = await planUpgrade(templateDir(), projectDir, { previous: await loadPreviousGenerator(previousDir) });
+    await applyUpgrade(plan);
+    stdout.write(upgradeNextSteps(plan));
+    return 0;
+  } catch (error) {
+    stderr.write(`\n${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  } finally {
+    if (cleanup) await cleanup();
+  }
+}
+
 /** `template/` sits beside `dist/` in the published tarball. */
 function templateDir(): string {
   return join(dirname(fileURLToPath(import.meta.url)), "..", "template");
@@ -176,6 +280,9 @@ export async function main(rawArgs: readonly string[] = argv.slice(2)): Promise<
   // generate's.
   if (rawArgs[0] === "add") {
     return addMain(rawArgs.slice(1));
+  }
+  if (rawArgs[0] === "upgrade") {
+    return upgradeMain(rawArgs.slice(1));
   }
 
   const flags = parseArgs(rawArgs);

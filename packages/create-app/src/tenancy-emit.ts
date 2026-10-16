@@ -569,28 +569,27 @@ export const tenancyLogoStore: LogoStore | undefined = undefined;
 `;
   }
   return `import type { LogoStore } from "${scope}/tenancy/server";
-import { getBlobStore } from "./blob-store";
+import { filesLogoStore } from "./files";
 
 /**
- * Where a ${tenantLabel(answers).toLowerCase()}'s logo is kept: the project's blob store (the same one
- * the file library uses). Undefined until BLOB_READ_WRITE_TOKEN is set — the
- * settings page then says uploads aren't switched on yet instead of failing
- * after someone picked a file. The tenancy package checks the caller, the
- * size and the file's real type before anything is stored here.
+ * Where a ${tenantLabel(answers).toLowerCase()}'s logo is kept (Tenancy 2b-1, 6.9): this project's file
+ * storage, as the one PUBLIC file a ${tenantLabel(answers).toLowerCase()} has — under an unguessable
+ * address with no ${tenantLabel(answers).toLowerCase()} id and no file name in it, counted in its
+ * storage but never refused for a full one (so a full ${tenantLabel(answers).toLowerCase()} can still
+ * fix its logo). Uploaded in ${tenantLabel(answers).toLowerCase()} settings, never a pasted address; the
+ * old logo's file is deleted on a replace, a 2a logo's from the public store
+ * too. The tenancy package checks the caller, the size and the file's real
+ * type before anything is stored here.
+ *
+ * Undefined until the public store is connected (BLOB_READ_WRITE_TOKEN; on a
+ * laptop, files are kept on its disk): the settings page then says uploads
+ * aren't switched on yet instead of failing after someone picked a file.
+ *
+ * IMPORT ORDER (13.10): tenancy.ts imports this module, which imports
+ * files.ts at load; files.ts therefore imports nothing that imports
+ * tenancy.ts.
  */
-const blobStore = getBlobStore();
-
-export const tenancyLogoStore: LogoStore | undefined = blobStore
-  ? {
-      put: async ({ pathname, bytes, contentType }) => {
-        const stored = await blobStore.put(pathname, bytes, { contentType });
-        return { url: stored.url, key: stored.pathname };
-      },
-      delete: async (key) => {
-        await blobStore.delete(key);
-      },
-    }
-  : undefined;
+export const tenancyLogoStore: LogoStore | undefined = filesLogoStore;
 `;
 }
 

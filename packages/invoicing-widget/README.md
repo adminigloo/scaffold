@@ -13,10 +13,18 @@ opened by its link with no account.
 React (18 or 19) is the only peer. Everything styles itself (no Tailwind, no CSS
 import) and follows the host page's light or dark theme.
 
-It talks to `@adminigloo/invoicing` 0.3's handlers (`createInvoicingHandlers`
+It talks to `@adminigloo/invoicing` 0.4's handlers (`createInvoicingHandlers`
 for the customer's page, `createInvoicingAdminHandlers` for staff) over a small
 JSON contract. The contract's types are declared in this package; it does
-**not** depend on the server package.
+**not** depend on the server package (`@adminigloo/invoicing` `^0.4.0` is an
+optional peer, so an older server warns at install time).
+
+**Alerts and files (Tenancy 2b-1).** No screen or wire change. Behind the same
+screens, invoicing 0.4 tells the business when the customer's page reports the
+first view, when a recorded payment pays an invoice in full, and when one goes
+overdue (`@adminigloo/notifications` shows them in the bell), and an invoice
+can carry photos and files (`@adminigloo/storage-widget`'s `<RecordFiles>`
+under the editor).
 
 ## What each install gets you
 
@@ -155,10 +163,10 @@ before anything is sent. The totals on screen are always the server's.
 - **A customer account** or a list of a customer's invoices.
 - **PDF download.** The page prints as a plain invoice.
 - **Logo and colour inside the invoice email.** The page carries them.
-- **Recurring invoices and overdue reminders.**
+- **Recurring invoices and overdue reminders to customers.**
 - **Plans and billing per company, custom domains, impersonation, per-company
   SEO.**
-- **Per-company boards and widgets for feedback, notifications, files, the
-  assistant, analytics, SEO/AEO and book-a-call**: Tenancy 2b.
+- **Per-company feedback boards, the assistant, analytics, SEO/AEO and
+  book-a-call**: Tenancy 2b-2 to 2b-4.
 - **Translations.** The words are English; `locale` changes money and date
   formats.

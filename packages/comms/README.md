@@ -10,7 +10,7 @@ that sends, so Resend, SMTP or anything else works.
 templates, and the reminder is a queued message.
 
 ```
-@adminigloo/comms          templates, sendNow, the queue, runDueMessages, the sender types
+@adminigloo/comms          templates, sendNow, deliverNow, the queue, runDueMessages, the sender types, onFailed, the alert kind
 @adminigloo/comms/schema   the drizzle pgTables
 ```
 
@@ -245,6 +245,100 @@ Permissions (`commsPermissions`): `comms.view` (see the templates and the log)
 and `comms.manage` (edit, turn on or off, send due now). `COMMS_ADMIN_ROUTES`
 lists every route with its permission, for a host's own tests.
 
+## Alerts and files (Tenancy 2b-1)
+
+comms 0.4 tells you when a customer's email didn't go, says whether trying a
+message again could help, and brings the words for both.
+
+| Install | What you get |
+| --- | --- |
+| `@adminigloo/comms` alone | `onFailed`, `deliverNow`, `templateLabel`, the alert kind and its mapper (plain data: you decide what to do with them) |
+| with `@adminigloo/notifications` | a "didn't go" alert in the bell of everyone who manages messages, through your glue (below) |
+| with `@adminigloo/create-app` (`--comms --notifications`) | all of it wired: `onFailed` on the project's senders, the alert in the bell, team emails in their own sending allowance |
+
+**A final failure is told: `onFailed`.** Pass it with the senders. It is told
+once a message has FAILED FOR GOOD: every failed `sendNow` / `deliverNow`, and
+a queued message the cron gives up on (a permanent failure, out of attempts,
+or a send abandoned mid-way and out of attempts). It is never told about a
+failure the queue will try again, nor about a skip (no provider set up is not
+a failure). It is awaited after the outcome is written, and a throw is
+swallowed, so your reporter can never fail a send or stop the cron.
+
+```ts
+import type { CommsFailure, CommsSenders } from "@adminigloo/comms";
+
+export const senders: CommsSenders = {
+  email,
+  identity,
+  onFailed: (failure: CommsFailure) => import("./alerts").then((m) => m.alertOnCommsFailure(failure)),
+};
+```
+
+`CommsFailure` is `{ tenantId, messageId, scheduledId, channel, to,
+templateKey, error, at }`: `messageId` is the delivery-log row that recorded
+it (null for a queued message abandoned mid-send, which has none),
+`scheduledId` the queued message when it came from the queue.
+
+**`deliverNow(db, input, senders)`** is `sendNow` plus `retryable`: whether
+trying again could change the outcome. True only for a failure that might
+pass (the sending allowance held it, the provider threw or refused it, the
+company's name and reply-to couldn't be read); false for a send, a skip, and a
+failure that would fail the same way every time (no such template, an address
+that isn't one). A caller that keeps its own retry (the alerts package's
+emails, scheduling's and the estimator's office notices) uses it: a held
+message is tried again by its cron, a refused address is not. `sendNow` is
+unchanged; it is `deliverNow(...).message`.
+
+```ts
+import { deliverNow } from "@adminigloo/comms";
+
+const { message, retryable } = await deliverNow(db, { tenantId, to, templateKey: "team_alert", vars, idempotencyKey: `alert:${alertId}` }, senders);
+if (message.status === "failed" && retryable) await markForRetry(alertId);
+```
+
+**The words: `templateLabel(key)`.** "visit_reminder" → "Visit reminder",
+"estimate_lead_staff" → "New lead (to your office)", "team_alert" → "Team
+alert"; a key it doesn't know is title-cased ("thank_you" → "Thank you"). The
+same names the Messages screen (`@adminigloo/comms-widget`) shows.
+
+**The alert kind: `commsAlertKinds` and `commsFailureAlert`.** One kind, for
+the project's alert registry:
+
+| key | label | category | audience | default | email |
+| --- | --- | --- | --- | --- | --- |
+| `comms.message.failed` | "An email to a customer doesn't go" | Messages | `comms.manage` | `in_app` | never (an alert about mail that failed mustn't depend on mail, and it can't loop) |
+
+`commsFailureAlert(failure, { href, customerTemplateKeys })` turns a
+`CommsFailure` into its alert: title "The visit reminder email to
+pat@x.com didn't go", body "Open Messages to see what happened.", the dedupe
+key `comms.message.failed:{messageId}` (or `comms.message.failed:queued:{scheduledId}`),
+so the same failure told twice is one alert. It answers null for a template
+NOT in `customerTemplateKeys`: only customer emails are alerted (an office
+notice or a team alert that failed is the alerts package's own retry's job).
+The shapes are declared here (no notifications import), structurally the same
+as notifications' own.
+
+```ts
+import { commsFailureAlert, type CommsFailure } from "@adminigloo/comms";
+
+const CUSTOMER_TEMPLATE_KEYS = new Set(["visit_reminder", "visit_confirmed", "quote_sent", "invoice_sent"]);
+
+export async function alertOnCommsFailure(failure: CommsFailure): Promise<void> {
+  const draft = commsFailureAlert(failure, { href: "/app/messages", customerTemplateKeys: CUSTOMER_TEMPLATE_KEYS });
+  if (draft) await alerts.notify(draft);
+}
+```
+
+**In an app that isn't ours.** Nothing above needs tenancy or notifications.
+A host with its own error log passes `onFailed: (f) => myLog.warn("email
+didn't go", { company: f.tenantId, to: f.to, template: f.templateKey, why: f.error })`,
+and a host with its own job queue retries on `deliverNow`'s `retryable`.
+
+## Upgrading from 0.3
+
+No database change. `onFailed` is optional; without it 0.4 sends exactly as
+0.3 did. `sendNow` answers the same row.
+
 ## Upgrading from 0.2
 
 Two new columns on the delivery log. A drizzle host regenerates its migration;
@@ -264,7 +358,57 @@ them 0.3 sends exactly as 0.2 did.
 - **Emailing customers about a time-zone correction** made in company settings.
 - **Payments to companies, plans and billing per company, custom domains,
   impersonation, per-company SEO.**
-- **Per-company boards and widgets for feedback, notifications, files, the
-  assistant, analytics, SEO/AEO and book-a-call**: Tenancy 2b.
 - **Per-company sending domains or phone numbers.** One verified address and
   one SMS sender for the site, each message in its company's name.
+
+### Not included (Tenancy 2b-1)
+
+- **The feedback board per company, and the complete board** — Tenancy 2b-2.
+  It will keep screenshots as these private files and send its alerts through
+  these notifications. Until then, feedback screenshots stay on the public
+  Blob store as in 2a.
+- **The AI assistant per company** — Tenancy 2b-3.
+- **Website analytics, SEO/AEO and book-a-call (booking) per company** —
+  Tenancy 2b-4.
+- **Text (SMS) and push alerts.** Alerts come in the app and by email — S9.
+- **Plans, limits and billing enforcement** — the billing chunk. Each
+  company's storage allowance is one setting for everyone
+  (`FILES_ALLOWANCE_MB`) until then; the seam the billing chunk fills is
+  there.
+- **Stripe Connect** (customers paying a company by card).
+- **Custom domains.**
+- **Virus scanning of uploads.** Files are checked for their type and size
+  only.
+- **Uploads over 4 MB, and uploads straight from the browser to storage.**
+  Phone photos are made smaller before they're sent; other files over 4 MB are
+  refused with a plain sentence.
+- **Serving files straight from S3 or R2 by presigned link.** Every private
+  file is sent through the site's own route.
+- **Thumbnails.** Photos are shown at their (shrunk) size.
+- **Turning a kind of alert off.** Each kind comes in the app, or in the app
+  and by email; who gets the work alerts is the owner's choice.
+- **Alerts from your other companies in the bell.** The bell shows the
+  company you're working in.
+- **A daily or weekly digest of alerts.**
+- **Customers seeing files** (photos on their quote or invoice page).
+- **Editing the wording of the team alert email** beyond the Messages screen
+  (it is the `team_alert` message there).
+- **Carrying 2a's per-feature alert address lists over.** With alerts
+  installed, the people (and extra addresses) are chosen again in Alert
+  settings; the old lists are no longer read.
+- **Alert settings in a single-business project without an admin shell.** Its
+  staff get the bell; the office emails keep 2a's lists.
+- **A transactional outbox.** Alerts are written right after the change they
+  report (D8); the events package (S2) brings the outbox.
+- **Crew alerts when the office moves, reassigns or cancels their visit.**
+  Only a customer's change alerts the crew.
+- **An alert when a customer opens a quote** (invoices only).
+- **A history of cron runs, and an alert when a cron fails.**
+- **Alerts for the platform owner** (a new company, a company out of
+  storage). A company's storage refusal is reported in `/admin/errors` once a
+  day.
+- **Giving one company more storage than the others.** `FILES_ALLOWANCE_MB`
+  is one number until the billing chunk.
+- **Checking an address before it gets a company's alert emails.** The owner
+  adds up to five per group; the company's team sending allowance bounds what
+  they get.

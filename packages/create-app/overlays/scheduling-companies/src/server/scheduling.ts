@@ -27,6 +27,7 @@ import {
   resolvePublicTenant,
   type FeatureHandlerOverrides,
 } from "@/server/company-routes";
+import { ALERTS_SETTINGS_HREF } from "@/server/alerts-links";
 import { reportError } from "@/server/error-reporter";
 import { log } from "@/server/logger";
 import { limiter } from "@/server/rate-limit";
@@ -174,6 +175,11 @@ export function buildSchedulingAdminHandlers(overrides: FeatureHandlerOverrides 
       })),
     // Where the crew notice's "Pick their crew" link goes.
     settingsHref: "/app/schedule/settings",
+    // Who hears about new requests is chosen in Alert settings when this
+    // project has alerts (Tenancy 2b-1, D6): the settings screen links there
+    // instead of offering its own list. ALERTS_SETTINGS_HREF is generated —
+    // null without alerts, and the package keeps 2a's list.
+    alertsHref: ALERTS_SETTINGS_HREF,
     onError: reportSchedulingError,
   });
 }

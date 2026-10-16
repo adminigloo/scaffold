@@ -38,6 +38,8 @@ is harmless in an app that never uses Neon.
 | `@adminigloo/scheduling` + `./schema` | Crews ("resources") with weekly hours (several windows a day), time off, a daily cap and an online-booking switch. Business settings in the database: time zone, services, notice, horizon, auto-confirm, expiry, reminder, change cutoff. A **public** booking flow: the same times for every visitor, server-decided times and crew, requests that expire unanswered, a cap on how many one caller can have waiting, one transaction under a per-crew lock. Customer **manage links** (hashed tokens): view, move, cancel, up to a cutoff, and a `.ics`. **Staff** booking, moving, crew changes and detail edits, validated under the same locks. A **calendar** read model (range × crews) and a **crew day** (ordered stops, drive times, directions links). **Events** after every change. **Google Maps** (geocoding and drive times, cached) or keyless estimates. Two **HTTP handlers**, one public and one for staff. Permission keys. | The six tables in your schema, and a migration you generate and run. |
 | `+ @adminigloo/scheduling/comms` (with `@adminigloo/comms`) | The emails: acknowledgement, confirmation with a manage link, declined, moved, new crew, cancelled, released, the reminder, and office notices (including "Request expired"). A reminder queued for the cron run before it is due and withdrawn when the visit moves or stops. No manage link is ever left in the delivery log. | Comms' three tables in the same migration. Your mail sender (any provider). Hand `onEvent` to the handlers, and run one cron route that calls `beforeSend`, `redactSent` and `expirePendingRequests` (see [The cron](#the-cron)). |
 | `+ @adminigloo/scheduling-widget` | The screens: `<VisitPicker>` (booking page), `<ManageVisit>` (the customer's link), `<ScheduleCalendar>` (day and week, drag to move), `<CrewDay>` (today's route on a phone), `<SchedulingSettings>`. | Nothing beyond the two routes below. |
+| `+ @adminigloo/notifications` (Tenancy 2b-1) | The bell's alerts about visits (`schedulingAlertKinds`, `schedulingAlertsFor`, `schedulingExpiringAlert`), and the office emails sent to the people chosen in Alert settings (`officeRecipients`, `officeSent`). See [Alerts and files](#alerts-and-files-tenancy-2b-1). | Pass the fragment to `defineAlertRegistry`, the drafts to `alerts.notify` before the comms listener runs, and the expiring sweep from your alerts cron. |
+| `+ @adminigloo/storage` (Tenancy 2b-1) | Photos and files on a visit, the visit's permissions deciding who sees them (`schedulingFileRecords`). | Pass the record type to `createStorage({ records })`, and the visit files page to the calendar and today's route (`visitFilesHref`, `filesHref`). |
 | `create-adminigloo-app --scheduling` | All of the above, wired, for one business. | — |
 
 **In short, four steps:**
@@ -64,9 +66,10 @@ is harmless in an app that never uses Neon.
 - **Deposits and payments.**
 - **A merge with `@adminigloo/booking`** (book-a-call). They are two engines with
   two calendars, so one person on both can be double-booked.
-- **Per-company boards and widgets for feedback, notifications, files, the
-  assistant, analytics, SEO/AEO and book-a-call**: Tenancy 2b. (Scheduling
-  itself is per company since 0.5: see [Companies](#companies-tenancy-2a).)
+- **What Tenancy 2b-1 leaves out** (alerts and photos and files per company
+  are in 0.6): see [Not included (Tenancy 2b-1)](#not-included-tenancy-2b-1).
+  (Scheduling itself is per company since 0.5: see
+  [Companies](#companies-tenancy-2a).)
 - **Payments to companies, plans and billing per company, custom domains,
   impersonation, per-company SEO.**
 - **Logo and colour inside emails.** Emails carry the company's name and
@@ -86,7 +89,8 @@ is harmless in an app that never uses Neon.
 - **Holds while the customer types.** The time is checked when they send the
   form, and a taken time recovers with "pick another".
 - **A second reminder** (one hour before, say).
-- **Job photos, checklists or signatures.**
+- **Checklists or signatures.** Job photos are files on the visit, with
+  `@adminigloo/storage` (see [Alerts and files](#alerts-and-files-tenancy-2b-1)).
 - **A license gate.**
 - Postgres only.
 
@@ -682,8 +686,12 @@ Routes with a token in the URL also send `Referrer-Policy: no-referrer` and
 `X-Robots-Tag: noindex`. The request form carries a hidden `website` field and
 how long the form was open (`fillMs`): a filled hidden field, or a form sent
 faster than `minFillMs` (default 2000 ms), is `spam_suspected` before any
-database work. A POST a browser sent from another site is refused 403 unless
-`cors` names that origin.
+database work. A POST a browser sent from any other page is refused 403
+unless `cors` names that origin, including a page on another subdomain of
+your own domain (www.example.com when the app is app.example.com), since it
+carries the signed-in session cookie. Every body is read with a cap, counted as it
+arrives (20,000 characters), so a server with no platform limit is never
+made to hold a huge request.
 
 **Server callers.** Node's built-in `fetch` sends `Sec-Fetch-Mode`, so a POST
 from a server (an integration test, a backend route that forwards, a GitHub
@@ -936,6 +944,16 @@ booking, the office's accept), so the page can say "we've emailed you" and
 mean it. Each send may hold that request up for at most `sendTimeoutMs`
 (default 10 seconds); past it the request answers, the send finishes in the
 background, and `onError` hears about it. Office notices go out in parallel.
+
+**The same event twice tells the customer once.** A retried delivery or a
+replayed queue hands the listener an event it has seen: the customer's email
+with a link (asked, confirmed, moved, given to another crew) goes once per
+event, and the reminder queued for it stays queued. The claim is the email's
+manage link, stored under an id made from the event's id, so it holds across
+processes; an email that didn't go is tried again on the next delivery. An
+email with no link (declined, cancelled, lapsed) goes again with the same
+idempotency key and the same words, which a provider that deduplicates (Resend)
+drops.
 
 ### The cron
 
@@ -1441,6 +1459,225 @@ company's failure is reported and the next one runs.
 `Response`), `admit`, `company` and `staffEmails` from its own tables, and
 calls `resolveSchedulingSettings` when its business's zone changes.
 
+## Alerts and files (Tenancy 2b-1)
+
+0.6 lets a company hear about its visits in the app (a bell, with
+`@adminigloo/notifications`) and keep photos and files against a visit
+(`@adminigloo/storage`). Everything here is optional: a host passing none of
+it gets 0.5's behaviour. Scheduling imports neither package. The shapes are
+declared here and match theirs exactly, so you hand them over as they are.
+
+| You add | You get |
+| --- | --- |
+| `schedulingAlertKinds`, `schedulingAlertsFor` (with `@adminigloo/notifications`) | The bell's alerts about visits, in plain words, each opening the visit. |
+| `listExpiringRequests`, `schedulingExpiringAlert` (in your alerts cron) | "Answer Pat Rivera's visit request by Tue, Nov 3, 9:00 AM MST, or it lapses." |
+| `officeRecipients`, `officeSent` on the comms listener | The office emails go to the people chosen in Alert settings, once each, and a failed one is sent again by the alerts cron. |
+| `alertsHref` on the staff handlers | Schedule settings says "Who gets new-request alerts is chosen in Alert settings." with a link, instead of its own address list. |
+| `schedulingFileRecords` (with `@adminigloo/storage`) | Photos and files on a visit. The visit's own permissions decide who sees them, and a crew member adds photos to their own visits from their phone. |
+
+### The alert kinds
+
+| Kind | Alert settings says | Who gets it | Default | The email |
+| --- | --- | --- | --- | --- |
+| `scheduling.visit.requested` | "A customer asks for a visit, or books one" | the "Visit requests and customer changes" group (`schedule.view`) | In the app and by email | scheduling's office notice (`visit_staff_notice`) |
+| `scheduling.visit.moved` | "A customer moves a visit" | the group, and the people on the visit's crew (`schedule.route`) | In the app and by email | the office notice; the crew get notifications' own copy |
+| `scheduling.visit.cancelled` | "A customer cancels a visit" | the group, and the crew | In the app and by email | the office notice; the crew get notifications' own copy |
+| `scheduling.request.expiring` | "A visit request is about to lapse unanswered" | the group | In the app and by email | notifications |
+| `scheduling.request.expired` | "A visit request lapsed unanswered" | the group | In the app and by email | the office notice |
+
+All are under "Visits". The group's key is `visits`; until the owner chooses
+people for it, it is the company's owner. Staff-made changes alert nobody:
+only a customer's request, move or cancel, and a request nobody answered.
+
+### The mapper
+
+`schedulingAlertsFor(db, event, { hrefs, locale?, now? })` turns one
+scheduling event into alert drafts for `alerts.notify`. It writes an alert
+exactly when the comms listener writes an office notice, under the same kind
+and dedupe key, so the office email is claimed from the alert and a request
+is never emailed twice.
+
+| Event | Title | Body |
+| --- | --- | --- |
+| a customer asks | "New visit request: Pat Rivera, Tue, Nov 3, 9:00 AM MST" | "Free estimate at 1 Main St, SLC." (and "The address couldn't be found on the map. Check it with them." when it couldn't) |
+| an online booking | "New booking: Pat Rivera, Tue, Nov 3, 9:00 AM MST" | as above |
+| a customer moves it | "Pat Rivera moved their visit to Thu, Nov 5, 2:00 PM MST" | "Now Thu, Nov 5, 2:00 PM MST. It was Tue, Nov 3, 9:00 AM MST. Free estimate at 1 Main St, SLC." (onto another crew: "Now …, with South. It was …, with North. …") |
+| … and it left the crew it was on | "Pat Rivera's visit is off your route: moved to Thu, Nov 5, 2:00 PM MST" (to the people who were only on the old crew) | "It's now with South. It was Tue, Nov 3, 9:00 AM MST. Free estimate at 1 Main St, SLC." |
+| a customer cancels | "Pat Rivera cancelled their visit on Tue, Nov 3, 9:00 AM MST" | "Free estimate at 1 Main St, SLC. They said: …" |
+| nobody answered | "Pat Rivera's visit request lapsed unanswered" | "They asked for Tue, Nov 3, 9:00 AM MST (Free estimate)." |
+
+Times are in the visit's own zone. The links are patterns (`{id}` and `{date}`
+are filled in, URL-encoded), so the same package serves `/app/…` and
+`/admin/…`. A crew member's link on a move or cancel is today's route when the
+visit is today, else the visit's photos-and-files page (`visitFiles`), else
+nothing: their route is today-only, and the alert's body says everything,
+where the job is included. When a customer's move puts the visit on another
+crew, the people who were only on the old crew get their own alert, "off your
+route", opening today's route if it was on it today and nothing otherwise
+(their link to the visit would no longer open). It is a second draft under
+the move's kind and key: notifications keeps one row per person per key, the
+first draft's, so the office and the new crew get the move and nobody gets
+both. A host with its own inbox does the same: one alert per person per key,
+the first draft that reaches them.
+
+```ts
+import { schedulingAlertKinds, schedulingAlertsFor, listExpiringRequests, schedulingExpiringAlert } from "@adminigloo/scheduling";
+
+const ALERT_REGISTRY = defineAlertRegistry([schedulingAlertKinds /* , … the other packages' fragments */]);
+const hrefs = {
+  visit: "/app/schedule?date={date}&visit={id}",
+  crewDay: "/app/schedule/today",
+  visitFiles: "/app/schedule/visits/{id}/files", // leave it out without file storage
+};
+
+// Alerts FIRST, then the comms listener: the office email claims the alert's email.
+const onEvent = async (event: SchedulingEvent) => {
+  await alerts.notify(await schedulingAlertsFor(db, event, { hrefs }));
+  await schedulingComms.onEvent(event);
+};
+
+// The alerts cron, per active company: requests about to lapse.
+const expiring = await listExpiringRequests(db, tenantId); // deadline in the next 26 h, asked more than 6 h ago
+await alerts.notify(expiring.map((request) => schedulingExpiringAlert(tenantId, request, { hrefs })));
+```
+
+`listExpiringRequests` is one query. It leaves out a request made in the last
+six hours (its "new request" alert has only just gone), and the alert's key is
+the visit and its version, so a second cron run is no second alert.
+
+### Office emails through the one setting
+
+```ts
+const schedulingComms = createSchedulingCommsListener({
+  db, senders, manageUrl, company,
+  staffEmails: async (id) => (await company(id))?.inbox ?? [], // used only if officeRecipients throws
+  officeRecipients: (notice) => alerts.claimEmails(notice),
+  officeSent: async (notice, result) => {
+    if (result.status === "failed" && result.retryable) await alerts.releaseClaim({ ...notice, to: result.to });
+  },
+});
+```
+
+- **`officeRecipients(notice)`** decides who gets the office notice. The saved
+  "Send new-request alerts to" list is not read, and `[]` sends nothing. The
+  notice carries the alert's `kind` and `dedupeKey` (the same ones the mapper
+  wrote), the event's id, and the people on the visit's crew
+  (`assignedUserIds`; they are not sent the office notice, they get their own
+  copy from notifications). If it throws, that is reported (step
+  `office-recipients`) and the notice goes to `staffEmails`, so the office
+  still hears.
+- Each office email goes through comms' **`deliverNow`**, with 2a's template,
+  wording, reply-to (the customer) and idempotency key.
+- **`officeSent(notice, { to, status, retryable })`** hears how each address
+  ended: `sent`, `skipped` (no mail provider set up), or `failed`, and whether
+  trying again could help. A send that ran past `sendTimeoutMs` is not handed
+  over (it may have gone, and two emails are worse than a late one): it is
+  reported (step `office-timeout`). A throw is reported (step `office-sent`)
+  and changes nothing.
+- Without `officeRecipients`, 0.5 exactly: the saved list, else `staffEmails`,
+  through `sendNow`.
+
+### Schedule settings
+
+```ts
+createSchedulingAdminHandlers({ /* … */ alertsHref: "/app/alerts/settings" });
+```
+
+With `alertsHref`, `GET settings` answers `alertRecipients: { href }`, the
+screen shows a link to Alert settings instead of the address list, and a save
+drops `staffNotifyEmails` (never an error; a body of only that saves nothing).
+Without it, `alertRecipients` is `null` and the list is edited here as before.
+
+### Photos and files on a visit
+
+```ts
+import { schedulingFileRecords } from "@adminigloo/scheduling";
+
+createStorage({
+  /* … */
+  records: [...schedulingFileRecords(db, { visitHref: "/app/schedule?date={date}&visit={id}" })],
+});
+```
+
+One record type, `scheduling.visit` ("Visit", "Visits"): `schedule.view` sees a
+visit's files, `schedule.manage` adds and removes them, and a crew member
+(`schedule.route`) sees and adds files on their own crew's visits and may
+remove one they added within a day. `find` is one query in the company; its
+label is "Visit · Pat Rivera · Tue, Nov 3, 9:00 AM MST", and the person linked
+to the visit's crew is the one assigned. The screens link to the visit's page
+with `<ScheduleCalendar visitFilesHref>` and `<CrewDay filesHref>`
+(`@adminigloo/scheduling-widget` 0.3).
+
+### In an app that isn't ours
+
+A host with its own inbox and no `@adminigloo/notifications` can still use the
+drafts: they are plain data (a title, a body, a link, and a dedupe key that
+makes its own insert safe to repeat). `officeRecipients` can read its own
+"who hears about new work" table, with ids as text:
+
+```ts
+const listener = createSchedulingCommsListener({
+  db, senders, manageUrl,
+  officeRecipients: async (notice) => {
+    // Your own table. Return [] when this fact was already emailed (notice.dedupeKey).
+    const rows = await prisma.officeContact.findMany({ where: { companyId: Number(notice.tenantId) } });
+    return rows.map((row) => row.email);
+  },
+});
+```
+
+### Not included (Tenancy 2b-1)
+
+- **The feedback board per company, and the complete board** — Tenancy 2b-2.
+  It will keep screenshots as these private files and send its alerts through
+  these notifications. Until then, feedback screenshots stay on the public
+  Blob store as in 2a.
+- **The AI assistant per company** — Tenancy 2b-3.
+- **Website analytics, SEO/AEO and book-a-call (booking) per company** —
+  Tenancy 2b-4.
+- **Text (SMS) and push alerts.** Alerts come in the app and by email — S9.
+- **Plans, limits and billing enforcement** — the billing chunk. Each
+  company's storage allowance is one setting for everyone
+  (`FILES_ALLOWANCE_MB`) until then; the seam the billing chunk fills is
+  there.
+- **Stripe Connect** (customers paying a company by card).
+- **Custom domains.**
+- **Virus scanning of uploads.** Files are checked for their type and size
+  only.
+- **Uploads over 4 MB, and uploads straight from the browser to storage.**
+  Phone photos are made smaller before they're sent; other files over 4 MB are
+  refused with a plain sentence.
+- **Serving files straight from S3 or R2 by presigned link.** Every private
+  file is sent through the site's own route.
+- **Thumbnails.** Photos are shown at their (shrunk) size.
+- **Turning a kind of alert off.** Each kind comes in the app, or in the app
+  and by email; who gets the work alerts is the owner's choice.
+- **Alerts from your other companies in the bell.** The bell shows the
+  company you're working in.
+- **A daily or weekly digest of alerts.**
+- **Customers seeing files** (photos on their quote or invoice page).
+- **Editing the wording of the team alert email** beyond the Messages screen
+  (it is the `team_alert` message there).
+- **Carrying 2a's per-feature alert address lists over.** With alerts
+  installed, the people (and extra addresses) are chosen again in Alert
+  settings; the old lists are no longer read.
+- **Alert settings in a single-business project without an admin shell.** Its
+  staff get the bell; the office emails keep 2a's lists.
+- **A transactional outbox.** Alerts are written right after the change they
+  report (D8); the events package (S2) brings the outbox.
+- **Crew alerts when the office moves, reassigns or cancels their visit.**
+  Only a customer's change alerts the crew.
+- **An alert when a customer opens a quote** (invoices only).
+- **A history of cron runs, and an alert when a cron fails.**
+- **Alerts for the platform owner** (a new company, a company out of
+  storage). A company's storage refusal is reported in `/admin/errors` once a
+  day.
+- **Giving one company more storage than the others.** `FILES_ALLOWANCE_MB`
+  is one number until the billing chunk.
+- **Checking an address before it gets a company's alert emails.** The owner
+  adds up to five per group; the company's team sending allowance bounds what
+  they get.
+
 ## Upgrading from 0.3
 
 1. **Migrate.** Everything new is nullable or has a default, so a drizzle
@@ -1644,12 +1881,16 @@ same changes.
 | `BOOKING_STATUSES`, `STAFF_SETTABLE_STATUSES`, `BOOKING_STATUS_TRANSITIONS`, `canTransitionBooking`, `nextBookingStatuses` | |
 | `timeOfDaySchema`, `endTimeSchema` | The `HH:MM` checks. |
 | `schedulingPermissions` | |
+| `schedulingAlertKinds`, `schedulingAlertsFor(db, event, { hrefs, locale?, now? })` | Tenancy 2b-1: the alert fragment and the event → drafts mapper. |
+| `listExpiringRequests(db, tenantId, { now?, withinHours?, createdBefore?, limit? })`, `schedulingExpiringAlert(tenantId, request, { hrefs, locale? })` | Tenancy 2b-1: requests about to lapse, and their alert. |
+| `schedulingFileRecords(db, { visitHref, locale? })` | Tenancy 2b-1: the visit as a file record. |
 | The wire types (`PublicConfig`, `SlotsResponse`, `PublicVisit`, `VisitSnapshot`, `CalendarResponse`, `CrewDayResponse`, `SettingsWire`, …) | What the handlers send; shared with the widget. |
 
 From `@adminigloo/scheduling/comms`: `createSchedulingCommsListener` (with
 `onEvent`, `beforeSend`, `redactSent`, `ensureTemplates`, `verify`),
 `SCHEDULING_EMAIL_TEMPLATES`, `SCHEDULING_COMMS_REF_TYPE`,
-`COMMS_TABLES_MISSING`, `schedulingEmailVars`.
+`COMMS_TABLES_MISSING`, `schedulingEmailVars`, and the types `SchedulingOfficeNotice` and
+`SchedulingOfficeSendResult` (Tenancy 2b-1).
 
 The pure engine (`findFreeSlots`, `scoreSlot`, `sortScoredSlots`,
 `haversineDistance`, the time helpers) is exported too. Importing it still loads
@@ -1694,6 +1935,15 @@ drizzle, zod and `@adminigloo/db`; there is no separate entry for the math yet.
   reminder on a daily cron and inside the cutoff, a corrected email, the
   delivery-log sweep after a crashed run, a zone change racing a booking, and
   the crew's own route and progress.
+
+- Tenancy 2b-1 (`alerts.test.ts`, `files.test.ts`): the mapper writes an
+  alert for exactly the events the office notice is for, with the same kind
+  and key (every event type and actor); times in the visit's zone; the crew
+  (old and new) and their link; the expiring window and its six hours;
+  `officeRecipients` and `officeSent` on the real comms tables (sent, failed
+  and retryable, failed for good, a timed-out send, a throw), and 0.5's path
+  without them; `alertsHref`; the visit record type, one query, in the
+  company.
 
 PGlite is a single connection, so the race tests prove the
 validate-and-write-in-one-transaction logic and would pass without the lock.

@@ -59,3 +59,23 @@ export {
   type EstimateItemMeasurement,
   type EstimateItemOptionSnapshot,
 } from "./schema.js";
+// Tenancy 2b-1: alerts and files. Structural (2a D4): nothing here imports
+// @adminigloo/notifications or @adminigloo/storage, and a host passing none
+// of it gets 0.4's behaviour.
+export {
+  estimatorAlertKinds,
+  estimatorAlertsFor,
+  type EstimatorAlertChannel,
+  type EstimatorAlertKinds,
+  type EstimatorAlertKind,
+  type EstimatorAlertRouting,
+  type EstimatorAlertDraft,
+  type EstimatorAlertsForOptions,
+} from "./alerts.js";
+export {
+  estimatorFileRecords,
+  estimatorPhotoPurpose,
+  estimatorStaffPhotoPurpose,
+  type EstimatorFileRecordType,
+  type EstimatorFileRecordsOptions,
+} from "./files.js";

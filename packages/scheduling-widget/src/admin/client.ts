@@ -328,6 +328,9 @@ export function parseSettingsWire(raw: unknown): SettingsWire | null {
     // Tenancy 2a: an older server sends nothing here, which reads as
     // "editable here" (null), the 0.1 screen.
     managedByCompany: isObject(raw.managedByCompany) ? { href: strOrNull(raw.managedByCompany.href) } : null,
+    // Tenancy 2b-1: an older server sends nothing here, which reads as "the
+    // list is edited here" (null), 0.2's screen.
+    alertRecipients: isObject(raw.alertRecipients) ? { href: safeLink(raw.alertRecipients.href) } : null,
   };
 }
 
@@ -408,6 +411,11 @@ const NOTICE_CODES = new Set<string>([
   "delivery_problem",
   "crew_unlinked",
 ]);
+
+/** A link the server sent for a screen to follow: a path on this site or an http(s) address, never a script URL; else null. */
+function safeLink(raw: unknown): string | null {
+  return isString(raw) && /^(\/(?!\/)|https?:\/\/)/i.test(raw) ? raw : null;
+}
 
 /** A notice's "where to fix it" link: a path on this site or an http(s) address, never a script URL. */
 function parseNoticeLink(raw: unknown): { href: string; label: string } | null {

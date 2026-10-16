@@ -7,6 +7,7 @@ import type { SessionState } from "__SCOPE__/tenancy/server";
 import { env } from "@/env";
 import { APP_LINKS, SITE_LINKS, type SiteLink } from "@/nav";
 import { buttonClass } from "@/components/ui";
+import { AlertsBellSlot } from "@/components/AlertsBellSlot";
 import { CompanySwitcherSlot } from "@/components/CompanySwitcherSlot";
 import { currentPrincipal } from "@/server/auth";
 import { loadStaffPermissions, loadTenantPermissions } from "@/server/permissions";
@@ -88,6 +89,14 @@ export async function AuthHeader() {
         <AppLinks viewer={viewer} />
       </div>
       <PhoneMenu app={visibleAppLinks(viewer)} />
+      {/* THE ALERTS BELL (Tenancy 2b-1), OUTSIDE the phone menu so it shows on
+          a phone too. Generated in three variants (src/components/
+          AlertsBellSlot.tsx): the active company's bell for someone whose role
+          there holds alerts.view, the staff bell in a single business, or
+          nothing in a project generated without alerts. It reads only what
+          the viewer above already resolved (inside its try/catch), so it can
+          never fail the page. */}
+      <AlertsBellSlot session={viewer.session} can={viewer.can} isStaff={viewer.isStaff} />
       <UserButton />
     </div>
   );

@@ -74,24 +74,39 @@ export interface Answers {
    */
   readonly includeSeoReports: boolean;
   /**
-   * The in-app inbox: durable per-recipient notifications your events write
-   * and your header badge reads. The package ships the primitive; PRODUCERS
-   * ARE THE PROJECT'S TO WIRE — feedback's `onEvent` hook is the proven first
-   * one, and adminigloo.com's intake route is the shape to copy.
+   * ALERTS (Tenancy 2b-1): a bell in the header with each person's own
+   * alerts in the company they're working in — a new lead, a quote answered,
+   * a visit request, a customer moving a visit, an invoice opened, paid or
+   * overdue, an email that didn't go, a teammate who joined or left — each
+   * person's choice of "In the app" or "In the app and by email", and one
+   * place where the owner picks who hears about new work.
    *
-   * DEFAULTS TO FALSE: an inbox nothing writes to is a page that teaches
-   * people to stop checking it.
+   * THE PRODUCERS ARE WIRED, not left for the project: every installed
+   * feature's events reach the alerts (src/server/alerts.ts), the office
+   * emails go to the people Alert settings name, and the alerts cron sends
+   * what a request couldn't and produces the time-based ones (a request
+   * about to lapse, an invoice gone overdue). In both modes: a single
+   * business's staff get the same bell.
+   *
+   * DEFAULTS TO FALSE: a business that installs no feature has nothing to be
+   * alerted about, and the bell is a promise.
    */
   readonly includeNotifications: boolean;
   /**
-   * Tenant-scoped file storage: rows in the app's own database, bytes behind
-   * a two-method adapter the app owns (the emitted one chooses Vercel Blob).
-   * The upload is a plain route handler — files do not ride superjson — and
-   * the staff library page rides `adminShell`.
+   * PHOTOS AND FILES (Tenancy 2b-1): each company's files, PRIVATE by
+   * default — served only through its signed-in screens or a short-lived
+   * signed link — on its visits, estimates and invoices (a crew member adds
+   * them from their phone at the job), the customer's estimate photo kept
+   * privately with the estimate, the logo uploaded in company settings (the
+   * one public file, under an unguessable address), and a Files screen that
+   * says "Using X of Y" against a per-company allowance.
    *
-   * DEFAULTS TO FALSE. Without BLOB_READ_WRITE_TOKEN the library says so in
-   * one sentence instead of erroring, so default-on would only add surface
-   * with nothing behind it — the feedback-widget rule.
+   * Two Vercel Blob stores (a private one and the public one); with neither
+   * token, and outside production, files are kept on this computer's disk so
+   * a laptop works with nothing set.
+   *
+   * DEFAULTS TO FALSE: a business with no visits, estimates or invoices has
+   * little to keep, and every stored byte costs somebody.
    */
   readonly includeStorage: boolean;
   /**
@@ -306,8 +321,15 @@ export function packagesFor(answers: Answers): readonly string[] {
   // into one package here would misstate what is actually for sale.
   if (answers.includeFeedback) optional.push("feedback", "feedback-widget");
   if (answers.includeSeoReports) optional.push("seo-reports");
-  if (answers.includeNotifications) optional.push("notifications");
-  if (answers.includeStorage) optional.push("storage");
+  // Two packages each since Tenancy 2b-1, the scheduling split: the server
+  // half (`notifications`: alerts, choices, who hears, the email copies and
+  // the handlers; `storage`: the files, the stores, the allowance, signed
+  // links and the handlers) and the screens (`notifications-widget`: the
+  // bell, the alerts page, Alert settings; `storage-widget`: a record's
+  // photos and files, the Files screen, the usage meter). A fix to the bell
+  // reaches every project by `npm update`.
+  if (answers.includeNotifications) optional.push("notifications", "notifications-widget");
+  if (answers.includeStorage) optional.push("storage", "storage-widget");
   if (answers.includeAssistant) optional.push("assistant");
 
   // Field service. Each installs only its own package; the cross-feature glue
@@ -464,11 +486,27 @@ export function optionalEnvFor(answers: Answers): readonly string[] {
     vars.push("ADMINIGLOO_FEEDBACK_KEY", "BLOB_READ_WRITE_TOKEN");
   }
   if (answers.includeStorage) {
-    // Same variable feedback's screenshots use — one blob store per project,
-    // so the file library and the screenshots share a credential.
-    vars.push("BLOB_READ_WRITE_TOKEN");
+    // TWO STORES (Tenancy 2b-1, D10): the private one for photos and files,
+    // and the public one (the variable feedback's screenshots already use)
+    // for company logos. A Vercel Blob store is private or public as a
+    // whole, so they are two stores with two tokens — the env check refuses
+    // the same token in both. Without either, and outside production, files
+    // are kept on this computer's disk.
+    vars.push("BLOB_PRIVATE_READ_WRITE_TOKEN", "BLOB_READ_WRITE_TOKEN");
+    // How much each company may store (default 5 GB until the billing chunk
+    // sets it per plan), and the key for "Copy link" (else one is made from
+    // CLERK_SECRET_KEY).
+    vars.push("FILES_ALLOWANCE_MB", "FILES_LINK_SECRET");
   }
-  if (answers.includeComms || answers.includeScheduling || answers.includeEstimator) {
+  if (
+    answers.includeComms ||
+    answers.includeScheduling ||
+    answers.includeEstimator ||
+    // The alerts cron (email retries, the time-based alerts, clean-up) and
+    // the files cron (the purge, the move to private) check it too.
+    answers.includeNotifications ||
+    answers.includeStorage
+  ) {
     // What the /api/cron/* routes check. Optional because a laptop drains
     // nothing on a schedule; on a deployment, unset means every cron call is
     // refused — reminders and quote follow-ups wait, and expired requests and
@@ -487,8 +525,9 @@ export function optionalEnvFor(answers: Answers): readonly string[] {
     // The zone the dates on quotes start in (the owner changes it in Estimate
     // settings) and, with --ai, which model reads a customer's photo: Claude
     // Haiku 4.5 unless this names another — the founder's choice of the
-    // cheapest capable model. The photos themselves are kept with
-    // BLOB_READ_WRITE_TOKEN, listed above with storage.
+    // cheapest capable model. The photos themselves are kept privately with
+    // the estimate, in the private store (BLOB_PRIVATE_READ_WRITE_TOKEN,
+    // listed above with storage).
     vars.push("ESTIMATOR_TIME_ZONE");
     if (answers.includeAi) vars.push("ESTIMATOR_TAKEOFF_MODEL");
   }
@@ -641,13 +680,45 @@ export function overlayNamesFor(answers: Answers): readonly string[] {
   if (answers.includeSeoReports && answers.adminShell !== "none") {
     names.push("seo-admin");
   }
-  if (answers.includeNotifications) names.push("notifications");
-  if (answers.includeNotifications && answers.adminShell !== "none") {
-    names.push("notifications-admin");
-  }
-  if (answers.includeStorage) names.push("storage");
-  if (answers.includeStorage && answers.adminShell !== "none") {
-    names.push("storage-admin");
+  // ALERTS AND FILES (Tenancy 2b-1), cut by mode the way the field-service
+  // features are (below), because their files have the same four
+  // conditions. The 0.1 `notifications` overlay is gone: its notify helper
+  // and tRPC router were replaced by the generated src/server/alerts.ts and
+  // the package's own handlers.
+  //
+  //   notifications-companies  each company's alerts page, Alert settings and
+  //                            its alerts route (/api/app/{id}/alerts)
+  //   notifications-single     the one business's alerts route
+  //                            (/api/admin/alerts)
+  //   notifications-admin      its pages under the shell, and /admin/inbox
+  //                            as a redirect to /admin/alerts
+  //   storage                  both modes: signed links and public files
+  //                            (/api/files) and the files cron
+  //   storage-companies        each company's Files page and files route
+  //   storage-visits-*         a visit's photos-and-files page (a visit has
+  //                            no page of its own), with scheduling
+  //   storage-single / -admin  the one business's files route and pages
+  {
+    const companies = answers.tenantNoun !== "none";
+    const shell = answers.adminShell !== "none";
+    if (answers.includeNotifications) {
+      if (companies) names.push("notifications-companies");
+      else {
+        names.push("notifications-single");
+        if (shell) names.push("notifications-admin");
+      }
+    }
+    if (answers.includeStorage) {
+      names.push("storage");
+      if (companies) {
+        names.push("storage-companies");
+        if (answers.includeScheduling) names.push("storage-visits-companies");
+      } else {
+        names.push("storage-single");
+        if (shell) names.push("storage-admin");
+        if (shell && answers.includeScheduling) names.push("storage-visits-admin");
+      }
+    }
   }
   if (answers.includeAssistant) names.push("assistant");
   if (answers.includeAssistant && answers.adminShell !== "none") {
@@ -849,13 +920,29 @@ export function capabilitiesFor(answers: Answers): readonly string[] {
   if (answers.includeSeoReports && answers.adminShell !== "none") {
     keys.push("seo.reports");
   }
-  if (answers.includeNotifications) keys.push("notifications.fanout");
-  if (answers.includeNotifications && answers.adminShell !== "none") {
-    keys.push("notifications.inbox");
-  }
-  if (answers.includeStorage) keys.push("storage.files");
-  if (answers.includeStorage && answers.adminShell !== "none") {
-    keys.push("storage.library");
+  // Alerts and files (Tenancy 2b-1). The screens are a company's own in a
+  // companies project (its area needs no shell) and the shell's for a single
+  // business — so "is there an alerts page / a Files screen here" is
+  // companies OR a shell, the field-service rule.
+  {
+    const ownScreens = answers.tenantNoun !== "none" || answers.adminShell !== "none";
+    const fieldFeature =
+      answers.includeScheduling || answers.includeEstimator || answers.includeInvoicing || answers.includeComms;
+    if (answers.includeNotifications) keys.push("notifications.fanout", "notifications.bell");
+    if (answers.includeNotifications && ownScreens) keys.push("notifications.inbox");
+    // Every installed field-service feature's events reach the alerts (the
+    // team's own alerts, in companies mode, ride tenancy's events either way).
+    if (answers.includeNotifications && fieldFeature) {
+      keys.push("notifications.producers");
+    }
+    if (answers.includeStorage) keys.push("storage.files");
+    if (answers.includeStorage && ownScreens) keys.push("storage.library");
+    if (
+      answers.includeStorage &&
+      (answers.includeScheduling || answers.includeEstimator || answers.includeInvoicing)
+    ) {
+      keys.push("storage.attachments");
+    }
   }
   if (answers.includeAssistant) keys.push("assistant.brain");
   if (answers.includeAssistant && answers.adminShell !== "none") {

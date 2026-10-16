@@ -642,7 +642,11 @@ export async function acceptInvitation(
     if (result.status === "wrong-email") await noteWrongAccount(ctx, tx, hash, input.userId);
     return finishAccept(ctx, tx, company, result, input.userId, "invitation", input.request);
   });
-  if (out.joined) ctx.emit({ type: "member.joined", tenantId, userId: input.userId, via: "invitation" });
+  if (out.joined) {
+    // Tenancy 2b-1 (8.1): who joined, and as what, in words (one query).
+    const { person, roleName } = await ctx.memberFacts(tenantId, input.userId);
+    ctx.emit({ type: "member.joined", tenantId, userId: input.userId, via: "invitation", person, roleName });
+  }
   return out.outcome;
 }
 
@@ -688,7 +692,10 @@ export async function joinInvitation(
     );
     return finishAccept(ctx, tx, company, result, input.userId, "verified-email", input.request);
   });
-  if (out.joined) ctx.emit({ type: "member.joined", tenantId, userId: input.userId, via: "verified-email" });
+  if (out.joined) {
+    const { person, roleName } = await ctx.memberFacts(tenantId, input.userId);
+    ctx.emit({ type: "member.joined", tenantId, userId: input.userId, via: "verified-email", person, roleName });
+  }
   return out.outcome;
 }
 

@@ -41,8 +41,10 @@ export interface EstimatorSettingsWire {
   managedByCompany: { href: string | null } | null;
   /** The most a day of photo reading may cost on this site, in cents; null = no ceiling. */
   aiBudgetCeilingCents: number | null;
+  /** Who gets the lead alerts is chosen in Alert settings (Tenancy 2b-1): show this link instead of the address list. null = the list is edited here. */
+  alertRecipients: { href: string | null } | null;
 }
-export type EstimatorSettingsPatch = Partial<Omit<EstimatorSettingsWire, "sampleLoadedAt" | "saved" | "updatedAt" | "defaultLaborRateCents" | "managedByCompany" | "aiBudgetCeilingCents">> & {
+export type EstimatorSettingsPatch = Partial<Omit<EstimatorSettingsWire, "sampleLoadedAt" | "saved" | "updatedAt" | "defaultLaborRateCents" | "managedByCompany" | "aiBudgetCeilingCents" | "alertRecipients">> & {
   defaultLaborRateCents?: Cents;
 };
 

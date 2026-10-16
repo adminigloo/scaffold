@@ -8,6 +8,7 @@ import {
   type InvoicingBusiness,
   type ResolvedInvoicingBusiness,
 } from "./business.js";
+import { emitInvoicingEvent, type InvoicingEventOptions } from "./events.js";
 import {
   CROSS_SITE_MESSAGE,
   FORBIDDEN_MESSAGE,
@@ -92,7 +93,7 @@ export interface InvoicingDelivery {
 
 export type InvoiceEmailDelivery = "sent" | "skipped" | "failed" | "no-email";
 
-export interface CreateInvoicingAdminHandlersOptions {
+export interface CreateInvoicingAdminHandlersOptions extends InvoicingEventOptions {
   db: InvoicingDb;
   /** A fixed tenant (a single business). Pass this or `resolveTenant`. */
   tenantId?: string;
@@ -512,6 +513,25 @@ export function createInvoicingAdminHandlers(options: CreateInvoicingAdminHandle
           userId ?? undefined,
         );
         if (!recorded) throw notFound();
+        // Tenancy 2b-1 (11.1): `invoice.paid` when THIS payment settled it.
+        // recordPayment refuses a payment on an invoice already paid, so
+        // "paid now" means "not paid before"; a payment whose reference was
+        // already recorded (`duplicate`) wrote nothing and tells nobody. After
+        // commit (recordPayment's transaction has ended), awaited, contained.
+        if (!recorded.duplicate && recorded.status === "paid") {
+          await emitInvoicingEvent(
+            db,
+            {
+              type: "invoice.paid",
+              tenantId,
+              invoiceId: id,
+              actor: { type: "staff", id: userId },
+              format: async () => moneyFormatOf(await biz()),
+              now,
+            },
+            { onEvent: options.onEvent, onEventError: options.onEventError, report: (error) => report(error, tenantId, matched.kind) },
+          );
+        }
         return respond(id);
       }
       case "payment-reverse": {

@@ -2,6 +2,7 @@
 
 import { useParams, useRouter } from "next/navigation";
 import { EstimateEditor } from "__SCOPE__/estimator-widget/admin";
+import { RecordFilesSlot } from "@/components/RecordFilesSlot";
 
 /**
  * One estimate, from __SCOPE__/estimator-widget's <EstimateEditor>, talking to
@@ -25,15 +26,34 @@ import { EstimateEditor } from "__SCOPE__/estimator-widget/admin";
  * A CLIENT PAGE: the id comes from the URL in the browser, and "Duplicate"
  * opens the copy by navigating — a function the server can't hand down.
  */
+/**
+ * The estimate's "Other files" card (Tenancy 2b-1; reviews BO-13, BO-22):
+ * the editor above already has its own "Photos" panel — the job's photos the
+ * estimate reads — so this card is for everything else (a site plan, a
+ * permit). RecordFilesSlot is generated: nothing without file storage.
+ */
+const ESTIMATE_FILES_HINT =
+  "Photos of the job go in Photos above, so the estimate can read them. Your team sees these; they aren't sent to the customer.";
+
 export default function EstimatePage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   return (
-    <EstimateEditor
-      baseUrl="/api/admin/estimator"
-      estimateId={params.id}
-      backHref="/admin/estimates"
-      onOpenEstimate={(id) => router.push(`/admin/estimates/${encodeURIComponent(id)}`)}
-    />
+    <>
+      <EstimateEditor
+        baseUrl="/api/admin/estimator"
+        estimateId={params.id}
+        backHref="/admin/estimates"
+        onOpenEstimate={(id) => router.push(`/admin/estimates/${encodeURIComponent(id)}`)}
+      />
+      <div className="mt-8">
+        <RecordFilesSlot
+          baseUrl="/api/admin/files"
+          record={{ type: "estimator.estimate", id: params.id }}
+          title="Other files"
+          hint={ESTIMATE_FILES_HINT}
+        />
+      </div>
+    </>
   );
 }

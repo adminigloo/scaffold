@@ -23,12 +23,12 @@ and who on the team is staff at what level.
 <StaffPeople baseUrl="/api/admin/tenancy" />                       staff roles          (./admin)
 ```
 
-React (18 or 19) is the only required peer; `@adminigloo/tenancy` ^0.5.0 is an
+React (18 or 19) is the only required peer; `@adminigloo/tenancy` ^0.6.0 is an
 optional peer, so installing the widget beside an older server warns at install
 time instead of failing on every call. Everything styles itself (no Tailwind, no
 CSS import) and follows the host page's light or dark theme.
 
-It talks to `@adminigloo/tenancy` 0.5's HTTP handlers (`createTenancyHandlers` for
+It talks to `@adminigloo/tenancy` 0.6's HTTP handlers (`createTenancyHandlers` for
 the company screens, `createTenancyOperatorHandlers` for the console) over a small
 JSON contract. The contract's types are declared in this package as well; it does
 **not** import the server package at runtime, so a page that only renders the
@@ -145,6 +145,16 @@ The tables it relies on arrive with `@adminigloo/tenancy` 0.4 and
 It replaces the template's own `AcceptInvitation` and `PendingInvitations`
 components and the `invitations` tRPC router: the team page and the invitation
 page now come from here.
+
+## Alerts and files (Tenancy 2b-1)
+
+No component or wire change: this release names `@adminigloo/tenancy` ^0.6.0 as
+its peer. Behind the same screens, tenancy 0.6 tells your logo store which
+company a logo is for (so `@adminigloo/storage`'s logo store files and counts
+it with that company's files), answers every team POST only after its events
+have been handed on (so "Cam joined the team" reaches the owner's alerts), and
+gives `@adminigloo/notifications` the team's alert kinds. The alert bell and
+Alert settings are `@adminigloo/notifications-widget`'s.
 
 ## The components
 
@@ -451,10 +461,10 @@ on a phone, and everything works at 390px wide.
 
 ## Not included
 
-- **Per-company boards and widgets for feedback, notifications, files, the
-  assistant, analytics, SEO/AEO and book-a-call (booking)** — **Tenancy 2b**.
-  (Scheduling, the estimator, invoicing and messages are per company since
-  2a; `<CompanyBrandBar>` heads their public pages.)
+- **Per-company feedback boards, the assistant, analytics, SEO/AEO and
+  book-a-call (booking)** — Tenancy 2b-2 to 2b-4. (Scheduling, the estimator,
+  invoicing and messages are per company since 2a; alerts and files since
+  2b-1; `<CompanyBrandBar>` heads their public pages.)
 - **Payments to companies** (paying a company's invoice by card).
 - **Search indexing of company pages**, and per-company SEO.
 - **Logo and colour inside emails.**

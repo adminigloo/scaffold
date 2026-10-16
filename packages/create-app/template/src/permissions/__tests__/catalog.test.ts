@@ -8,7 +8,7 @@ import { assertCatalogConformance } from "__SCOPE__/testing/permissions";
 import type { ConformanceResult } from "__SCOPE__/testing/permissions";
 import { tenancyPermissions } from "__SCOPE__/tenancy";
 import { staffCatalog, tenantCatalog } from "@/permissions/catalog";
-import { TENANT_ROLES } from "@/permissions/roles";
+import { ROLES_NOT_IN_THIS_PROJECT, TENANT_ROLES } from "@/permissions/roles";
 
 /**
  * THIS IS THE TEST THAT MAKES RENAMING A PERMISSION SAFE.
@@ -444,7 +444,9 @@ function templatesNamedBy<TKey extends string>(
 describe("role templates", () => {
   it("only names templates of its own scope that the seed script creates", () => {
     const unknown = [
-      ...templatesNamedBy(tenantCatalog, TENANT_TEMPLATE_KEYS),
+      // A role another package adds, which this project doesn't have (its
+      // roles.ts names each and says why), is absent by design, not unseeded.
+      ...templatesNamedBy(tenantCatalog, [...TENANT_TEMPLATE_KEYS, ...ROLES_NOT_IN_THIS_PROJECT]),
       ...templatesNamedBy(staffCatalog, STAFF_TEMPLATE_KEYS),
     ];
 

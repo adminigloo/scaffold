@@ -249,10 +249,13 @@ export async function setLogo(
   requireLive(ctx, await readCompany(ctx.db, input.tenantId));
   await requireActor(ctx, ctx.db, { userId: input.actorUserId, tenantId: input.tenantId }, { permission: "tenant.edit" });
 
+  // Tenancy 2b-1 (8.3): the store is told the company, so a store that
+  // keeps files per company (storage 0.2) files it, and counts it, there.
   const stored = await store.put({
     pathname: `tenancy/logos/${input.tenantId}/${uuidv7()}.${type.ext}`,
     bytes: input.file.bytes,
     contentType: input.file.contentType,
+    tenantId: input.tenantId,
   });
   let previousKey: string | undefined;
   let view: CompanyView;
@@ -277,12 +280,12 @@ export async function setLogo(
       return companyView({ ...company, branding }, { userId: input.actorUserId, role: roleKeyOf(facts.role?.key) });
     });
   } catch (error) {
-    await store.delete(stored.key).catch((e: unknown) => ctx.report(e, "logo.cleanup"));
+    await store.delete(stored.key, { tenantId: input.tenantId }).catch((e: unknown) => ctx.report(e, "logo.cleanup"));
     throw error;
   }
   ctx.emit({ type: "company.branding.updated", tenantId: view.id, by: input.actorUserId });
   if (previousKey && previousKey !== stored.key) {
-    await store.delete(previousKey).catch((e: unknown) => ctx.report(e, "logo.delete-previous"));
+    await store.delete(previousKey, { tenantId: input.tenantId }).catch((e: unknown) => ctx.report(e, "logo.delete-previous"));
   }
   return view;
 }
@@ -310,6 +313,8 @@ export async function removeLogo(ctx: Ctx, input: Actor): Promise<CompanyView> {
     return companyView({ ...company, branding }, { userId: input.actorUserId, role: roleKeyOf(facts.role?.key) });
   });
   ctx.emit({ type: "company.branding.updated", tenantId: view.id, by: input.actorUserId });
-  if (previousKey && ctx.logos) await ctx.logos.delete(previousKey).catch((e: unknown) => ctx.report(e, "logo.delete"));
+  if (previousKey && ctx.logos) {
+    await ctx.logos.delete(previousKey, { tenantId: input.tenantId }).catch((e: unknown) => ctx.report(e, "logo.delete"));
+  }
   return view;
 }

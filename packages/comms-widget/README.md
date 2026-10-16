@@ -126,6 +126,13 @@ with example values ("Confirmed: Lawn mowing, Tue, Nov 4, 9:00 AM"); the edit
 form shows the wording with its blanks. The status says when queued messages
 missed their run.
 
+**Alerts and files (Tenancy 2b-1).** With `@adminigloo/notifications`, staff
+alert emails go out as the `team_alert` template; the console lists it under
+"Other" as "Team alert", where the owner edits its wording or switches it off
+(Alert settings then says so). The names are the same ones
+`@adminigloo/comms` 0.4's `templateLabel` gives the server; the peer is now
+`@adminigloo/comms` `^0.4.0` (still optional). No screen or wire change.
+
 ## Not included
 
 - **Writing a new kind of message.** The templates are the ones the features
@@ -136,6 +143,7 @@ missed their run.
 - **Per-company sending domains or phone numbers.**
 - **Payments to companies, plans and billing per company, custom domains,
   impersonation, per-company SEO.**
-- **Per-company boards and widgets for feedback, notifications, files, the
-  assistant, analytics, SEO/AEO and book-a-call**: Tenancy 2b.
+- **Per-company feedback boards, the assistant, analytics, SEO/AEO and
+  book-a-call**: Tenancy 2b-2 to 2b-4 (alerts and files per company are in
+  `@adminigloo/notifications` and `@adminigloo/storage`).
 - **Translations.** The words are English; `locale` changes date formats.

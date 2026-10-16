@@ -27,7 +27,7 @@ import { DEFAULT_ANSWERS, capabilitiesFor, overlayNamesFor, packagesFor, type An
 import { CAPABILITY_EVIDENCE } from "../capabilities.js";
 import { planEmit, renderPermissionsCatalog, versionRangeFor, type EmitPlan } from "../emit.js";
 import { FEATURE_ENTITIES } from "../feature-proofs-emit.js";
-import { TENANCY_1_NOT_INCLUDED, TENANCY_2A_NOT_INCLUDED } from "../readme-emit.js";
+import { TENANCY_1_NOT_INCLUDED, TENANCY_2A_NOT_INCLUDED, TENANCY_2A_SUPERSEDED } from "../readme-emit.js";
 import { ROUTER_SCOPES } from "../tenancy-proofs-emit.js";
 import { EVERY_CONFIGURATION, TEMPLATE_DIR } from "./configurations.js";
 
@@ -148,7 +148,8 @@ function isFeatureFile(path: string): boolean {
   );
 }
 
-const FIXED_TENANT_NAMES = ["SCHEDULING_TENANT", "ESTIMATOR_TENANT", "INVOICING_TENANT", "COMMS_TENANT"];
+// Tenancy 2b-1 (13.9) adds the alerts' and files' fixed business.
+const FIXED_TENANT_NAMES = ["SCHEDULING_TENANT", "ESTIMATOR_TENANT", "INVOICING_TENANT", "COMMS_TENANT", "ALERTS_TENANT", "FILES_TENANT"];
 
 // ---------------------------------------------------------------------------
 
@@ -273,7 +274,9 @@ describe("routes ↔ pages (11.3–11.4)", () => {
         checked += 1;
         const route = `app/api/app/[tenantId]/${match[1]}/[...path]/route.ts`;
         expect(pathsOf(p), `${path} calls ${route}`).toContain(route);
-        expect(contentsAt(p, route), route).toMatch(/build\w+AdminHandlers\(\)/);
+        // Tenancy 2b-1: alerts and files mount their own builders
+        // (buildAlertsHandlers, buildFilesHandlers), behind the same company gate.
+        expect(contentsAt(p, route), route).toMatch(/build\w+?(Admin)?Handlers\(\)/);
       }
     }
     expect(checked).toBeGreaterThanOrEqual(9);
@@ -392,6 +395,12 @@ describe("routes ↔ pages (11.3–11.4)", () => {
     }
     const checklist = file(p, "src", "server", "setup-checklist.ts");
     for (const m of checklist.matchAll(/"(\/app\/[^"#]+)/g)) hrefs.add(m[1]!);
+    // Tenancy 2b-1: a visit's photos and files page is opened from the
+    // calendar's visit panel and the crew's day, by the generated pattern
+    // those pages pass the widgets (VISIT_FILES_HREF).
+    if (pathsOf(p).includes("src/server/visit-files.ts")) {
+      for (const m of file(p, "src", "server", "visit-files.ts").matchAll(/"(\/app\/[^"#?]+)/g)) hrefs.add(m[1]!.replace("{id}", "[id]"));
+    }
     for (const path of pathsOf(p)) {
       if (!path.startsWith("app/(site)/app/") || !path.endsWith("page.tsx")) continue;
       const url = `/${path.slice("app/(site)/".length, -"/page.tsx".length)}`;
@@ -461,6 +470,10 @@ describe("the company modules (11.5)", () => {
     expect(safeSwitchNext("/app/schedule")).toBe("/app/schedule");
     expect(safeSwitchNext("/app/estimates/e1?tab=lines")).toBe("/app/estimates/e1?tab=lines");
     expect(safeSwitchNext("/dashboard")).toBe("/dashboard");
+    // Tenancy 2b-1 (13.5): an alert about the team opens the team page, and
+    // the company's settings, through the switch route too.
+    expect(safeSwitchNext("/settings/team")).toBe("/settings/team");
+    expect(safeSwitchNext("/settings/company")).toBe("/settings/company");
     for (const hostile of [
       null,
       "",
@@ -471,7 +484,8 @@ describe("the company modules (11.5)", () => {
       "/app\\..\\admin",
       "/app/x\nSet-Cookie: a=b",
       "/app/switch/other?next=/app/x",
-      "/settings/team",
+      "/settings/billing",
+      "/settings/team/../../admin",
     ]) {
       expect(safeSwitchNext(hostile), String(hostile)).toBe("/dashboard");
     }
@@ -825,7 +839,9 @@ describe("catalogs, roles and the seed (11.7)", () => {
     // set — against tenancy's four alone, scheduling's `schedule.route ->
     // "crew"` read as a template nobody seeds.
     const catalogTest = code(file(await plan(COMPANY_FULL), "src", "permissions", "__tests__", "catalog.test.ts"));
-    expect(catalogTest).toContain('import { TENANT_ROLES } from "@/permissions/roles";');
+    // Tenancy 2b-1: it also reads the roles another package adds that this
+    // project lacks (ROLES_NOT_IN_THIS_PROJECT), from the same module.
+    expect(catalogTest).toContain('import { ROLES_NOT_IN_THIS_PROJECT, TENANT_ROLES } from "@/permissions/roles";');
     expect(catalogTest).toContain("const TENANT_TEMPLATE_KEYS = TENANT_ROLES.templates.map((template) => template.key);");
     // The single business keeps scheduling's crew STAFF role and its audit vocabulary.
     expect(code(file(await plan(SINGLE_FULL), "src", "server", "audit.ts"))).toContain('from "./scheduling-staff"');
@@ -879,6 +895,8 @@ describe("the header and the company links (11.11)", () => {
       ...(a.includeEstimator ? ['{ href: "/app/estimates", label: "Estimates", permission: "estimator.view" }'] : []),
       ...(a.includeInvoicing ? ['{ href: "/app/invoices", label: "Invoices", permission: "invoices.view" }'] : []),
       ...(a.includeComms ? ['{ href: "/app/messages", label: "Messages", permission: "comms.view" }'] : []),
+      // Tenancy 2b-1: each company's files, with storage.
+      ...(a.includeStorage ? ['{ href: "/app/files", label: "Files", permission: "files.view" }'] : []),
       '{ href: "/settings/team", label: "Team", permission: "members.view" }',
       '{ href: "/settings/company", label: "Settings", permission: "tenant.view" }',
       '{ href: "/admin", label: "Admin", audience: "staff" }',
@@ -899,6 +917,9 @@ describe("the header and the company links (11.11)", () => {
       ...(await packagePermissionKeys("estimator")),
       ...(await packagePermissionKeys("invoicing")),
       ...(await packagePermissionKeys("comms")),
+      // Tenancy 2b-1: files (and alerts) are company keys too.
+      ...(await packagePermissionKeys("storage")),
+      ...(await packagePermissionKeys("notifications")),
     ]);
     for (const m of nav.matchAll(/permission: "([^"]+)"/g)) {
       expect(declared.has(m[1]!), `${m[1]} is not a company key`).toBe(true);
@@ -976,9 +997,9 @@ describe("the crons (11.12)", () => {
     const single = await plan(SINGLE_FULL);
     expect(code(file(single, "app", "api", "cron", "comms", "route.ts"))).not.toContain("tenantIds");
     expect(code(file(single, "app", "api", "cron", "scheduling", "route.ts"))).toContain("resolveSchedulingTenant()");
-    // vercel.json is unchanged in shape: three crons.
+    // vercel.json: 2a's three crons, and Tenancy 2b-1's files cron with storage.
     const vercel = JSON.parse(file(companies, "vercel.json")) as { crons: Array<{ path: string }> };
-    expect(vercel.crons.map((c) => c.path)).toEqual(["/api/cron/comms", "/api/cron/scheduling", "/api/cron/estimator"]);
+    expect(vercel.crons.map((c) => c.path)).toEqual(["/api/cron/comms", "/api/cron/scheduling", "/api/cron/estimator", "/api/cron/files"]);
   });
 });
 
@@ -1081,23 +1102,26 @@ describe("what the project claims and documents (11.13)", () => {
     }
   });
 
-  it("installs the two new widgets and the 2a lines of every package", async () => {
+  it("installs the two new widgets and the 2b-1 lines of every package", async () => {
     const pkgs = packagesFor(answers(COMPANY_FULL));
     expect(pkgs).toContain("@adminigloo/invoicing-widget");
     expect(pkgs).toContain("@adminigloo/comms-widget");
     const manifest = JSON.parse(file(await plan(COMPANY_FULL), "package.json")) as { dependencies: Record<string, string> };
     for (const [pkg, range] of [
-      ["tenancy", "^0.5.0"],
-      ["tenancy-widget", "^0.2.0"],
-      ["scheduling", "^0.5.0"],
-      ["scheduling-widget", "^0.2.0"],
-      ["estimator", "^0.4.0"],
-      ["estimator-widget", "^0.3.0"],
-      ["invoicing", "^0.3.0"],
-      ["invoicing-widget", "^0.1.0"],
-      ["comms", "^0.3.0"],
-      ["comms-widget", "^0.1.0"],
+      // Tenancy 2b-1 moved every line it changed (versions.ts says why).
+      ["tenancy", "^0.6.0"],
+      ["tenancy-widget", "^0.2.1"],
+      ["scheduling", "^0.6.0"],
+      ["scheduling-widget", "^0.3.0"],
+      ["estimator", "^0.5.0"],
+      ["estimator-widget", "^0.4.0"],
+      ["invoicing", "^0.4.0"],
+      ["invoicing-widget", "^0.1.1"],
+      ["comms", "^0.4.0"],
+      ["comms-widget", "^0.1.1"],
       ["email", "^0.3.0"],
+      ["storage", "^0.2.0"],
+      ["storage-widget", "^0.1.0"],
     ] as const) {
       expect(versionRangeFor(`@adminigloo/${pkg}`), pkg).toBe(range);
       expect(manifest.dependencies[`@adminigloo/${pkg}`], pkg).toBe(range);
@@ -1106,7 +1130,12 @@ describe("what the project claims and documents (11.13)", () => {
 
   it("says in the README what each company gets and what isn't included, word for word", async () => {
     const readme = file(await plan(COMPANY_FULL), "README.md");
-    for (const item of [...TENANCY_2A_NOT_INCLUDED, ...TENANCY_1_NOT_INCLUDED]) expect(readme).toContain(item);
+    // Tenancy 2b-1 delivered or restated four of 2a's items (TENANCY_2A_SUPERSEDED);
+    // the rest are still said word for word.
+    const stillTrue = TENANCY_2A_NOT_INCLUDED.filter((item) => !TENANCY_2A_SUPERSEDED.has(item));
+    expect(stillTrue.length).toBe(TENANCY_2A_NOT_INCLUDED.length - 4);
+    for (const item of [...stillTrue, ...TENANCY_1_NOT_INCLUDED]) expect(readme).toContain(item);
+    for (const item of TENANCY_2A_SUPERSEDED) expect(readme).not.toContain(item);
     expect(readme).toContain("### What each company runs itself");
     expect(readme).toContain("update scheduling_bookings set tenant_id = '<company id>' where tenant_id = 'primary';");
     expect(readme).toContain("$1.00 a day per company");
@@ -1122,7 +1151,9 @@ describe("what the project claims and documents (11.13)", () => {
     const flat = (text: string) => text.replace(/\s+/g, " ");
     const own = flat(await readFile(join(__dirname, "..", "..", "README.md"), "utf8"));
     expect(own).toContain("### Not included (Tenancy 2a)");
-    for (const item of TENANCY_2A_NOT_INCLUDED) expect(own, item).toContain(flat(item));
+    for (const item of TENANCY_2A_NOT_INCLUDED.filter((entry) => !TENANCY_2A_SUPERSEDED.has(entry))) {
+      expect(own, item).toContain(flat(item));
+    }
   });
 
   it("tells the operator in DEPLOYMENT.md that the crons serve every company and each company sends as itself", async () => {
@@ -1186,7 +1217,10 @@ describe("Tenancy 2a review: what the generated project does now", () => {
     expect(senders).toContain("allowance: companySendAllowance,");
     expect(senders).toContain("established: { hour: 100, day: 500 },");
     expect(senders).toContain("newCompany: { hour: 20, day: 100 },");
-    expect(senders).toContain("limiter.limit({ key: `comms-out:${bucket}:${tenantId}`");
+    // Tenancy 2b-1 (review BO-10): the team's own emails count in their own bucket.
+    expect(senders).toContain("const key = team ? `comms-out-team:${bucket}:${tenantId}` : `comms-out:${bucket}:${tenantId}`;");
+    expect(senders).toContain("limiter.limit({ key, policy: { limit, windowMs } })");
+    expect(senders).toContain("team: { hour: 60, day: 300 },");
     expect(code(file(await plan(SINGLE_FULL), "src", "server", "comms-senders.ts"))).not.toContain("allowance");
   });
 

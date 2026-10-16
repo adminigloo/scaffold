@@ -21,6 +21,7 @@ The screens are `@adminigloo/invoicing-widget`.
 | `@adminigloo/invoicing` | `createInvoice`, `listInvoices`, `getInvoice`, lines, payments (record and reverse), status changes, totals and balances, the customer's link (`getInvoiceByToken`), and (0.3) the staff and public HTTP handlers, the permissions, the `invoicing` settings section and a checklist item. | The tables in your migration, two routes, and who may do what (`authorize`). |
 | `@adminigloo/invoicing/comms` | `createInvoicingComms`: the invoice email (its templates, sending it in the company's name with a link to the invoice page, then wiping the link from the log). | Comms' senders. |
 | `@adminigloo/invoicing-widget` | The ledger, the editor and the customer's invoice page. | The pages that render them. |
+| `@adminigloo/invoicing` 0.4 with `@adminigloo/notifications` / `@adminigloo/storage` | Alerts when an invoice is opened, paid in full or goes overdue, and photos and files on an invoice (see "Alerts and files"). | `onEvent` → `alerts.notify`, the daily overdue sweep, `invoicingFileRecords` in `createStorage`. |
 
 ## Install
 
@@ -150,6 +151,117 @@ An invoice email that a sending allowance held back (comms 0.3's `allowance`)
 answers "Send" with `HELD_MESSAGE` — the company has sent as many emails as
 the site allows for now — rather than "the email didn't go".
 
+## Alerts and files (Tenancy 2b-1)
+
+Invoicing 0.4 tells the business when a customer opens an invoice, when one is
+paid in full and when one goes overdue, and lets staff keep photos and files on
+an invoice. Nothing to migrate.
+
+| Install | What you get |
+| --- | --- |
+| `@adminigloo/invoicing` alone | `onEvent` (`invoice.viewed`, `invoice.paid`), `listOverdueInvoices`, the alert kinds and their mappers, `invoicingFileRecords` (plain data and functions: you decide what to do with them) |
+| with `@adminigloo/notifications` (+ widget) | "Pat Rivera opened invoice INV-2026-0042" in the owner's bell, an email when an invoice goes overdue, and the owner choosing who else hears, in Alert settings |
+| with `@adminigloo/storage` (+ widget) | "Photos and files" on an invoice, seen by whoever can see invoices |
+| with `@adminigloo/create-app` (`--invoicing --notifications --storage`) | all of it wired, with the overdue sweep in the daily alerts job |
+
+**Events: `onEvent`.** Both handler factories take `onEvent(event)` and
+`onEventError(error, event)`:
+
+- `invoice.viewed`, from the customer's page, the FIRST time a customer opens
+  a sent invoice (a second view, the business's own preview link and a draft
+  tell nobody). The actor is the customer.
+- `invoice.paid`, from the staff "record a payment" route, when that payment
+  pays the invoice in full (a part payment, a refused payment and a reversal
+  tell nobody; a reversal followed by a new full payment is a new event). The
+  actor is the staff member.
+
+Each event is `{ id, type, tenantId, invoiceId, occurredAt, actor, data: {
+invoice, format } }`: the invoice after the change (number, status, customer,
+total, paid, balance, due date, viewed and paid times, in cents and ISO text)
+and how this business shows money and dates. Told after the change is saved,
+awaited before the handler answers (so a serverless platform doesn't freeze it
+half-way), and contained: a listener that throws goes to `onEventError`, and
+the payment or the customer's page is unaffected. No link token is ever in an
+event.
+
+**The overdue sweep: `listOverdueInvoices(db, tenantId, { now, dueSince,
+timeZone, limit })`.** Sent, viewed and part-paid invoices with money still
+owed whose due date has passed, oldest due first (200 at most by default), in
+one query. "Goes overdue" is an event, so only invoices that went past their
+due date in the last 7 days are listed (`dueSince`, a calendar date, default
+today minus 7 in `timeZone`): the first run after an upgrade doesn't email the
+owner once per old invoice. Older ones are on the invoice list, marked
+Overdue. Run it once a day per company and hand each result to
+`invoicingOverdueAlert`; its key is the invoice and its due date, so a run
+that repeats alerts nobody twice.
+
+**The alert kinds** (`invoicingAlertKinds`), all under "Invoices", all for
+people who can see invoices (`invoices.view`), all in the routing group
+"Invoices opened, paid or overdue" (`invoices`: the owner, until the owner
+chooses others):
+
+| key | label | default | title | body |
+| --- | --- | --- | --- | --- |
+| `invoicing.invoice.viewed` | "A customer opens an invoice" | in the app | "Pat Rivera opened invoice INV-2026-0042" | "$1,250.00 due Nov 2, 2026" |
+| `invoicing.invoice.paid` | "An invoice is paid in full" | in the app | "Invoice INV-2026-0042 is paid: $1,250.00 from Pat Rivera" | none |
+| `invoicing.invoice.overdue` | "An invoice goes overdue" | in the app and by email | "Invoice INV-2026-0042 to Pat Rivera is overdue" | "$1,250.00 was due Nov 2, 2026." |
+
+Money is in the business's currency and locale, dates in its time zone.
+`invoicingAlertsFor(event, { hrefs: { invoice: "/app/invoices/{id}" } })` maps
+an event; `invoicingOverdueAlert(tenantId, invoice, { hrefs, format })` maps
+one sweep result. The shapes are declared here (no notifications import),
+structurally the same as notifications' own.
+
+```ts
+import {
+  invoicingAlertsFor,
+  invoicingOverdueAlert,
+  listOverdueInvoices,
+  resolveInvoicingBusiness,
+  type InvoicingEvent,
+} from "@adminigloo/invoicing";
+
+export async function alertOnInvoicingEvent(event: InvoicingEvent): Promise<void> {
+  for (const draft of invoicingAlertsFor(event, { hrefs: { invoice: "/app/invoices/{id}" } })) await alerts.notify(draft);
+}
+
+// The daily job, per active company:
+const b = resolveInvoicingBusiness(await business(tenantId));
+for (const invoice of await listOverdueInvoices(db, tenantId, { timeZone: b.timeZone })) {
+  const format = { currency: b.currency, locale: b.locale, timeZone: b.timeZone };
+  await alerts.notify(invoicingOverdueAlert(tenantId, invoice, { hrefs: { invoice: "/app/invoices/{id}" }, format }));
+}
+```
+
+**Photos and files on an invoice: `invoicingFileRecords(db, { invoiceHref })`.**
+The invoice as a record `@adminigloo/storage` files belong to: type
+`invoicing.invoice` ("Invoice", "Invoices"), seen by `invoices.view`, added
+and removed by `invoices.manage`, labelled "Invoice INV-2026-0042 · Pat
+Rivera" on the Files screen and opening at `invoiceHref` (`{id}` is the
+invoice). Its `find` reads this company's invoices only, in one query.
+
+```ts
+const files = createStorage({ /* …, */ records: [...invoicingFileRecords(db, { invoiceHref: "/app/invoices/{id}" })] });
+```
+
+**In an app that isn't ours.** Pass `onEvent` to the handlers you already
+mount, and send the events wherever your own notices go:
+
+```ts
+createInvoicingAdminHandlers({
+  db, resolveTenant, authorize, invoiceUrl, business,
+  onEvent: async (event) => {
+    if (event.type === "invoice.paid") await slack.post(`${event.data.invoice.number} is paid`);
+  },
+  onEventError: (error) => logger.warn("invoice event listener failed", { error }),
+});
+```
+
+## Upgrading from 0.3
+
+No database change. `onEvent` is optional; without it 0.4 answers exactly as
+0.3 did. The optional `@adminigloo/comms` peer is now `^0.4.0`.
+
 ## Not included
 
 - **Payments to companies** (Stripe Connect: a customer paying a company's
@@ -159,9 +271,62 @@ the site allows for now — rather than "the email didn't go".
   and reply-to; its body is plain text. The invoice PAGE carries the colour.
 - **Editable invoice details and per-feature identity in single-business
   mode.** A single business's invoices are signed with the site's name.
-- **Recurring invoices, reminders for overdue invoices, credit notes,
-  multi-currency within one company.**
+- **Recurring invoices, reminders to customers about overdue invoices,
+  credit notes, multi-currency within one company.** (The business itself is
+  told when an invoice goes overdue: see Alerts and files.)
 - **Plans and billing per company, custom domains, impersonation, per-company
   SEO.**
-- **Per-company boards and widgets for feedback, notifications, files, the
-  assistant, analytics, SEO/AEO and book-a-call**: Tenancy 2b.
+- **Per-company feedback boards, the assistant, analytics, SEO/AEO and
+  book-a-call**: Tenancy 2b-2 to 2b-4 (listed below).
+
+### Not included (Tenancy 2b-1)
+
+- **The feedback board per company, and the complete board** — Tenancy 2b-2.
+  It will keep screenshots as these private files and send its alerts through
+  these notifications. Until then, feedback screenshots stay on the public
+  Blob store as in 2a.
+- **The AI assistant per company** — Tenancy 2b-3.
+- **Website analytics, SEO/AEO and book-a-call (booking) per company** —
+  Tenancy 2b-4.
+- **Text (SMS) and push alerts.** Alerts come in the app and by email — S9.
+- **Plans, limits and billing enforcement** — the billing chunk. Each
+  company's storage allowance is one setting for everyone
+  (`FILES_ALLOWANCE_MB`) until then; the seam the billing chunk fills is
+  there.
+- **Stripe Connect** (customers paying a company by card).
+- **Custom domains.**
+- **Virus scanning of uploads.** Files are checked for their type and size
+  only.
+- **Uploads over 4 MB, and uploads straight from the browser to storage.**
+  Phone photos are made smaller before they're sent; other files over 4 MB are
+  refused with a plain sentence.
+- **Serving files straight from S3 or R2 by presigned link.** Every private
+  file is sent through the site's own route.
+- **Thumbnails.** Photos are shown at their (shrunk) size.
+- **Turning a kind of alert off.** Each kind comes in the app, or in the app
+  and by email; who gets the work alerts is the owner's choice.
+- **Alerts from your other companies in the bell.** The bell shows the
+  company you're working in.
+- **A daily or weekly digest of alerts.**
+- **Customers seeing files** (photos on their quote or invoice page).
+- **Editing the wording of the team alert email** beyond the Messages screen
+  (it is the `team_alert` message there).
+- **Carrying 2a's per-feature alert address lists over.** With alerts
+  installed, the people (and extra addresses) are chosen again in Alert
+  settings; the old lists are no longer read.
+- **Alert settings in a single-business project without an admin shell.** Its
+  staff get the bell; the office emails keep 2a's lists.
+- **A transactional outbox.** Alerts are written right after the change they
+  report (D8); the events package (S2) brings the outbox.
+- **Crew alerts when the office moves, reassigns or cancels their visit.**
+  Only a customer's change alerts the crew.
+- **An alert when a customer opens a quote** (invoices only).
+- **A history of cron runs, and an alert when a cron fails.**
+- **Alerts for the platform owner** (a new company, a company out of
+  storage). A company's storage refusal is reported in `/admin/errors` once a
+  day.
+- **Giving one company more storage than the others.** `FILES_ALLOWANCE_MB`
+  is one number until the billing chunk.
+- **Checking an address before it gets a company's alert emails.** The owner
+  adds up to five per group; the company's team sending allowance bounds what
+  they get.

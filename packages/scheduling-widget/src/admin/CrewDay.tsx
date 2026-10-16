@@ -3,7 +3,7 @@ import type { ClientError } from "../http.js";
 import { CheckIcon, ChevronIcon, Loading, Notice, type ChromeProps } from "../parts.js";
 import { addDays, formatDurationShort, formatLongDate, formatTimeRange, zoneAbbreviation } from "../time.js";
 import type { SchedulingAdminTransport } from "./client.js";
-import { adminErrorText, STATUS_LABEL, stampTime, statusTagClass } from "./helpers.js";
+import { adminErrorText, fillIdPattern, STATUS_LABEL, stampTime, statusTagClass } from "./helpers.js";
 import type { AdminResource, CrewDayResponse, CrewStop, DateString, ProgressStatus, VisitSnapshot } from "./types.js";
 import { AdminRoot, useAdminTransport } from "./ui.js";
 
@@ -47,6 +47,12 @@ export interface CrewDayProps extends ChromeProps {
   canManage?: boolean;
   /** Background refresh while visible, in ms. Default 120000; 0 turns it off. */
   pollMs?: number;
+  /**
+   * Tenancy 2b-1: a pattern with {id}, the visit's photos-and-files page. Each
+   * stop then shows "Photos" (a 44 px link), so a crew member at the job adds
+   * the before-and-after photos from their phone. Absent: no link.
+   */
+  filesHref?: string;
 }
 
 /** How long after Complete (or Couldn't do it) the Undo stays. */
@@ -480,6 +486,11 @@ export function CrewDay(props: CrewDayProps) {
                     {stop.telUrl ? (
                       <a className="aisw-btn aisw-btn-secondary" href={stop.telUrl}>
                         Call<span className="aisw-sr"> {visit.customerName ?? "the customer"}</span>
+                      </a>
+                    ) : null}
+                    {props.filesHref ? (
+                      <a className="aisw-btn aisw-btn-secondary" href={fillIdPattern(props.filesHref, visit.id)} data-aisw-stop-files="">
+                        Photos<span className="aisw-sr"> for {visit.customerName ?? "this stop"}</span>
                       </a>
                     ) : null}
                     {canManage && (visit.status === "confirmed" || visit.status === "in_progress") && noting !== visit.id ? (

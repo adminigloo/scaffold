@@ -203,6 +203,7 @@ export function settingsWire(extra: Partial<SettingsWire> = {}): SettingsWire {
     saved: true,
     updatedAt: "2026-10-01T00:00:00.000Z",
     managedByCompany: null,
+    alertRecipients: null,
     ...extra,
   };
 }

@@ -16,15 +16,23 @@ function hostOf(value: string): string | null {
 }
 
 /**
- * COPIED FROM @adminigloo/booking's handlers.ts; change both or neither.
+ * FIRST COPIED FROM @adminigloo/booking's handlers.ts. Since Tenancy 2b-1
+ * (review SEC-04) it is stricter than booking's: same-site is refused here.
+ * The estimator, invoicing and comms copies follow this one; change them all
+ * or none.
  *
- * Was this request sent by a browser from ANOTHER site? The CSRF check every
- * POST passes before any work (unless `cors` is configured).
+ * Was this request sent by a browser from anywhere but THIS origin? The CSRF
+ * check every POST passes before any work (unless `cors` is configured).
  *
  *  1. Sec-Fetch-Site, when present, is the browser's own verdict and cannot
- *     be set by a page: same-origin, same-site (a sibling subdomain of the
- *     same registrable domain) and none (typed, bookmarked) pass; cross-site
- *     does not. Every current browser sends it.
+ *     be set by a page: same-origin and none (typed, bookmarked) pass;
+ *     cross-site does not, and NEITHER DOES same-site: that is another
+ *     origin on the same registrable domain (the business's www site on a
+ *     CMS, a taken-over sibling subdomain), and its requests carry the
+ *     SameSite=Lax session cookie, so a page there could move a signed-in
+ *     owner's schedule. Tenancy's check has always been this strict. A
+ *     business whose own website posts the booking form names that origin
+ *     in `cors`. Every current browser sends it.
  *  2. Otherwise (an older browser) the Origin header — or, failing that, the
  *     Referer — must name the same host as the request URL. `Origin: null`
  *     (a sandboxed iframe, a file: page, a data: URL) is cross-site by
@@ -42,7 +50,8 @@ export function isCrossSiteRequest(req: Request): boolean {
   const site = req.headers.get("sec-fetch-site");
   if (site !== null) {
     const verdict = site.trim().toLowerCase();
-    return !(verdict === "same-origin" || verdict === "same-site" || verdict === "none");
+    // same-site is ANOTHER origin on this domain (a sibling subdomain): refused (review SEC-04).
+    return !(verdict === "same-origin" || verdict === "none");
   }
   const origin = req.headers.get("origin");
   if (origin !== null && origin.trim().toLowerCase() === "null") return true;
@@ -137,12 +146,72 @@ export function toWireError(
   return { status: 500, code: "internal", message: INTERNAL_MESSAGE };
 }
 
-const MAX_BODY_CHARS = 20_000;
+export const MAX_BODY_CHARS = 20_000;
+/** UTF-8 takes at most 3 bytes for one UTF-16 character: the byte cap never refuses a body the character rule accepts. */
+export const MAX_BODY_BYTES = MAX_BODY_CHARS * 3;
 
-/** A JSON object body, tolerant of `text/plain` (sendBeacon). Missing → {}. */
+const TOO_LARGE = "Request body is too large.";
+
+/**
+ * COPIED FROM @adminigloo/storage's body.ts (`readBodyCapped`, review G10);
+ * change all or none.
+ *
+ * The body's bytes, or `tooLarge()` thrown the moment more than `cap` have
+ * arrived (Tenancy 2b-1 review SEC-01). WHY COUNT THE BYTES AS THEY STREAM:
+ * `Content-Length` is a promise the client makes, and a chunked request
+ * makes none. A platform with a body cap (Vercel's 4.5 MB) stops a big body
+ * before the code runs; a self-hosted Node server (`next start`, a host's
+ * own) has no cap at all, so `await req.text()` on a 2 GB chunked body
+ * holds 2 GB in memory before anything can say no, and the public request,
+ * move and cancel routes need no sign-in. So a declared length over the cap
+ * is refused before a byte is read, the rest is counted as it streams, and
+ * the stream is cancelled at the cap.
+ */
+export async function readBodyCapped(req: Request, cap: number, tooLarge: () => Error): Promise<Uint8Array> {
+  const declared = req.headers.get("content-length");
+  if (declared !== null && /^\s*\d+\s*$/.test(declared) && Number(declared) > cap) throw tooLarge();
+  const body = req.body;
+  if (!body) return new Uint8Array(0);
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > cap) {
+        // Stop pulling: the rest of the body is never read into memory.
+        await reader.cancel().catch(() => undefined);
+        throw tooLarge();
+      }
+      chunks.push(value);
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      /* already released by cancel */
+    }
+  }
+  const bytes = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  return bytes;
+}
+
+/**
+ * A JSON object body, tolerant of `text/plain` (sendBeacon). Missing → {}.
+ * At most 20 000 characters, read through `readBodyCapped` (review SEC-01),
+ * so an oversized body is refused without being held in memory first.
+ */
 export async function readJsonBody(req: Request): Promise<Record<string, unknown>> {
-  const text = await req.text();
-  if (text.length > MAX_BODY_CHARS) throw new HttpError("invalid", "Request body is too large.");
+  const text = new TextDecoder().decode(await readBodyCapped(req, MAX_BODY_BYTES, () => new HttpError("invalid", TOO_LARGE)));
+  if (text.length > MAX_BODY_CHARS) throw new HttpError("invalid", TOO_LARGE);
   if (text.trim() === "") return {};
   let parsed: unknown;
   try {

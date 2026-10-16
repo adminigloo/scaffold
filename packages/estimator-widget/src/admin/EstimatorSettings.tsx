@@ -115,7 +115,15 @@ export function EstimatorSettings(props: EstimatorSettingsProps) {
                 case "pricing":
                   return <PricingSection {...common} />;
                 case "alerts":
-                  return <AlertsSection {...common} />;
+                  // Tenancy 2b-1, D6: with alerts installed, who hears about a
+                  // new lead is chosen in Alert settings, the ONE place. The
+                  // list is replaced by the way there, and nothing here can
+                  // send it (the server drops it too).
+                  return settings.alertRecipients ? (
+                    <ManagedAlertsSection key={section} href={settings.alertRecipients.href} />
+                  ) : (
+                    <AlertsSection {...common} />
+                  );
                 case "website":
                   return <WebsiteSection {...common} />;
                 case "photos":
@@ -653,6 +661,21 @@ function PricingSection({ settings, transport, onSaved }: SectionProps) {
 // ---------------------------------------------------------------------------
 // Lead alerts
 // ---------------------------------------------------------------------------
+
+/**
+ * Lead alerts when the host's Alert settings choose the people (Tenancy 2b-1):
+ * a sentence and the way there, no form. Two places to choose the same people
+ * is how a lead gets emailed twice, or never.
+ */
+function ManagedAlertsSection({ href }: { href: string | null }) {
+  return (
+    <Panel id="alerts" title="Lead alerts" hint="Who hears about a new lead, and when a customer accepts or declines a quote.">
+      <p className="aiew-hint" data-aiew-alerts-managed="">
+        Who gets lead alerts is chosen in Alert settings. {href ? <a href={href}>Open Alert settings</a> : null}
+      </p>
+    </Panel>
+  );
+}
 
 function AlertsSection({ settings, transport, onSaved }: SectionProps) {
   const ids = useId();

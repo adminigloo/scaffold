@@ -97,10 +97,12 @@ describe("estimator settings", () => {
     const tenantId = tenant();
     const saved = await updateEstimatorSettings(t.db, tenantId, { businessName: "Summit", leadNotifyEmails: ["office@summit.test"] });
     const wire = toSettingsWire(saved);
-    // 0.4 (Tenancy 2a, 7.9) adds managedByCompany and aiBudgetCeilingCents.
+    // 0.4 (Tenancy 2a, 7.9) adds managedByCompany and aiBudgetCeilingCents;
+    // 0.5 (Tenancy 2b-1, 10.6) adds alertRecipients.
     expect(Object.keys(wire).sort()).toEqual(
       [
         "aiBudgetCeilingCents",
+        "alertRecipients",
         "aiDailyBudgetCents",
         "aiPerRequesterDaily",
         "brandColor",

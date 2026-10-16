@@ -253,7 +253,7 @@ describe("public: who is asking", () => {
       );
     const cases: Array<[Record<string, string>, number]> = [
       [{ "sec-fetch-site": "same-origin" }, 200],
-      [{ "sec-fetch-site": "same-site" }, 200],
+      [{ "sec-fetch-site": "same-site" }, 403], // a sibling subdomain (review SEC-04)
       [{ "sec-fetch-site": "none" }, 200],
       [{ "sec-fetch-site": "cross-site" }, 403],
       [{ origin: "null" }, 403],

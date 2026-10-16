@@ -22,23 +22,48 @@
       "types": "./dist/schema.d.ts",
       "import": "./dist/schema.js",
       "require": "./dist/schema.cjs"
-    }
+    },
+    "./vercel-blob": {
+      "types": "./dist/vercel-blob.d.ts",
+      "import": "./dist/vercel-blob.js",
+      "require": "./dist/vercel-blob.cjs"
+    },
+    "./s3": {
+      "types": "./dist/s3.d.ts",
+      "import": "./dist/s3.js",
+      "require": "./dist/s3.cjs"
+    },
+    "./local": {
+      "types": "./dist/local.d.ts",
+      "import": "./dist/local.js",
+      "require": "./dist/local.cjs"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js",
+      "require": "./dist/testing.cjs"
+    },
+    "./sql/*": "./sql/*",
+    "./package.json": "./package.json"
   },
   "files": [
-    "dist"
+    "dist",
+    "sql",
+    "README.md"
   ],
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
     "access": "public"
   },
   "dependencies": {
-    "@adminigloo/db": "workspace:^"
+    "uuidv7": "^1.2.1"
   },
   "peerDependencies": {
     "drizzle-orm": "catalog:peers",
     "zod": "catalog:peers"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "drizzle-orm": "catalog:",
     "zod": "catalog:"
   },

@@ -305,6 +305,112 @@ Three more, after commit through `onEvent`: `company.settings.updated`
 `company.branding.updated`. Scheduling's time zone follows the company's by
 listening for `company.settings.updated` with `"timeZone"` changed.
 
+## Alerts and files (Tenancy 2b-1)
+
+Tenancy 0.6 is what `@adminigloo/notifications` and `@adminigloo/storage`
+need from the company lifecycle. Nothing to migrate.
+
+| Install | What you get |
+| --- | --- |
+| `@adminigloo/tenancy` alone | Events with ids, times and people; handlers that answer a POST once its events are handed on; `listMemberPeople({ holding })`; the logo store told the company; the team's alert kinds and their mapper |
+| with `@adminigloo/notifications` (+ widget) | "Cam Rivera joined the team as Crew member" in the bell of everyone who can invite, a removed member's alerts forgotten, alerts that follow a role change |
+| with `@adminigloo/storage` | the company logo kept with that company's files (`files.logoStore()` is a `LogoStore`) |
+| with `@adminigloo/create-app` (`--notifications`, `--storage`) | all of it wired |
+
+**Every event has `id` and `occurredAt`.** `id` is a uuidv7, unique per
+event; `occurredAt` the service's `now`, as ISO text. Both are stamped in one
+place, when the event is told. `member.joined`, `member.removed` and
+`member.left` also carry `person: { name, email }` (nulls for a deleted
+user), and `member.joined` carries `roleName`, the role they joined with in
+words ("Crew member"). `TenancyEvent` is exported from the root as well as
+`./server`.
+
+**Events are settled before a handler answers.** `onEvent` is still told after
+commit and never holds a direct service call. But `createTenancyHandlers` and
+`createTenancyOperatorHandlers` now wait, at most 5 seconds, for the
+listeners a POST set off before they answer it: on a serverless platform a
+promise left running after the response is often frozen, and the listener cut
+off would be the one telling the owner someone joined, or forgetting a removed
+member's alerts. `tenancy.settleEvents(timeoutMs?)` does the waiting (only the
+listeners pending when it is called) and never throws; call it yourself after a
+service call in a server action if you want the same.
+
+**Members holding a permission.** `listMemberPeople(tenantId, { holding:
+"members.invite" })` answers only the active members whose permissions in
+that company include the key, worked out exactly as a request works them out
+(their role's grants, their own allow and deny overrides, a sealed key staying
+sealed). Three queries whatever the team size. Notifications' `people()` is
+this:
+
+```ts
+people: async (tenantId, permission) => {
+  const company = await tenancy.companyProfile(tenantId);
+  if (!company || company.kind !== "org" || company.status !== "active") return [];
+  return (await tenancy.listMemberPeople(tenantId, { holding: permission })).map((p) => ({
+    userId: p.userId, name: p.name, email: p.email, isOwner: p.roleKey === "owner",
+  }));
+},
+```
+
+**The logo store is told the company.** `put` gets `tenantId` beside the
+pathname, bytes and type, and `delete(key, { tenantId })`. A 0.5 store that
+ignores both still works; storage 0.2's `logoStore()` uses them to file the
+logo with the company's files.
+
+**The team's alert kinds** (root, client-safe: no table, no driver):
+
+| key | label | category | audience | default | email |
+| --- | --- | --- | --- | --- | --- |
+| `tenancy.member.joined` | "Someone joins the team" | Team | `members.invite` | `in_app` | yes |
+| `tenancy.member.left` | "Someone leaves the team" | Team | `members.invite` | `in_app` | yes |
+
+`tenancyAlertsFor(event, { teamHref })` maps an event to its alert drafts:
+`member.joined` → "{name} joined the team as {roleName}", `member.left` →
+"{name} left the team", `member.removed` → "{name} was removed from the team"
+(the `left` kind), each opening `teamHref`, keyed on the event's `id` so the
+same event told twice is one alert, and never shown to whoever did it. Every
+other event maps to nothing. `{name}` is the person's name, else their
+address, else "Someone".
+
+```ts
+import { tenancyAlertKinds, tenancyAlertsFor, type TenancyEvent } from "@adminigloo/tenancy";
+
+export const ALERT_REGISTRY = defineAlertRegistry([tenancyAlertKinds /* , the other packages' */]);
+
+export async function alertOnTenancyEvent(event: TenancyEvent): Promise<void> {
+  for (const draft of tenancyAlertsFor(event, { teamHref: "/settings/team" })) await alerts.notify(draft);
+  if (event.type === "member.removed" || event.type === "member.left") await alerts.forget({ tenantId: event.tenantId, userId: event.userId });
+}
+```
+
+**In an app that isn't ours.** A foreign host doesn't run tenancy (below), but
+it can still use the team's words: the root is plain data and functions. Hand
+`tenancyAlertsFor` an event of the same shape built from your own membership
+change:
+
+```ts
+import { randomUUID } from "node:crypto";
+import { tenancyAlertKinds, tenancyAlertsFor } from "@adminigloo/tenancy";
+
+const drafts = tenancyAlertsFor(
+  {
+    type: "member.joined", id: randomUUID(), occurredAt: new Date().toISOString(),
+    tenantId: String(brand.id), userId: String(user.id), via: "invitation",
+    person: { name: user.fullName, email: user.email }, roleName: "Dispatcher",
+  },
+  { teamHref: "/account/team" },
+);
+```
+
+## Upgrading from 0.5
+
+Nothing to migrate. `TenancyService` gains `settleEvents` (a hand-written
+fake of the service needs it; the handlers answer as before without it).
+`TenancyEvent`'s members gain `id` and `occurredAt` (and the member events
+`person`, `roleName`): code that builds events by hand for a test needs them,
+and a test comparing whole events with `toEqual` needs to leave them out.
+`LogoStore.put` is given `tenantId` and `delete` a second argument.
+
 ## Upgrading from 0.4
 
 Nothing to migrate. `RoleKey` is now `"owner" | "admin" | "member" | "viewer"
@@ -383,9 +489,10 @@ package takes the tenant from you instead: pass your own tenant id to their
 
 ## Not included
 
-- **Per-company boards and widgets for feedback, notifications, files, the
-  assistant, analytics, SEO/AEO and book-a-call (booking)** — **Tenancy 2b**.
-  (Scheduling, the estimator, invoicing and comms are per company since 2a.)
+- **Per-company feedback boards, the assistant, analytics, SEO/AEO and
+  book-a-call (booking)** — Tenancy 2b-2 to 2b-4 (listed below). Scheduling,
+  the estimator, invoicing and comms are per company since 2a; alerts and
+  files since 2b-1.
 - **Payments to companies** (Stripe Connect: a customer paying a company's
   invoice by card). Invoices are paid however the payment instructions say;
   staff record the payment.
@@ -413,3 +520,55 @@ package takes the tenant from you instead: pass your own tenant id to their
   personal workspaces are ignored.
 - Identity providers other than Clerk.
 - Table prefixes, or a dedicated Postgres schema.
+
+### Not included (Tenancy 2b-1)
+
+- **The feedback board per company, and the complete board** — Tenancy 2b-2.
+  It will keep screenshots as these private files and send its alerts through
+  these notifications. Until then, feedback screenshots stay on the public
+  Blob store as in 2a.
+- **The AI assistant per company** — Tenancy 2b-3.
+- **Website analytics, SEO/AEO and book-a-call (booking) per company** —
+  Tenancy 2b-4.
+- **Text (SMS) and push alerts.** Alerts come in the app and by email — S9.
+- **Plans, limits and billing enforcement** — the billing chunk. Each
+  company's storage allowance is one setting for everyone
+  (`FILES_ALLOWANCE_MB`) until then; the seam the billing chunk fills is
+  there.
+- **Stripe Connect** (customers paying a company by card).
+- **Custom domains.**
+- **Virus scanning of uploads.** Files are checked for their type and size
+  only.
+- **Uploads over 4 MB, and uploads straight from the browser to storage.**
+  Phone photos are made smaller before they're sent; other files over 4 MB are
+  refused with a plain sentence.
+- **Serving files straight from S3 or R2 by presigned link.** Every private
+  file is sent through the site's own route.
+- **Thumbnails.** Photos are shown at their (shrunk) size.
+- **Turning a kind of alert off.** Each kind comes in the app, or in the app
+  and by email; who gets the work alerts is the owner's choice.
+- **Alerts from your other companies in the bell.** The bell shows the
+  company you're working in.
+- **A daily or weekly digest of alerts.**
+- **Customers seeing files** (photos on their quote or invoice page).
+- **Editing the wording of the team alert email** beyond the Messages screen
+  (it is the `team_alert` message there).
+- **Carrying 2a's per-feature alert address lists over.** With alerts
+  installed, the people (and extra addresses) are chosen again in Alert
+  settings; the old lists are no longer read.
+- **Alert settings in a single-business project without an admin shell.** Its
+  staff get the bell; the office emails keep 2a's lists.
+- **A transactional outbox.** Alerts are written right after the change they
+  report (D8); the events package (S2) brings the outbox.
+- **Crew alerts when the office moves, reassigns or cancels their visit.**
+  Only a customer's change alerts the crew.
+- **An alert when a customer opens a quote** (invoices only).
+- **A history of cron runs, and an alert when a cron fails.**
+- **Alerts for the platform owner** (a new company, a company out of
+  storage). A company's storage refusal is reported in `/admin/errors` once a
+  day.
+- **Giving one company more storage than the others.** `FILES_ALLOWANCE_MB`
+  is one number until the billing chunk.
+- **Checking an address before it gets a company's alert emails.** The owner
+  adds up to five per group; the company's team sending allowance bounds what
+  they get.

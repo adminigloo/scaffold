@@ -360,29 +360,39 @@ function BusinessCard({
   // are shown read-only and a save sends none of them (the server would
   // drop them anyway); the office alert addresses stay scheduling's own.
   const managed = settings.managedByCompany;
+  // Tenancy 2b-1, D6: with alerts installed, who hears about new requests is
+  // chosen in Alert settings, the ONE place. The list here is replaced by a
+  // link, and a save never sends it (the server drops it too): two places
+  // to choose the same people is how a lead gets emailed twice, or never.
+  const alertsElsewhere = settings.alertRecipients;
+  const addresses = (d: { staffNotifyEmails: string[] }) =>
+    alertsElsewhere ? {} : { staffNotifyEmails: d.staffNotifyEmails.map((e) => e.trim()).filter(Boolean) };
   const form = useSettingsDraft(
     initial,
     transport,
     (d) =>
       managed
-        ? { staffNotifyEmails: d.staffNotifyEmails.map((e) => e.trim()).filter(Boolean) }
+        ? addresses(d)
         : {
             businessName: d.businessName.trim(),
             timeZone: d.timeZone,
             contactPhone: d.contactPhone.trim() || null,
             contactEmail: d.contactEmail.trim() || null,
-            staffNotifyEmails: d.staffNotifyEmails.map((e) => e.trim()).filter(Boolean),
+            ...addresses(d),
           },
     onSaved,
     () => (tellCustomers && !managed ? { notifyCustomers: true } : {}),
   );
+  // Nothing on this card is editable here: the company owns the details and
+  // Alert settings owns the people. No Save button for a form with nothing in it.
+  const nothingToSave = Boolean(managed && alertsElsewhere);
   const { draft, set, fields } = form;
   const upcoming = status?.upcomingVisits ?? 0;
   const zoneChanging = draft.timeZone !== settings.timeZone;
   const usZone = US_TIME_ZONES.some((z) => z.zone === draft.timeZone);
   const [other, setOther] = useState(!usZone);
   const zones = useMemo(() => allTimeZones(), []);
-  const badEmail = draft.staffNotifyEmails.find((e) => e.trim() && !isValidEmail(e));
+  const badEmail = alertsElsewhere ? undefined : draft.staffNotifyEmails.find((e) => e.trim() && !isValidEmail(e));
   const problem =
     draft.contactEmail.trim() && !isValidEmail(draft.contactEmail)
       ? "The contact email doesn't look right."
@@ -496,6 +506,15 @@ function BusinessCard({
           </div>
           </>
           )}
+          {alertsElsewhere ? (
+            <div className="aisw-stack-sm" data-aisw-alerts-managed="">
+              <p className="aisw-label">New-request alerts</p>
+              <p className="aisw-hint">
+                Who gets new-request alerts is chosen in Alert settings.{" "}
+                {alertsElsewhere.href ? <a href={alertsElsewhere.href}>Open Alert settings</a> : null}
+              </p>
+            </div>
+          ) : (
           <fieldset className="aisw-stack-sm" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
             <legend className="aisw-label">Send new-request alerts to</legend>
             <p className="aisw-hint">Up to 5 addresses. They also hear when a customer moves or cancels online.</p>
@@ -539,8 +558,11 @@ function BusinessCard({
             ) : null}
             {fields.staffNotifyEmails ? <span className="aisw-field-error">{fields.staffNotifyEmails}</span> : null}
           </fieldset>
+          )}
         </fieldset>
-        <SaveRow dirty={form.dirty} busy={form.busy} saved={form.saved} error={form.error} problem={problem} canManage={canManage} />
+        {nothingToSave ? null : (
+          <SaveRow dirty={form.dirty} busy={form.busy} saved={form.saved} error={form.error} problem={problem} canManage={canManage} />
+        )}
       </form>
     </Card>
   );

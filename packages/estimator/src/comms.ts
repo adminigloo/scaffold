@@ -22,6 +22,13 @@
  * THE COMMS TENANT IS THE ESTIMATOR TENANT: templates, sends and the queue all
  * use `event.tenantId`.
  *
+ * WHO GETS THE OFFICE EMAIL (Tenancy 2b-1, D6). Without `officeRecipients`,
+ * 2a's rule exactly: the business's saved `leadNotifyEmails`, else the
+ * host's `staffEmails`, through `sendNow`. With it, the host's alerts decide
+ * (the one Alert settings screen), each email goes through `deliverNow`, and
+ * its outcome is told to `officeSent`, so a failed lead email goes back to
+ * the alerts cron instead of being lost (review BO-02).
+ *
  * NO KEY SITS IN A TABLE. A quote link is a key to the customer's quote.
  *   - An email sent now gets a freshly minted token; right after the send,
  *     that one `comms_messages` row is rewritten with the token replaced by
@@ -39,6 +46,10 @@ import {
   commsMessages,
   commsScheduled,
   commsTemplates,
+  // CONTRACT: comms 0.4's `deliverNow(db, input, senders) → { message, retryable }`
+  // (contract 12.2), built by the platform builder. The office emails go
+  // through it when `officeRecipients` is given (10.2, review BO-02).
+  deliverNow,
   enqueueMessage,
   sendNow,
   type BeforeSendResult,
@@ -46,6 +57,7 @@ import {
   type ScheduledRow,
 } from "@adminigloo/comms";
 import { and, eq, gt, inArray, sql } from "drizzle-orm";
+import { estimatorOfficeNotice } from "./alerts.js";
 import { getEstimateDetail, getEstimateRow, staffDetailOf, type EstimateStaffDetail } from "./estimates.js";
 import { loadSnapshots, type EstimatorEvent, type EstimatorEventListener } from "./events.js";
 import { insertQuoteToken, issueQuoteToken } from "./quotes.js";
@@ -58,6 +70,50 @@ import type { EstimatorDb } from "./types.js";
 import type { EstimateSnapshot } from "./wire.js";
 
 export type { EstimateStaffDetail } from "./estimates.js";
+
+/**
+ * What an office email is the copy of (Tenancy 2b-1, contract 3.4): handed to
+ * `officeRecipients` and `officeSent`, so the host's alerts can claim the
+ * email of exactly the alert rows the mapper (`estimatorAlertsFor`) wrote.
+ * `kind` and `dedupeKey` come from the same function the mapper uses
+ * (`estimatorOfficeNotice`).
+ */
+export interface EstimatorOfficeNotice {
+  readonly tenantId: string;
+  /** The alert kind this email is the copy of (contract 10.1). */
+  readonly kind: string;
+  /** The same key the alert mapper writes for this fact (D6, D7). */
+  readonly dedupeKey: string;
+  readonly eventId: string;
+  /** Always [] for the estimator: nobody is assigned to an estimate (3.4). */
+  readonly assignedUserIds: readonly string[];
+}
+
+/** How one office email ended, per address, as `deliverNow` answered (contract 3.4). */
+export interface EstimatorOfficeSendResult {
+  readonly to: string;
+  readonly status: "sent" | "skipped" | "failed";
+  readonly retryable: boolean;
+}
+
+/**
+ * A send the listener stopped waiting for (`sendTimeoutMs`). Its own name, so
+ * an office email that timed out (it may have gone) is told apart from one
+ * that failed before anything left: only the second may be retried.
+ */
+class SendTimedOutError extends Error {
+  readonly name = "SendTimedOutError";
+}
+
+/** Addresses as a host answered them: strings only, blanks dropped. */
+function cleanAddresses(list: readonly unknown[] | null | undefined): string[] {
+  return Array.isArray(list) ? list.filter((to): to is string => typeof to === "string" && to.trim() !== "") : [];
+}
+
+/** comms' log status, as the three words `officeSent` hears. Anything else is a failure. */
+function sendStatus(status: string): EstimatorOfficeSendResult["status"] {
+  return status === "sent" || status === "skipped" ? status : "failed";
+}
 
 /** The comms `refType` every queued estimate message is tagged with (`refId` = the estimate id). */
 export const ESTIMATOR_COMMS_REF_TYPE = "estimator_estimate";
@@ -449,6 +505,31 @@ export interface EstimatorCommsOptions {
    */
   staffEmails?: readonly string[] | ((tenantId: string) => readonly string[] | Promise<readonly string[]>);
   /**
+   * Who gets each office email (a new lead, a quote answered or lapsed), when
+   * the host routes them through its alerts (Tenancy 2b-1, D6): the ONE place
+   * an owner chose who hears about new work. When given it decides: the
+   * saved `leadNotifyEmails` are not read, and `[]` sends no office email
+   * (the people chose the app only, or the email was already claimed: the
+   * same event handed over twice is never two emails for one lead). A throw
+   * is reported (step "office-recipients") and the listener falls back to
+   * `staffEmails` (the host's business address) so the office still hears
+   * (review BO-02).
+   *
+   * Each office email then goes through comms' `deliverNow` (not `sendNow`),
+   * keeping 2a's template, variables, reply-to and idempotency key, so its
+   * outcome can be told to `officeSent`.
+   */
+  officeRecipients?: (notice: EstimatorOfficeNotice) => readonly string[] | Promise<readonly string[]>;
+  /**
+   * Told, per address, how each office email ended, after `deliverNow`
+   * answered: the host turns a `failed` and retryable one back into an alert
+   * email the alerts cron sends (`alerts.releaseClaim`). NOT told about a send
+   * that hit `sendTimeoutMs` (it may have gone): that is reported (step
+   * "office-timeout"). Awaited inside its own step: a throw is reported (step
+   * "office-sent") and changes nothing. Only used with `officeRecipients`.
+   */
+  officeSent?: (notice: EstimatorOfficeNotice, result: EstimatorOfficeSendResult) => void | Promise<void>;
+  /**
    * The business as its customers know it, from the host's company profile
    * (Tenancy 2a, D5): settings are read through `resolveEstimatorSettings`,
    * so `{{businessName}}`, the contact lines and every date are the company's.
@@ -530,7 +611,7 @@ export function createEstimatorCommsListener(options: EstimatorCommsOptions): Es
     work.catch(() => undefined);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`${label} took longer than ${timeoutMs} ms; left to finish in the background`)), timeoutMs);
+      timer = setTimeout(() => reject(new SendTimedOutError(`${label} took longer than ${timeoutMs} ms; left to finish in the background`)), timeoutMs);
     });
     return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
   };
@@ -621,17 +702,21 @@ export function createEstimatorCommsListener(options: EstimatorCommsOptions): Es
       ...(options.company ? { company: options.company } : {}),
       onError: (error) => report(error, { ...context, step: "company" }),
     });
-  /** The office's addresses: the business's saved ones, else the host's (per tenant when a function). */
-  const staffRecipients = async (event: EstimatorEvent, settings: EstimatorSettings): Promise<string[]> => {
-    if (settings.leadNotifyEmails.length > 0) return [...settings.leadNotifyEmails];
+  /** The host's own office addresses (2a's `staffEmails`, per tenant when a function). */
+  const hostStaffEmails = async (event: EstimatorEvent): Promise<string[]> => {
     const fallback = options.staffEmails;
-    if (typeof fallback !== "function") return [...(fallback ?? [])];
+    if (typeof fallback !== "function") return cleanAddresses(fallback ?? []);
     try {
-      return [...(await fallback(event.tenantId))].filter((to) => typeof to === "string" && to.trim() !== "");
+      return cleanAddresses(await fallback(event.tenantId));
     } catch (error) {
       report(error, { estimateId: event.estimateId, eventId: event.id, step: "staff-emails" });
       return [];
     }
+  };
+  /** The office's addresses (2a): the business's saved ones, else the host's. */
+  const staffRecipients = async (event: EstimatorEvent, settings: EstimatorSettings): Promise<string[]> => {
+    if (settings.leadNotifyEmails.length > 0) return [...settings.leadNotifyEmails];
+    return hostStaffEmails(event);
   };
 
   async function sendCustomer(event: EstimatorEvent, settings: EstimatorSettings, templateKey: EstimatorTemplateKey, withLink: boolean) {
@@ -674,9 +759,34 @@ export function createEstimatorCommsListener(options: EstimatorCommsOptions): Es
   }
 
   async function sendStaff(event: EstimatorEvent, settings: EstimatorSettings, templateKey: EstimatorTemplateKey) {
-    if (event.type !== "lead.received" && !staffNoticeKind(event)) return;
-    if (event.type === "lead.received" && event.actor.type === "staff") return;
-    const recipients = await staffRecipients(event, settings);
+    // Tenancy 2b-1: the decision is `estimatorOfficeNotice`, shared with the
+    // alert mapper (alerts.ts), so the alert and this email are written for
+    // the same events under the same kind and key (contract 3.4). It is 2a's
+    // rule exactly: never a lead staff made, an answer only from a customer,
+    // a lapsed quote always.
+    const spec = estimatorOfficeNotice(event);
+    if (!spec) return;
+    const context = { estimateId: event.estimateId, eventId: event.id };
+    const routed = typeof options.officeRecipients === "function";
+    // `notice` stays set only while the addresses came from the host's alerts
+    // (the claim). The fallback addresses after a throw were claimed by
+    // nobody, so their outcome is told to nobody: releasing a claim for them
+    // could re-send an alert email the first delivery of this same event
+    // already sent (two emails are worse than a late one).
+    let notice: EstimatorOfficeNotice | null = null;
+    let recipients: string[];
+    if (routed) {
+      notice = { tenantId: event.tenantId, kind: spec.kind, dedupeKey: spec.dedupeKey, eventId: event.id, assignedUserIds: [] };
+      try {
+        recipients = cleanAddresses(await options.officeRecipients!(notice));
+      } catch (error) {
+        report(error, { ...context, step: "office-recipients" });
+        notice = null;
+        recipients = await hostStaffEmails(event);
+      }
+    } else {
+      recipients = await staffRecipients(event, settings);
+    }
     if (recipients.length === 0) return;
     const vars = estimatorEmailVars(event, settings, {
       quoteUrl: null,
@@ -685,30 +795,44 @@ export function createEstimatorCommsListener(options: EstimatorCommsOptions): Es
       audience: "staff",
       staffDetail: await staffDetail(event),
     });
+    const input = (to: string, index: number) => ({
+      tenantId: event.tenantId,
+      to,
+      templateKey,
+      vars,
+      idempotencyKey: `estimate:${event.estimateId}:${event.id}:staff:${index}`,
+      // Reply on a lead notice reaches the CUSTOMER, not the office's own
+      // address (review T2A-BO-12). No address: the business's.
+      ...(event.data.estimate.customerEmail ? { replyTo: event.data.estimate.customerEmail } : {}),
+    });
     // Side by side: five office addresses behind a slow mail server must not
     // add up to minutes on the customer's request.
-    await Promise.all(
-      recipients.map((to, index) =>
-        step(`send:${templateKey}`, event.estimateId, event.id, () =>
-          bounded(
-            sendNow(
-              db,
-              {
-                tenantId: event.tenantId,
-                to,
-                templateKey,
-                vars,
-                idempotencyKey: `estimate:${event.estimateId}:${event.id}:staff:${index}`,
-                // Reply on a lead notice reaches the CUSTOMER, not the office's
-                // own address (review T2A-BO-12). No address: the business's.
-                ...(event.data.estimate.customerEmail ? { replyTo: event.data.estimate.customerEmail } : {}),
-              },
-              options.senders,
-            ),
-            "the office email",
-          ),
+    if (!routed) {
+      // 2a's path, exactly: no alerts on this host.
+      await Promise.all(
+        recipients.map((to, index) =>
+          step(`send:${templateKey}`, event.estimateId, event.id, () => bounded(sendNow(db, input(to, index), options.senders), "the office email")),
         ),
-      ),
+      );
+      return;
+    }
+    await Promise.all(
+      recipients.map(async (to, index) => {
+        let outcome: { message: { status: string }; retryable: boolean };
+        try {
+          outcome = await bounded(deliverNow(db, input(to, index), options.senders), "the office email");
+        } catch (error) {
+          // A send we stopped waiting for may still go: it is NOT handed to
+          // `officeSent`, so it is never released for a second copy.
+          report(error, { ...context, step: error instanceof SendTimedOutError ? "office-timeout" : `send:${templateKey}` });
+          return;
+        }
+        const told = notice;
+        if (!told || !options.officeSent) return;
+        await step("office-sent", event.estimateId, event.id, async () => {
+          await options.officeSent!(told, { to, status: sendStatus(outcome.message.status), retryable: outcome.retryable });
+        });
+      }),
     );
   }
 

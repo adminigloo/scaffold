@@ -48,7 +48,7 @@
   "peerDependencies": {
     "drizzle-orm": "catalog:peers",
     "zod": "^4.0.0",
-    "@adminigloo/comms": "^0.3.0",
+    "@adminigloo/comms": "^0.4.0",
     "@anthropic-ai/sdk": ">=0.122.0"
   },
   "peerDependenciesMeta": {

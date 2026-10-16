@@ -1,3 +1,4 @@
+import { resolvePermissionSet } from "@adminigloo/permissions";
 import { sql } from "drizzle-orm";
 import type { Ctx } from "./context.js";
 import { asRoleKey, COMPANY_COLUMNS, companyRow, q, str, strOrNull } from "./db.js";
@@ -87,13 +88,34 @@ export async function companyProfile(ctx: Ctx, tenantId: string): Promise<Compan
  * people, never the site's whole user table (in companies mode that would
  * show Summit's people to Green Acres). One query; the role's name is the one
  * the database holds (a renamed template reads as renamed).
+ *
+ * TENANCY 2b-1 (8.2): `holding` narrows it to the members whose resolved
+ * permission set in this company includes that key. Resolved EXACTLY as a
+ * request resolves it — `resolvePermissionSet` over their role's grants and
+ * their own overrides here (an allow override adds it, a deny override takes
+ * it away, a template's deny seals it) — so "who gets this alert" and "who
+ * may open what it links to" can never disagree. THREE QUERIES whatever the
+ * team size: the members (with each one's role template), the grants of
+ * those templates for this one key, and this company's overrides of it for
+ * those members. A per-person resolve was 3 queries a person: 90 for a team
+ * of 30, on every alert. Grants and overrides are read for the ONE key
+ * asked: resolution is per key, so the answer for it is the same as the
+ * whole set's, without reading the whole set.
  */
-export async function listMemberPeople(ctx: Ctx, tenantId: string): Promise<readonly MemberPerson[]> {
+export async function listMemberPeople(
+  ctx: Ctx,
+  tenantId: string,
+  options: { readonly holding?: string } = {},
+): Promise<readonly MemberPerson[]> {
   if (typeof tenantId !== "string" || tenantId === "") return [];
+  const holding = typeof options.holding === "string" ? options.holding : undefined;
+  // An empty key is held by nobody; a host that forgot to fill it gets [] and
+  // not everyone (never widen).
+  if (holding !== undefined && holding.trim() === "") return [];
   const rows = await q(
     ctx.db,
     sql`/* adminigloo:tenancy/member-people */
-      select m.user_id, u.display_name, u.email, rt.key as role_key, rt.name as role_name
+      select m.user_id, u.display_name, u.email, rt.key as role_key, rt.name as role_name, pr.template_id
       from tenant_members m
       join tenants t on t.id = m.tenant_id and t.deleted_at is null
       left join users u on u.id = m.user_id and u.deleted_at is null
@@ -102,7 +124,8 @@ export async function listMemberPeople(ctx: Ctx, tenantId: string): Promise<read
       where m.tenant_id = ${tenantId} and m.status = 'active'
       order by lower(u.display_name) nulls last, lower(u.email) nulls last, m.user_id`,
   );
-  return rows.map((r) => {
+  const holders = holding === undefined ? null : await holdersOf(ctx, tenantId, holding, rows);
+  return rows.filter((r) => holders === null || holders.has(str(r["user_id"]))).map((r) => {
     const roleKey = asRoleKey(r["role_key"]);
     return {
       userId: str(r["user_id"]),
@@ -112,6 +135,69 @@ export async function listMemberPeople(ctx: Ctx, tenantId: string): Promise<read
       roleName: textOrNull(r["role_name"]) ?? (roleKey ? ctx.roles.templates.find((t) => t.key === roleKey)?.name ?? roleKey : "No role"),
     };
   });
+}
+
+/**
+ * Which of these member rows hold `permission` in this company: the second
+ * and third of `listMemberPeople`'s three queries, then
+ * `resolvePermissionSet` per person in memory (8.2).
+ */
+async function holdersOf(
+  ctx: Ctx,
+  tenantId: string,
+  permission: string,
+  members: readonly Readonly<Record<string, unknown>>[],
+): Promise<ReadonlySet<string>> {
+  const holders = new Set<string>();
+  if (members.length === 0) return holders;
+  const userIds = [...new Set(members.map((r) => str(r["user_id"])))];
+  const templateIds = [...new Set(members.map((r) => strOrNull(r["template_id"])).filter((id): id is string => id !== null))];
+  const list = (values: readonly string[]) => sql.join(values.map((v) => sql`${v}`), sql`, `);
+
+  // 2. The grants of the templates these members hold, for this key (a team
+  // where nobody holds a role has none to read: at most three queries).
+  const grants =
+    templateIds.length === 0
+      ? []
+      : await q(
+          ctx.db,
+          sql`/* adminigloo:tenancy/member-people-grants */
+            select template_id, permission, effect from role_template_grant
+            where permission = ${permission} and template_id in (${list(templateIds)})`,
+        );
+  // 3. This company's overrides of this key for these members.
+  const overrides = await q(
+    ctx.db,
+    sql`/* adminigloo:tenancy/member-people-overrides */
+      select principal_id, permission, effect from principal_override
+      where scope = 'tenant' and tenant_id = ${tenantId} and permission = ${permission}
+        and principal_id in (${list(userIds)})`,
+  );
+
+  const grantsByTemplate = new Map<string, { permission: string; effect: "allow" | "deny" }[]>();
+  for (const g of grants) {
+    const id = str(g["template_id"]);
+    const rules = grantsByTemplate.get(id) ?? [];
+    rules.push({ permission: str(g["permission"]), effect: g["effect"] === "deny" ? "deny" : "allow" });
+    grantsByTemplate.set(id, rules);
+  }
+  const overridesByPerson = new Map<string, { permission: string; effect: "allow" | "deny" }[]>();
+  for (const o of overrides) {
+    const id = str(o["principal_id"]);
+    const rules = overridesByPerson.get(id) ?? [];
+    rules.push({ permission: str(o["permission"]), effect: o["effect"] === "deny" ? "deny" : "allow" });
+    overridesByPerson.set(id, rules);
+  }
+  for (const member of members) {
+    const userId = str(member["user_id"]);
+    const templateId = strOrNull(member["template_id"]);
+    const set = resolvePermissionSet({
+      templateGrants: templateId ? grantsByTemplate.get(templateId) ?? [] : [],
+      overrides: overridesByPerson.get(userId) ?? [],
+    });
+    if (set.has(permission)) holders.add(userId);
+  }
+  return holders;
 }
 
 /**

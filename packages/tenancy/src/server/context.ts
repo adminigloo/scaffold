@@ -6,12 +6,14 @@ import {
   type DrizzlePermissionLoaders,
 } from "@adminigloo/permissions/server";
 import { sql } from "drizzle-orm";
+import { uuidv7 } from "uuidv7";
 import type { SetupChecklist } from "../checklist.js";
+import type { TenancyEventInput, TenancyEventPerson } from "../events.js";
 import { RESERVED_SLUGS } from "../slug.js";
 import type { TenantSettingsRegistry } from "../settings.js";
 import { DEFAULT_TENANT_ROLES, type TenantRoleSet } from "../roles.js";
 import type { RoleKey, RoleOptionWire } from "../wire.js";
-import { asRoleKey, q, str, type CompanyRow } from "./db.js";
+import { asRoleKey, q, str, strOrNull, type CompanyRow } from "./db.js";
 import { failWith, type TenancyError } from "./errors.js";
 import { tenancyMembershipGate } from "./gate.js";
 import type {
@@ -28,6 +30,11 @@ import type {
 
 /** Live companies one account may own unless the host says otherwise (review R2 SEC-T1-B/C). */
 export const DEFAULT_COMPANIES_PER_ACCOUNT = 10;
+
+/** How long `settleEvents` waits for the listeners pending now, unless told otherwise (Tenancy 2b-1, 8.1). */
+export const DEFAULT_SETTLE_EVENTS_MS = 5000;
+/** The longest `settleEvents` will wait, whatever it is asked: a handler must answer. */
+const MAX_SETTLE_EVENTS_MS = 60_000;
 
 /** Everything the lifecycle modules share, built once by `createTenancyService`. */
 export interface Ctx {
@@ -53,8 +60,22 @@ export interface Ctx {
   loaders(on: TenancyDb): DrizzlePermissionLoaders;
   /** Write one audit row inside the transaction (D17). No sink → nothing. */
   audit(tx: TenancyDb, event: Omit<TenancyAuditEvent, "request"> & { readonly request?: RequestFacts | null }): Promise<void>;
-  /** After commit: tell `onEvent`, swallowing and reporting its failures. */
-  emit(event: TenancyEvent): void;
+  /**
+   * After commit: tell `onEvent`, swallowing and reporting its failures.
+   * Tenancy 2b-1: stamps `id` and `occurredAt` (the one place they are made)
+   * and keeps the listener's promise until it settles, for `settle`.
+   */
+  emit(event: TenancyEventInput): void;
+  /** Tenancy 2b-1: wait (bounded, never throwing) for the listeners pending now. */
+  settle(timeoutMs?: number): Promise<void>;
+  /**
+   * Tenancy 2b-1: who a member event is about, and the role they hold now in
+   * words, in ONE query (`users` by id, its role in this company). A deleted
+   * user gives `{ name: null, email: null }`. With no `onEvent` there is
+   * nobody to tell, so nothing is read. Never throws: a failed read is
+   * reported and the event still goes, naming nobody.
+   */
+  memberFacts(tenantId: string, userId: string): Promise<{ readonly person: TenancyEventPerson; readonly roleName: string }>;
   /** Report a problem that must not fail the request (a parse fallback, a best-effort delete). */
   report(error: unknown, where: string): void;
 }
@@ -90,6 +111,11 @@ export function createCtx(options: {
       /* a broken reporter must not fail the request it reports on */
     }
   };
+  const now = options.now ?? (() => new Date());
+  const roles = options.roles ?? DEFAULT_TENANT_ROLES;
+  // The listeners still running (Tenancy 2b-1, 8.1). Each removes itself when
+  // it settles, so the set holds only what is pending NOW.
+  const pending = new Set<Promise<void>>();
   return {
     db: options.db,
     mode: options.mode,
@@ -98,7 +124,7 @@ export function createCtx(options: {
     bootstrap: options.bootstrap,
     settings: options.settings,
     checklist: options.checklist,
-    roles: options.roles ?? DEFAULT_TENANT_ROLES,
+    roles,
     seats: options.seats,
     logos: options.logos,
     reserved,
@@ -110,26 +136,91 @@ export function createCtx(options: {
         : typeof options.companiesPerAccount === "number" && Number.isFinite(options.companiesPerAccount) && options.companiesPerAccount >= 1
           ? Math.floor(options.companiesPerAccount)
           : DEFAULT_COMPANIES_PER_ACCOUNT,
-    now: options.now ?? (() => new Date()),
+    now,
     fail: failWith(options.noun),
     loaders: (on) => createDrizzlePermissionLoaders(on, { membership: tenancyMembershipGate }),
     async audit(tx, event) {
       if (!options.audit) return;
       await options.audit(tx, { ...event, request: event.request ?? null });
     },
-    emit(event) {
+    emit(input) {
       if (!options.onEvent) return;
+      // The stamp (Tenancy 2b-1, 8.1): an id unique per event (a member
+      // event's alert is keyed on it, 2b-1 D7) and the service's own clock.
+      const event = { ...input, id: uuidv7(), occurredAt: now().toISOString() } as TenancyEvent;
       // After commit, never awaited by the request: a slow or failing listener
       // (an email, a webhook) must not fail or delay the act it reports on.
-      void Promise.resolve()
+      // The HTTP handlers wait for it, bounded, through `settle`.
+      const running: Promise<void> = Promise.resolve()
         .then(() => options.onEvent?.(event))
-        .catch((error) => {
-          try {
-            options.onEventError?.(error, event);
-          } catch {
-            /* swallowed on purpose */
-          }
+        .then(
+          () => undefined,
+          (error: unknown) => {
+            try {
+              options.onEventError?.(error, event);
+            } catch {
+              /* swallowed on purpose */
+            }
+          },
+        )
+        .finally(() => {
+          pending.delete(running);
         });
+      pending.add(running);
+    },
+    async settle(timeoutMs) {
+      const bound =
+        typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs >= 0
+          ? Math.min(timeoutMs, MAX_SETTLE_EVENTS_MS)
+          : DEFAULT_SETTLE_EVENTS_MS;
+      // A snapshot: the listeners pending NOW. One that starts while we wait
+      // (another request's) is that request's to wait for.
+      const waiting = [...pending];
+      if (waiting.length === 0) return;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          // Each `running` already swallows its listener's failure; allSettled
+          // is belt and braces, so this can never reject.
+          Promise.allSettled(waiting),
+          new Promise<void>((resolve) => {
+            timer = setTimeout(resolve, bound);
+          }),
+        ]);
+      } catch {
+        /* never throws (8.1) */
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
+    },
+    async memberFacts(tenantId, userId) {
+      const nobody = { person: { name: null, email: null }, roleName: "a member" };
+      if (!options.onEvent) return nobody;
+      try {
+        const rows = await q(
+          options.db,
+          sql`/* adminigloo:tenancy/event-person */
+            select u.display_name, u.email, rt.key as role_key, rt.name as role_name
+            from (select 1) as one
+            left join users u on u.id = ${userId} and u.deleted_at is null
+            left join principal_role pr on pr.principal_id = ${userId} and pr.scope = 'tenant' and pr.tenant_id = ${tenantId}
+            left join role_template rt on rt.id = pr.template_id`,
+        );
+        const row = rows[0];
+        const name = strOrNull(row?.["display_name"])?.trim() || null;
+        const email = strOrNull(row?.["email"])?.trim() || null;
+        const roleKey = strOrNull(row?.["role_key"]);
+        // The name the database holds (a renamed template reads as renamed),
+        // else the project's own, else "a member" (a role-less join).
+        const roleName =
+          strOrNull(row?.["role_name"])?.trim() ||
+          (roleKey ? roles.templates.find((t) => t.key === roleKey)?.name ?? roleKey : null) ||
+          "a member";
+        return { person: { name, email }, roleName };
+      } catch (error) {
+        report(error, "event.person");
+        return nobody;
+      }
     },
     report,
   };

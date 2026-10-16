@@ -275,11 +275,18 @@ describe("the glue, by what else is installed", () => {
     expect(p.files.has(join("src", "server", "comms-hooks.ts"))).toBe(false);
   });
 
+  // Tenancy 2b-1: the photo is one of the project's files (src/server/files.ts,
+  // the private store), through storage's purpose store — not 0.1's
+  // storeFile/deleteFile over the public blob store.
   it("keeps the customer's photo through storage, and keeps nothing without it", async () => {
-    const services = code(file(await plan(FULL), ...SERVICES));
-    expect(services).toContain("storeFile(db, blobStore");
-    expect(services).toContain('kind: "estimator.photo"');
-    expect(services).toContain("deleteFile(db, blobStore, { id: fileId, tenantId })");
+    const p = await plan(FULL);
+    const services = code(file(p, ...SERVICES));
+    // Staff's own photos are kept apart from customers' (review SEC-02).
+    expect(services).toContain('export { estimatorPhotoStore, estimatorStaffPhotoStore } from "@/server/files";');
+    expect(services).not.toContain("storeFile(");
+    const files = code(file(p, "src", "server", "files.ts"));
+    expect(files).toContain('files.purposeStore("estimator.photo")');
+    expect(files).toContain("estimatorPhotoPurpose");
     const bare = code(file(await plan({ ...FULL, includeStorage: false }), ...SERVICES));
     expect(bare).toContain("export const estimatorPhotoStore: EstimatorPhotoStore | undefined = undefined;");
     expect(bare).not.toContain("@adminigloo/storage");
@@ -362,12 +369,12 @@ describe("answers, packages and the CLI", () => {
     ).rejects.toThrow(IncompatibleAnswersError);
   });
 
-  it("installs the server package and the widget, at the 0.4 / 0.3 lines (Tenancy 2a)", () => {
+  it("installs the server package and the widget, at the 0.5 / 0.4 lines (Tenancy 2b-1)", () => {
     const installed = packagesFor(answers());
     expect(installed).toContain("@adminigloo/estimator");
     expect(installed).toContain("@adminigloo/estimator-widget");
-    expect(versionRangeFor("@adminigloo/estimator")).toBe("^0.4.0");
-    expect(versionRangeFor("@adminigloo/estimator-widget")).toBe("^0.3.0");
+    expect(versionRangeFor("@adminigloo/estimator")).toBe("^0.5.0");
+    expect(versionRangeFor("@adminigloo/estimator-widget")).toBe("^0.4.0");
   });
 
   it("brings comms, storage and email with the estimator unless each is declined", async () => {

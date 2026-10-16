@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 import { resolveAppEnv } from "__SCOPE__/env";
 import { AdminNav } from "@/components/admin/AdminNav";
+import { AlertsBellSlot } from "@/components/AlertsBellSlot";
 import {
   AdminUnavailable,
   type AdminUnavailableReason,
@@ -79,11 +80,20 @@ export default async function AdminLayout({ children }: { children: ReactNode })
           crew opening today's route at /admin/schedule/today should see their
           stops, not the menu. From md up it is the sticky sidebar as before. */}
       <aside className="order-last flex w-full flex-col border-t border-line bg-surface md:sticky md:top-0 md:order-none md:h-dvh md:w-60 md:shrink-0 md:border-r md:border-t-0">
-        <div className="border-b border-line px-4 py-4">
-          <p className="truncate font-mono text-[11px] uppercase tracking-[0.14em] text-ink-muted">
-            __PROJECT_NAME__
-          </p>
-          <p className="mt-0.5 text-sm font-semibold tracking-tight">Admin</p>
+        <div className="flex items-start justify-between gap-2 border-b border-line px-4 py-4">
+          <div className="min-w-0">
+            <p className="truncate font-mono text-[11px] uppercase tracking-[0.14em] text-ink-muted">
+              __PROJECT_NAME__
+            </p>
+            <p className="mt-0.5 text-sm font-semibold tracking-tight">Admin</p>
+          </div>
+          {/* THE ALERTS BELL, where a single business's staff work (Tenancy
+              2b-1). Generated in three variants (src/components/
+              AlertsBellSlot.tsx): the staff bell in a single-business project
+              with alerts; nothing in a companies project (a company's bell is
+              in its own area's header) or without alerts. The person here is
+              staff — the layout just checked. */}
+          <AlertsBellSlot session={null} can={[]} isStaff />
         </div>
 
         <AdminNav granted={can.toArray()} />

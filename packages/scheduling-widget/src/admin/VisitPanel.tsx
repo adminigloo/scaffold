@@ -16,6 +16,7 @@ import type { SchedulingAdminTransport } from "./client.js";
 import {
   adminErrorText,
   expiresIn,
+  fillIdPattern,
   isMovable,
   issuesByField,
   STATUS_LABEL,
@@ -60,6 +61,7 @@ export function VisitPanel({
   customerEmails = true,
   locale,
   nowMs,
+  filesHref,
   onClose,
   onChanged,
   returnFocus,
@@ -74,6 +76,8 @@ export function VisitPanel({
   customerEmails?: boolean;
   locale: string;
   nowMs: number;
+  /** Tenancy 2b-1: a pattern with {id}; the panel links "Photos and files" to the visit's own page. Absent: no link. */
+  filesHref?: string;
   onClose: () => void;
   onChanged: (change: PanelChange) => void;
   returnFocus: () => HTMLElement | null;
@@ -379,6 +383,13 @@ export function VisitPanel({
             </>
           ) : null}
         </dl>
+        {filesHref ? (
+          <p data-aisw-visit-files="">
+            <a className="aisw-btn aisw-btn-secondary" href={fillIdPattern(filesHref, visit.id)}>
+              Photos and files
+            </a>
+          </p>
+        ) : null}
 
         {canManage ? (
           <>

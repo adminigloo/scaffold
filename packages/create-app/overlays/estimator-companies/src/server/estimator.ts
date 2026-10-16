@@ -17,6 +17,7 @@ import {
   resolvePublicTenant,
   type FeatureHandlerOverrides,
 } from "@/server/company-routes";
+import { ALERTS_SETTINGS_HREF } from "@/server/alerts-links";
 import { reportError } from "@/server/error-reporter";
 import {
   ESTIMATOR_AI_CEILING_CENTS,
@@ -34,6 +35,7 @@ import {
   estimatorLinkSeams,
   estimatorPhotoReadingOff,
   estimatorPhotoStore,
+  estimatorStaffPhotoStore,
   estimatorTakeoff,
 } from "@/server/estimator-services";
 import { log } from "@/server/logger";
@@ -129,6 +131,10 @@ export function buildEstimatorAdminHandlers(overrides: FeatureHandlerOverrides =
     companySettingsHref: COMPANY_DETAILS_HREF,
     aiBudgetCeilingCents: ESTIMATOR_AI_CEILING_CENTS,
     photoStore: estimatorPhotoStore,
+    // Staff's own photos, apart from customers' (review SEC-02): never refused
+    // because strangers filled the customers' share. Undefined without file
+    // storage, and the package then keeps 0.4's single store.
+    staffPhotoStore: estimatorStaffPhotoStore,
     photoReading: Boolean(estimatorTakeoff),
     photoReadingOff: estimatorPhotoReadingOff,
     // The site's own setup gaps (no AI key, no file storage) in a company's
@@ -144,6 +150,11 @@ export function buildEstimatorAdminHandlers(overrides: FeatureHandlerOverrides =
     // "Turn into an invoice" asks invoices.manage too (review SEC-2A-02).
     invoiceAccess: estimatorInvoiceAccess(overrides),
     embedBaseUrl: estimatorEmbedBase,
+    // Who hears about new leads is chosen in Alert settings when this
+    // project has alerts (Tenancy 2b-1, D6): the settings screen links there
+    // instead of offering its own list. ALERTS_SETTINGS_HREF is generated —
+    // null without alerts, and the package keeps 2a's list.
+    alertsHref: ALERTS_SETTINGS_HREF,
     onError: reportEstimatorError,
   });
 }

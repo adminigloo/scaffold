@@ -430,6 +430,127 @@ It needs `packages/tenancy`, `auth`, `permissions`, `observability`, `testing`,
 - **Real time.** One scenario clock, moved by the test; the browsers get the
   same time through Playwright's clock.
 
+## What `tenancy-2b1-scenario.spec.ts` proves
+
+The business scenario Tenancy 2b-1 is sold on (contract section 16): the two
+lawn companies of the 2a scenario now hear about their work in the app and by
+email, and keep photos and files against their visits, estimates and
+invoices — each company only its own, and every file private. The REAL
+screens (the 2a ones plus the bell in every company page's header,
+`/app/alerts`, `/app/alerts/settings`, `/app/files`, a visit's photos and
+files, and "Photos and files" under the estimate and invoice editors; bundled
+from source by `bundle.mjs`'s `tenancy2b1ScenarioTarget`,
+`fixtures/tenancy-2b1-scenario-host.tsx`) in a real browser, against the REAL
+backend from the packages' built `dist` (`fixtures/tenancy-2b1-scenario-server.ts`):
+the 2a fixture's backend (whose pieces it reuses; the 2a files are not edited)
+plus `@adminigloo/notifications` 0.2 (the alerts, their handlers at
+`/api/app/{company id}/alerts/…`, every installed package's producer first in
+each listener list, the office emails claimed with `claimEmails` and handed
+back with `releaseClaim`, the comms senders' `onFailed`, tenancy's team
+events) and `@adminigloo/storage` 0.2 (the files over two in-memory stores —
+PRIVATE, and PUBLIC served at `/__blob/{key}` as a CDN would — with a signing
+key and `stillValid` checking the maker and the company on every open, its
+handlers at `/api/app/{company id}/files/…`, the signed links and public files
+at `/api/files/…`, the logo store tenancy uses and the estimator's photo
+store), wired the way create-app 0.24 wires a `--tenant-noun Company
+--estimator --scheduling --invoicing --comms --email --storage
+--notifications` project. The test's own doors: `/__test/outbox` (each email
+with its comms template), `/__test/blobs`, `/__test/clock`,
+`/__test/cron/{alerts|files|scheduling|estimator|comms}` and
+`/__test/replay-last-event`.
+
+Gail owns Green Acres (business email `office@greenacres.test`), Mia is a
+member, Cam the crew member on crew "North", Vic a viewer; Sam owns Summit
+Lawn; Pat and Kim are customers; Ava is the platform owner. An axe check (no
+serious or critical violations) runs on the screens a step lands on.
+
+0. **Set up as in 2a**, through the screens: both companies, Green Acres'
+   details, price book and estimate settings, booking on with crew "North"
+   (same-day visits allowed in Schedule settings), Cam, Mia and Vic invited
+   and in (Cam put on North as he joins). Gail reads her team's alerts.
+1. **Alerts.** Pat asks Green Acres for an estimate, with a photo: Gail's bell
+   shows 1 ("New estimate request: Pat Rivera…"), Sam's nothing. The outbox
+   has ONE `estimate_lead_staff`, to the business email, From "Green Acres".
+   With the dashboard open in a second tab, opening the alert takes Gail to
+   the estimate and the other tab's badge follows without a reload. Alert
+   settings' estimates card says "Emails go to office@greenacres.test, the
+   business email in company settings." Pat asks for a visit today (it goes on
+   North); Gail gets "New visit request" and accepts it; Pat moves it, still
+   today: Gail gets "Pat Rivera moved their visit to …"; Cam's bell has ONLY
+   the move (a sheet on his phone), opening Today's route, and his email is a
+   `team_alert`, never the office notice. Mia has nothing; Vic's bell says
+   "You're not on any alert lists yet…" (review BO-12; Mia holds
+   `schedule.route` by default, so she counts as reachable). Replaying the
+   last event to the listeners writes no new alert and sends no new email at
+   all — Pat's own "your visit moved" included (scheduling 0.6 sends it once
+   per event).
+2. **Choices.** Gail sets "A customer moves a visit" to "In the app": the next
+   move emails neither her nor the office. She puts Mia and
+   `dispatch@greenacres.test` on the visits list: Kim's request alerts Mia,
+   not Gail, and the office notice goes to Mia and to dispatch, once each.
+   Back to "The owner", the business-email line returns.
+3. **Housekeeping.** Gail keeps a PDF on `/app/files`; Mia opens it and copies
+   a link (it opens). Gail removes Mia: Mia's `alerts` count answers 403, her
+   alerts in Green Acres are gone, and her copied link shows "This link has
+   expired, or the file was removed." (review G2). Ava suspends Summit: its
+   booking page is closed and nothing is written for it. 31 days later the
+   alerts cron clears Gail's read alerts and keeps her unread ones. The bell's
+   count is the server's; at 390 px it opens as a sheet with nothing scrolling
+   sideways, at 1280 px as a popover.
+4. **Files.** Gail's logo is the one public file, at `/__blob/p/…` (public in
+   `/__test/blobs`). Cam, on his phone, taps "Photos" on today's stop and adds
+   a photo through "Take a photo"; Gail sees it on the visit's files page.
+   Gail attaches a PDF to an invoice ("Your team sees these; they aren't sent
+   to the customer.") and a photo to the estimate's "Other files". Pat's photo
+   is on the estimate, PRIVATE. `/app/files` lists them all, says "Using … of
+   5 GB", links Pat's photo to "Estimate … · Pat Rivera" (review BO-13) and
+   its "Invoices" filter shows only the PDF. With the signal cut, Cam's next
+   photo keeps its card with "Try again" and "Save to phone", and Try again
+   adds it (review BO-05).
+5. **Files are private.** Anonymously, Cam's photo's content route answers 401 or
+   403 and `/__blob/{its key}` 404; a copied link opens it and, 61 minutes later,
+   doesn't. Sam's browser gets 403 from Green Acres' files route with Green
+   Acres' file id, and 404 from his own company's. Gail removes the invoice's
+   PDF and its bytes leave the store. Mia (removed) gets 403. A 5 MB PDF says
+   "That file is too big…", an SVG "That kind of file can't be kept here…".
+
+**Negative controls** run in the same file, each as a pair on fresh fixtures
+(the assertion on the fixture as wired, which passes, and on a deliberately
+broken FIXTURE with `test.fail()`, which must fail; the packages carry no bug
+switches):
+
+- `break: "no-dedupe"` — every draft's `dedupeKey` gets a random suffix. The
+  replay assertion fails: the replayed request writes a second alert.
+- `break: "no-crew-scope"` — the alerts' `people()` ignores the permission.
+  "Cam hears only about the move" fails: he also gets the team's alert about
+  Mia joining.
+- `break: "private-as-public"` — the private slot is the PUBLIC memory store,
+  wrapped to say "private" (so createStorage's own check doesn't stop the
+  fixture). "`/__blob/{private key}` → 404" fails: the file is served (200).
+- `break: "link-ignores-maker"` — `stillValid` always answers yes. "A removed
+  member's copied link shows the expired sentence" fails: the file opens.
+
+All four fail, and do, for those reasons.
+
+It needs every package the 2a scenario needs plus `notifications`,
+`notifications-widget`, `storage` and `storage-widget` built.
+
+### What it does NOT prove
+
+- **One database connection.** PGlite is one connection (as in 2a).
+- **Real email.** No Resend: the transport records what the provider would
+  have been handed; the comms template of each email is read back from the
+  delivery log.
+- **Real file stores.** No Vercel Blob, S3, R2 or MinIO: two in-memory stores
+  stand in, and the public one is served by the fixture as a CDN would. The S3
+  signer is proven only by AWS's two published vectors (in the storage
+  package's own tests, review BO-16).
+- **Real sign-in.** No Clerk: a fake identity sets a cookie, as in 2a; the
+  pages and gates are the fixture's renderings of the generated ones.
+- **A real phone camera.** "Take a photo" is fed a file; the photo is shrunk
+  by the browser as on a phone.
+- **Real time.** One scenario clock, moved by the test.
+
 ## What `estimator-widget.spec.ts` proves
 
 `@adminigloo/estimator-widget` on its own, against a fake server answered with

@@ -235,3 +235,22 @@ export {
 } from "./routes.js";
 // The items scheduling adds to the company setup checklist.
 export { schedulingChecklistItems, type SchedulingChecklistItem } from "./checklist.js";
+
+// Tenancy 2b-1: alerts and files. Structural (2a D4): nothing here imports
+// @adminigloo/notifications or @adminigloo/storage. A host passing none of
+// it gets 0.5's behaviour.
+export {
+  schedulingAlertKinds,
+  schedulingAlertsFor,
+  listExpiringRequests,
+  schedulingExpiringAlert,
+  type SchedulingAlertChannel,
+  type SchedulingAlertKinds,
+  type SchedulingAlertKind,
+  type SchedulingAlertRouting,
+  type SchedulingAlertDraft,
+  type SchedulingAlertsForOptions,
+  type ExpiringRequest,
+  type ListExpiringRequestsOptions,
+} from "./alerts.js";
+export { schedulingFileRecords, type SchedulingFileRecordType, type SchedulingFileRecordsOptions } from "./files.js";

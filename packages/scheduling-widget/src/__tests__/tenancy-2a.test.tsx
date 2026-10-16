@@ -205,7 +205,9 @@ describe("wire", () => {
     const server = readFileSync(resolve(here, "../../../scheduling/src/wire.ts"), "utf8");
     for (const source of [widget, server]) {
       expect(source).toContain("managedByCompany: { href: string | null } | null;");
-      expect(source).toContain('Omit<SettingsWire, "saved" | "updatedAt" | "managedByCompany">');
+      // Tenancy 2b-1 adds `| "alertRecipients"` after it (9.7), so the
+      // Omit is matched up to managedByCompany, not to its closing ">".
+      expect(source).toContain('Omit<SettingsWire, "saved" | "updatedAt" | "managedByCompany"');
     }
   });
 });

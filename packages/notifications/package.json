@@ -1,7 +1,7 @@
 {
   "name": "@adminigloo/notifications",
   "version": "0.1.0",
-  "description": "An in-app inbox as a primitive: durable per-recipient notifications your events write and your header badge reads — no third-party inbox service holding your customers' activity.",
+  "description": "Alerts for each company and each person in it: a bell with their own company's alerts in plain words, each person's choice of in the app or also by email, one place where the owner picks who hears about new work, and alert emails under the company's name. Durable in your own database, with handlers for @adminigloo/notifications-widget.",
   "license": "UNLICENSED",
   "type": "module",
   "repository": {
@@ -22,23 +22,33 @@
       "types": "./dist/schema.d.ts",
       "import": "./dist/schema.js",
       "require": "./dist/schema.cjs"
-    }
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js",
+      "require": "./dist/testing.cjs"
+    },
+    "./sql/*": "./sql/*",
+    "./package.json": "./package.json"
   },
   "files": [
-    "dist"
+    "dist",
+    "sql",
+    "README.md"
   ],
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
     "access": "public"
   },
   "dependencies": {
-    "@adminigloo/db": "workspace:^"
+    "uuidv7": "^1.2.1"
   },
   "peerDependencies": {
     "drizzle-orm": "catalog:peers",
     "zod": "catalog:peers"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "drizzle-orm": "catalog:",
     "zod": "catalog:"
   },

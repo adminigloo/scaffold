@@ -306,6 +306,7 @@ export function settingsWire(extra: Partial<EstimatorSettingsWire> = {}): Estima
     updatedAt: "2026-11-02T15:00:00.000Z",
     managedByCompany: null,
     aiBudgetCeilingCents: null,
+    alertRecipients: null,
     ...extra,
   };
 }

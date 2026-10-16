@@ -10,6 +10,7 @@ import {
   jsonResponse,
   matchRoute,
   readJson,
+  settleBeforeAnswering,
 } from "./http.js";
 import { TENANCY_OPERATOR_ROUTES, type TenancyOperatorRouteKind } from "./routes.js";
 import { adminCompanyDetailToWire, adminCompanyListToWire, adminPeopleToWire, adminPersonToWire } from "./to-wire.js";
@@ -145,26 +146,40 @@ export function createTenancyOperatorHandlers(options: CreateTenancyOperatorHand
       }
       const { kind, params } = matched.found;
       const route = TENANCY_OPERATOR_ROUTES.find((r) => r.kind === kind)!;
-      try {
-        if (route.method === "POST" && isCrossOriginRequest(req)) return codeResponse("cross_site", noun);
-        const principal = await options.principal(req);
-        if (!principal) return codeResponse("signed_out", noun);
-        if (route.bucket && options.limit) {
-          const verdict = await options.limit({ bucket: route.bucket, key: `user:${principal.userId}` });
-          if (!verdict.allowed) {
-            return codeResponse("rate_limited", noun, { "retry-after": String(Math.max(1, Math.ceil(verdict.retryAfterSeconds ?? 60))) });
-          }
-        }
-        return await run(req, kind, params, principal.userId);
-      } catch (error) {
-        if (error instanceof TenancyError) return errorResponse(error.code, error.message, error.details);
-        try {
-          await options.onError?.(error, req);
-        } catch {
-          /* the reporter failing must not change the answer */
-        }
-        return codeResponse("internal", noun);
-      }
+      const response = await answer(req, route, kind, params);
+      // Tenancy 2b-1 (8.1): a POST (suspend, reactivate, a new owner) is
+      // answered only after its events settled, bounded: see handlers.ts.
+      if (route.method === "POST") await settleBeforeAnswering(tenancy);
+      return response;
     },
   };
+
+  /** One route's answer: the same-origin, sign-in and rate checks, then the service (hoisted; `handle` settles events after it). */
+  async function answer(
+    req: Request,
+    route: (typeof TENANCY_OPERATOR_ROUTES)[number],
+    kind: TenancyOperatorRouteKind,
+    params: Readonly<Record<string, string>>,
+  ): Promise<Response> {
+    try {
+      if (route.method === "POST" && isCrossOriginRequest(req)) return codeResponse("cross_site", noun);
+      const principal = await options.principal(req);
+      if (!principal) return codeResponse("signed_out", noun);
+      if (route.bucket && options.limit) {
+        const verdict = await options.limit({ bucket: route.bucket, key: `user:${principal.userId}` });
+        if (!verdict.allowed) {
+          return codeResponse("rate_limited", noun, { "retry-after": String(Math.max(1, Math.ceil(verdict.retryAfterSeconds ?? 60))) });
+        }
+      }
+      return await run(req, kind, params, principal.userId);
+    } catch (error) {
+      if (error instanceof TenancyError) return errorResponse(error.code, error.message, error.details);
+      try {
+        await options.onError?.(error, req);
+      } catch {
+        /* the reporter failing must not change the answer */
+      }
+      return codeResponse("internal", noun);
+    }
+  }
 }

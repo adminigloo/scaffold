@@ -5,3 +5,5 @@ dist
 .env.local
 .vercel
 *.tsbuildinfo
+# Files kept on this computer while developing (no Blob store connected yet).
+.data/

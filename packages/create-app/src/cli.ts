@@ -194,13 +194,17 @@ export const HELP = `
   --seo-reports        SEO & AEO self-audits: the site crawls its own sitemap and
     / --no-seo-reports scores how search and answer engines read it, receipts in
                        your own database. The report page rides the admin shell.
-  --notifications      An in-app inbox: durable per-recipient rows your events
+  --notifications      Alerts: a bell in the header, an alerts page, and Alert
     / --no-notifications
-                       write and your badge reads. Ships the primitive and the
-                       inbox page; producers are yours to wire.
-  --storage            Tenant-scoped file storage: rows in your own database,
-    / --no-storage     bytes behind an adapter you own (Vercel Blob as emitted).
-                       The library page rides the admin shell.
+                       settings, where each person picks "in the app" or "in
+                       the app and by email" and the owner picks who hears
+                       about new work. Every installed feature raises its own
+                       alerts (new requests and leads, quotes, invoices, emails
+                       that didn't go, the team), each company's its own.
+  --storage            Photos and files, kept private: on visits, estimates and
+    / --no-storage     invoices, a Files screen with each company's storage
+                       allowance, and the company logo. Needs a second, private
+                       Vercel Blob store when deployed (DEPLOYMENT.md).
   --assistant          The AI assistant's editable brain: a personality stored
     / --no-assistant   as versioned, revertible rows an admin edits without a
                        deploy, plus the assemblePrompt function your AI route
@@ -250,6 +254,13 @@ export const HELP = `
 
   See \`add --help\`. It wires the feature in the way generating with it would
   have, and never overwrites a file you have edited.
+
+  To bring a project an earlier create-app made up to this version (its
+  packages, its files, and a list of exactly what's left for you to merge):
+
+    pnpm dlx @adminigloo/create-app upgrade [--dir <path>]
+
+  See \`upgrade --help\`.
 `.trimStart();
 
 /**
@@ -324,13 +335,13 @@ export async function collectAnswers(
   const includeNotifications =
     flags.notifications ??
     (await prompter.confirm(
-      "In-app notifications? A durable inbox your events write and your badge reads.",
+      "Alerts? A bell in the header, an alerts page, and each person's choice of in the app or by email.",
       DEFAULT_ANSWERS.includeNotifications,
     ));
   const includeStorage =
     flags.storage ??
     (await prompter.confirm(
-      "File storage? Tenant-scoped uploads with the rows in your own database.",
+      "Photos and files? Kept private, on visits, estimates and invoices, with a Files screen.",
       DEFAULT_ANSWERS.includeStorage,
     ));
   const includeAssistant =
@@ -591,22 +602,64 @@ export function nextSteps(answers: Answers, targetDir: string): string {
   }
 
   if (answers.includeNotifications) {
+    // Tenancy 2b-1: every installed feature's alerts are wired by the
+    // generator (no longer "producers are yours to wire"), so what is left
+    // to say is where the choices live and what makes the emails go. The
+    // settings page is the company's own in a companies project, the admin
+    // panel's in a single business, and absent with no panel (13.4).
+    const companies = answers.tenantNoun !== "none";
+    const settingsPage = companies
+      ? "/app/alerts/settings"
+      : answers.adminShell !== "none"
+        ? "/admin/alerts/settings"
+        : null;
     lines.push(
-      "Notifications ship as a primitive: the inbox reads rows, and your events",
-      "write them. Wire your first producer — feedback's onEvent hook is the",
-      "proven shape — or the inbox stays honestly empty.",
+      "Alerts are on: every feature you installed raises its own (new",
+      `requests and leads, quote answers, invoices, emails that didn't go${companies ? ", the team" : ""}),`,
+      "in the bell in the header.",
+      ...(settingsPage
+        ? [
+            `At ${settingsPage} each person picks "In the app" or "In the app and`,
+            'by email", and the owner picks who hears about new work.',
+          ]
+        : ["Staff get the bell; Alert settings come with the admin panel (--admin)."]),
+      ...(answers.includeComms && answers.includeEmail
+        ? [
+            "Alert emails go out once RESEND_API_KEY is set. Set CRON_SECRET too:",
+            "/api/cron/alerts retries an alert email that didn't go and clears old",
+            "read alerts.",
+          ]
+        : [
+            "Alerts stay in the app: their email copies come with --comms and --email.",
+            "Set CRON_SECRET so /api/cron/alerts clears old read alerts.",
+          ]),
       "",
     );
   }
 
-  if (answers.includeStorage && !answers.includeFeedback) {
+  if (answers.includeStorage) {
+    // Tenancy 2b-1: files are private, kept on this computer while
+    // developing (review BO-08) and in a SECOND, private Blob store once
+    // deployed (13.7, 13.9). The public store (BLOB_READ_WRITE_TOKEN) keeps
+    // only a company's logo — and feedback screenshots, which feedback's own
+    // block above names.
     lines.push(
-      // Feedback's block already explains the same variable when both are on.
-      "File uploads turn on with BLOB_READ_WRITE_TOKEN (Vercel -> Storage ->",
-      "Blob). Until then /admin/files says exactly that, in one sentence.",
+      "Photos and files are kept private. While you develop (pnpm dev) they're",
+      "kept on this computer, in .data/files. Deployed, they need a second",
+      "Vercel Blob store with access Private, connected with the prefix",
+      answers.tenantNoun !== "none"
+        ? "BLOB_PRIVATE (the store behind BLOB_READ_WRITE_TOKEN keeps company logos)."
+        : "BLOB_PRIVATE.",
+      "DEPLOYMENT.md has the steps; until then the screens say files can't be added.",
       "",
     );
   }
+
+  // A companies project's features are each company's own: its screens under
+  // /app, its public pages under /t/{web address} (Tenancy 2a). The /admin
+  // paths below are a single business's, and a companies project has none of
+  // them, so its steps name the company's own pages.
+  const companies = answers.tenantNoun !== "none";
 
   if (answers.includeScheduling) {
     const emails = answers.includeComms && answers.includeEmail;
@@ -615,15 +668,32 @@ export function nextSteps(answers: Answers, targetDir: string): string {
       // than a demo. The terminal right after generating is the only
       // documentation that reliably gets read. Only pages this project has:
       // scheduling is refused without an admin panel (assertAnswersCompatible).
-      "Scheduling:",
-      "  1. Online booking starts OFF. Open /admin/schedule/settings, set the",
-      "     business name, time zone, phone, services, crews and hours, then",
-      "     switch on \"Take bookings online\". Customers book at /book-visit.",
-      "  2. Staff answer requests and run the week at /admin/schedule.",
-      "  3. Crews: each crew member signs in once at /sign-in; then pick them",
-      "     for their crew in Schedule settings → Crews. That gives them",
-      "     Today's route (/admin/schedule/today) on their phone — their own",
-      "     stops, nothing else. No developer, no database.",
+      ...(companies
+        ? [
+            `Scheduling (each ${answers.tenantNoun.toLowerCase()} runs its own):`,
+            "  1. Online booking starts OFF. The owner opens Schedule settings",
+            "     (/app/schedule/settings), sets the services, crews and hours, then",
+            "     switches on \"Take bookings online\". The name, time zone and phone",
+            "     come from /settings/company. Customers book at",
+            "     /t/{its web address}/book-visit.",
+            "  2. Its people answer requests and run the week at /app/schedule.",
+            "  3. Crews: the owner invites each crew member at /settings/team with",
+            "     the Crew role, then picks them for their crew in Schedule settings",
+            "     → Crews. That gives them Today's route (/app/schedule/today) on",
+            "     their phone — their own stops, nothing else. No developer, no",
+            "     database.",
+          ]
+        : [
+            "Scheduling:",
+            "  1. Online booking starts OFF. Open /admin/schedule/settings, set the",
+            "     business name, time zone, phone, services, crews and hours, then",
+            "     switch on \"Take bookings online\". Customers book at /book-visit.",
+            "  2. Staff answer requests and run the week at /admin/schedule.",
+            "  3. Crews: each crew member signs in once at /sign-in; then pick them",
+            "     for their crew in Schedule settings → Crews. That gives them",
+            "     Today's route (/admin/schedule/today) on their phone — their own",
+            "     stops, nothing else. No developer, no database.",
+          ]),
       ...(emails
         ? [
             "  4. Set CRON_SECRET on the deployment: reminders and expiry notices",
@@ -660,20 +730,39 @@ export function nextSteps(answers: Answers, targetDir: string): string {
       // pages this project has: the estimator is refused without an admin
       // panel (assertAnswersCompatible), and /book-visit and the invoice step
       // are named only when scheduling and invoicing were installed with it.
-      "Estimator:",
-      "  1. Save your business name, sales tax and labor rate at",
-      "     /admin/estimator/settings. Until you do, /estimate is closed and no",
-      "     quote can be sent.",
-      "  2. Build your price book at /admin/estimator: your products, priced",
-      "     from your own supplies, labor and markup — or \"Load a sample",
-      "     catalog\" to start from an example. A product stays off /estimate",
-      "     until you turn it on; nothing is added for you.",
-      "  3. Customers get a price at /estimate. Each one they save is a lead in",
-      "     /admin/estimates: edit it, then send the quote. They accept it on",
-      "     the page the email links to.",
-      ...(answers.includeScheduling
-        ? ["     An accepted quote books the visit at /book-visit in one click."]
-        : []),
+      ...(companies
+        ? [
+            `Estimator (each ${answers.tenantNoun.toLowerCase()} runs its own):`,
+            "  1. The owner saves the sales tax and labor rate in Estimate settings",
+            "     (/app/estimates/settings); the name comes from /settings/company.",
+            "     Until then its estimate page is closed and no quote can be sent.",
+            "  2. It builds its price book at /app/price-book: its products, priced",
+            "     from its own supplies, labor and markup — or \"Load a sample",
+            "     catalog\" to start from an example. A product stays off the",
+            "     estimate page until it's turned on; nothing is added for it.",
+            "  3. Customers get a price at /t/{its web address}/estimate. Each one",
+            "     they save is a lead in /app/estimates: edit it, then send the",
+            "     quote. They accept it on the page the email links to.",
+            ...(answers.includeScheduling
+              ? [`     An accepted quote books the visit on the ${answers.tenantNoun.toLowerCase()}'s booking page in one click.`]
+              : []),
+          ]
+        : [
+            "Estimator:",
+            "  1. Save your business name, sales tax and labor rate at",
+            "     /admin/estimator/settings. Until you do, /estimate is closed and no",
+            "     quote can be sent.",
+            "  2. Build your price book at /admin/estimator: your products, priced",
+            "     from your own supplies, labor and markup — or \"Load a sample",
+            "     catalog\" to start from an example. A product stays off /estimate",
+            "     until you turn it on; nothing is added for you.",
+            "  3. Customers get a price at /estimate. Each one they save is a lead in",
+            "     /admin/estimates: edit it, then send the quote. They accept it on",
+            "     the page the email links to.",
+            ...(answers.includeScheduling
+              ? ["     An accepted quote books the visit at /book-visit in one click."]
+              : []),
+          ]),
       ...(answers.includeInvoicing
         ? ["     An accepted quote becomes an invoice in one click."]
         : []),
@@ -686,8 +775,10 @@ export function nextSteps(answers: Answers, targetDir: string): string {
         : []),
       ...(answers.includeStorage
         ? [
-            "Customers' photos are kept with their estimate once",
-            "BLOB_READ_WRITE_TOKEN is set.",
+            // Tenancy 2b-1 (contract 10.5): the estimator's photos are on the
+            // PRIVATE files store now, not the public Blob store.
+            "Customers' photos are kept privately with their estimate: on this",
+            "computer while you develop, in the private Blob store once deployed.",
           ]
         : [
             "Customers' photos are not kept: this project has no file storage.",
@@ -710,7 +801,7 @@ export function nextSteps(answers: Answers, targetDir: string): string {
       lines.push(
         // Said plainly: a lead nobody is told about is a lead found days late.
         "This project sends no estimate emails: they need both --comms and",
-        "--email. New leads wait in /admin/estimates, and you copy the quote",
+        `--email. New leads wait in ${companies ? "/app/estimates" : "/admin/estimates"}, and you copy the quote`,
         "link to the customer yourself. To add them later:",
         "",
         ...(answers.includeComms ? [] : ["  pnpm dlx @adminigloo/create-app add comms"]),

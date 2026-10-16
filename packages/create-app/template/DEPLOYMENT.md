@@ -210,12 +210,14 @@ tighten the comms cron, as with reminders.
 
 The same `CRON_SECRET` covers every route.
 <!-- adminigloo:company-crons -->
+<!-- adminigloo:alerts-files -->
 
 ### Estimator: photos and photo reading
 
-A customer's photo is kept with their estimate in the project's file storage
-(`BLOB_READ_WRITE_TOKEN`, Vercel → Storage → Blob). Without it photos are not
-kept, and the staff screens say so.
+A customer's photo is kept with their estimate in the project's PRIVATE file
+storage (`BLOB_PRIVATE_READ_WRITE_TOKEN`, the second Blob store — "Photos and
+files: two Blob stores" above). Without it photos are not kept, and the staff
+screens say so.
 
 With `--ai`, the photo is read by Claude Haiku 4.5 (`ESTIMATOR_TAKEOFF_MODEL`
 to change it; the model needs its price in `MODEL_RATES`, `src/server/ai.ts`).
@@ -554,6 +556,7 @@ working. The production database has not been touched.
 | /admin says "The roles aren't installed yet" | the deploy's `db:seed:deploy` step | Re-run the deploy, or `pnpm db:seed` locally. |
 | /admin says "You do not have access" and you run the site | whether an administrator exists | Run the Admin grant workflow (production) or `pnpm admin:grant` (local/staging). |
 | Someone deleted in Clerk can still sign in | the Clerk webhook for that instance | Set it up (§5); deletions reach the app only through it. |
+| On Windows, `next build` (or `pnpm dev`) says `Module not found: Can't resolve '__SCOPE__/…-widget/admin'` although it is installed | how long the project folder's path is | pnpm keeps each package several folders deep inside `node_modules`, and the build can't read a file whose full path is over 260 characters. This project's `.npmrc` already keeps those folders short (`virtual-store-dir-max-length=40`); if it still happens, move the project to a short folder (`C:\sites\my-site`; under about 80 characters), delete `node_modules` and run `pnpm install` again. |
 
 ## 8. Demo data
 
@@ -567,3 +570,34 @@ whose `.env.local` was filled in with `vercel env pull`.
 Demo people are created under the `demo` identity provider with `.invalid`
 email addresses, so they can never collide with a real Clerk webhook and can
 never be sent mail.
+
+## 9. Upgrading to a newer create-app
+
+`adminigloo.json` records which create-app made this project. To bring the
+project up to a newer one — its packages, the files it wrote, and a list of
+exactly what is left for you — run, in the project's folder:
+
+```sh
+pnpm dlx @adminigloo/create-app upgrade
+```
+
+It fetches the create-app that made the project (through this project's own
+`.npmrc`, so `GITHUB_TOKEN` must be set) to see exactly what that version
+wrote, so it can tell a file you changed from one you didn't. Then it raises
+every `__SCOPE__` package in `package.json` to the version the new release
+needs (your own scripts and dependencies stay), writes the new files, rewrites
+every file you never changed, deletes the files the new version no longer
+uses (if you never changed them), and writes `<file>.new` beside each file you
+DID change. Those `.new` files, any retired file you had changed, and your own
+files that import a removed one are the only hand edits; it lists them all.
+`.env.local` is never touched; new variables are listed.
+
+Then `pnpm install`, `pnpm db:generate && pnpm db:migrate && pnpm db:seed`,
+`pnpm exec tsc --noEmit && pnpm test`, push to `staging` as for any change, and
+do what it printed for the versions crossed (below).
+
+`add <feature>` refuses a project an older create-app made — the new feature's
+files would be written for packages the project doesn't have yet — and says
+to run `upgrade` first.
+
+<!-- adminigloo:upgrade-notes -->

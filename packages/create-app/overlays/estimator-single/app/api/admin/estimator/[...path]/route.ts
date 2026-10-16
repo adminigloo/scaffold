@@ -1,5 +1,6 @@
 import { createEstimatorAdminHandlers } from "__SCOPE__/estimator";
 import { db } from "@/db";
+import { ALERTS_SETTINGS_HREF } from "@/server/alerts-links";
 import { authorizeEstimatorStaff, estimatorUrls, reportEstimatorError } from "@/server/estimator";
 import { ESTIMATOR_TENANT } from "@/server/estimator-staff";
 import { estimatorDelivery, onEstimatorEvent } from "@/server/estimator-notify";
@@ -9,6 +10,7 @@ import {
   estimatorLinkSeams,
   estimatorPhotoReadingOff,
   estimatorPhotoStore,
+  estimatorStaffPhotoStore,
   estimatorTakeoff,
 } from "@/server/estimator-services";
 
@@ -39,6 +41,9 @@ export const dynamic = "force-dynamic";
  * What the screens need from the rest of this project, each from a module
  * generated for what was installed:
  *
+ *   staffPhotoStore            staff's own photos of an estimate, kept apart from
+ *                              customers' (review SEC-02): never refused because
+ *                              strangers filled the customers' share
  *   photoStore / photoReading  the customer's photo on the estimate, and whether
  *                              a model reads them (the status says when not,
  *                              and photoReadingOff says WHY: never installed,
@@ -61,6 +66,7 @@ const admin = createEstimatorAdminHandlers({
   resolveTenant: () => ESTIMATOR_TENANT,
   authorize: authorizeEstimatorStaff,
   photoStore: estimatorPhotoStore,
+  staffPhotoStore: estimatorStaffPhotoStore,
   photoReading: Boolean(estimatorTakeoff),
   photoReadingOff: estimatorPhotoReadingOff,
   onEvent: onEstimatorEvent,
@@ -71,6 +77,11 @@ const admin = createEstimatorAdminHandlers({
   // "Turn into an invoice" asks the invoice staff key too (review SEC-2A-02).
   invoiceAccess: estimatorInvoiceAccess(),
   embedBaseUrl: estimatorUrls.embedBase,
+  // Who hears about new leads is chosen in Alert settings when this
+  // project has alerts (Tenancy 2b-1, D6): the settings screen links there
+  // instead of offering its own list. ALERTS_SETTINGS_HREF is generated —
+  // null without alerts, and the package keeps 2a's list.
+  alertsHref: ALERTS_SETTINGS_HREF,
   onError: reportEstimatorError,
 });
 

@@ -167,8 +167,11 @@ export function createTenancyService(options: CreateTenancyServiceOptions): Tena
     // Tenancy 2a: the feature packages' reads (no permission check; see profile-read.ts).
     resolvePublicCompany: (slug) => resolvePublicCompany(ctx, slug),
     companyProfile: (tenantId) => companyProfile(ctx, tenantId),
-    listMemberPeople: (tenantId) => listMemberPeople(ctx, tenantId),
+    listMemberPeople: (tenantId, options) => listMemberPeople(ctx, tenantId, options ?? {}),
     activeCompanyIds: () => activeCompanyIds(ctx),
+
+    // Tenancy 2b-1 (8.1): the handlers wait for the listeners before answering.
+    settleEvents: (timeoutMs) => ctx.settle(timeoutMs),
   };
   rememberCtx(service, ctx);
   return service;

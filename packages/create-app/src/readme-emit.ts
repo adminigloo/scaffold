@@ -53,6 +53,52 @@ export const TENANCY_2A_NOT_INCLUDED: readonly string[] = [
 ];
 
 /**
+ * Tenancy 2b-1's "Not included" list (contract 17.2), word for word — the same
+ * list every README that 2b-1 touched carries.
+ */
+export const TENANCY_2B1_NOT_INCLUDED: readonly string[] = [
+  "**The feedback board per company, and the complete board** — Tenancy 2b-2. It will keep screenshots as these private files and send its alerts through these notifications. Until then, feedback screenshots stay on the public Blob store as in 2a.",
+  "**The AI assistant per company** — Tenancy 2b-3.",
+  "**Website analytics, SEO/AEO and book-a-call (booking) per company** — Tenancy 2b-4.",
+  "**Text (SMS) and push alerts.** Alerts come in the app and by email — S9.",
+  "**Plans, limits and billing enforcement** — the billing chunk. Each company's storage allowance is one setting for everyone (`FILES_ALLOWANCE_MB`) until then; the seam the billing chunk fills is there.",
+  "**Stripe Connect** (customers paying a company by card).",
+  "**Custom domains.**",
+  "**Virus scanning of uploads.** Files are checked for their type and size only.",
+  "**Uploads over 4 MB, and uploads straight from the browser to storage.** Phone photos are made smaller before they're sent; other files over 4 MB are refused with a plain sentence.",
+  "**Serving files straight from S3 or R2 by presigned link.** Every private file is sent through the site's own route.",
+  "**Thumbnails.** Photos are shown at their (shrunk) size.",
+  "**Turning a kind of alert off.** Each kind comes in the app, or in the app and by email; who gets the work alerts is the owner's choice.",
+  "**Alerts from your other companies in the bell.** The bell shows the company you're working in.",
+  "**A daily or weekly digest of alerts.**",
+  "**Customers seeing files** (photos on their quote or invoice page).",
+  "**Editing the wording of the team alert email** beyond the Messages screen (it is the `team_alert` message there).",
+  "**Carrying 2a's per-feature alert address lists over.** With alerts installed, the people (and extra addresses) are chosen again in Alert settings; the old lists are no longer read.",
+  "**Alert settings in a single-business project without an admin shell.** Its staff get the bell; the office emails keep 2a's lists.",
+  "**A transactional outbox.** Alerts are written right after the change they report (D8); the events package (S2) brings the outbox.",
+  "**Crew alerts when the office moves, reassigns or cancels their visit.** Only a customer's change alerts the crew.",
+  "**An alert when a customer opens a quote** (invoices only).",
+  "**A history of cron runs, and an alert when a cron fails.**",
+  "**Alerts for the platform owner** (a new company, a company out of storage). A company's storage refusal is reported in `/admin/errors` once a day.",
+  "**Giving one company more storage than the others.** `FILES_ALLOWANCE_MB` is one number until the billing chunk.",
+  "**Checking an address before it gets a company's alert emails.** The owner adds up to five per group; the company's team sending allowance bounds what they get.",
+];
+
+/**
+ * 2a's items that 2b-1's list supersedes or restates, so a README never says
+ * a thing twice — or says it doesn't work once it does: notifications and
+ * files per company are delivered (the rest of that item is restated as
+ * 2b-2, 2b-3 and 2b-4), and Stripe Connect, plans and custom domains are
+ * restated word for word above.
+ */
+export const TENANCY_2A_SUPERSEDED: ReadonlySet<string> = new Set([
+  TENANCY_2A_NOT_INCLUDED[0]!,
+  TENANCY_2A_NOT_INCLUDED[1]!,
+  TENANCY_2A_NOT_INCLUDED[2]!,
+  TENANCY_2A_NOT_INCLUDED[3]!,
+]);
+
+/**
  * The items that are only about companies — a single-business project has no
  * company pages, no company roles and no company emails, so its README leaves
  * them out (review R2 TB2-07) instead of describing what it doesn't have.
@@ -71,12 +117,92 @@ const COMPANIES_ONLY_ITEMS: ReadonlySet<string> = new Set([
   TENANCY_2A_NOT_INCLUDED[12]!,
   TENANCY_2A_NOT_INCLUDED[13]!,
   TENANCY_2A_NOT_INCLUDED[14]!,
+  // Tenancy 2b-1's items about companies: per-company boards, a company's
+  // card payments and domain, the bell's other companies, one company's
+  // storage.
+  TENANCY_2B1_NOT_INCLUDED[0]!,
+  TENANCY_2B1_NOT_INCLUDED[1]!,
+  TENANCY_2B1_NOT_INCLUDED[2]!,
+  TENANCY_2B1_NOT_INCLUDED[4]!,
+  TENANCY_2B1_NOT_INCLUDED[5]!,
+  TENANCY_2B1_NOT_INCLUDED[6]!,
+  TENANCY_2B1_NOT_INCLUDED[12]!,
+  TENANCY_2B1_NOT_INCLUDED[23]!,
 ]);
 
-/** The "Not included" list for this project's mode: 2a's list, then Tenancy 1's still-true items. */
+/** The items only a single-business project has (a companies project always has its alert settings). */
+const SINGLE_ONLY_ITEMS: ReadonlySet<string> = new Set([TENANCY_2B1_NOT_INCLUDED[17]!]);
+
+/**
+ * The "Not included" list for this project's mode: 2b-1's list, 2a's still-true
+ * items, then Tenancy 1's.
+ */
 export function notIncludedFor(companies: boolean): readonly string[] {
-  const all = [...TENANCY_2A_NOT_INCLUDED, ...TENANCY_1_NOT_INCLUDED];
-  return companies ? all : all.filter((item) => !COMPANIES_ONLY_ITEMS.has(item));
+  const all = [
+    ...TENANCY_2B1_NOT_INCLUDED,
+    ...TENANCY_2A_NOT_INCLUDED.filter((item) => !TENANCY_2A_SUPERSEDED.has(item)),
+    ...TENANCY_1_NOT_INCLUDED,
+  ];
+  return companies
+    ? all.filter((item) => !SINGLE_ONLY_ITEMS.has(item))
+    : all.filter((item) => !COMPANIES_ONLY_ITEMS.has(item));
+}
+
+/**
+ * The "Alerts and files" section (Tenancy 2b-1, 13.9): what each company (or
+ * the one business) gets — the bell, the choices, who hears about new work,
+ * files on visits, estimates and invoices, the Files screen and its
+ * allowance. Empty without notifications and storage.
+ */
+export function alertsAndFilesSection(answers: ProjectManifest["answers"]): string[] {
+  const notifications = answers.includeNotifications;
+  const storage = answers.includeStorage;
+  if (!notifications && !storage) return [];
+  const companies = answers.tenantNoun !== "none";
+  const shell = answers.adminShell !== "none";
+  const noun = companies ? tenantLabel(answers).toLowerCase() : "business";
+  const at = (companyPath: string, adminPath: string) => (companies ? companyPath : adminPath);
+  const screens = companies || shell;
+  const records = [
+    ...(answers.includeScheduling ? ["visits"] : []),
+    ...(answers.includeEstimator ? ["estimates"] : []),
+    ...(answers.includeInvoicing ? ["invoices"] : []),
+  ];
+  const lines: string[] = ["### Alerts and files", ""];
+  if (notifications) {
+    lines.push(
+      screens
+        ? `- **The bell** in the header shows the ${noun}'s unread alerts, on a phone too, and opens each one where it happened; the full list is at ${at("/app/alerts", "/admin/alerts")}.`
+        : "- **The bell** in the header shows your staff the unread alerts, on a phone too, and opens each one where it happened.",
+      ...(screens
+        ? [
+            `- **Alert settings** (${at("/app/alerts/settings", "/admin/alerts/settings")}): each person chooses, kind by kind, "In the app" or "In the app and by email".${
+              records.length > 0 || answers.includeComms
+                ? ` The owner chooses who hears about new work — visit requests, leads and invoices: "The owner" (their copy at the business email in ${companies ? "company " : ""}settings), or named people plus up to five extra addresses — and the office emails go to exactly those people, one email per lead. An office email that fails is sent again by the alerts cron.`
+                : ""
+            }`,
+          ]
+        : []),
+      `- **Alert emails** go out ${companies ? `as the ${noun}, ` : ""}through Messages (the "Team alert" message, which the owner can reword or switch off), counted in ${companies ? `the ${noun}'s own` : "their own"} team sending allowance, never in the one customers' quotes and invoices use.`,
+    );
+  }
+  if (storage) {
+    lines.push(
+      ...(records.length > 0
+        ? [
+            `- **Photos and files** on ${list(records)}${answers.includeScheduling ? ` (a visit's are at ${at("/app/schedule/visits/{id}/files", "/admin/schedule/visits/{id}/files")}, from the calendar and the crew's day)` : ""}. Who may see a record's files is decided by that record's own permissions.${answers.includeEstimator ? " Customers' estimate photos are kept the same way, attached to their estimate." : ""}`,
+          ]
+        : []),
+      ...(screens
+        ? [
+            `- **Files** (${at("/app/files", "/admin/files")}): everything the ${noun} keeps, its usage against its allowance (\`FILES_ALLOWANCE_MB\`, 5 GB by default), and a link to copy that lasts at most an hour.`,
+          ]
+        : []),
+      `- **Private by default.** A file is opened through this site's own routes by someone allowed to see it; a copied link stops working when its maker leaves${companies ? ` the ${noun} or the ${noun} is suspended` : ""}. The logo is the one public file, under an address nobody can guess. Files need a second, private Blob store (DEPLOYMENT.md); while developing with no store, they are kept in \`.data/files\`.`,
+    );
+  }
+  lines.push("");
+  return lines;
 }
 
 /** The installed field-service features, in words, for the README's first paragraph. */
@@ -208,11 +334,11 @@ export function renderProjectReadme(manifest: ProjectManifest): string {
         "",
         `**Roles.** Owners and admins manage everything; a member works the estimates, the schedule and the invoices; ${answers.includeScheduling ? "a crew member sees only today's route; " : ""}a viewer reads. Each screen and each route checks the person's role in THAT ${noun}.`,
         "",
-        `**Emails.** ${answers.includeComms ? `Every customer email goes out with the ${noun}'s name (on your one sending address, \`EMAIL_FROM\`) and its reply-to, links to the ${noun}'s own pages, and the office notices go to the ${noun}'s own addresses — never to you.` : `This project was generated without messages (comms), so nothing is emailed about visits, quotes or invoices; customers keep the links the pages hand them.`}`,
+        `**Emails.** ${answers.includeComms ? `Every customer email goes out with the ${noun}'s name (on your one sending address, \`EMAIL_FROM\`) and its reply-to, links to the ${noun}'s own pages, and the office notices go to ${answers.includeNotifications ? `the people the owner names in Alert settings` : `the ${noun}'s own addresses`} — never to you.` : `This project was generated without messages (comms), so nothing is emailed about visits, quotes or invoices; customers keep the links the pages hand them.`}`,
         "",
         `**Crons.** ${answers.includeScheduling || answers.includeEstimator || answers.includeComms ? `Each daily job serves every active ${noun}, skips a suspended one, and reports one ${noun}'s failure without stopping the rest (DEPLOYMENT.md, \`vercel.json\` crons).` : `None of these features needs one.`}`,
         "",
-        `**Proven.** \`pnpm test\` proves, on this project's own schema, that one ${noun} can't reach another's rows through any feature route (src/server/__tests__/feature-isolation.test.ts)${answers.includeScheduling || answers.includeEstimator || answers.includeComms ? ", that the crons serve every active one (company-crons.test.ts)" : ""}${answers.includeComms && answers.includeEmail ? ", and that each one's email goes out under its own name (company-email.test.ts)" : ""}.`,
+        `**Proven.** \`pnpm test\` proves, on this project's own schema, that one ${noun} can't reach another's rows through any feature route (src/server/__tests__/feature-isolation.test.ts)${answers.includeScheduling || answers.includeEstimator || answers.includeComms ? ", that the crons serve every active one (company-crons.test.ts)" : ""}${answers.includeComms && answers.includeEmail ? ", that each one's email goes out under its own name (company-email.test.ts)" : ""}${answers.includeNotifications ? ", that its alerts are its own (company-alerts.test.ts)" : ""}${answers.includeStorage ? ", that its files are its own and private (company-files.test.ts)" : ""}.`,
         "",
       );
     }
@@ -250,6 +376,7 @@ export function renderProjectReadme(manifest: ProjectManifest): string {
     );
   }
 
+  lines.push(...alertsAndFilesSection(answers));
   lines.push("### Not included", "", ...notIncludedFor(companies).map((item) => `- ${item}`), "");
 
   const tables = primaryTables(answers);
@@ -269,6 +396,15 @@ export function renderProjectReadme(manifest: ProjectManifest): string {
       "",
     );
   }
+
+  // How this project reaches a newer create-app (review BUY-01): one command,
+  // and where its by-hand steps are written down.
+  lines.push(
+    "## Upgrading",
+    "",
+    `Made by create-app ${manifest.generator.version} (adminigloo.json). To bring it up to a newer create-app — its packages, the files it wrote, and a list of exactly what is left for you to merge — run \`pnpm dlx @adminigloo/create-app upgrade\` in this folder. It never overwrites a file you changed (the new version lands beside it as \`<file>.new\`) and never touches \`.env.local\`. DEPLOYMENT.md §9 says what it does, and what each release asks of you after it.`,
+    "",
+  );
 
   lines.push(
     "## Installed packages",

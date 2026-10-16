@@ -365,3 +365,16 @@ export function noticeParts(minutes: number): { amount: number; unit: "hours" | 
 export function noticeMinutes(amount: number, unit: "hours" | "days"): number {
   return Math.round(amount * (unit === "days" ? 1440 : 60));
 }
+
+// ---------------------------------------------------------------------------
+// Links a host hands in as patterns (Tenancy 2b-1)
+// ---------------------------------------------------------------------------
+
+/**
+ * A host's link pattern with `{id}` filled in, URL-encoded (2a 7.10's rule):
+ * "/app/schedule/visits/{id}/files" → "/app/schedule/visits/v%201/files". An
+ * id can never add a "/", a "?" or a space to the path it lands in.
+ */
+export function fillIdPattern(pattern: string, id: string): string {
+  return pattern.split("{id}").join(encodeURIComponent(id));
+}

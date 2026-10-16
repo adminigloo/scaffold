@@ -21,6 +21,100 @@ export interface EstimatorPhotoStore {
   delete(input: { tenantId: string; fileId: string }): Promise<void>;
   /** A URL staff can open now (a signed URL, say). Default: the stored url. */
   urlFor?(input: { tenantId: string; fileId: string; url: string }): string | Promise<string>;
+  /**
+   * Puts the stored photo on its estimate (Tenancy 2b-1, review BO-13), so a
+   * host's file storage files it under "Estimate 1042 · Pat Rivera" and the
+   * estimate's own permissions decide who opens it. Called after the
+   * estimate's write commits; a throw is reported (step "photo-attach") and
+   * changes nothing else. @adminigloo/storage's
+   * `purposeStore("estimator.photo")` has it; a 0.4 store without it is fine.
+   */
+  attach?(input: { tenantId: string; fileId: string; record: { type: "estimator.estimate"; id: string } }): Promise<void>;
+}
+
+/** Told about a photo step that failed after the estimate's write committed (the write stands). */
+export type PhotoStepReporter = (error: unknown, context: { tenantId: string; estimateId: string; step: "photo-attach" }) => void;
+
+/**
+ * Put stored photos on their estimate (`attach`), one by one, each contained:
+ * the estimate and its photo rows are already committed, so a store that
+ * refuses changes nothing but where the Files screen lists the file (it
+ * stays "not on a record" until the files cron or a retry puts it there).
+ */
+export async function attachPhotosToEstimate(
+  store: EstimatorPhotoStore | null | undefined,
+  input: { tenantId: string; estimateId: string; fileIds: readonly string[] },
+  onError?: PhotoStepReporter,
+): Promise<void> {
+  if (!store?.attach || input.fileIds.length === 0) return;
+  for (const fileId of [...new Set(input.fileIds)]) {
+    try {
+      await store.attach({ tenantId: input.tenantId, fileId, record: { type: "estimator.estimate", id: input.estimateId } });
+    } catch (error) {
+      try {
+        if (onError) onError(error, { tenantId: input.tenantId, estimateId: input.estimateId, step: "photo-attach" });
+        else console.error("[@adminigloo/estimator] a photo couldn't be put on its estimate", { estimateId: input.estimateId }, error);
+      } catch {
+        /* a broken reporter must not undo a saved estimate */
+      }
+    }
+  }
+}
+
+/** Who a refused photo is answered to: the customer on the public form, or staff in the editor. */
+type PhotoAudience = "public" | "staff";
+
+/** Staff, when the share kept for estimate photos is full: the photos come off estimates, not the Files screen (review SEC-02). */
+export const STAFF_SHARE_FULL_MESSAGE =
+  "The room kept for estimate photos is full. Remove photos you don't need from your estimates, then try again.";
+/** Staff, when the company's storage is full. */
+export const STAFF_ROOM_FULL_MESSAGE =
+  "There's no room left for photos. The owner can free some up on the Files screen, or remove photos from estimates, then try again.";
+
+/**
+ * A file store's refusal, as the estimator's own sentence (Tenancy 2b-1,
+ * review G6), or null for anything else.
+ *
+ * CHECKED STRUCTURALLY: `name === "StorageError"` and its `code`, never
+ * `instanceof`, so the estimator never imports @adminigloo/storage (2a D4).
+ * The public `photo` route then answers 4xx (never 500), a photo reading
+ * keeps going without the copy, and the lead still goes in without it.
+ *
+ *   storage_full (the company's room, or the share customers' photos may use)
+ *                          → photo_limit
+ *   file_type, file_too_big → photo_invalid, the existing sentence
+ *   storage_off            → photos_disabled
+ *
+ * CONTRACT: 10.5 names PHOTO_CAP_MESSAGE for `storage_full`. That is the
+ * customer's sentence ("send your estimate without more"); staff adding a
+ * photo in the editor read their own, under the same code, and it names a
+ * place that CAN make room (review SEC-02):
+ *
+ *   - the share kept for estimate photos is full (`share: true`, only when
+ *     staff photos still go to the customers' store, a host without
+ *     `staffPhotoStore`): the Files screen can't remove these photos, so
+ *     staff are told to remove photos from their estimates;
+ *   - the company itself is full: the owner can free room on the Files
+ *     screen (other files can go there), or photos can come off estimates.
+ */
+export function photoStoreRefusal(error: unknown, audience: PhotoAudience): EstimatorInputError | null {
+  if (!error || typeof error !== "object" || (error as { name?: unknown }).name !== "StorageError") return null;
+  switch ((error as { code?: unknown }).code) {
+    case "storage_full":
+      if (audience === "public") return new EstimatorInputError("photo_limit", PHOTO_CAP_MESSAGE);
+      return new EstimatorInputError("photo_limit", (error as { share?: unknown }).share === true ? STAFF_SHARE_FULL_MESSAGE : STAFF_ROOM_FULL_MESSAGE);
+    case "file_type":
+      return new EstimatorInputError("photo_invalid", photoRefusalMessage("unsupported_type"));
+    case "file_too_big":
+      return new EstimatorInputError("photo_invalid", photoRefusalMessage("too_large"));
+    case "storage_off":
+      return new EstimatorInputError(
+        "photos_disabled",
+        audience === "public" ? "This estimator doesn't take photos." : "Photos can't be kept: no file storage is connected.",
+      );
+    default:
+      return null;
+  }
 }
 
 /** A customer may attach this many photos to a lead; staff this many to an estimate. */
@@ -68,8 +162,21 @@ export async function storePhoto(
   },
 ): Promise<PhotoRow> {
   const now = input.now ?? new Date();
-  const filename = `estimate-photo-${input.sha256.slice(0, 12)}.${EXTENSIONS[input.mediaType]}`;
-  const stored = await store.put({ tenantId: input.tenantId, bytes: input.bytes, contentType: input.mediaType, filename });
+  // A NAME A PERSON READS on the Files screen (review BO-12), never a hash:
+  // "estimate-photo-b058938721a7.jpg" was an id on a screen. Next to it the
+  // screen says which estimate and customer it is on. Not unique: a store
+  // keeps the bytes under its own key (storage's are random).
+  const filename = `${input.source === "staff" ? "Estimate photo" : "Customer photo"}.${EXTENSIONS[input.mediaType]}`;
+  let stored: { fileId: string; url: string };
+  try {
+    stored = await store.put({ tenantId: input.tenantId, bytes: input.bytes, contentType: input.mediaType, filename });
+  } catch (error) {
+    // THE ONE PLACE that calls `store.put`: a file store's refusal (full,
+    // wrong type, too big, switched off) becomes the estimator's own
+    // sentence here, for every caller (review G6). Anything else is thrown
+    // as it was.
+    throw photoStoreRefusal(error, input.source) ?? error;
+  }
   try {
     const [row] = (await db
       .insert(estimatorPhotos)
@@ -118,8 +225,8 @@ export async function findReusablePhoto(db: EstimatorDb, tenantId: string, sha25
 }
 
 /**
- * How many photos visitors may leave in the business's storage without
- * sending an estimate, per UTC day: per visitor (by `requesterKey`, an IP by
+ * How many photos visitors may leave in the business's storage in any 24
+ * hours, sent with a lead or not: per visitor (by `requesterKey`, an IP by
  * default) and for the whole business.
  */
 export interface PublicPhotoLimits {
@@ -141,7 +248,7 @@ export const PHOTO_CAP_MESSAGE =
  * Keep a customer's photo for their lead (the public `photo` route, and step 5
  * of a reading): reuse the tenant's unlinked copy of the same bytes from the
  * last 24 h, else store it — unless the visitor (or the business) is over the
- * day's cap of photos nobody has sent (`photo_limit`).
+ * cap of customers' photos kept in the last 24 hours (`photo_limit`).
  *
  * WHY A CAP (review ADV-5). The route took any photo from anyone, and the
  * daily clean-up deletes only what nobody sent: one address could fill the
@@ -150,6 +257,12 @@ export const PHOTO_CAP_MESSAGE =
  * photos failed. Counted in the database, so it holds across serverless
  * instances. A visitor with no address (`requesterKey` null: no proxy headers)
  * shares ONE bucket with every other such visitor.
+ *
+ * SENT OR NOT (Tenancy 2b-1 review SEC-02). The cap once counted only the
+ * photos nobody had sent, so a junk lead with three photos emptied the
+ * count, and photos on a lead are never purged: a few addresses could fill
+ * the share kept for customers' photos for good in hours. Every customer
+ * photo kept in the last 24 hours counts now, on a lead or not.
  */
 export async function keepPublicPhoto(
   db: EstimatorDb,
@@ -164,20 +277,16 @@ export async function keepPublicPhoto(
   if (existing) return existing;
   const limits = { ...DEFAULT_PUBLIC_PHOTO_LIMITS, ...(options.limits ?? {}) };
   const since = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-  const unsent = and(
-    eq(estimatorPhotos.tenantId, tenantId),
-    eq(estimatorPhotos.source, "public"),
-    isNull(estimatorPhotos.estimateId),
-    gt(estimatorPhotos.createdAt, since),
-  );
-  const [byTenant] = (await db.select({ n: count() }).from(estimatorPhotos).where(unsent)) as Array<{ n: number | string }>;
+  // Every customer photo of the last 24 h, on a lead or not (review SEC-02).
+  const recent = and(eq(estimatorPhotos.tenantId, tenantId), eq(estimatorPhotos.source, "public"), gt(estimatorPhotos.createdAt, since));
+  const [byTenant] = (await db.select({ n: count() }).from(estimatorPhotos).where(recent)) as Array<{ n: number | string }>;
   if (Number(byTenant?.n ?? 0) >= limits.perTenantDaily) throw new EstimatorInputError("photo_limit", PHOTO_CAP_MESSAGE);
   const requesterHash = options.requesterHash ?? null;
   if (requesterHash) {
     const [byRequester] = (await db
       .select({ n: count() })
       .from(estimatorPhotos)
-      .where(and(unsent, eq(estimatorPhotos.requesterHash, requesterHash)))) as Array<{ n: number | string }>;
+      .where(and(recent, eq(estimatorPhotos.requesterHash, requesterHash)))) as Array<{ n: number | string }>;
     if (Number(byRequester?.n ?? 0) >= limits.perRequesterDaily) throw new EstimatorInputError("photo_limit", PHOTO_CAP_MESSAGE);
   }
   return storePhoto(db, store, { tenantId, ...photo, sha256, source: "public", now, requesterHash });
@@ -187,6 +296,10 @@ export async function keepPublicPhoto(
  * Staff add a photo to an estimate (any status): checked like a customer's,
  * at most 12 per estimate (`photo_limit`). Null when the estimate isn't this
  * tenant's.
+ *
+ * Tenancy 2b-1: once the row is written, the store is told which estimate
+ * the photo is on (`attach`, review BO-13); a refusal there is reported
+ * (`onError`, step "photo-attach") and the photo stays added.
  */
 export async function attachStaffPhoto(
   db: EstimatorDb,
@@ -194,7 +307,7 @@ export async function attachStaffPhoto(
   tenantId: string,
   estimateId: string,
   input: { imageBase64: string; mediaType: string },
-  options: { now?: Date } = {},
+  options: { now?: Date; onError?: PhotoStepReporter } = {},
 ): Promise<PhotoRow | null> {
   const photo = decodePhoto(input.imageBase64, input.mediaType);
   const [estimate] = (await db
@@ -210,7 +323,7 @@ export async function attachStaffPhoto(
   if (Number(counted?.n ?? 0) >= STAFF_PHOTO_LIMIT) {
     throw new EstimatorInputError("photo_limit", `An estimate can have up to ${STAFF_PHOTO_LIMIT} photos. Remove one first.`);
   }
-  return storePhoto(db, store, {
+  const row = await storePhoto(db, store, {
     tenantId,
     bytes: photo.bytes,
     mediaType: photo.mediaType,
@@ -221,13 +334,16 @@ export async function attachStaffPhoto(
     estimateId,
     now: options.now ?? new Date(),
   });
+  await attachPhotosToEstimate(store, { tenantId, estimateId, fileIds: [row.fileId] }, options.onError);
+  return row;
 }
 
 /**
  * Remove a photo from an estimate: the row first, then the bytes (a store that
  * fails leaves a file nobody points at, which costs pennies; the other order
  * would leave a row pointing at nothing). False when it isn't this tenant's
- * estimate's photo.
+ * estimate's photo. A staff photo is removed through `staffStore` when one is
+ * given (review SEC-02), a customer's through `store`.
  */
 export async function removeEstimatePhoto(
   db: EstimatorDb,
@@ -235,15 +351,17 @@ export async function removeEstimatePhoto(
   tenantId: string,
   estimateId: string,
   photoId: string,
+  staffStore?: EstimatorPhotoStore | null,
 ): Promise<boolean> {
   const [row] = (await db
     .delete(estimatorPhotos)
     .where(and(eq(estimatorPhotos.id, photoId), eq(estimatorPhotos.tenantId, tenantId), eq(estimatorPhotos.estimateId, estimateId)))
-    .returning({ fileId: estimatorPhotos.fileId })) as Array<{ fileId: string }>;
+    .returning({ fileId: estimatorPhotos.fileId, source: estimatorPhotos.source })) as Array<{ fileId: string; source: string }>;
   if (!row) return false;
-  if (store) {
+  const holder = storeFor(row.source, store, staffStore);
+  if (holder) {
     try {
-      await store.delete({ tenantId, fileId: row.fileId });
+      await holder.delete({ tenantId, fileId: row.fileId });
     } catch {
       /* the row is gone; an orphaned file is harmless */
     }
@@ -251,12 +369,28 @@ export async function removeEstimatePhoto(
   return true;
 }
 
-/** An estimate's photos, oldest first, with a URL staff can open now and the reading made from each. */
+/**
+ * The store that holds a photo of this source: staff's own (`staffStore`,
+ * review SEC-02) when given, else the one store. A staff photo added before
+ * a host passed `staffStore` is in `store`: @adminigloo/storage's purpose
+ * stores open and remove any of the company's files by id, so it still opens
+ * and goes; a host with stores of its own keeps them able to do the same.
+ */
+function storeFor(
+  source: string,
+  store: EstimatorPhotoStore | null | undefined,
+  staffStore: EstimatorPhotoStore | null | undefined,
+): EstimatorPhotoStore | null | undefined {
+  return source === "staff" && staffStore ? staffStore : store;
+}
+
+/** An estimate's photos, oldest first, with a URL staff can open now (from the store that holds each) and the reading made from each. */
 export async function listEstimatePhotos(
   db: EstimatorDb,
   tenantId: string,
   estimateId: string,
   store?: EstimatorPhotoStore,
+  staffStore?: EstimatorPhotoStore,
 ): Promise<EstimatePhoto[]> {
   const rows = (await db
     .select()
@@ -279,9 +413,10 @@ export async function listEstimatePhotos(
   const out: EstimatePhoto[] = [];
   for (const row of rows) {
     let url = row.url;
-    if (store?.urlFor) {
+    const holder = storeFor(row.source, store, staffStore);
+    if (holder?.urlFor) {
       try {
-        url = await store.urlFor({ tenantId, fileId: row.fileId, url: row.url });
+        url = await holder.urlFor({ tenantId, fileId: row.fileId, url: row.url });
       } catch {
         /* the stored url is still a url */
       }

@@ -342,7 +342,10 @@ export async function removeMember(ctx: Ctx, input: Mutation & { readonly target
       request: input.request ?? null,
     });
   });
-  ctx.emit({ type: "member.removed", tenantId: input.tenantId, userId: input.targetUserId, by: input.actorUserId });
+  // Tenancy 2b-1 (8.1): the event names the person, read after commit (they
+  // are no longer a member to look up through the team).
+  const { person } = await ctx.memberFacts(input.tenantId, input.targetUserId);
+  ctx.emit({ type: "member.removed", tenantId: input.tenantId, userId: input.targetUserId, by: input.actorUserId, person });
   return { removed: input.targetUserId };
 }
 
@@ -377,7 +380,8 @@ export async function leaveCompany(
       request: input.request ?? null,
     });
   });
-  ctx.emit({ type: "member.left", tenantId: input.tenantId, userId: input.userId, by: input.userId });
+  const { person } = await ctx.memberFacts(input.tenantId, input.userId);
+  ctx.emit({ type: "member.left", tenantId: input.tenantId, userId: input.userId, by: input.userId, person });
   return { left: input.tenantId };
 }
 

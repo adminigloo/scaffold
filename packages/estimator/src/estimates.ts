@@ -48,7 +48,7 @@ import type {
   ReadingWire,
   RecipeKey,
 } from "./wire.js";
-import { listEstimatePhotos, type EstimatorPhotoStore } from "./photos.js";
+import { attachPhotosToEstimate, listEstimatePhotos, type EstimatorPhotoStore, type PhotoStepReporter } from "./photos.js";
 
 /**
  * Estimates: the lead a customer saves, the staff estimate, editing either,
@@ -577,6 +577,16 @@ export interface PublicEstimateConfig {
   now?: Date;
   /** Who asked (an IP, by default). Accepted for the handler's symmetry; a lead never stores it. */
   requesterKey?: string | null;
+  /**
+   * Tenancy 2b-1 (review BO-13): the store the customer's photos are in. After
+   * the lead commits, each linked photo is put on its estimate there
+   * (`attach`), so it is filed with the estimate and the estimate's
+   * permissions decide who opens it. Without it (or a 0.4 store with no
+   * `attach`), 0.4's behaviour.
+   */
+  photoStore?: EstimatorPhotoStore;
+  /** Told about a photo step that failed after the lead was saved (step "photo-attach"). The lead stands. */
+  onError?: PhotoStepReporter;
 }
 
 /** How long an unlinked photo may wait for its submit. */
@@ -664,6 +674,10 @@ export async function createPublicEstimate(
   const taxRateBp = effectiveTaxRateBp(settings, config.taxRateBp);
   const totals = calculateTotals({ itemTotals: items.map((item) => item.total), taxRateBp, discount: 0 });
   const photoIds = [...new Set(parsed.photoIds)];
+  // The stored files of the photos linked in the transaction, to put on the
+  // estimate once it has committed (never inside it: a slow store must not
+  // hold the lead's transaction open, and a rolled-back lead attaches nothing).
+  let linkedFileIds: string[] = [];
 
   const created = await insertEstimate(
     db,
@@ -706,15 +720,21 @@ export async function createPublicEstimate(
                 gt(estimatorPhotos.createdAt, new Date(now.getTime() - PHOTO_LINK_WINDOW_MS)),
               ),
             )
-            .returning({ id: estimatorPhotos.id })) as Array<{ id: string }>;
+            .returning({ id: estimatorPhotos.id, fileId: estimatorPhotos.fileId })) as Array<{ id: string; fileId: string }>;
           if (linked.length !== photoIds.length) {
             throw new EstimatorInputError(
               "photo_unavailable",
               "One of your photos isn't available any more. Add it again, or send your estimate without it.",
             );
           }
+          linkedFileIds = linked.map((row) => row.fileId);
         },
   );
+
+  // Committed: the customer's photos go on their estimate in the file store
+  // (Tenancy 2b-1, review BO-13). Each is contained and reported; the lead
+  // and its photo rows stand whatever the store says.
+  await attachPhotosToEstimate(config.photoStore, { tenantId, estimateId: created.id, fileIds: linkedFileIds }, config.onError);
 
   await emitEvents(db, tenantId, [{ type: "lead.received", estimateId: created.id, actor: { type: "customer", id: null }, via: "online" }], {
     now,
@@ -1570,6 +1590,8 @@ export async function getEstimateDetail(
   id: string,
   options: {
     photoStore?: EstimatorPhotoStore;
+    /** Where staff's own photos are (review SEC-02); default `photoStore`. */
+    staffPhotoStore?: EstimatorPhotoStore;
     includeCosts?: boolean;
     now?: Date;
     seams?: { convert?: boolean; bookVisit?: boolean; copyLink?: boolean };
@@ -1651,7 +1673,7 @@ export async function getEstimateDetail(
     };
   });
 
-  const photos: EstimatePhoto[] = await listEstimatePhotos(db, tenantId, id, options.photoStore);
+  const photos: EstimatePhoto[] = await listEstimatePhotos(db, tenantId, id, options.photoStore, options.staffPhotoStore);
   const revenue = row.subtotal - row.discount;
   const marginBp = costs && row.cost !== null ? (revenue > 0 ? Math.round(((revenue - row.cost) / revenue) * 10_000) : 0) : null;
   const iso = (value: Date | null) => (value ? value.toISOString() : null);

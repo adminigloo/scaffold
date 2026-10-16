@@ -69,6 +69,19 @@ export const TENANT_ROLES = defineTenantRoles([SCHEDULING_CREW_ROLE]);`
       }
  */
 export const TENANT_ROLES = defineTenantRoles([]);`;
+  // Tenancy 2b-1: alerts' `alerts.view` names scheduling's Crew among its
+  // defaults (a crew member hears about their own visits). Without
+  // scheduling there is no Crew role, so that default grants nothing — by
+  // design, and said here so the catalog test doesn't read it as a
+  // misplaced fragment. GENERATED: an array, empty where it doesn't apply.
+  const absent = companiesMode(answers) && answers.includeNotifications && !answers.includeScheduling ? ["crew"] : [];
+  const absentRoles = `
+/**
+ * Roles an installed package's defaults name that ANOTHER package adds, and
+ * which this project doesn't have${absent.length > 0 ? ": scheduling's Crew (alerts give a crew member\n * their own visits' alerts). Nobody here holds it, so those defaults grant\n * nothing, by design" : " (none)"}. The catalog test reads this list.
+ */
+export const ROLES_NOT_IN_THIS_PROJECT: readonly string[] = [${absent.map((r) => JSON.stringify(r)).join(", ")}];
+`;
   return `import { defineTenantRoles } from "${scope}/tenancy";
 ${crew ? `import { SCHEDULING_CREW_ROLE } from "${scope}/scheduling";\n` : ""}
 /**
@@ -83,6 +96,7 @@ ${crew ? `import { SCHEDULING_CREW_ROLE } from "${scope}/scheduling";\n` : ""}
  */
 
 ${extra}
+${absentRoles}
 `;
 }
 
@@ -236,9 +250,11 @@ export interface CompanyLinks {
    * One of the ${noun}'s own screens, THROUGH THE SWITCH ROUTE (D2):
    * {app}/app/switch/{web address}?next={path}. Someone in two ${tenantLabelPlural(answers).toLowerCase()} who
    * clicks "see the new request" in an email lands in the ${noun} the email
-   * was about, not whichever one they last had open.
+   * was about, not whichever one they last had open. Tenancy 2b-1: the
+   * company settings and the team page too (an alert about a teammate opens
+   * the team page).
    */
-  readonly app: (path: \`/app/\${string}\` | "/dashboard") => string;
+  readonly app: (path: \`/app/\${string}\` | \`/settings/\${string}\` | "/dashboard") => string;
 }
 
 export class UnknownCompanyError extends Error {
@@ -283,17 +299,24 @@ export async function companyLinks(tenantId: string): Promise<CompanyLinks> {
 
 /**
  * Where the switch route may send someone (D2): a page of the working area
- * (/app/…) or the dashboard. Anything else — another site, a
- * protocol-relative "//evil.example", a path that climbs out with "..", a
- * backslash a browser might read as a slash, or the switch route itself — is
- * the dashboard instead.
+ * (/app/…), the dashboard, or — Tenancy 2b-1 — the ${noun}'s settings and
+ * team pages (/settings/company, /settings/team: an alert about a teammate
+ * opens the team page). Anything else — another site, a protocol-relative
+ * "//evil.example", a path that climbs out with "..", a backslash a browser
+ * might read as a slash, or the switch route itself — is the dashboard
+ * instead.
  */
+const SWITCH_SETTINGS_PAGES: ReadonlySet<string> = new Set(["/settings/company", "/settings/team"]);
+
 export function safeSwitchNext(value: string | null | undefined): string {
   if (typeof value !== "string") return "/dashboard";
   if (value === "/dashboard") return value;
-  if (!value.startsWith("/app/") || /[\\\\\\u0000-\\u001f]/.test(value)) return "/dashboard";
+  if (/[\\\\\\u0000-\\u001f]/.test(value)) return "/dashboard";
+  const settings = SWITCH_SETTINGS_PAGES.has(value.split(/[?#]/)[0] ?? "");
+  if (!value.startsWith("/app/") && !settings) return "/dashboard";
   const parsed = new URL(value, "http://this.site");
-  if (parsed.host !== "this.site" || !parsed.pathname.startsWith("/app/")) return "/dashboard";
+  if (parsed.host !== "this.site") return "/dashboard";
+  if (!parsed.pathname.startsWith("/app/") && !SWITCH_SETTINGS_PAGES.has(parsed.pathname)) return "/dashboard";
   if (parsed.pathname.startsWith("/app/switch/")) return "/dashboard";
   return \`\${parsed.pathname}\${parsed.search}\`;
 }
@@ -336,15 +359,35 @@ export function renderCompanySetup(answers: Answers): string {
   // confirmation", "Review request") are sent by nothing in a companies
   // project, so seeding them only showed an owner emails to edit that never
   // go out. Every feature adds its own emails in its own setup above.
+  //
+  // ALERTS (Tenancy 2b-1), with comms to send them: the team alert email,
+  // added if absent, so the owner can read it in Messages before the first
+  // alert email goes.
+  if (answers.includeNotifications && answers.includeComms) {
+    setups.push({
+      name: "alerts",
+      module: "./alerts",
+      fn: "ensureTeamAlertTemplate",
+      what: "the team alert email (Team alert, in Messages)",
+    });
+  }
+  const alerts = answers.includeNotifications;
+  const alertImports = [
+    ...(alerts && answers.includeComms ? ["ensureTeamAlertTemplate"] : []),
+    ...(alerts ? ["alertOnTenancyEvent"] : []),
+  ];
   const imports = [
     `import type { TenancyEvent } from "${scope}/tenancy/server";`,
     `import { log } from "./logger";`,
     `import { tenancy } from "./tenancy";`,
-    ...setups.map((s) =>
-      s.name === "scheduling"
-        ? `import { linkNewCrewMember, setupSchedulingFor, syncSchedulingCompany } from "./scheduling";`
-        : `import { ${s.fn} } from "${s.module}";`,
-    ),
+    ...setups
+      .filter((s) => s.name !== "alerts")
+      .map((s) =>
+        s.name === "scheduling"
+          ? `import { linkNewCrewMember, setupSchedulingFor, syncSchedulingCompany } from "./scheduling";`
+          : `import { ${s.fn} } from "${s.module}";`,
+      ),
+    ...(alertImports.length > 0 ? [`import { ${alertImports.join(", ")} } from "./alerts";`] : []),
   ];
   const entries =
     setups.length === 0
@@ -370,6 +413,16 @@ export function renderCompanySetup(answers: Answers): string {
     if (event.type === "member.joined" || event.type === "member.role.changed") {
       await linkNewCrewMember(event.tenantId, event.userId);
     }`
+    : "";
+  // ALERTS (Tenancy 2b-1, 13.6): every tenancy event is handed to the alerts
+  // too — "Cam joined the team", and the housekeeping a removal or a role
+  // change needs (forget, prune). After the setup above, in its own step.
+  const alertsLine = alerts
+    ? `
+    // A teammate joined, left or was removed, or changed role: the team's
+    // alerts, and forgetting or pruning that person's own (Tenancy 2b-1). In
+    // the same try/catch: alertOnTenancyEvent never throws anyway.
+    await alertOnTenancyEvent(event);`
     : "";
   return `${imports.join("\n")}
 
@@ -445,7 +498,7 @@ async function runSetups(tenantId: string): Promise<boolean> {
  */
 export async function onCompanyEvent(event: TenancyEvent): Promise<void> {
   try {
-    if (event.type === "company.created") await ensureCompanySetup(event.tenantId);${zoneLine}
+    if (event.type === "company.created") await ensureCompanySetup(event.tenantId);${zoneLine}${alertsLine}
   } catch (error) {
     log.error({ err: error, type: event.type }, "a ${noun}'s feature setup couldn't run after an event");
   }
@@ -652,6 +705,7 @@ export function renderInvoicingGlue(answers: Answers): string {
 function renderInvoicingCompanies(answers: Answers): string {
   const scope = answers.scope;
   const comms = answers.includeComms;
+  const alerts = answers.includeNotifications;
   const noun = tenantLabel(answers).toLowerCase();
   // The zone a company with no zone of its own is dated in: the same starting
   // zone scheduling and the estimator fall back to (review T2A-BO-07), never
@@ -665,13 +719,16 @@ function renderInvoicingCompanies(answers: Answers): string {
     `import {`,
     `  createInvoicingAdminHandlers,`,
     `  createInvoicingHandlers,`,
+    ...(alerts ? [`  invoicingOverdueAlert,`, `  listOverdueInvoices,`] : []),
     `  readInvoicingDetails,`,
+    ...(alerts ? [`  resolveInvoicingBusiness,`, `  type InvoicingAlertDraft,`] : []),
     `  type InvoicingBusiness,`,
     `  type InvoicingDelivery,`,
     `} from "${scope}/invoicing";`,
     ...(comms ? [`import { createInvoicingComms } from "${scope}/invoicing/comms";`] : []),
     `import { db } from "@/db";`,
     ...(startingZones.length > 0 ? [`import { env } from "@/env";`] : []),
+    ...(alerts ? [`import { alertOnInvoicingEvent } from "@/server/alerts";`] : []),
     ...(comms ? [`import { commsEmailConfigured, commsSenders } from "@/server/comms-senders";`] : []),
     `import { companyLinks } from "@/server/company-links";`,
     `import {`,
@@ -872,7 +929,24 @@ export async function invoicingRateLimit(req: Request, bucket: keyof typeof INVO
   const result = await limiter.limit({ key: \`invoicing:\${tenantId}:\${bucket}:\${caller}\`, policy: INVOICING_RATE_LIMITS[bucket] });
   return result.allowed;
 }
-${commsBlock}
+${commsBlock}${alerts ? `
+/**
+ * Invoices newly overdue, as alerts (Tenancy 2b-1, 11.2), for the alerts
+ * cron's sweep (src/server/alerts.ts \`runAlertSweeps\`, which imports this
+ * function DYNAMICALLY: this module imports company-routes, and alerts.ts must
+ * not). In the ${noun}'s own zone and currency: "newly" is the last seven days
+ * there, so the first run after deploy doesn't alert once per old invoice.
+ */
+export async function overdueInvoiceAlerts(
+  tenantId: string,
+  options: { readonly invoiceHref: string; readonly now?: Date },
+): Promise<readonly InvoicingAlertDraft[]> {
+  const business = resolveInvoicingBusiness(await invoicingBusiness(tenantId));
+  const format = { currency: business.currency, locale: business.locale, timeZone: business.timeZone };
+  const due = await listOverdueInvoices(db, tenantId, { now: options.now, timeZone: business.timeZone });
+  return due.map((invoice) => invoicingOverdueAlert(tenantId, invoice, { hrefs: { invoice: options.invoiceHref }, format }));
+}
+` : ""}
 /**
  * The staff side, for one ${noun} per request. \`overrides.principal\` is how
  * the project's isolation proof calls it as somebody else.
@@ -888,7 +962,11 @@ export function buildInvoicingAdminHandlers(overrides: FeatureHandlerOverrides =
     business: invoicingBusiness,
     invoiceUrl: async (token, tenantId) => (await companyLinks(tenantId)).invoice(token),${comms ? "\n    sendInvoiceEmail: (input) => invoicingComms.sendInvoice(input)," : ""}
     delivery: (tenantId) => invoicingDelivery(tenantId),
-    detailsHref: "/settings/company#invoicing",
+    detailsHref: "/settings/company#invoicing",${alerts ? `
+    // A customer opened an invoice, or a payment settled it: the alerts
+    // (Tenancy 2b-1). Inside an arrow on purpose: alerts.ts and this module
+    // import each other, and nothing here reads it at load (13.10 rule 3).
+    onEvent: (event) => alertOnInvoicingEvent(event),` : ""}
     onError: reportInvoicingError,
   });
 }
@@ -900,7 +978,11 @@ export function buildInvoicingPublicHandlers() {
     resolveTenant: resolvePublicTenant,
     admit: admitPublic,
     business: invoicingBusiness,
-    rateLimit: invoicingRateLimit,
+    rateLimit: invoicingRateLimit,${alerts ? `
+    // A customer opened an invoice, or a payment settled it: the alerts
+    // (Tenancy 2b-1). Inside an arrow on purpose: alerts.ts and this module
+    // import each other, and nothing here reads it at load (13.10 rule 3).
+    onEvent: (event) => alertOnInvoicingEvent(event),` : ""}
     onError: reportInvoicingError,
   });
 }
@@ -910,6 +992,7 @@ export function buildInvoicingPublicHandlers() {
 function renderInvoicingSingle(answers: Answers): string {
   const scope = answers.scope;
   const comms = answers.includeComms;
+  const alerts = answers.includeNotifications;
   // The zone the business's invoices are dated in: whichever of the features'
   // own starting zones this project has (generated), else Mountain Time.
   const zones = [
@@ -930,6 +1013,7 @@ function renderInvoicingSingle(answers: Answers): string {
     `import {`,
     `  createInvoicingAdminHandlers,`,
     `  createInvoicingHandlers,`,
+    ...(alerts ? [`  invoicingOverdueAlert,`, `  listOverdueInvoices,`, `  resolveInvoicingBusiness,`, `  type InvoicingAlertDraft,`] : []),
     `  type InvoicingBusiness,`,
     `  type InvoicingDelivery,`,
     `  type InvoicingPermission,`,
@@ -940,6 +1024,7 @@ function renderInvoicingSingle(answers: Answers): string {
     `import { db } from "@/db";`,
     `import { env } from "@/env";`,
     `import { SITE_NAME } from "@/seo";`,
+    ...(alerts ? [`import { alertOnInvoicingEvent } from "@/server/alerts";`] : []),
     ...(comms ? [`import { commsEmailConfigured, commsSenders } from "@/server/comms-senders";`] : []),
     `import { reportError } from "@/server/error-reporter";`,
     ...(detailsFrom === "estimator" ? [`import { ESTIMATOR_TENANT } from "@/server/estimator-staff";`] : []),
@@ -1103,7 +1188,23 @@ export async function invoicingRateLimit(req: Request, bucket: keyof typeof INVO
   const result = await limiter.limit({ key: \`invoicing:\${bucket}:\${caller}\`, policy: INVOICING_RATE_LIMITS[bucket] });
   return result.allowed;
 }
-${commsBlock}
+${commsBlock}${alerts ? `
+/**
+ * Invoices newly overdue, as alerts (Tenancy 2b-1, 11.2), for the alerts
+ * cron's sweep (src/server/alerts.ts \`runAlertSweeps\`, which imports this
+ * function DYNAMICALLY: this module imports alerts.ts back). In the
+ * business's own zone: "newly" is the last seven days there.
+ */
+export async function overdueInvoiceAlerts(
+  tenantId: string,
+  options: { readonly invoiceHref: string; readonly now?: Date },
+): Promise<readonly InvoicingAlertDraft[]> {
+  const business = resolveInvoicingBusiness(await invoicingBusiness());
+  const format = { currency: business.currency, locale: business.locale, timeZone: business.timeZone };
+  const due = await listOverdueInvoices(db, tenantId, { now: options.now, timeZone: business.timeZone });
+  return due.map((invoice) => invoicingOverdueAlert(tenantId, invoice, { hrefs: { invoice: options.invoiceHref }, format }));
+}
+` : ""}
 /** The staff side: the ledger, on this project's staff keys. */
 export function buildInvoicingAdminHandlers() {
   return createInvoicingAdminHandlers({
@@ -1112,7 +1213,11 @@ export function buildInvoicingAdminHandlers() {
     authorize: authorizeStaffFor(INVOICING_STAFF_KEYS, "Sign in to see invoices."),
     business: () => invoicingBusiness(),
     invoiceUrl: (token) => invoiceLink(token),${comms ? "\n    sendInvoiceEmail: (input) => invoicingComms.sendInvoice(input)," : ""}
-    delivery: () => invoicingDelivery(),
+    delivery: () => invoicingDelivery(),${alerts ? `
+    // A customer opened an invoice, or a payment settled it: the alerts
+    // (Tenancy 2b-1). Inside an arrow on purpose: alerts.ts and this module
+    // import each other, and nothing here reads it at load (13.10 rule 3).
+    onEvent: (event) => alertOnInvoicingEvent(event),` : ""}
     onError: reportInvoicingError,
   });
 }
@@ -1123,7 +1228,11 @@ export function buildInvoicingPublicHandlers() {
     db,
     tenantId: INVOICING_TENANT,
     business: () => invoicingBusiness(),
-    rateLimit: invoicingRateLimit,
+    rateLimit: invoicingRateLimit,${alerts ? `
+    // A customer opened an invoice, or a payment settled it: the alerts
+    // (Tenancy 2b-1). Inside an arrow on purpose: alerts.ts and this module
+    // import each other, and nothing here reads it at load (13.10 rule 3).
+    onEvent: (event) => alertOnInvoicingEvent(event),` : ""}
     onError: reportInvoicingError,
   });
 }
@@ -1384,6 +1493,11 @@ export const POST = handle;
 export function renderSchedulingNotifyCompanies(answers: Answers): string {
   const scope = answers.scope;
   const noun = tenantLabel(answers).toLowerCase();
+  const alerts = answers.includeNotifications;
+  // ALERTS FIRST (Tenancy 2b-1, 4.5): the alert rows are written before the
+  // office email, so the email finds them to claim. Inside an arrow on
+  // purpose (13.10 rule 3): alerts.ts sits in the same import chain.
+  const alertListener = alerts ? ["(event) => alertOnSchedulingEvent(event)"] : [];
   const header = `/**
  * Who hears about each visit, in every ${noun} — the listeners every scheduling
  * event is handed to, after the write that caused it has committed.
@@ -1410,18 +1524,18 @@ export async function onSchedulingEvent(event: SchedulingEvent): Promise<void> {
 `;
   if (!answers.includeComms) {
     return `import type { DeliveryStatus, SchedulingEvent, SchedulingEventListener } from "${scope}/scheduling";
-import { log } from "@/server/logger";
+${alerts ? `import { alertOnSchedulingEvent } from "@/server/alerts";\n` : ""}import { log } from "@/server/logger";
 import { schedulingDeliveryStatus } from "@/server/scheduling-config";
 
 ${header}
 
 /**
- * EMPTY: ${answers.projectName} was generated without ${scope}/comms, so no
+ * ${alerts ? "THE ALERTS ONLY" : "EMPTY"}: ${answers.projectName} was generated without ${scope}/comms, so no
  * email is sent about a visit. Customers keep the manage link the booking page
- * hands them, and each ${noun} sees its requests in /app/schedule.
+ * hands them, and each ${noun} sees its requests in /app/schedule${alerts ? " — and its\n * people get the alerts (the bell), in the app" : ""}.
  * \`add comms\` (and \`add email\`) wires the emails in.
  */
-const LISTENERS: readonly SchedulingEventListener[] = [];
+const LISTENERS: readonly SchedulingEventListener[] = [${alertListener.join(", ")}];
 
 /** False: the booking page promises no email and shows the manage link to keep instead. */
 export const SCHEDULING_EMAILS_ENABLED: boolean = false;
@@ -1452,7 +1566,7 @@ import { SCHEDULING_COMMS_REF_TYPE, createSchedulingCommsListener } from "${scop
 import { db } from "@/db";
 import { env } from "@/env";
 import { commsEmailConfigured, commsSenders } from "@/server/comms-senders";
-import { companyLinks } from "@/server/company-links";
+${alerts ? `import { alertOnSchedulingEvent, officeRecipientsFor, officeSentFor } from "@/server/alerts";\n` : ""}import { companyLinks } from "@/server/company-links";
 import { log } from "@/server/logger";
 import { schedulingDeliveryStatus } from "@/server/scheduling-config";
 import { tenancy } from "@/server/tenancy";
@@ -1478,9 +1592,11 @@ const REMINDER_RUNS = { dailyAtUtc: "${commsRunAt()}" } as const;
  *     the office's link to its schedule through the switch route;
  *   - it goes out under its name with its reply-to (comms' sender identity,
  *     src/server/comms-senders.ts);
- *   - the office's notices (a new request, a customer's change) go to the
+ *   - the office's notices (a new request, a customer's change) go to ${alerts ? `the
+ *     people the ${noun} chose in Alert settings (its owner, at the business
+ *     email, until it chooses; Tenancy 2b-1)` : `the
  *     addresses the ${noun} set in Schedule settings, else to the ${noun}'s
- *     own inbox — its contact email, else its owner — NEVER to the platform
+ *     own inbox — its contact email, else its owner`} — NEVER to the platform
  *     owner: one ${noun}'s leads are nobody else's.
  *
  * A link that can't be built (the ${noun} was deleted) leaves its line empty
@@ -1493,12 +1609,23 @@ export const schedulingComms = createSchedulingCommsListener({
   manageUrl: async (token, tenantId) => (await companyLinks(tenantId)).manageVisit(token),
   bookUrl: async (tenantId) => (await companyLinks(tenantId)).bookVisit(),
   adminUrl: async (tenantId) => (await companyLinks(tenantId)).app("/app/schedule"),
-  staffEmails: async (tenantId) => (await tenancy.companyProfile(tenantId))?.inbox ?? [],
+  staffEmails: async (tenantId) => (await tenancy.companyProfile(tenantId))?.inbox ?? [],${alerts ? `
+  // WHO GETS THE OFFICE EMAIL (Tenancy 2b-1, D6): the people Alert settings
+  // name for visit requests and customers' changes, and their extra addresses — the ONE place the owner
+  // chooses — each claimed once (src/server/alerts.ts \`officeRecipientsFor\`),
+  // so the same event handed over twice is never two emails. The saved
+  // per-feature list is no longer read; \`staffEmails\` above is read ONLY when
+  // this throws (alerts unreachable), so the office still hears at the
+  // business email (review BO-02).
+  officeRecipients: (notice) => officeRecipientsFor(notice),
+  // A failed office email goes back to the alerts cron, sent once as a team
+  // alert (review BO-02).
+  officeSent: (notice, result) => officeSentFor(notice, result),` : ""}
   reminderRuns: REMINDER_RUNS,
   onError: (error, context) => log.error({ err: error, ...context }, "scheduling: an email step failed"),
 });
 
-const LISTENERS: readonly SchedulingEventListener[] = [schedulingComms.onEvent];
+const LISTENERS: readonly SchedulingEventListener[] = [${[...alertListener, "schedulingComms.onEvent"].join(", ")}];
 
 /**
  * Told to the booking widget through the public handler's \`emailsEnabled\`:
@@ -1574,6 +1701,9 @@ ${dispatch}`;
 export function renderEstimatorNotifyCompanies(answers: Answers): string {
   const scope = answers.scope;
   const noun = tenantLabel(answers).toLowerCase();
+  const alerts = answers.includeNotifications;
+  // ALERTS FIRST (Tenancy 2b-1, 4.5), inside an arrow (13.10 rule 3).
+  const alertListener = alerts ? ["(event) => alertOnEstimatorEvent(event)"] : [];
   const header = `/**
  * Who hears about each estimate, in every ${noun} — the listeners every
  * estimator event is handed to, after the write that caused it committed.
@@ -1597,17 +1727,17 @@ export async function onEstimatorEvent(event: EstimatorEvent): Promise<void> {
 `;
   if (!answers.includeComms) {
     return `import type { EstimatorDelivery, EstimatorEvent, EstimatorEventListener } from "${scope}/estimator";
-import { estimatorDeliveryStatus } from "@/server/estimator-config";
+${alerts ? `import { alertOnEstimatorEvent } from "@/server/alerts";\n` : ""}import { estimatorDeliveryStatus } from "@/server/estimator-config";
 import { log } from "@/server/logger";
 
 ${header}
 
 /**
- * EMPTY: ${answers.projectName} was generated without ${scope}/comms, so no
+ * ${alerts ? "THE ALERTS ONLY" : "EMPTY"}: ${answers.projectName} was generated without ${scope}/comms, so no
  * email is sent about an estimate. New leads wait in each ${noun}'s
- * /app/estimates, and staff copy a quote's link to the customer themselves.
+ * /app/estimates${alerts ? " (and its people get the alerts, in the app)" : ""}, and staff copy a quote's link to the customer themselves.
  */
-const LISTENERS: readonly EstimatorEventListener[] = [];
+const LISTENERS: readonly EstimatorEventListener[] = [${alertListener.join(", ")}];
 
 /** False: the estimate page promises no email. */
 export const ESTIMATOR_EMAILS_ENABLED: boolean = false;
@@ -1628,7 +1758,7 @@ ${dispatch}`;
 import { createEstimatorCommsListener } from "${scope}/estimator/comms";
 import { db } from "@/db";
 import { env } from "@/env";
-import { commsEmailConfigured, commsSenders } from "@/server/comms-senders";
+${alerts ? `import { alertOnEstimatorEvent, officeRecipientsFor, officeSentFor } from "@/server/alerts";\n` : ""}import { commsEmailConfigured, commsSenders } from "@/server/comms-senders";
 import { companyLinks } from "@/server/company-links";
 import { estimatorDeliveryStatus } from "@/server/estimator-config";
 import { log } from "@/server/logger";
@@ -1647,8 +1777,7 @@ const FOLLOW_UP_RUNS = { dailyAtUtc: "${commsRunAt()}" } as const;
  * (Tenancy 2a, D8): its name, contact and dates in its zone (\`company\`); the
  * quote link to /t/{web address}/quote/…; the office's link to the estimate
  * through the switch route${answers.includeScheduling ? "; \"pick a time for the work\" to its own booking page" : ""}; sent
- * under its name with its reply-to; and the new-lead notices to the addresses
- * it set in Estimate settings, else its own inbox — never the platform owner.
+ * under its name with its reply-to; and the new-lead notices to ${alerts ? "the people it\n * chose in Alert settings (its owner, at the business email, until it chooses;\n * Tenancy 2b-1)" : "the addresses\n * it set in Estimate settings, else its own inbox"} — never the platform owner.
  */
 export const estimatorComms = createEstimatorCommsListener({
   db,
@@ -1657,12 +1786,23 @@ export const estimatorComms = createEstimatorCommsListener({
   quoteUrl: async (token, tenantId) => (await companyLinks(tenantId)).quote(token),
   adminEstimateUrl: async (estimateId, tenantId) =>
     (await companyLinks(tenantId)).app(\`/app/estimates/\${encodeURIComponent(estimateId)}\`),${bookUrl}
-  staffEmails: async (tenantId) => (await tenancy.companyProfile(tenantId))?.inbox ?? [],
+  staffEmails: async (tenantId) => (await tenancy.companyProfile(tenantId))?.inbox ?? [],${alerts ? `
+  // WHO GETS THE OFFICE EMAIL (Tenancy 2b-1, D6): the people Alert settings
+  // name for new estimate requests and quote answers, and their extra addresses — the ONE place the owner
+  // chooses — each claimed once (src/server/alerts.ts \`officeRecipientsFor\`),
+  // so the same event handed over twice is never two emails. The saved
+  // per-feature list is no longer read; \`staffEmails\` above is read ONLY when
+  // this throws (alerts unreachable), so the office still hears at the
+  // business email (review BO-02).
+  officeRecipients: (notice) => officeRecipientsFor(notice),
+  // A failed office email goes back to the alerts cron, sent once as a team
+  // alert (review BO-02).
+  officeSent: (notice, result) => officeSentFor(notice, result),` : ""}
   followUpRuns: FOLLOW_UP_RUNS,
   onError: (error, context) => log.error({ err: error, ...context }, "estimator: an email step failed"),
 });
 
-const LISTENERS: readonly EstimatorEventListener[] = [estimatorComms.onEvent];
+const LISTENERS: readonly EstimatorEventListener[] = [${[...alertListener, "estimatorComms.onEvent"].join(", ")}];
 
 /** Told to the estimate page: true only when an email would actually leave (RESEND_API_KEY set). */
 export const ESTIMATOR_EMAILS_ENABLED: boolean = commsEmailConfigured;
@@ -1771,14 +1911,31 @@ export function renderDeploymentCompanyNotes(answers: Answers): DeploymentNotes 
   const plural = tenantLabelPlural(answers).toLowerCase();
   const companies = companiesMode(answers);
 
-  const proCronList = [
-    ...(answers.includeComms ? ["/api/cron/comms"] : []),
-    ...(answers.includeScheduling ? ["/api/cron/scheduling"] : []),
-    ...(answers.includeEstimator ? ["/api/cron/estimator"] : []),
+  // THE WHOLE ARRAY, every cron vercel.json has (review BUY-07): a reader
+  // pastes this over vercel.json's `crons`, so a cron left out of it is a cron
+  // switched off. The files cron stays once a day (its work is a daily
+  // clean-up), at vercel.json's own schedule; versions.test-style drift is
+  // caught by the generator test that compares the two.
+  const proCronList: ReadonlyArray<{ readonly path: string; readonly schedule: string }> = [
+    ...(answers.includeComms ? [{ path: "/api/cron/comms", schedule: "*/15 * * * *" }] : []),
+    ...(answers.includeScheduling ? [{ path: "/api/cron/scheduling", schedule: "*/15 * * * *" }] : []),
+    ...(answers.includeEstimator ? [{ path: "/api/cron/estimator", schedule: "*/15 * * * *" }] : []),
+    // Tenancy 2b-1: alert emails retried within the hour.
+    ...(answers.includeNotifications ? [{ path: "/api/cron/alerts", schedule: "*/15 * * * *" }] : []),
+    // Tenancy 2b-1: the purge, the move to private, the private-store check.
+    ...(answers.includeStorage ? [{ path: "/api/cron/files", schedule: "45 14 * * *" }] : []),
   ];
   const proCrons =
     proCronList.length > 0
-      ? ["```json", '"crons": [', proCronList.map((path) => `  { "path": "${path}", "schedule": "*/15 * * * *" }`).join(",\n"), "]", "```"].join("\n")
+      ? [
+          "```json",
+          '"crons": [',
+          proCronList.map((cron) => `  { "path": "${cron.path}", "schedule": "${cron.schedule}" }`).join(",\n"),
+          "]",
+          "```",
+          "",
+          `That is the whole \`crons\` array: paste it over the one in \`vercel.json\`.${answers.includeStorage ? " The files cron stays once a day." : ""}`,
+        ].join("\n")
       : "";
 
   const crons =
@@ -1823,8 +1980,13 @@ outside scheduler (cron-job.org, GitHub Actions, your own server) calling
 ${noun}'s name on \`EMAIL_FROM\`'s address — the one sending domain you verify at
 Resend serves every ${noun}, so verify it once — and its replies go to the
 ${noun}'s contact email (else its owner's), never to \`EMAIL_REPLY_TO\`. Office
-notices (a new request, a new lead) go to the addresses the ${noun} saved, else
-to its own inbox — never to you — and a reply to one reaches the customer it is
+notices (a new request, a new lead) go to ${
+        answers.includeNotifications
+          ? `the people the ${noun}'s owner names in Alert
+settings (the owner's copy at the business email in ${noun} settings)`
+          : `the addresses the ${noun} saved, else
+to its own inbox`
+      } — never to you — and a reply to one reaches the customer it is
 about. Each ${noun} sees in Messages who its emails went out as.
 
 **Each ${noun} has a sending allowance.** Because every ${noun}'s mail leaves
@@ -1832,7 +1994,8 @@ from your one domain, one ${noun} sending thousands of messages could get that
 domain throttled or suspended for all of them. So each ${noun} may send 100
 emails an hour and 500 a day (20 and 100 in its first week); past that its
 emails are held — logged as held in its Messages, never lost from the queue —
-and you are told in \`/admin/errors\`. The numbers are \`COMMS_SEND_ALLOWANCE\` in
+and you are told in \`/admin/errors\`. Its team's own emails (office notices${answers.includeNotifications ? " and\nalert emails" : ""}) count apart, 60 an hour and 300 a day, so a busy morning never
+holds a customer's invoice. The numbers are \`COMMS_SEND_ALLOWANCE\` in
 \`src/server/comms-senders.ts\`; they count in Upstash once it is configured.
 `
       : "";

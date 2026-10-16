@@ -901,21 +901,40 @@ describe("non-interactive flags", () => {
       expect.arrayContaining(["seo.audits", "seo.reports"]),
     );
 
+    // Tenancy 2b-1: each company's alerts and files live in its own area
+    // (/app/alerts, /app/files), so a companies project has them with no admin
+    // shell; a single business has them in the admin shell only.
     const notif = answers({ includeNotifications: true, adminShell: "none" });
-    expect(packagesFor(notif)).toContain("@adminigloo/notifications");
-    expect(overlayNamesFor(notif)).toContain("notifications");
-    // No shell, no inbox page — the same fork feedback-admin takes.
+    expect(packagesFor(notif)).toEqual(
+      expect.arrayContaining(["@adminigloo/notifications", "@adminigloo/notifications-widget"]),
+    );
+    expect(overlayNamesFor(notif)).toContain("notifications-companies");
     expect(overlayNamesFor(notif)).not.toContain("notifications-admin");
-    expect(capabilitiesFor(notif)).toContain("notifications.fanout");
-    expect(capabilitiesFor(notif)).not.toContain("notifications.inbox");
+    expect(capabilitiesFor(notif)).toEqual(
+      expect.arrayContaining(["notifications.fanout", "notifications.bell", "notifications.inbox"]),
+    );
+    // A single business with no shell: the bell, and no alerts page to open —
+    // the same fork feedback-admin takes.
+    const notifSingle = answers({ includeNotifications: true, adminShell: "none", tenantNoun: "none" });
+    expect(overlayNamesFor(notifSingle)).toContain("notifications-single");
+    expect(overlayNamesFor(notifSingle)).not.toContain("notifications-admin");
+    expect(capabilitiesFor(notifSingle)).toContain("notifications.bell");
+    expect(capabilitiesFor(notifSingle)).not.toContain("notifications.inbox");
 
     const storage = answers({ includeStorage: true, adminShell: "minimal" });
-    expect(packagesFor(storage)).toContain("@adminigloo/storage");
-    expect(overlayNamesFor(storage)).toEqual(
-      expect.arrayContaining(["storage", "storage-admin"]),
+    expect(packagesFor(storage)).toEqual(
+      expect.arrayContaining(["@adminigloo/storage", "@adminigloo/storage-widget"]),
     );
+    expect(overlayNamesFor(storage)).toEqual(
+      expect.arrayContaining(["storage", "storage-companies"]),
+    );
+    expect(overlayNamesFor(storage)).not.toContain("storage-admin");
     expect(capabilitiesFor(storage)).toEqual(
       expect.arrayContaining(["storage.files", "storage.library"]),
+    );
+    const storageSingle = answers({ includeStorage: true, adminShell: "minimal", tenantNoun: "none" });
+    expect(overlayNamesFor(storageSingle)).toEqual(
+      expect.arrayContaining(["storage", "storage-single", "storage-admin"]),
     );
     // The blob token is named once even when feedback would name it too.
     const both = answers({ includeStorage: true, includeFeedback: true });
