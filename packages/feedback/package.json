@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/feedback",
-  "version": "0.9.1",
+  "version": "0.10.0",
   "description": "A feedback board for each company: the website button and public feedback page they speak to, the board and ticket panel each company works its own customers' feedback on, website keys per company, alerts for the team and emails for the reporter.",
   "license": "UNLICENSED",
   "type": "module",
