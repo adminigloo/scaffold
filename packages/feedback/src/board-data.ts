@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, isNull, max, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, isNotNull, isNull, lt, max, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import {
   CLIENT_KEY_PREFIX,
@@ -12,7 +12,30 @@ import {
   type FeedbackDb,
   type SubmitPayload,
 } from "./core.js";
-import { feedbackCategories, feedbackClientKeys, feedbackMessages, feedbackStatuses, feedbackTickets } from "./schema.js";
+import {
+  EMPTY_FILTERS,
+  FILTER_ME,
+  FILTER_NAMED_PREFIX,
+  FILTER_NONE,
+  FILTER_PRIORITIES,
+  namedAssignee,
+  FILTER_SOURCES,
+  MAX_FILTER_VALUES,
+  MAX_SEARCH_LENGTH,
+  PRIORITY_LABELS,
+  type BoardFilters,
+} from "./board-filters.js";
+import {
+  feedbackBoards,
+  feedbackCategories,
+  feedbackClientKeys,
+  feedbackMessages,
+  feedbackStatuses,
+  feedbackTicketEvents,
+  feedbackTickets,
+  type FeedbackTicketEventKind,
+  type FeedbackTicketSource,
+} from "./schema.js";
 
 /**
  * The board's server half: every read and write a company's staff screens
@@ -49,9 +72,10 @@ export const DEFAULT_BOARD_STATUSES = [
 
 /**
  * Give a company's board its default columns and categories, the first time
- * it's used — and only then: a company that already has any column (or any
- * category) gets nothing added, so a column the owner deleted never comes
- * back.
+ * it's used — and only then. 0.11.0: "the first time" is remembered
+ * (feedback_boards), so a company that deletes every category, or every
+ * column it can, never gets the defaults back; 0.10 re-seeded any list that
+ * was empty.
  *
  * IDEMPOTENT AND RACE-SAFE. Two first requests at once both see "no rows" and
  * both insert; the unique index on (company, key) and ON CONFLICT DO NOTHING
@@ -64,6 +88,8 @@ export async function ensureFeedbackBoard(
   tenantId: string,
 ): Promise<{ readonly statuses: number; readonly categories: number }> {
   if (!isTenantId(tenantId)) return { statuses: 0, categories: 0 };
+  const [setUp] = await db.select({ tenantId: feedbackBoards.tenantId }).from(feedbackBoards).where(eq(feedbackBoards.tenantId, tenantId)).limit(1);
+  if (setUp) return { statuses: 0, categories: 0 };
   let statuses = 0;
   let categories = 0;
   const [statusCount] = (await db
@@ -98,6 +124,10 @@ export async function ensureFeedbackBoard(
       .returning({ id: feedbackCategories.id })) as Array<{ id: string }>;
     categories = added.length;
   }
+  // Written AFTER the defaults, so a request that sees the mark sees a board
+  // with its columns; two first requests at once both seed (harmlessly, the
+  // unique indexes decide) and both mark (ON CONFLICT).
+  await db.insert(feedbackBoards).values({ tenantId }).onConflictDoNothing({ target: feedbackBoards.tenantId });
   return { statuses, categories };
 }
 
@@ -183,7 +213,8 @@ const AGING_MESSAGE = "The warning has to come before the overdue mark: make its
 
 export const createStatusSchema = z
   .object({
-    key: statusKeySchema,
+    /** A suggestion (0.11.0): made from the name when absent, and given a number when taken. */
+    key: statusKeySchema.optional(),
     label: z.string().trim().min(1).max(60),
     color: z.string().max(30).nullish(),
     sortOrder: z.number().int().min(0).max(100000).optional(),
@@ -225,6 +256,39 @@ export class DuplicateKeyError extends Error {
   }
 }
 
+/** A name as the short name tickets point at: "Waiting on customer" → "waiting_on_customer". */
+export function keyFromLabel(label: string): string {
+  const base = label
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 50);
+  if (!base) return "column";
+  return /^[a-z]/.test(base) ? base : `c_${base}`.slice(0, 50);
+}
+
+/** Two names a person would call the same: case and spacing don't count. */
+function sameName(a: string, b: string): boolean {
+  return a.trim().replace(/\s+/g, " ").toLowerCase() === b.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+/**
+ * The short name to store (0.11.0): the suggestion if it's free, else the
+ * suggestion with the next free number ("open_2"). Short names are never
+ * shown and never change, so a column once called "Open" and renamed still
+ * holds "open" — 0.10 then refused a new column named "Open" with "already
+ * has a column with that name", which was untrue. Only the NAME people see
+ * has to be unique.
+ */
+function freeKey(base: string, taken: ReadonlySet<string>): string {
+  if (!taken.has(base)) return base;
+  for (let n = 2; ; n += 1) {
+    const candidate = `${base.slice(0, 50 - String(n).length - 1)}_${n}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+}
+
 function isUniqueViolation(error: unknown): boolean {
   const code = (error as { code?: unknown } | null)?.code ?? (error as { cause?: { code?: unknown } } | null)?.cause?.code;
   return code === "23505";
@@ -252,28 +316,39 @@ export async function createStatus(
       .orderBy(desc(feedbackStatuses.sortOrder))
       .limit(1)
       .then((rows: Array<{ sortOrder: number }>) => (rows[0]?.sortOrder ?? 0) + 10));
-  try {
-    const rows = await db
-      .insert(feedbackStatuses)
-      .values({
-        tenantId,
-        key: parsed.key,
-        label: parsed.label,
-        color: parsed.color ?? null,
-        sortOrder,
-        isTerminal: parsed.isTerminal ?? false,
-        wipLimit: parsed.wipLimit ?? null,
-        agingWarnHours: parsed.agingWarnHours ?? null,
-        agingStaleHours: parsed.agingStaleHours ?? null,
-        allowAiTransition: parsed.allowAiTransition ?? false,
-      })
-      .returning(BOARD_STATUS_COLUMNS);
-    const row = rows[0];
-    if (!row) throw new Error("status insert returned no row");
-    return row;
-  } catch (error) {
-    if (isUniqueViolation(error)) throw new DuplicateKeyError("column", parsed.key);
-    throw error;
+  const base = parsed.key ?? keyFromLabel(parsed.label);
+  for (let attempt = 0; ; attempt += 1) {
+    const existing = (await db
+      .select({ key: feedbackStatuses.key, label: feedbackStatuses.label })
+      .from(feedbackStatuses)
+      .where(eq(feedbackStatuses.tenantId, tenantId))) as Array<{ key: string; label: string }>;
+    if (existing.some((row) => sameName(row.label, parsed.label))) throw new DuplicateKeyError("column", base);
+    const key = freeKey(base, new Set(existing.map((row) => row.key)));
+    try {
+      const rows = await db
+        .insert(feedbackStatuses)
+        .values({
+          tenantId,
+          key,
+          label: parsed.label,
+          color: parsed.color ?? null,
+          sortOrder,
+          isTerminal: parsed.isTerminal ?? false,
+          wipLimit: parsed.wipLimit ?? null,
+          agingWarnHours: parsed.agingWarnHours ?? null,
+          agingStaleHours: parsed.agingStaleHours ?? null,
+          allowAiTransition: parsed.allowAiTransition ?? false,
+        })
+        .returning(BOARD_STATUS_COLUMNS);
+      const row = rows[0];
+      if (!row) throw new Error("status insert returned no row");
+      return row;
+    } catch (error) {
+      // Another add took that short name between the read and the insert: try the next.
+      if (isUniqueViolation(error) && attempt < 5) continue;
+      if (isUniqueViolation(error)) throw new DuplicateKeyError("column", base);
+      throw error;
+    }
   }
 }
 
@@ -285,6 +360,13 @@ export async function updateStatus(
 ): Promise<boolean> {
   if (!isTenantId(tenantId)) return false;
   const parsed = updateStatusSchema.parse(input);
+  if (parsed.label !== undefined) {
+    const others = (await db
+      .select({ id: feedbackStatuses.id, label: feedbackStatuses.label })
+      .from(feedbackStatuses)
+      .where(eq(feedbackStatuses.tenantId, tenantId))) as Array<{ id: string; label: string }>;
+    if (others.some((row) => row.id !== parsed.id && sameName(row.label, parsed.label!))) throw new DuplicateKeyError("column", parsed.id);
+  }
   const patch: Record<string, unknown> = {};
   if (parsed.label !== undefined) patch["label"] = parsed.label;
   if (parsed.color !== undefined) patch["color"] = parsed.color;
@@ -306,49 +388,116 @@ export async function updateStatus(
 }
 
 export type DeleteStatusResult =
-  | { deleted: true }
-  | { deleted: false; reason: "unknown" | "occupied"; ticketCount?: number };
+  | {
+      deleted: true;
+      moved?: number;
+      /** The column the tickets went to, and each moved ticket with where it was (0.11.0: for `ticket.moved`). */
+      to?: BoardStatus;
+      tickets?: ReadonlyArray<{ id: string; from: string }>;
+    }
+  | { deleted: false; reason: "unknown" | "occupied" | "unknown-target" | "last"; ticketCount?: number };
 
 /**
- * Refuses to delete a column that holds tickets, and says how many — the
- * alternative is tickets whose status points at nothing, which vanish from
- * every column of the board while still existing in the queue. Move them
- * first; the refusal message is the instruction. "unknown" for a column that
- * isn't on this company's board.
+ * Delete a column. One that holds tickets is refused, saying how many — the
+ * alternative is tickets whose status points at nothing — UNLESS `moveTo`
+ * names another of this company's columns (0.11.0): its tickets are moved
+ * there first (each a line on its trail, by `actor`), then the column goes.
+ * The editor asks where; the sentence for a refusal is the instruction.
+ *
+ * "last" for the board's only column (0.11.0): a board needs one, for new
+ * tickets to land in — and since defaults come only once, a board left with
+ * none would stay that way.
+ *
+ * "unknown" for a column that isn't on this company's board; "unknown-target"
+ * for a `moveTo` that isn't (or is the column itself). `moveTo` is checked
+ * even when the column is empty, so a stale editor can't delete on the
+ * strength of a target that no longer exists.
  */
-export async function deleteStatus(db: FeedbackDb, tenantId: string, statusId: string): Promise<DeleteStatusResult> {
+export async function deleteStatus(
+  db: FeedbackDb,
+  tenantId: string,
+  statusId: string,
+  options: { moveTo?: string | null; actor?: TicketActor; now?: Date } = {},
+): Promise<DeleteStatusResult> {
   if (!isTenantId(tenantId)) return { deleted: false, reason: "unknown" };
   const rows = await db
-    .select({ id: feedbackStatuses.id, key: feedbackStatuses.key })
+    .select({ id: feedbackStatuses.id, key: feedbackStatuses.key, label: feedbackStatuses.label })
     .from(feedbackStatuses)
     .where(and(eq(feedbackStatuses.tenantId, tenantId), eq(feedbackStatuses.id, statusId)))
     .limit(1);
   const status = rows[0];
   if (!status) return { deleted: false, reason: "unknown" };
-
-  const [occupied] = (await db
+  const [columns] = (await db
     .select({ n: count() })
-    .from(feedbackTickets)
-    .where(and(eq(feedbackTickets.tenantId, tenantId), eq(feedbackTickets.status, status.key)))) as Array<{ n: number }>;
-  const ticketCount = Number(occupied?.n ?? 0);
-  if (ticketCount > 0) return { deleted: false, reason: "occupied", ticketCount };
+    .from(feedbackStatuses)
+    .where(eq(feedbackStatuses.tenantId, tenantId))) as Array<{ n: number }>;
+  if (Number(columns?.n ?? 0) <= 1) return { deleted: false, reason: "last" };
+  const target = options.moveTo ? await findStatus(db, tenantId, options.moveTo) : null;
+  if (options.moveTo && (!target || target.key === status.key)) return { deleted: false, reason: "unknown-target" };
 
+  const occupants = (await db
+    .select({ id: feedbackTickets.id })
+    .from(feedbackTickets)
+    .where(and(eq(feedbackTickets.tenantId, tenantId), eq(feedbackTickets.status, status.key)))) as Array<{ id: string }>;
+  if (occupants.length > 0 && !target) return { deleted: false, reason: "occupied", ticketCount: occupants.length };
+
+  let moved = 0;
+  let movedTickets: Array<{ id: string; from: string }> = [];
+  if (target && occupants.length > 0) {
+    const now = options.now ?? new Date();
+    const updated = (await db
+      .update(feedbackTickets)
+      .set({ status: target.key, statusChangedAt: now })
+      .where(and(eq(feedbackTickets.tenantId, tenantId), eq(feedbackTickets.status, status.key)))
+      .returning({ id: feedbackTickets.id })) as Array<{ id: string }>;
+    moved = updated.length;
+    movedTickets = updated.map((row) => ({ id: row.id, from: status.key }));
+    const actor = options.actor ?? { id: null, name: "The team" };
+    await recordEventsQuietly(
+      db,
+      tenantId,
+      updated.map((row) => ({
+        ticketId: row.id,
+        kind: "status" as const,
+        fromValue: status.label,
+        toValue: target.label,
+        actorId: actor.id,
+        actorName: actor.name,
+      })),
+      now,
+    );
+  }
   await db.delete(feedbackStatuses).where(and(eq(feedbackStatuses.tenantId, tenantId), eq(feedbackStatuses.id, statusId)));
-  return { deleted: true };
+  return target ? { deleted: true, moved, to: target, tickets: movedTickets } : { deleted: true };
 }
 
 /**
- * The full column order, as ids. Renumbers in tens so gaps stay available.
- * An id that isn't one of this company's columns is skipped by the WHERE.
+ * Renumber rows in tens, in the order given, in ONE statement (0.11.0 —
+ * 0.10 ran one update per row, so a refresh between two of them saw a half-
+ * reordered board). Ids that aren't this company's are skipped by the WHERE.
  */
+async function reorderRows(
+  db: FeedbackDb,
+  table: typeof feedbackStatuses | typeof feedbackCategories,
+  tenantId: string,
+  orderedIds: readonly string[],
+): Promise<void> {
+  const ids = [...new Set(orderedIds)];
+  if (ids.length === 0) return;
+  const cases = sql.join(
+    ids.map((id, index) => sql`when ${id} then ${(index + 1) * 10}`),
+    sql` `,
+  );
+  await db
+    .update(table)
+    .set({ sortOrder: sql`(case ${table.id} ${cases} end)::integer` })
+    .where(and(eq(table.tenantId, tenantId), inArray(table.id, ids)));
+}
+
+/** The full column order, as ids. Renumbers in tens so gaps stay available. */
 export async function reorderStatuses(db: FeedbackDb, tenantId: string, orderedIds: readonly string[]): Promise<void> {
   if (!isTenantId(tenantId)) return;
-  for (const [index, id] of orderedIds.entries()) {
-    await db
-      .update(feedbackStatuses)
-      .set({ sortOrder: (index + 1) * 10 })
-      .where(and(eq(feedbackStatuses.tenantId, tenantId), eq(feedbackStatuses.id, id)));
-  }
+  await reorderRows(db, feedbackStatuses, tenantId, orderedIds);
 }
 
 // ---------------------------------------------------------------------------
@@ -364,6 +513,12 @@ export interface BoardTicket {
   category: string | null;
   status: string;
   assignee: string | null;
+  /** The host's user id of the assignee, when they were picked from the company's people (0.11.0). */
+  assigneeId: string | null;
+  /** "widget" | "page" | "staff" (0.11.0). */
+  source: FeedbackTicketSource;
+  /** Is the reporter emailed about it (0.11.0; false for a team ticket filed without "tell them"). */
+  notifyReporter: boolean;
   reporterName: string | null;
   reporterEmail: string | null;
   pagePathname: string | null;
@@ -378,6 +533,21 @@ export interface BoardTicket {
   hasUnreadReporterReply: boolean;
 }
 
+/**
+ * How many tickets carry each value of a field, with every OTHER filter
+ * applied (0.11.0) — "how many would I get if I ticked this", which is the
+ * number a person choosing a filter wants. (Ask Lou's counts ignored the
+ * filters, so they were board-wide totals that never matched what ticking
+ * gave.) `FILTER_NONE` counts the empty value: unassigned, no category.
+ */
+export interface BoardFacets {
+  status: Record<string, number>;
+  priority: Record<string, number>;
+  category: Record<string, number>;
+  assignee: Record<string, number>;
+  source: Record<string, number>;
+}
+
 export interface BoardData {
   statuses: BoardStatus[];
   tickets: BoardTicket[];
@@ -387,10 +557,24 @@ export interface BoardData {
    * than from the capped page of tickets above.
    */
   archivableCount: number;
+  /** Every ticket on the board (archived ones too when they're asked for): the "of Y" (0.11.0). */
+  totalCount: number;
+  /** How many match the filters, counted in the database: the "X" — more than `tickets.length` when truncated. */
+  matchCount: number;
+  /** Some matching tickets aren't in `tickets` (past the caps): the board says so instead of hiding them. */
+  truncated: boolean;
+  facets: BoardFacets;
 }
 
-/** How many cards one board read returns at most, newest first. */
+/** How many unfinished cards one board read returns at most, newest first. */
 export const BOARD_TICKET_LIMIT = 300;
+/**
+ * How many cards of FINISHED columns one read returns at most (0.11.0). Read
+ * separately, so a busy Done column never pushes open work off the board —
+ * 0.10 took the newest 300 of everything, and a month of closed tickets did
+ * exactly that.
+ */
+export const BOARD_FINISHED_LIMIT = 100;
 
 const TICKET_CARD_COLUMNS = {
   id: feedbackTickets.id,
@@ -400,6 +584,9 @@ const TICKET_CARD_COLUMNS = {
   category: feedbackTickets.category,
   status: feedbackTickets.status,
   assignee: feedbackTickets.assignee,
+  assigneeId: feedbackTickets.assigneeId,
+  source: feedbackTickets.source,
+  notifyReporter: feedbackTickets.notifyReporter,
   reporterName: feedbackTickets.reporterName,
   reporterEmail: feedbackTickets.reporterEmail,
   pagePathname: feedbackTickets.pagePathname,
@@ -412,44 +599,251 @@ const TICKET_CARD_COLUMNS = {
   lastStaffReadAt: feedbackTickets.lastStaffReadAt,
 } as const;
 
-/** A company's board: its columns (seeded the first time) and its newest tickets. */
+// ---------------------------------------------------------------------------
+// Filters and search (0.11.0)
+// ---------------------------------------------------------------------------
+
+/**
+ * A NUL character can't be stored or searched in Postgres text (0.11.0: it
+ * was a 500). Refused at the boundary with a sentence instead.
+ */
+export const NUL_MESSAGE = "That has a character in it that can't be saved. Type it again without it.";
+const noNul = (value: string) => !value.includes("\u0000");
+
+const filterValues = z
+  .array(z.string().trim().min(1).max(200).refine(noNul, NUL_MESSAGE))
+  .max(MAX_FILTER_VALUES, `Pick up to ${MAX_FILTER_VALUES} at a time.`);
+/** The years a date filter may name: wider than any board, narrower than what the database can hold. */
+const FIRST_YEAR = 1970;
+const LAST_YEAR = 2999;
+const filterMoment = z
+  .string()
+  .max(40)
+  .refine((value) => !Number.isNaN(new Date(value).getTime()), "That date couldn't be read.")
+  .refine((value) => {
+    const year = new Date(value).getUTCFullYear();
+    return year >= FIRST_YEAR && year <= LAST_YEAR;
+  }, `Pick a date between ${FIRST_YEAR} and ${LAST_YEAR}.`)
+  .nullable();
+
+/**
+ * The board's filters at the boundary: what `filtersFromSearchParams` reads
+ * from a query string, checked again (a caller may build the object itself).
+ * Priorities and sources are the known words; everything else is a value the
+ * WHERE compares against this company's rows only, so an unknown one simply
+ * matches nothing.
+ */
+export const boardFilterSchema = z.object({
+  q: z.string().trim().max(MAX_SEARCH_LENGTH, `Keep a search under ${MAX_SEARCH_LENGTH} characters.`).refine(noNul, NUL_MESSAGE).default(""),
+  status: filterValues.default([]),
+  priority: z.array(z.enum(FILTER_PRIORITIES)).max(FILTER_PRIORITIES.length).default([]),
+  category: filterValues.default([]),
+  assignee: filterValues.default([]),
+  source: z.array(z.enum(FILTER_SOURCES)).max(FILTER_SOURCES.length).default([]),
+  from: filterMoment.default(null),
+  to: filterMoment.default(null),
+  archived: z.boolean().default(false),
+});
+
+/**
+ * A search's text as a LIKE pattern that means exactly what was typed: `%`,
+ * `_` and `\` are escaped, so "100%" finds "100%" and "a_b" doesn't match
+ * "axb" (Ask Lou passed them through as wildcards).
+ */
+export function likePattern(text: string): string {
+  return `%${text.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+}
+
+/** "12", "#12", "fb12", "FB-00012" → "FB-00012": a number typed any way finds its ticket. */
+function ticketNumberOf(text: string): string | null {
+  const match = /^#?\s*(?:fb\s*-?\s*)?0*(\d{1,9})$/i.exec(text.trim());
+  if (!match) return null;
+  return `FB-${match[1]!.padStart(5, "0")}`;
+}
+
+type FilterPart = "status" | "priority" | "category" | "assignee" | "source" | "q" | "dates";
+
+/**
+ * The filters as WHERE conditions, one per field, so a facet can leave its own
+ * field out. NEVER includes the company: every statement starts from
+ * `ticketWhere(tenantId, …)`, which puts the company first, so no combination
+ * of filters can be run without it.
+ */
+function filterConditions(filters: BoardFilters, viewerId: string | null): Partial<Record<FilterPart, SQL>> {
+  const parts: Partial<Record<FilterPart, SQL>> = {};
+  if (filters.status.length > 0) parts.status = inArray(feedbackTickets.status, filters.status);
+  if (filters.priority.length > 0) parts.priority = inArray(feedbackTickets.priority, filters.priority as never[]);
+  if (filters.category.length > 0) {
+    const keys = filters.category.filter((value) => value !== FILTER_NONE);
+    parts.category =
+      or(
+        keys.length > 0 ? inArray(feedbackTickets.category, keys) : undefined,
+        filters.category.includes(FILTER_NONE) ? isNull(feedbackTickets.category) : undefined,
+      ) ?? sql`false`;
+  }
+  if (filters.assignee.length > 0) {
+    // "Mine" is whoever is asking — resolved here, never taken from the
+    // browser as an id, so a shared "mine" link means the viewer's own.
+    const named = filters.assignee.filter((value) => value.startsWith(FILTER_NAMED_PREFIX)).map((value) => value.slice(FILTER_NAMED_PREFIX.length));
+    const ids = filters.assignee
+      .filter((value) => value !== FILTER_NONE && !value.startsWith(FILTER_NAMED_PREFIX))
+      .flatMap((value) => (value === FILTER_ME ? (viewerId ? [viewerId] : []) : [value]));
+    const none = filters.assignee.includes(FILTER_NONE);
+    // THE SAME RULE as assigneeKeyOf below, which the counts use: a person
+    // (by id), a typed name nobody is linked to, or nobody at all.
+    parts.assignee =
+      or(
+        ids.length > 0 ? inArray(feedbackTickets.assigneeId, ids) : undefined,
+        named.length > 0 ? and(isNull(feedbackTickets.assigneeId), inArray(feedbackTickets.assignee, named)) : undefined,
+        none ? and(isNull(feedbackTickets.assigneeId), isNull(feedbackTickets.assignee)) : undefined,
+      ) ?? sql`false`;
+  }
+  if (filters.source.length > 0) parts.source = inArray(feedbackTickets.source, filters.source as FeedbackTicketSource[]);
+  const q = filters.q.trim();
+  if (q) {
+    const pattern = likePattern(q);
+    const number = ticketNumberOf(q);
+    parts.q = or(
+      sql`${feedbackTickets.ticketNumber} ilike ${pattern} escape '\\'`,
+      sql`${feedbackTickets.title} ilike ${pattern} escape '\\'`,
+      sql`${feedbackTickets.description} ilike ${pattern} escape '\\'`,
+      sql`${feedbackTickets.reporterName} ilike ${pattern} escape '\\'`,
+      sql`${feedbackTickets.reporterEmail} ilike ${pattern} escape '\\'`,
+      number ? eq(feedbackTickets.ticketNumber, number) : undefined,
+    )!;
+  }
+  const from = filters.from ? new Date(filters.from) : null;
+  // A bare day for `to` means "to the end of that day" (UTC); a moment is
+  // exclusive — the board's toolbar sends the start of the viewer's next day.
+  const to = filters.to
+    ? new Date(/^\d{4}-\d{2}-\d{2}$/.test(filters.to) ? new Date(filters.to).getTime() + 86_400_000 : filters.to)
+    : null;
+  const dates = and(
+    from && !Number.isNaN(from.getTime()) ? gte(feedbackTickets.createdAt, from) : undefined,
+    to && !Number.isNaN(to.getTime()) ? lt(feedbackTickets.createdAt, to) : undefined,
+  );
+  if (dates) parts.dates = dates;
+  return parts;
+}
+
+/** THE COMPANY FIRST, then the archive scope, then whichever filters apply. */
+function ticketWhere(tenantId: string, includeArchived: boolean, ...conditions: Array<SQL | undefined>): SQL {
+  return and(
+    eq(feedbackTickets.tenantId, tenantId),
+    includeArchived ? undefined : isNull(feedbackTickets.archivedAt),
+    ...conditions,
+  )!;
+}
+
+async function countWhere(db: FeedbackDb, where: SQL): Promise<number> {
+  const [row] = (await db.select({ n: count() }).from(feedbackTickets).where(where)) as Array<{ n: number }>;
+  return Number(row?.n ?? 0);
+}
+
+const FACET_COLUMNS = {
+  status: feedbackTickets.status,
+  priority: feedbackTickets.priority,
+  category: feedbackTickets.category,
+  source: feedbackTickets.source,
+} as const;
+
+/**
+ * Which "Assigned to" choice a ticket counts under: its person's id, its
+ * typed name (`__name:…`, not linked to anyone), or `__none` — exactly the
+ * rule the filter matches by, so a count is always what ticking gives.
+ */
+function assigneeKeyOf(assigneeId: string | null, assignee: string | null): string {
+  if (assigneeId !== null) return assigneeId;
+  if (assignee !== null) return namedAssignee(assignee);
+  return FILTER_NONE;
+}
+
+/**
+ * A company's board: its columns (seeded the first time) and the tickets that
+ * match `filters` — unfinished ones newest first up to BOARD_TICKET_LIMIT,
+ * finished ones up to BOARD_FINISHED_LIMIT — with the counts the toolbar
+ * shows ("Showing X of Y", per-option counts).
+ *
+ * Filtering happens HERE, in the database, never on the page: a capped read
+ * filtered in the browser can't find ticket 301 (Riddler Go's list bug, and
+ * the reason Ask Lou moved its filters server-side). `viewerId` is who is
+ * asking, for "Mine".
+ */
 export async function listBoardData(
   db: FeedbackDb,
   tenantId: string,
-  options: { includeArchived?: boolean } = {},
+  options: {
+    includeArchived?: boolean;
+    filters?: Partial<BoardFilters> | null;
+    viewerId?: string | null;
+  } = {},
 ): Promise<BoardData> {
-  if (!isTenantId(tenantId)) return { statuses: [], tickets: [], archivableCount: 0 };
+  const emptyFacets: BoardFacets = { status: {}, priority: {}, category: {}, assignee: {}, source: {} };
+  if (!isTenantId(tenantId)) {
+    return { statuses: [], tickets: [], archivableCount: 0, totalCount: 0, matchCount: 0, truncated: false, facets: emptyFacets };
+  }
+  const filters: BoardFilters = boardFilterSchema.parse({ ...EMPTY_FILTERS, ...(options.filters ?? {}) });
+  const includeArchived = options.includeArchived === true || filters.archived;
+  const viewerId = options.viewerId ?? null;
   await ensureFeedbackBoard(db, tenantId);
   const statuses = await listStatuses(db, tenantId);
+  const terminalKeys = statuses.filter((s) => s.isTerminal).map((s) => s.key);
 
-  const rows = (await db
+  const parts = filterConditions(filters, viewerId);
+  const conditions = Object.values(parts);
+  const matching = ticketWhere(tenantId, includeArchived, ...conditions);
+
+  // Two reads, so finished work never crowds out open work (BOARD_FINISHED_LIMIT).
+  const open = (await db
     .select(TICKET_CARD_COLUMNS)
     .from(feedbackTickets)
-    .where(
-      and(
-        eq(feedbackTickets.tenantId, tenantId),
-        // Archived tickets leave the board by default; the eye toggle brings
-        // them back greyed rather than moving them anywhere.
-        options.includeArchived ? undefined : isNull(feedbackTickets.archivedAt),
-      ),
-    )
+    .where(and(matching, terminalKeys.length > 0 ? notInArray(feedbackTickets.status, terminalKeys) : undefined))
     .orderBy(desc(feedbackTickets.createdAt), desc(feedbackTickets.id))
     .limit(BOARD_TICKET_LIMIT)) as Array<BoardTicket & { lastStaffReadAt: Date | null }>;
+  const finished = (
+    terminalKeys.length === 0
+      ? []
+      : await db
+          .select(TICKET_CARD_COLUMNS)
+          .from(feedbackTickets)
+          .where(and(matching, inArray(feedbackTickets.status, terminalKeys)))
+          .orderBy(desc(feedbackTickets.createdAt), desc(feedbackTickets.id))
+          .limit(BOARD_FINISHED_LIMIT)
+  ) as Array<BoardTicket & { lastStaffReadAt: Date | null }>;
+  const rows = [...open, ...finished];
 
-  const terminalKeys = statuses.filter((s) => s.isTerminal).map((s) => s.key);
-  let archivableCount = 0;
-  if (terminalKeys.length > 0) {
-    const [archivable] = (await db
-      .select({ n: count() })
+  const totalCount = await countWhere(db, ticketWhere(tenantId, includeArchived));
+  const matchCount = conditions.length === 0 ? totalCount : await countWhere(db, matching);
+  const archivableCount =
+    terminalKeys.length === 0 ? 0 : await countWhere(db, ticketWhere(tenantId, false, inArray(feedbackTickets.status, terminalKeys)));
+
+  // Per-option counts: each field counted with every OTHER field's filter on.
+  const facets: BoardFacets = { status: {}, priority: {}, category: {}, assignee: {}, source: {} };
+  for (const field of Object.keys(FACET_COLUMNS) as Array<keyof typeof FACET_COLUMNS>) {
+    const others = (Object.entries(parts) as Array<[FilterPart, SQL]>)
+      .filter(([part]) => part !== field)
+      .map(([, condition]) => condition);
+    const column = FACET_COLUMNS[field];
+    const grouped = (await db
+      .select({ value: column, n: count() })
       .from(feedbackTickets)
-      .where(
-        and(
-          eq(feedbackTickets.tenantId, tenantId),
-          inArray(feedbackTickets.status, terminalKeys),
-          isNull(feedbackTickets.archivedAt),
-        ),
-      )) as Array<{ n: number }>;
-    archivableCount = Number(archivable?.n ?? 0);
+      .where(ticketWhere(tenantId, includeArchived, ...others))
+      .groupBy(column)) as Array<{ value: string | null; n: number }>;
+    for (const row of grouped) facets[field][row.value ?? FILTER_NONE] = Number(row.n);
+  }
+  {
+    const others = (Object.entries(parts) as Array<[FilterPart, SQL]>)
+      .filter(([part]) => part !== "assignee")
+      .map(([, condition]) => condition);
+    const grouped = (await db
+      .select({ id: feedbackTickets.assigneeId, name: feedbackTickets.assignee, n: count() })
+      .from(feedbackTickets)
+      .where(ticketWhere(tenantId, includeArchived, ...others))
+      .groupBy(feedbackTickets.assigneeId, feedbackTickets.assignee)) as Array<{ id: string | null; name: string | null; n: number }>;
+    for (const row of grouped) {
+      const key = assigneeKeyOf(row.id, row.name);
+      facets.assignee[key] = (facets.assignee[key] ?? 0) + Number(row.n);
+    }
   }
 
   // One grouped query for the whole board, not one per ticket: the latest
@@ -486,7 +880,7 @@ export async function listBoardData(
     };
   });
 
-  return { statuses, tickets, archivableCount };
+  return { statuses, tickets, archivableCount, totalCount, matchCount, truncated: matchCount > tickets.length, facets };
 }
 
 /** The heavy half of a ticket, for the panel: the report, its captured context and errors. */
@@ -561,21 +955,54 @@ export interface CreatedTicket {
   status: string;
 }
 
-/** How many times a ticket number is retried when two submits race for it. */
-const NUMBER_ATTEMPTS = 8;
+/**
+ * How many times a ticket number is retried when submits race for it. Each
+ * round of a race has exactly one winner, so N tickets filed at the same
+ * moment need N rounds: 0.10's 8 lost the ninth of a burst (a team filing
+ * while a busy widget reports). 25 covers a burst bigger than any board sees.
+ */
+const NUMBER_ATTEMPTS = 25;
+
+type TicketInsert = typeof feedbackTickets.$inferInsert;
+
+/**
+ * Insert a ticket under the company's next number. RACE-SAFE WITHOUT A LOCK
+ * (so it works on every driver, neon-http included): the unique index on
+ * (company, number) is the arbiter, and an insert that loses the race takes
+ * the next number, up to NUMBER_ATTEMPTS times. The intake and staff "New ticket" share
+ * it, so a reporter and a teammate filing at the same moment never collide.
+ */
+async function insertNumbered(
+  db: FeedbackDb,
+  tenantId: string,
+  values: Omit<TicketInsert, "tenantId" | "ticketNumber">,
+): Promise<{ id: string; ticketNumber: string }> {
+  for (let attempt = 0; ; attempt++) {
+    const ticketNumber = await nextTicketNumber(db, tenantId);
+    try {
+      const [inserted] = (await db
+        .insert(feedbackTickets)
+        .values({ ...values, tenantId, ticketNumber })
+        .returning({ id: feedbackTickets.id })) as Array<{ id: string }>;
+      if (!inserted) throw new Error("ticket insert returned no row");
+      return { id: inserted.id, ticketNumber };
+    } catch (error) {
+      if (isUniqueViolation(error) && attempt < NUMBER_ATTEMPTS - 1) continue;
+      throw error;
+    }
+  }
+}
 
 /**
  * Put a report on a company's board: the ticket (numbered in that company),
  * the reporter's follow-up token, and the reporter's own words as the first
- * message of the conversation.
- *
- * RACE-SAFE NUMBERING without a lock (so it works on every driver, neon-http
- * included): the unique index on (company, number) is the arbiter, and a
- * submit that loses the race takes the next number, up to eight times.
+ * message of the conversation. `source` (0.11.0) is how it arrived: the
+ * feedback button on a website key ("widget", the default) or the company's
+ * own feedback page ("page").
  */
 export async function createTicket(
   db: FeedbackDb,
-  input: { readonly tenantId: string; readonly payload: SubmitPayload },
+  input: { readonly tenantId: string; readonly payload: SubmitPayload; readonly source?: "widget" | "page" },
 ): Promise<CreatedTicket> {
   const { tenantId, payload } = input;
   if (!isTenantId(tenantId)) throw new Error("createTicket: pass the company");
@@ -586,52 +1013,322 @@ export async function createTicket(
   const ticketToken = generateReporterToken();
   const reporterTokenHash = await hashReporterToken(ticketToken);
   const status = await initialStatus(db, tenantId);
+  const reporterName = payload.reporter?.name?.trim() || null;
+  const reporterEmail = payload.reporter?.email?.trim() || null;
 
-  for (let attempt = 0; ; attempt++) {
-    const ticketNumber = await nextTicketNumber(db, tenantId);
-    let id: string | undefined;
-    try {
-      const [inserted] = (await db
-        .insert(feedbackTickets)
-        .values({
-          tenantId,
-          ticketNumber,
-          title,
-          description: payload.description,
-          priority: payload.priority,
-          category: payload.category ?? null,
-          status,
-          screenshotUrl: payload.screenshotUrl ?? null,
-          annotatedScreenshotUrl: payload.annotatedScreenshotUrl ?? null,
-          reporterName: payload.reporter?.name?.trim() || null,
-          reporterEmail: payload.reporter?.email?.trim() || null,
-          reporterTokenHash,
-          pagePathname: payload.clientMetadata.pathname,
-          clientMetadata: payload.clientMetadata,
-          recentErrors: payload.recentErrors ?? [],
-        })
-        .returning({ id: feedbackTickets.id })) as Array<{ id: string }>;
-      id = inserted?.id;
-    } catch (error) {
-      if (isUniqueViolation(error) && attempt < NUMBER_ATTEMPTS - 1) continue;
-      throw error;
-    }
-    if (!id) throw new Error("ticket insert returned no row");
-    // The reporter's own words as the first message, so "My reports → thread"
-    // shows their submission rather than an empty conversation. Best-effort:
-    // a ticket that was created must not fail because its first message didn't.
-    try {
-      await insertMessage(db, {
-        ticketId: id,
-        senderType: "reporter",
-        senderName: payload.reporter?.name?.trim() || payload.reporter?.email?.trim() || "Reporter",
-        body: payload.description,
-      });
-    } catch {
-      /* the ticket stands */
-    }
-    return { id, ticketNumber, ticketToken, title, status };
+  const { id, ticketNumber } = await insertNumbered(db, tenantId, {
+    title,
+    description: payload.description,
+    priority: payload.priority,
+    category: payload.category ?? null,
+    status,
+    source: input.source ?? "widget",
+    screenshotUrl: payload.screenshotUrl ?? null,
+    annotatedScreenshotUrl: payload.annotatedScreenshotUrl ?? null,
+    reporterName,
+    reporterEmail,
+    reporterTokenHash,
+    pagePathname: payload.clientMetadata.pathname,
+    clientMetadata: payload.clientMetadata,
+    recentErrors: payload.recentErrors ?? [],
+  });
+  // The reporter's own words as the first message, so "My reports → thread"
+  // shows their submission rather than an empty conversation; and the first
+  // line of the activity trail. Best-effort: a ticket that was created must
+  // not fail because either didn't.
+  try {
+    await insertMessage(db, {
+      ticketId: id,
+      senderType: "reporter",
+      senderName: reporterName || reporterEmail || "Reporter",
+      body: payload.description,
+    });
+  } catch {
+    /* the ticket stands */
   }
+  await recordEventsQuietly(db, tenantId, [
+    { ticketId: id, kind: "created", fromValue: null, toValue: null, actorId: null, actorName: reporterName || "A customer" },
+  ]);
+  return { id, ticketNumber, ticketToken, title, status };
+}
+
+// ---------------------------------------------------------------------------
+// The activity trail (0.11.0)
+// ---------------------------------------------------------------------------
+
+/** Who made a change: the host's user id (or null) and the name the trail shows. */
+export interface TicketActor {
+  readonly id: string | null;
+  readonly name: string;
+}
+
+export interface TicketEvent {
+  id: string;
+  ticketId: string;
+  kind: FeedbackTicketEventKind;
+  fromValue: string | null;
+  toValue: string | null;
+  actorId: string | null;
+  actorName: string;
+  createdAt: Date;
+}
+
+interface EventDraft {
+  ticketId: string;
+  kind: FeedbackTicketEventKind;
+  fromValue: string | null;
+  toValue: string | null;
+  actorId: string | null;
+  actorName: string;
+}
+
+const EVENT_COLUMNS = {
+  id: feedbackTicketEvents.id,
+  ticketId: feedbackTicketEvents.ticketId,
+  kind: feedbackTicketEvents.kind,
+  fromValue: feedbackTicketEvents.fromValue,
+  toValue: feedbackTicketEvents.toValue,
+  actorId: feedbackTicketEvents.actorId,
+  actorName: feedbackTicketEvents.actorName,
+  createdAt: feedbackTicketEvents.createdAt,
+} as const;
+
+/** Callers have already found every ticket INSIDE `tenantId`; the rows carry it too. */
+async function recordEvents(db: FeedbackDb, tenantId: string, drafts: readonly EventDraft[], now?: Date): Promise<void> {
+  if (drafts.length === 0) return;
+  await db.insert(feedbackTicketEvents).values(
+    drafts.map((draft) => ({
+      tenantId,
+      ticketId: draft.ticketId,
+      kind: draft.kind,
+      fromValue: draft.fromValue?.slice(0, 200) ?? null,
+      toValue: draft.toValue?.slice(0, 200) ?? null,
+      actorId: draft.actorId,
+      actorName: draft.actorName.trim().slice(0, 120) || "The team",
+      ...(now ? { createdAt: now } : {}),
+    })),
+  );
+}
+
+/** The trail is a record of a change, never the change itself: a failed write never undoes one. */
+async function recordEventsQuietly(db: FeedbackDb, tenantId: string, drafts: readonly EventDraft[], now?: Date): Promise<void> {
+  try {
+    await recordEvents(db, tenantId, drafts, now);
+  } catch {
+    /* the change stands */
+  }
+}
+
+/** One of this company's tickets' trail, oldest first ([] for any other ticket). */
+export async function listTicketEvents(db: FeedbackDb, tenantId: string, ticketId: string): Promise<TicketEvent[]> {
+  if (!isTenantId(tenantId) || typeof ticketId !== "string" || ticketId.length === 0) return [];
+  return db
+    .select(EVENT_COLUMNS)
+    .from(feedbackTicketEvents)
+    .where(and(eq(feedbackTicketEvents.tenantId, tenantId), eq(feedbackTicketEvents.ticketId, ticketId)))
+    .orderBy(asc(feedbackTicketEvents.createdAt), asc(feedbackTicketEvents.id));
+}
+
+// ---------------------------------------------------------------------------
+// Staff tickets and editing (0.11.0)
+// ---------------------------------------------------------------------------
+
+/** A ticket change refused for a reason a person can fix: the sentence is shown as it is. */
+export class TicketChangeError extends Error {
+  readonly name = "TicketChangeError";
+}
+
+/** A person to assign: the host's own user id, and the name the card shows. */
+export interface TicketAssignee {
+  readonly id: string;
+  readonly name: string;
+}
+
+const priorityEnum = z.enum(FILTER_PRIORITIES);
+
+/**
+ * A ticket the team files from the board. Only the title is required; the
+ * column defaults to the board's first unfinished one, exactly where the
+ * intake puts a report. The assignee arrives already looked up (the handler
+ * checks it is one of the company's people).
+ */
+/** Checked the way the reporter emails check it, so an address that's stored is one that can be written to. */
+const EMAIL_SHAPE = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{2,}$/;
+
+export const staffTicketSchema = z.object({
+  title: z.string().trim().min(1, "Give the ticket a title.").max(200, "Keep the title under 200 characters.").refine(noNul, NUL_MESSAGE),
+  description: z.string().trim().max(5000, "Keep the description under 5000 characters.").refine(noNul, NUL_MESSAGE).optional(),
+  priority: priorityEnum.default("medium"),
+  category: z.string().trim().min(1).max(50).nullish(),
+  status: z.string().trim().min(1).max(50).optional(),
+  reporterName: z.string().trim().max(120).refine(noNul, NUL_MESSAGE).nullish(),
+  reporterEmail: z
+    .string()
+    .trim()
+    .max(255)
+    .refine((value) => value === "" || EMAIL_SHAPE.test(value), "That email address doesn't look right. Check it, or leave it empty.")
+    .nullish(),
+  /**
+   * Email the customer when the team replies or moves it (0.11.0). Off
+   * unless asked: the customer never used the feedback form.
+   */
+  tellReporter: z.boolean().optional(),
+});
+
+export interface CreatedStaffTicket {
+  id: string;
+  ticketNumber: string;
+  title: string;
+  status: string;
+}
+
+const UNKNOWN_CATEGORY = "That category isn't on this board. Refresh to see the board's categories.";
+const UNKNOWN_COLUMN = "That column isn't on this board any more. Refresh to see the board as it is.";
+
+/** A category key of THIS company's (or of the built-in list, when it has none); its label for the trail. */
+async function categoryLabel(db: FeedbackDb, tenantId: string, key: string): Promise<string | null> {
+  const rows = await listCategories(db, tenantId);
+  if (rows.length === 0) return DEFAULT_CATEGORIES.find((category) => category.key === key)?.label ?? null;
+  return rows.find((row) => row.key === key)?.label ?? null;
+}
+
+/**
+ * File a ticket from the board (0.11.0): numbered in the company like a
+ * report, marked `source: "staff"` and `createdBy`, with the trail's first
+ * line. A column or category that isn't THIS company's is refused with a
+ * sentence (TicketChangeError) — never written, never "found" on another
+ * company's board.
+ */
+export async function createStaffTicket(
+  db: FeedbackDb,
+  tenantId: string,
+  input: z.input<typeof staffTicketSchema> & { readonly assignee?: TicketAssignee | null },
+  actor: TicketActor,
+): Promise<CreatedStaffTicket> {
+  if (!isTenantId(tenantId)) throw new Error("createStaffTicket: pass the company");
+  const parsed = staffTicketSchema.parse(input);
+  await ensureFeedbackBoard(db, tenantId);
+  let status: string;
+  if (parsed.status) {
+    const column = await findStatus(db, tenantId, parsed.status);
+    if (!column) throw new TicketChangeError(UNKNOWN_COLUMN);
+    status = column.key;
+  } else {
+    status = await initialStatus(db, tenantId);
+  }
+  const category = parsed.category ?? null;
+  if (category !== null && (await categoryLabel(db, tenantId, category)) === null) throw new TicketChangeError(UNKNOWN_CATEGORY);
+  const assignee = input.assignee ?? null;
+
+  const { id, ticketNumber } = await insertNumbered(db, tenantId, {
+    title: parsed.title,
+    description: parsed.description ?? "",
+    priority: parsed.priority,
+    category,
+    status,
+    source: "staff",
+    createdBy: actor.id,
+    assignee: assignee ? assignee.name.slice(0, 120) : null,
+    assigneeId: assignee ? assignee.id : null,
+    reporterName: parsed.reporterName || null,
+    reporterEmail: parsed.reporterEmail || null,
+    notifyReporter: parsed.tellReporter === true && Boolean(parsed.reporterEmail),
+  });
+  await recordEventsQuietly(db, tenantId, [
+    { ticketId: id, kind: "created", fromValue: null, toValue: null, actorId: actor.id, actorName: actor.name },
+  ]);
+  return { id, ticketNumber, title: parsed.title, status };
+}
+
+/** What a ticket's editor may change (0.11.0). Absent = unchanged; `category: null` clears it. */
+export const ticketPatchSchema = z
+  .object({
+    title: z
+      .string()
+      .trim()
+      .min(1, "Give the ticket a title.")
+      .max(200, "Keep the title under 200 characters.")
+      .refine(noNul, NUL_MESSAGE)
+      .optional(),
+    priority: priorityEnum.optional(),
+    category: z.string().trim().min(1).max(50).nullable().optional(),
+  });
+
+export type UpdateTicketResult = { readonly updated: true; readonly changed: readonly FeedbackTicketEventKind[] } | null;
+
+/**
+ * Edit one of this company's tickets: its title, priority, category and
+ * assignee (`assignee: null` unassigns; absent leaves it). Every field that
+ * actually changed becomes a line of the trail, by `actor`. Everything is
+ * checked BEFORE anything is written, so a refused category never leaves half
+ * an edit behind. Null: not this company's ticket.
+ */
+export async function updateTicket(
+  db: FeedbackDb,
+  tenantId: string,
+  input: z.input<typeof ticketPatchSchema> & { readonly ticketId: string; readonly assignee?: TicketAssignee | null },
+  actor: TicketActor,
+  now: Date = new Date(),
+): Promise<UpdateTicketResult> {
+  if (!isTenantId(tenantId)) return null;
+  const { ticketId, assignee, ...fields } = input;
+  const patch = ticketPatchSchema.parse(fields);
+  const [ticket] = (await db
+    .select({
+      id: feedbackTickets.id,
+      title: feedbackTickets.title,
+      priority: feedbackTickets.priority,
+      category: feedbackTickets.category,
+      assignee: feedbackTickets.assignee,
+      assigneeId: feedbackTickets.assigneeId,
+    })
+    .from(feedbackTickets)
+    .where(and(eq(feedbackTickets.tenantId, tenantId), eq(feedbackTickets.id, ticketId)))
+    .limit(1)) as Array<{
+    id: string;
+    title: string;
+    priority: string;
+    category: string | null;
+    assignee: string | null;
+    assigneeId: string | null;
+  }>;
+  if (!ticket) return null;
+
+  const set: Partial<TicketInsert> = {};
+  const drafts: EventDraft[] = [];
+  const by = { actorId: actor.id, actorName: actor.name, ticketId: ticket.id };
+  if (patch.title !== undefined && patch.title !== ticket.title) {
+    set.title = patch.title;
+    drafts.push({ ...by, kind: "title", fromValue: ticket.title, toValue: patch.title });
+  }
+  if (patch.priority !== undefined && patch.priority !== ticket.priority) {
+    set.priority = patch.priority;
+    const label = (value: string) => PRIORITY_LABELS[value as keyof typeof PRIORITY_LABELS] ?? value;
+    drafts.push({ ...by, kind: "priority", fromValue: label(ticket.priority), toValue: label(patch.priority) });
+  }
+  if (patch.category !== undefined && patch.category !== ticket.category) {
+    const to = patch.category === null ? null : await categoryLabel(db, tenantId, patch.category);
+    if (patch.category !== null && to === null) throw new TicketChangeError(UNKNOWN_CATEGORY);
+    const from = ticket.category === null ? null : ((await categoryLabel(db, tenantId, ticket.category)) ?? ticket.category);
+    set.category = patch.category;
+    drafts.push({ ...by, kind: "category", fromValue: from, toValue: to });
+  }
+  if (assignee !== undefined) {
+    const nextId = assignee?.id ?? null;
+    const nextName = assignee ? assignee.name.slice(0, 120) : null;
+    if (nextId !== ticket.assigneeId || nextName !== ticket.assignee) {
+      set.assigneeId = nextId;
+      set.assignee = nextName;
+      if (nextName !== ticket.assignee) drafts.push({ ...by, kind: "assignee", fromValue: ticket.assignee, toValue: nextName });
+    }
+  }
+  if (Object.keys(set).length === 0) return { updated: true, changed: [] };
+  await db
+    .update(feedbackTickets)
+    .set(set)
+    .where(and(eq(feedbackTickets.tenantId, tenantId), eq(feedbackTickets.id, ticket.id)));
+  await recordEventsQuietly(db, tenantId, drafts, now);
+  return { updated: true, changed: drafts.map((draft) => draft.kind) };
 }
 
 /**
@@ -710,16 +1407,23 @@ export type MoveTicketResult =
   | { readonly moved: true; readonly from: string; readonly to: BoardStatus }
   | { readonly moved: false; readonly reason: "not-found" | "unknown-status" | "unchanged" };
 
+/** A column key's label on this company's board, for the trail; the key itself when no column has it. */
+async function columnLabels(db: FeedbackDb, tenantId: string): Promise<(key: string) => string> {
+  const byKey = new Map((await listStatuses(db, tenantId)).map((status) => [status.key, status.label]));
+  return (key) => byKey.get(key) ?? key;
+}
+
 /**
  * The one board mutation. An unknown column key is refused instead of written
  * — a drop target that doesn't exist is a stale client, and a silently
  * invented status would vanish from every column. Moving a ticket to the
  * column it's already in changes nothing (and resets no aging clock).
+ * `actor` (0.11.0) puts the move on the ticket's trail.
  */
 export async function moveTicket(
   db: FeedbackDb,
   tenantId: string,
-  input: { ticketId: string; statusKey: string },
+  input: { ticketId: string; statusKey: string; actor?: TicketActor },
   now: Date = new Date(),
 ): Promise<MoveTicketResult> {
   if (!isTenantId(tenantId)) return { moved: false, reason: "not-found" };
@@ -738,6 +1442,14 @@ export async function moveTicket(
     // column, so a fresh move resets the dot rather than inheriting it.
     .set({ status: status.key, statusChangedAt: now })
     .where(and(eq(feedbackTickets.tenantId, tenantId), eq(feedbackTickets.id, ticket.id)));
+  const actor = input.actor ?? { id: null, name: "The team" };
+  const label = await columnLabels(db, tenantId);
+  await recordEventsQuietly(
+    db,
+    tenantId,
+    [{ ticketId: ticket.id, kind: "status", fromValue: label(ticket.status), toValue: status.label, actorId: actor.id, actorName: actor.name }],
+    now,
+  );
   return { moved: true, from: ticket.status, to: status };
 }
 
@@ -754,7 +1466,7 @@ export const MAX_BULK_MOVE = 200;
 export async function moveTickets(
   db: FeedbackDb,
   tenantId: string,
-  input: { ticketIds: readonly string[]; statusKey: string },
+  input: { ticketIds: readonly string[]; statusKey: string; actor?: TicketActor },
   now: Date = new Date(),
 ): Promise<
   | {
@@ -785,6 +1497,21 @@ export async function moveTickets(
     .update(feedbackTickets)
     .set({ status: status.key, statusChangedAt: now })
     .where(and(eq(feedbackTickets.tenantId, tenantId), inArray(feedbackTickets.id, moving.map((row) => row.id))));
+  const actor = input.actor ?? { id: null, name: "The team" };
+  const label = await columnLabels(db, tenantId);
+  await recordEventsQuietly(
+    db,
+    tenantId,
+    moving.map((row) => ({
+      ticketId: row.id,
+      kind: "status" as const,
+      fromValue: label(row.status),
+      toValue: status.label,
+      actorId: actor.id,
+      actorName: actor.name,
+    })),
+    now,
+  );
   return { moved: moving.length, to: status, tickets: moving.map((row) => ({ id: row.id, from: row.status })), found };
 }
 
@@ -800,7 +1527,7 @@ export async function moveTickets(
 export async function archiveTicket(
   db: FeedbackDb,
   tenantId: string,
-  input: { ticketId: string; archivedBy: string },
+  input: { ticketId: string; archivedBy: string; actorId?: string | null },
   now: Date = new Date(),
 ): Promise<boolean> {
   if (!isTenantId(tenantId)) return false;
@@ -811,17 +1538,44 @@ export async function archiveTicket(
       and(eq(feedbackTickets.tenantId, tenantId), eq(feedbackTickets.id, input.ticketId), isNull(feedbackTickets.archivedAt)),
     )
     .returning({ id: feedbackTickets.id })) as Array<{ id: string }>;
+  await recordEventsQuietly(
+    db,
+    tenantId,
+    rows.map((row) => ({ ticketId: row.id, kind: "archived" as const, fromValue: null, toValue: null, actorId: input.actorId ?? null, actorName: input.archivedBy })),
+    now,
+  );
   return rows.length > 0;
 }
 
 /** False: not this company's ticket. */
-export async function unarchiveTicket(db: FeedbackDb, tenantId: string, ticketId: string): Promise<boolean> {
+export async function unarchiveTicket(
+  db: FeedbackDb,
+  tenantId: string,
+  ticketId: string,
+  actor?: TicketActor,
+  now: Date = new Date(),
+): Promise<boolean> {
   if (!isTenantId(tenantId)) return false;
+  const [before] = (await db
+    .select({ archivedAt: feedbackTickets.archivedAt })
+    .from(feedbackTickets)
+    .where(and(eq(feedbackTickets.tenantId, tenantId), eq(feedbackTickets.id, ticketId)))
+    .limit(1)) as Array<{ archivedAt: Date | null }>;
+  if (!before) return false;
   const rows = (await db
     .update(feedbackTickets)
     .set({ archivedAt: null, archivedBy: null })
     .where(and(eq(feedbackTickets.tenantId, tenantId), eq(feedbackTickets.id, ticketId)))
     .returning({ id: feedbackTickets.id })) as Array<{ id: string }>;
+  if (before.archivedAt !== null) {
+    const by = actor ?? { id: null, name: "The team" };
+    await recordEventsQuietly(
+      db,
+      tenantId,
+      rows.map((row) => ({ ticketId: row.id, kind: "unarchived" as const, fromValue: null, toValue: null, actorId: by.id, actorName: by.name })),
+      now,
+    );
+  }
   return rows.length > 0;
 }
 
@@ -834,7 +1588,7 @@ export async function unarchiveTicket(db: FeedbackDb, tenantId: string, ticketId
 export async function archiveTerminalTickets(
   db: FeedbackDb,
   tenantId: string,
-  input: { archivedBy: string },
+  input: { archivedBy: string; actorId?: string | null },
   now: Date = new Date(),
 ): Promise<{ archived: number }> {
   if (!isTenantId(tenantId)) return { archived: 0 };
@@ -857,6 +1611,12 @@ export async function archiveTerminalTickets(
       ),
     )
     .returning({ id: feedbackTickets.id })) as Array<{ id: string }>;
+  await recordEventsQuietly(
+    db,
+    tenantId,
+    rows.map((row) => ({ ticketId: row.id, kind: "archived" as const, fromValue: null, toValue: null, actorId: input.actorId ?? null, actorName: input.archivedBy })),
+    now,
+  );
   return { archived: rows.length };
 }
 
@@ -912,7 +1672,8 @@ export async function customerCategoryOptions(db: FeedbackDb, tenantId: string):
 }
 
 export const createCategorySchema = z.object({
-  key: statusKeySchema,
+  /** A suggestion (0.11.0): made from the name when absent, and given a number when taken. */
+  key: statusKeySchema.optional(),
   label: z.string().trim().min(1).max(60),
   description: z.string().max(200).nullish(),
   sortOrder: z.number().int().min(0).max(100000).optional(),
@@ -945,24 +1706,34 @@ export async function createCategory(
       .orderBy(desc(feedbackCategories.sortOrder))
       .limit(1)
       .then((rows: Array<{ sortOrder: number }>) => (rows[0]?.sortOrder ?? 0) + 10));
-  try {
-    const rows = await db
-      .insert(feedbackCategories)
-      .values({
-        tenantId,
-        key: parsed.key,
-        label: parsed.label,
-        description: parsed.description ?? null,
-        sortOrder,
-        showToCustomer: parsed.showToCustomer ?? true,
-      })
-      .returning(CATEGORY_COLUMNS);
-    const row = rows[0];
-    if (!row) throw new Error("category insert returned no row");
-    return row;
-  } catch (error) {
-    if (isUniqueViolation(error)) throw new DuplicateKeyError("category", parsed.key);
-    throw error;
+  const base = parsed.key ?? keyFromLabel(parsed.label);
+  for (let attempt = 0; ; attempt += 1) {
+    const existing = (await db
+      .select({ key: feedbackCategories.key, label: feedbackCategories.label })
+      .from(feedbackCategories)
+      .where(eq(feedbackCategories.tenantId, tenantId))) as Array<{ key: string; label: string }>;
+    if (existing.some((row) => sameName(row.label, parsed.label))) throw new DuplicateKeyError("category", base);
+    const key = freeKey(base, new Set(existing.map((row) => row.key)));
+    try {
+      const rows = await db
+        .insert(feedbackCategories)
+        .values({
+          tenantId,
+          key,
+          label: parsed.label,
+          description: parsed.description ?? null,
+          sortOrder,
+          showToCustomer: parsed.showToCustomer ?? true,
+        })
+        .returning(CATEGORY_COLUMNS);
+      const row = rows[0];
+      if (!row) throw new Error("category insert returned no row");
+      return row;
+    } catch (error) {
+      if (isUniqueViolation(error) && attempt < 5) continue;
+      if (isUniqueViolation(error)) throw new DuplicateKeyError("category", base);
+      throw error;
+    }
   }
 }
 
@@ -974,6 +1745,13 @@ export async function updateCategory(
 ): Promise<boolean> {
   if (!isTenantId(tenantId)) return false;
   const parsed = updateCategorySchema.parse(input);
+  if (parsed.label !== undefined) {
+    const others = (await db
+      .select({ id: feedbackCategories.id, label: feedbackCategories.label })
+      .from(feedbackCategories)
+      .where(eq(feedbackCategories.tenantId, tenantId))) as Array<{ id: string; label: string }>;
+    if (others.some((row) => row.id !== parsed.id && sameName(row.label, parsed.label!))) throw new DuplicateKeyError("category", parsed.id);
+  }
   const patch: Record<string, unknown> = {};
   if (parsed.label !== undefined) patch["label"] = parsed.label;
   if (parsed.description !== undefined) patch["description"] = parsed.description;
@@ -1025,12 +1803,7 @@ export async function deleteCategory(db: FeedbackDb, tenantId: string, categoryI
 /** The full option order, as ids. Ids that aren't this company's are skipped. */
 export async function reorderCategories(db: FeedbackDb, tenantId: string, orderedIds: readonly string[]): Promise<void> {
   if (!isTenantId(tenantId)) return;
-  for (const [index, id] of orderedIds.entries()) {
-    await db
-      .update(feedbackCategories)
-      .set({ sortOrder: (index + 1) * 10 })
-      .where(and(eq(feedbackCategories.tenantId, tenantId), eq(feedbackCategories.id, id)));
-  }
+  await reorderRows(db, feedbackCategories, tenantId, orderedIds);
 }
 
 // ---------------------------------------------------------------------------
@@ -1107,22 +1880,36 @@ export async function addTicketMessage(
 export async function assignTicket(
   db: FeedbackDb,
   tenantId: string,
-  input: { ticketId: string; assignee: string | null; actorName: string },
+  input: { ticketId: string; assignee: string | null; actorName: string; actorId?: string | null },
 ): Promise<boolean> {
   if (!isTenantId(tenantId)) return false;
   const assignee = input.assignee?.trim() ? input.assignee.trim().slice(0, 120) : null;
+  const [before] = (await db
+    .select({ assignee: feedbackTickets.assignee })
+    .from(feedbackTickets)
+    .where(and(eq(feedbackTickets.tenantId, tenantId), eq(feedbackTickets.id, input.ticketId)))
+    .limit(1)) as Array<{ assignee: string | null }>;
+  if (!before) return false;
   const rows = (await db
     .update(feedbackTickets)
-    .set({ assignee })
+    // A typed name is not one of the company's people: the id goes (0.11.0),
+    // so the "Assigned to" filter never matches a person by a stale id.
+    .set({ assignee, assigneeId: null })
     .where(and(eq(feedbackTickets.tenantId, tenantId), eq(feedbackTickets.id, input.ticketId)))
     .returning({ id: feedbackTickets.id })) as Array<{ id: string }>;
   if (rows.length === 0) return false;
+  const actorName = input.actorName.trim().slice(0, 120) || "The team";
   await insertMessage(db, {
     ticketId: input.ticketId,
     senderType: "system",
-    senderName: input.actorName.trim().slice(0, 120) || "The team",
+    senderName: actorName,
     body: assignee ? `Assigned to ${assignee}` : "Unassigned",
   });
+  if (before.assignee !== assignee) {
+    await recordEventsQuietly(db, tenantId, [
+      { ticketId: input.ticketId, kind: "assignee", fromValue: before.assignee, toValue: assignee, actorId: input.actorId ?? null, actorName },
+    ]);
+  }
   return true;
 }
 
@@ -1221,4 +2008,47 @@ export async function verifyClientKey(db: FeedbackDb, key: string): Promise<Veri
     .limit(1);
   const row = rows[0];
   return row ? { keyId: row.id, tenantId: row.tenantId } : null;
+}
+
+// ---------------------------------------------------------------------------
+// Assignees typed by name before 0.11.0
+// ---------------------------------------------------------------------------
+
+/**
+ * Link the assignees 0.10 stored as typed names to the company's people
+ * (0.11.0): every ticket of THIS company whose assignee is a name, with no
+ * person behind it, gets the person whose name matches — when exactly one of
+ * `people` has that name (case and spacing aside). A name that matches nobody,
+ * or two people, is left as it is: it stays its own "Assigned to" choice
+ * ("<name> (not linked)") until someone picks a person.
+ *
+ * The staff handlers run this once per company per process when they have a
+ * `listPeople`; a host can run it itself after the 0.10 → 0.11 upgrade.
+ * Returns how many tickets it linked.
+ */
+export async function linkTypedAssignees(
+  db: FeedbackDb,
+  tenantId: string,
+  people: ReadonlyArray<{ readonly id: string; readonly name: string }>,
+): Promise<{ linked: number }> {
+  if (!isTenantId(tenantId) || people.length === 0) return { linked: 0 };
+  const typed = (await db
+    .selectDistinct({ name: feedbackTickets.assignee })
+    .from(feedbackTickets)
+    .where(and(eq(feedbackTickets.tenantId, tenantId), isNull(feedbackTickets.assigneeId), isNotNull(feedbackTickets.assignee)))) as Array<{
+    name: string;
+  }>;
+  let linked = 0;
+  for (const { name } of typed) {
+    const matches = people.filter((person) => sameName(person.name, name));
+    if (matches.length !== 1) continue;
+    const person = matches[0]!;
+    const rows = (await db
+      .update(feedbackTickets)
+      .set({ assigneeId: person.id, assignee: person.name.slice(0, 120) })
+      .where(and(eq(feedbackTickets.tenantId, tenantId), isNull(feedbackTickets.assigneeId), eq(feedbackTickets.assignee, name)))
+      .returning({ id: feedbackTickets.id })) as Array<{ id: string }>;
+    linked += rows.length;
+  }
+  return { linked };
 }

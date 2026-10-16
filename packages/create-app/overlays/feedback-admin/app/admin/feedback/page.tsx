@@ -49,6 +49,9 @@ export default async function FeedbackBoardPage({
         canManage={can.can("staff.feedback.manage")}
         settingsHref={can.can("staff.feedback.settings") ? "/admin/feedback/settings" : null}
         initialTicketId={typeof ticket === "string" ? ticket : null}
+        // This site's own board emails nobody: its reporters read the team's
+        // answer under "My reports". The reply box says so.
+        emailsReporters={false}
       />
     </>
   );

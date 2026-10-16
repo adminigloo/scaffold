@@ -57,7 +57,7 @@ export const TENANCY_2A_NOT_INCLUDED: readonly string[] = [
  * list every README that 2b-1 touched carries.
  */
 export const TENANCY_2B1_NOT_INCLUDED: readonly string[] = [
-  "**The complete feedback board** (filters, search, a \"new ticket\" button for the team, epics) — Tenancy 2b-2b. The board per company, its alerts and its private screenshots are here (Tenancy 2b-2a).",
+  "**Epics on the feedback board** (grouping tickets under a bigger piece of work) — its next release. Its filters, search, New ticket, editing and settings screens are here (feedback 0.11), and so are the board per company, its alerts and its private screenshots (Tenancy 2b-2a).",
   "**The AI assistant per company** — Tenancy 2b-3.",
   "**Website analytics, SEO/AEO and book-a-call (booking) per company** — Tenancy 2b-4.",
   "**Text (SMS) and push alerts.** Alerts come in the app and by email — S9.",
@@ -148,10 +148,10 @@ export function notIncludedFor(companies: boolean): readonly string[] {
     : all.filter((item) => !COMPANIES_ONLY_ITEMS.has(item));
 }
 
-/** What the feedback boards don't do yet (Tenancy 2b-2a): the next chunk's, said plainly. */
+/** What the feedback boards don't do yet (feedback 0.11): the next release's, said plainly. */
 export const FEEDBACK_2B2A_NOT_INCLUDED: readonly string[] = [
-  "**Filters and search on the feedback board**, a **\"new ticket\" button for the team**, and **epics** (grouping tickets) — Tenancy 2b-2b.",
-  "**Column and category editors as package screens.** They are this project's own settings page (src/components/FeedbackSettings.tsx), yours to change.",
+  "**Epics** (grouping tickets under a bigger piece of work) — the next release of the feedback board.",
+  "**Saved views per person** (filters are kept in the page's address and remembered per browser) and **custom fields** on a ticket.",
   "**Custom domains** for a feedback page.",
   "**Checking a reporter's email address.** The address someone types on a feedback form isn't confirmed; the team's answer goes to it as typed.",
   "**Answering while a business's plan has ended.** Its customers can still read and reply on their tickets; its team can't answer until it has a plan again.",
@@ -171,7 +171,7 @@ export function feedbackSection(answers: ProjectManifest["answers"]): string[] {
   const lines: string[] = ["### Feedback", ""];
   if (companies) {
     lines.push(
-      `- **Each ${noun}'s own board** (/app/feedback): what its customers send, as columns to drag between, a ticket's conversation, replies, assignments and archive. Its columns, categories, feedback page address and website keys are at /app/feedback/settings (owners and admins change them; members answer and sort; viewers look; crew don't see it).`,
+      `- **Each ${noun}'s own board** (/app/feedback): what its customers send, as columns to drag between, with search and filters (status, priority, category, who it's assigned to, where it came from, when it was sent; Mine, Unassigned and Critical in one click), **New ticket** for the team (and a + on each column), a ticket's conversation, replies, editing (title, priority, category, assignee picked from the 's people) with its activity trail, and archive. Its columns, categories, feedback page address and website keys are at /app/feedback/settings (owners and admins change them; members answer and sort; viewers look; crew don't see it).`,
       `- **Its customers' feedback page** (/t/{web address}/feedback): they send feedback with their name and email, and follow their ticket under "My reports". A suspended ${noun}, or one whose plan ended, takes no new feedback and still lets them read and answer theirs.`,
       ...(answers.includeComms
         ? [`- **The reporter is emailed** when the team replies or moves their ticket, in the ${noun}'s name with its reply-to; the wording is in its Messages.`]
@@ -184,7 +184,7 @@ export function feedbackSection(answers: ProjectManifest["answers"]): string[] {
   }
   lines.push(
     shell
-      ? `- **This site's own board** (/admin/feedback, settings at /admin/feedback/settings), for your staff: what people send with the feedback button on every page of this app. Issue its key with \`pnpm feedback:issue-key\` and set ADMINIGLOO_FEEDBACK_KEY.`
+      ? `- **This site's own board** (/admin/feedback, settings at /admin/feedback/settings), for your staff: what people send with the feedback button on every page of this app, with the same search, filters, New ticket and editing (the assignee picked from your staff). Issue its key with \`pnpm feedback:issue-key\` and set ADMINIGLOO_FEEDBACK_KEY.`
       : `- **This site's own board**, for your staff, over /api/admin/feedback (this project has no admin panel to show it in): what people send with the feedback button on every page of this app. Issue its key with \`pnpm feedback:issue-key\` and set ADMINIGLOO_FEEDBACK_KEY.`,
     "",
     "Not included yet:",

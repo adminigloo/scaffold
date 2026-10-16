@@ -5,7 +5,11 @@ import { sql } from "drizzle-orm";
 import {
   CLIENT_KEY_HEADER,
   createFeedbackHandlers,
+  createStaffTicket,
   createTicket,
+  FILTER_NONE,
+  listTicketEvents,
+  updateTicket,
   hashClientKey,
   issueClientKey,
   listBoardData,
@@ -19,14 +23,21 @@ import {
 import { createTestDb, report, schemaDdl } from "./pglite.js";
 
 /**
- * The shipped SQL (sql/): the 0.10 create builds tables the package works on,
- * and the 0.9 → 0.10 upgrade turns a 0.9 install's one board into the
- * platform's own board ('*'), with per-company keys and numbers, twice over
- * without harm.
+ * The shipped SQL (sql/): the 0.11 create builds tables the package works on;
+ * the 0.10 → 0.11 upgrade adds the board's new columns and the activity trail
+ * to a 0.10 install, twice over without harm; and the 0.9 → 0.10 upgrade (then
+ * 0.10 → 0.11) turns a 0.9 install's one board into the platform's own board
+ * ('*'), with per-company keys and numbers.
  */
 
 const SQL_DIR = join(__dirname, "..", "..", "sql");
 const read = (name: string) => readFileSync(join(SQL_DIR, name), "utf8");
+/** A 0.9 database brought all the way to 0.11. */
+async function upgradeFrom09(client: { exec: (q: string) => Promise<unknown> }): Promise<void> {
+  await client.exec(read("upgrade-0.9-to-0.10.sql"));
+  await client.exec(read("upgrade-0.10-to-0.11.sql"));
+}
+const TABLES = ["feedback_client_keys", "feedback_statuses", "feedback_categories", "feedback_tickets", "feedback_messages", "feedback_uploads", "feedback_ticket_events", "feedback_boards"];
 
 /** 0.9.1's tables, as its drizzle schema made them. */
 const V09 = [
@@ -52,11 +63,11 @@ async function indexesOf(client: { query: (q: string) => Promise<{ rows: unknown
   return (result.rows as Array<{ indexname: string }>).map((row) => row.indexname);
 }
 
-describe("sql/feedback-0.10.0.sql", () => {
+describe("sql/feedback-0.11.0.sql", () => {
   it("makes the same tables, columns and indexes as the schema", async () => {
     const fromSchema = await createTestDb();
-    const fromSql = await createTestDb({ sql: [read("feedback-0.10.0.sql")] });
-    for (const table of ["feedback_client_keys", "feedback_statuses", "feedback_categories", "feedback_tickets", "feedback_messages"]) {
+    const fromSql = await createTestDb({ sql: [read("feedback-0.11.0.sql")] });
+    for (const table of TABLES) {
       expect(await columnsOf(fromSql.client, table), table).toEqual(await columnsOf(fromSchema.client, table));
       expect((await indexesOf(fromSql.client, table)).filter((n) => !n.endsWith("_pkey")), table).toEqual(
         (await indexesOf(fromSchema.client, table)).filter((n) => !n.endsWith("_pkey")),
@@ -71,6 +82,48 @@ describe("sql/feedback-0.10.0.sql", () => {
   });
 });
 
+describe("sql/upgrade-0.10-to-0.11.sql", () => {
+  it("brings a 0.10 install to the schema, keeps every ticket as it was, and runs twice without harm", async () => {
+    const fromSchema = await createTestDb();
+    const t = await createTestDb({ sql: [read("feedback-0.10.0.sql")] });
+    await t.client.exec(`insert into feedback_statuses (id, tenant_id, key, label, sort_order) values ('s1', 'co-a', 'open', 'Open', 10)`);
+    await t.client.exec(
+      `insert into feedback_tickets (id, tenant_id, ticket_number, title, description, status, assignee) values ('t1', 'co-a', 'FB-00001', 'Old one', 'Old one, long enough', 'open', 'Ada (typed)')`,
+    );
+    const upgrade = read("upgrade-0.10-to-0.11.sql");
+    await t.client.exec(upgrade);
+    await t.client.exec(upgrade);
+    for (const table of TABLES) {
+      expect(await columnsOf(t.client, table), table).toEqual(await columnsOf(fromSchema.client, table));
+      expect((await indexesOf(t.client, table)).filter((n) => !n.endsWith("_pkey")), table).toEqual(
+        (await indexesOf(fromSchema.client, table)).filter((n) => !n.endsWith("_pkey")),
+      );
+    }
+    // The 0.10 ticket: from the intake, its typed assignee kept, nobody picked,
+    // an empty trail — and it still counts as assigned, not "Unassigned".
+    const board = await listBoardData(t.db, "co-a");
+    expect(board.tickets.map((x) => [x.ticketNumber, x.source, x.assignee, x.assigneeId])).toEqual([["FB-00001", "widget", "Ada (typed)", null]]);
+    expect((await listBoardData(t.db, "co-a", { filters: { assignee: [FILTER_NONE] } })).tickets).toEqual([]);
+    expect(await listTicketEvents(t.db, "co-a", "t1")).toEqual([]);
+    // And 0.11 works on it: the team files one (numbered on), edits the old one.
+    const staff = await createStaffTicket(t.db, "co-a", { title: "Filed by the team" }, { id: "u1", name: "Ada" });
+    expect(staff.ticketNumber).toBe("FB-00002");
+    expect(await updateTicket(t.db, "co-a", { ticketId: "t1", priority: "high" }, { id: "u1", name: "Ada" })).toEqual({ updated: true, changed: ["priority"] });
+    expect((await listTicketEvents(t.db, "co-a", "t1")).map((e) => [e.kind, e.fromValue, e.toValue])).toEqual([["priority", "Medium", "High"]]);
+    await fromSchema.close();
+    await t.close();
+  });
+
+  it("stops with a sentence on a 0.9 database (the 0.9 upgrade comes first) and on an empty one", async () => {
+    const old = await createTestDb({ sql: V09 });
+    await expect(old.client.exec(read("upgrade-0.10-to-0.11.sql"))).rejects.toThrow(/0\.9 database/);
+    await old.close();
+    const empty = await createTestDb({ sql: [] });
+    await expect(empty.client.exec(read("upgrade-0.10-to-0.11.sql"))).rejects.toThrow(/no feedback tables to upgrade/);
+    await empty.close();
+  });
+});
+
 describe("sql/upgrade-0.9-to-0.10.sql", () => {
   it("turns a 0.9 board into the platform's own, keeps every ticket, and runs twice without harm", async () => {
     const t = await createTestDb({ sql: V09 });
@@ -80,9 +133,8 @@ describe("sql/upgrade-0.9-to-0.10.sql", () => {
     await t.client.exec(
       `insert into feedback_tickets (id, tenant_id, ticket_number, title, description, status) values ('t1', 'client-a', 'FB-00001', 'One', 'One long enough', 'open'), ('t2', 'client-b', 'FB-00002', 'Two', 'Two long enough', 'shipped')`,
     );
-    const upgrade = read("upgrade-0.9-to-0.10.sql");
-    await t.client.exec(upgrade);
-    await t.client.exec(upgrade);
+    await upgradeFrom09(t.client);
+    await upgradeFrom09(t.client);
 
     expect(await columnsOf(t.client, "feedback_statuses")).toContain("tenant_id");
     expect(await indexesOf(t.client, "feedback_statuses")).toContain("feedback_statuses_tenant_key_idx");
@@ -117,7 +169,7 @@ describe("sql/upgrade-0.9-to-0.10.sql", () => {
     await t.client.exec(`insert into feedback_client_keys (id, tenant_id, key_hash, label) values ('k1', 'acme-id', '${await hashClientKey(key)}', 'default')`);
     await t.client.exec(`insert into feedback_statuses (id, key, label, sort_order, is_terminal) values ('s1','open','Open',10,false),('s2','triage','Triage',15,false),('s3','closed','Closed',40,true)`);
     await t.client.exec(`insert into feedback_tickets (id, tenant_id, ticket_number, title, description, status, reporter_email) values ('t1','acme-id','FB-00001','From a Bravo user','long enough text','triage','bob@bravo.test')`);
-    await t.client.exec(read("upgrade-0.9-to-0.10.sql"));
+    await upgradeFrom09(t.client);
     const platform = await listBoardData(t.db, FEEDBACK_PLATFORM_BOARD);
     // L6: the old ticket sits in its own (custom) column on the site's board…
     expect(platform.tickets.map((x) => [x.ticketNumber, x.status])).toEqual([["FB-00001", "triage"]]);
@@ -144,18 +196,17 @@ describe("sql/upgrade-0.9-to-0.10.sql", () => {
 
   it("run again after companies have boards and keys of their own, moves none of them", async () => {
     const t = await createTestDb({ sql: V09 });
-    const upgrade = read("upgrade-0.9-to-0.10.sql");
-    await t.client.exec(upgrade);
+    await upgradeFrom09(t.client);
     const company = await issueClientKey(t.db, { tenantId: "green-acres", label: "Website" });
     await createTicket(t.db, { tenantId: "green-acres", payload: submitPayloadSchema.parse(report()) });
-    await t.client.exec(upgrade);
+    await upgradeFrom09(t.client);
     expect(await verifyClientKey(t.db, company.key)).toMatchObject({ tenantId: "green-acres" });
     expect((await listBoardData(t.db, "green-acres")).tickets).toHaveLength(1);
     await t.close();
   });
 
   it("drops the default after filling it (L4): an insert that forgets the company fails", async () => {
-    for (const sqlText of [read("upgrade-0.9-to-0.10.sql"), read("feedback-0.10.0.sql")]) {
+    for (const sqlText of [read("upgrade-0.9-to-0.10.sql"), read("feedback-0.10.0.sql"), read("feedback-0.11.0.sql")]) {
       const t = await createTestDb({ sql: sqlText.startsWith("-- @adminigloo/feedback: upgrade") ? V09 : [] });
       await t.client.exec(sqlText);
       await expect(t.client.exec(`insert into feedback_statuses (id, key, label) values ('x', 'loose', 'Loose')`)).rejects.toThrow();

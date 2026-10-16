@@ -120,6 +120,17 @@ export function renderDeploymentUpgradeNotes(answers: Answers): string {
           "",
           ...feedbackUpgradeNotes(answers).map((note) => `- ${note}`),
           "",
+          // Feedback 0.11: additions only, so drizzle-kit's own migration is right.
+          "### From create-app 0.26 to 0.27 (the complete feedback board)",
+          "",
+          "`upgrade` raises feedback to 0.11 and removes `src/components/FeedbackSettings.tsx`: the settings pages now show the package's own screens. After it:",
+          "",
+          "- Run `pnpm db:generate`, then `pnpm db:migrate`. It only adds: four ticket columns (who it's assigned to, where it came " +
+            "from, who on the team filed it, whether the customer is emailed about it), the activity trail's table, and " +
+            "a table that remembers each board was set up (so deleted defaults never come back). Without drizzle-kit, the same change is " +
+            "node_modules/@adminigloo/feedback/sql/upgrade-0.10-to-0.11.sql.",
+          "- Tickets assigned by a typed name before are linked to the person with that name the first time each board opens (when exactly one person has it); any other name stays its own choice in the Assigned-to filter, \"(not linked)\", until you pick a person.",
+          "",
         ]
       : []),
   ].join("\n");

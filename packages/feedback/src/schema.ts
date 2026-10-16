@@ -3,6 +3,18 @@ import { createdAt, idColumn } from "@adminigloo/db";
 
 export type FeedbackPriority = "low" | "medium" | "high" | "critical";
 export type FeedbackTicketStatus = "open" | "in_progress" | "resolved" | "closed";
+/** Where a ticket came from (0.11.0). */
+export type FeedbackTicketSource = "widget" | "page" | "staff";
+/** What one row of a ticket's activity trail records (0.11.0). */
+export type FeedbackTicketEventKind =
+  | "created"
+  | "title"
+  | "priority"
+  | "category"
+  | "assignee"
+  | "status"
+  | "archived"
+  | "unarchived";
 
 /**
  * The platform's own board (0.10.0): the site's own support queue, fed by the
@@ -184,6 +196,32 @@ export const feedbackTickets = pgTable(
      */
     assignee: text("assignee"),
     /**
+     * The same person as the host's own user id (0.11.0), when they were
+     * picked from the company's people (the `listPeople` seam). What the
+     * "Assigned to" and "Mine" filters match: two people can share a name,
+     * never an id. Null on a ticket assigned by typing a name (0.10 and
+     * earlier, or a host without the seam) — those still show their name.
+     */
+    assigneeId: text("assignee_id"),
+    /**
+     * Where the ticket came from (0.11.0): "widget" (the feedback button, on
+     * a website key), "page" (a company's own feedback page) or "staff" (the
+     * team filed it from the board). The board's "From" filter. Every 0.10
+     * ticket arrived through the intake, so the upgrade's default is "widget".
+     */
+    source: text("source").$type<FeedbackTicketSource>().notNull().default("widget"),
+    /** Who on the team filed it (the host's user id), for a staff ticket; null otherwise. */
+    createdBy: text("created_by"),
+    /**
+     * Is the reporter emailed when the team replies or moves it (0.11.0)?
+     * True for everything the intake takes (the person sent it, and left an
+     * address to hear back). A ticket the team files for a customer is only
+     * emailed when the team said "tell them": that customer never used the
+     * feedback form, so an email they didn't expect, pointing at a form they
+     * never filled in, is the wrong surprise.
+     */
+    notifyReporter: boolean("notify_reporter").notNull().default(true),
+    /**
      * SHA-256 hex of the per-ticket reporter token (0.4.0). The plaintext is
      * returned exactly once, in the submit response, and lives only in the
      * reporter's own browser — a capability, not an account. It is what lets
@@ -237,6 +275,54 @@ export const feedbackTickets = pgTable(
     // read is the complement. Both walk this.
     index("feedback_tickets_archived_idx").on(table.archivedAt),
   ],
+);
+
+/**
+ * Which companies' boards have been set up (0.11.0): one row, written the
+ * first time a board is used, after its default columns and categories. The
+ * defaults come ONCE: a company that deletes every category gets an empty
+ * list, not the six defaults back on the next page load (0.10 re-seeded
+ * whenever a list was empty). The upgrade marks every board that already has
+ * columns or categories.
+ */
+export const feedbackBoards = pgTable("feedback_boards", {
+  tenantId: text("tenant_id").primaryKey(),
+  createdAt: createdAt(),
+});
+
+/**
+ * What changed on a ticket, and who changed it (0.11.0): the panel's activity
+ * trail. One row per field per change — "Priority: medium → high, by Ada" —
+ * written by the same call that made the change, so the trail can't drift
+ * from the ticket.
+ *
+ * Unlike feedback_messages this table CARRIES THE COMPANY: the trail is read
+ * as a list of its own, and a list whose company lives one join away is the
+ * list that leaks the day the join is forgotten. Every read names both the
+ * company and the ticket.
+ *
+ * Values are what a person reads, not keys: a column's label, a category's
+ * label, a person's name, as they were at the time — renaming a column later
+ * doesn't rewrite history.
+ */
+export const feedbackTicketEvents = pgTable(
+  "feedback_ticket_events",
+  {
+    id: idColumn(),
+    tenantId: text("tenant_id").notNull(),
+    ticketId: text("ticket_id")
+      .notNull()
+      .references(() => feedbackTickets.id, { onDelete: "cascade" }),
+    kind: text("kind").$type<FeedbackTicketEventKind>().notNull(),
+    fromValue: text("from_value"),
+    toValue: text("to_value"),
+    /** The host's user id of whoever made the change; null for the intake or a sweep. */
+    actorId: text("actor_id"),
+    /** Their name as the trail shows it ("Ada", or the business's name). */
+    actorName: text("actor_name").notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [index("feedback_ticket_events_ticket_idx").on(table.tenantId, table.ticketId, table.createdAt)],
 );
 
 /**

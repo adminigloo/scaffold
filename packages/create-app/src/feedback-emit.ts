@@ -89,6 +89,31 @@ async function staffName(userId: string | null): Promise<string | null> {
   return row?.name?.trim() || null;
 }
 
+/** Someone with no display name, in the picker. */
+const NO_NAME = "A teammate with no name set";
+
+/** Someone a ticket can be assigned to: their user id and the name the card shows. */
+interface FeedbackPerson {
+  readonly id: string;
+  readonly name: string;
+}
+
+/**
+ * THIS SITE'S OWN board's people (feedback 0.11): everyone holding a
+ * firm-wide staff role, not a deleted account — the assignee picker, the
+ * "Assigned to" filter, and the check that an assignee is one of them. By
+ * the name they set — never their sign-in address (review M4's rule: an
+ * address in a name ends up where names go).
+ */
+async function staffPeople(): Promise<FeedbackPerson[]> {
+  const rows = await db
+    .selectDistinct({ id: users.id, name: users.displayName })
+    .from(principalRole)
+    .innerJoin(users, eq(users.id, principalRole.principalId))
+    .where(and(eq(principalRole.scope, "staff"), eq(principalRole.tenantId, FIRM_WIDE), isNull(users.deletedAt)));
+  return rows.map((row) => ({ id: row.id, name: row.name?.trim() || NO_NAME }));
+}
+
 /** An error the handlers didn't expect: a fixed sentence for the caller, the error in /admin/errors. */
 export function reportFeedbackError(error: unknown, context: { tenantId: string | null; route: string }): void {
   void reportError({
@@ -121,6 +146,7 @@ export function buildPlatformFeedbackAdminHandlers() {
     authorize: authorizeStaffFor(FEEDBACK_STAFF_KEYS, "Sign in to see the feedback board."),
     staffName: (userId) => staffName(userId),
     teamName: (tenantId) => feedbackTeamName(tenantId),
+    listPeople: () => staffPeople(),
     onError: reportFeedbackError,
   });
 }
@@ -146,6 +172,8 @@ export function renderFeedbackGlue(answers: Answers): string {
 function renderSingle(answers: Answers): string {
   const scope = answers.scope;
   return `import { users } from "${scope}/auth/schema";
+import { FIRM_WIDE } from "${scope}/permissions";
+import { principalRole } from "${scope}/permissions/schema";
 import {
   createFeedbackAdminHandlers,
   createFeedbackHandlers,
@@ -156,7 +184,7 @@ import {
   type FeedbackScreenshotStore,
 } from "${scope}/feedback";
 import { del, put } from "@vercel/blob";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { db } from "@/db";
 import { env } from "@/env";
 import { SITE_NAME } from "@/seo";
@@ -222,10 +250,13 @@ function renderCompanies(answers: Answers): string {
   ];
   const imports = [
     `import { users } from "${scope}/auth/schema";`,
+    `import { FIRM_WIDE } from "${scope}/permissions";`,
+    `import { principalRole } from "${scope}/permissions/schema";`,
+    `import { tenantMembers } from "${scope}/tenancy/schema";`,
     ...(comms ? [`import { commsTemplates, sendNow } from "${scope}/comms";`] : []),
     `import {\n${pkgImports.map((name) => `  ${name},`).join("\n")}\n} from "${scope}/feedback";`,
     `import { del, put } from "@vercel/blob";`,
-    `import { eq } from "drizzle-orm";`,
+    `import { and, eq, isNull } from "drizzle-orm";`,
     `import { db } from "@/db";`,
     `import { env } from "@/env";`,
     `import { SITE_NAME } from "@/seo";`,
@@ -386,6 +417,13 @@ ${shared(answers)}
 ${companyShots}
 
 /**
+ * Does a ${noun}'s board email the reporter when its team replies or moves a
+ * ticket (feedback 0.11)? Written per variant: ${comms ? "yes — this project has messages (comms), which send in the " + noun + "'s name" : "no — this project was generated without messages (comms)"}.
+ * The board's reply box reads it, so it never promises an email that won't go.
+ */
+export const FEEDBACK_EMAILS_REPORTERS = ${comms ? "true" : "false"};
+
+/**
  * The name on a reply when the person who wrote it has no display name
  * (review M4): the ${noun}'s, as its customers know it ("Green Acres"); this
  * site's own on this site's own board (runtime data: whose board it is).
@@ -398,6 +436,23 @@ export async function feedbackTeamName(tenantId: string): Promise<string | null>
 ${intakeEvent}${staffEvent}${setup}
 
 /**
+ * A ${noun}'s people a ticket can be assigned to (feedback 0.11): its active
+ * members, not a deleted account — the assignee picker, the "Assigned to"
+ * filter, and the check that an assignee is one of THIS ${noun}'s (anyone
+ * else's id is refused). This site's own board's are its staff (runtime data:
+ * whose board it is).
+ */
+async function companyPeople(tenantId: string): Promise<FeedbackPerson[]> {
+  if (tenantId === FEEDBACK_PLATFORM_BOARD) return staffPeople();
+  const rows = await db
+    .select({ id: users.id, name: users.displayName })
+    .from(tenantMembers)
+    .innerJoin(users, eq(users.id, tenantMembers.userId))
+    .where(and(eq(tenantMembers.tenantId, tenantId), eq(tenantMembers.status, "active"), isNull(users.deletedAt)));
+  return rows.map((row) => ({ id: row.id, name: row.name?.trim() || NO_NAME }));
+}
+
+/**
  * A ${noun}'s board, for its own people, one ${noun} per request.
  * \`overrides.principal\` is how the project's isolation proof calls it as
  * somebody else.
@@ -408,7 +463,8 @@ export function buildFeedbackAdminHandlers(overrides: FeatureHandlerOverrides = 
     resolveTenant: companyRoutes.resolveTenant,
     authorize: companyAuthorizer(overrides),
     staffName: (userId) => staffName(userId),
-    teamName: (tenantId) => feedbackTeamName(tenantId),${staffOnEvent}
+    teamName: (tenantId) => feedbackTeamName(tenantId),
+    listPeople: (tenantId) => companyPeople(tenantId),${staffOnEvent}
     onError: reportFeedbackError,
   });
 }

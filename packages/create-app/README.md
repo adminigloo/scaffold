@@ -175,9 +175,20 @@ board. `upgrade` removes the retired feedback tRPC router; then run
 `pnpm db:generate && pnpm db:migrate` (or feedback's
 `sql/upgrade-0.9-to-0.10.sql`) and `pnpm db:seed` for the new staff keys.
 
-Not included yet: filters and search on the board, a "new ticket" button for
-the team, epics, column and category editors as package screens, private
-screenshots, custom domains.
+### The complete feedback board (feedback 0.11, create-app 0.27)
+
+Every board — each company's and this site's own — has search and filters
+(status, priority, category, who it's assigned to, where it came from, when it
+was sent; Mine, Unassigned and Critical in one click), kept in the page's
+address and remembered per browser, with "Showing X of Y". The team files
+tickets with **New ticket** (or the **+** on a column), and the ticket panel
+edits the title, priority, category and assignee — picked from the company's
+members, or this site's staff — with an activity trail. The settings pages
+render `@adminigloo/feedback/admin`'s screens (columns, categories, website
+keys); `src/components/FeedbackSettings.tsx` is gone. `upgrade` removes it;
+then `pnpm db:generate && pnpm db:migrate` (additions only).
+
+Not included yet: epics, saved views per person, custom fields, custom domains.
 
 ### Not included (Tenancy 2b-1)
 
@@ -185,9 +196,7 @@ What a generated project does NOT do yet, so nobody sells it as doing so. The
 generated `README.md` carries the same lists (single-business projects leave
 out the items that are only about companies).
 
-- **The complete feedback board** (filters, search, a "new ticket" button for the team, epics) — Tenancy 2b-2b.
-  The board per company, its alerts and its private screenshots are here (Tenancy
-  2b-2a).
+- **Epics on the feedback board** (grouping tickets under a bigger piece of work) — its next release. Its filters, search, New ticket, editing and settings screens are here (feedback 0.11), and so are the board per company, its alerts and its private screenshots (Tenancy 2b-2a).
 - **The AI assistant per company** — Tenancy 2b-3.
 - **Website analytics, SEO/AEO and book-a-call (booking) per company** —
   Tenancy 2b-4.

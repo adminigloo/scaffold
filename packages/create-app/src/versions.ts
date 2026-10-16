@@ -155,7 +155,12 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // the company, and the emitted src/server/feedback.ts mounts
   // createFeedbackAdminHandlers and the intake with resolveTenant and admit —
   // none of which exist in 0.9, whose functions act on the whole install.
-  feedback: "0.10.0",
+  // 0.11.0: the complete board. The emitted settings pages render
+  // FeedbackSettingsPanel from the new ./admin entry, the glue passes
+  // listPeople, and the isolation proof plants rows for the new routes
+  // (New ticket, editing, the trail) and the board's filters — none of which
+  // exist in 0.10.
+  feedback: "0.11.0",
   // 0.2.1 — 0.2.0 brought the "My reports" view the thread endpoints exist
   // to serve; the patch is the glacier re-skin with the widget's own dark
   // theme, which a caret would cover anyway. Pinned at the workspace version

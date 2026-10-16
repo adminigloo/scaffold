@@ -5,21 +5,38 @@ import {
   useMemo,
   useRef,
   useState,
-  version as reactVersion,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactElement,
 } from "react";
-import { DARK_PALETTE, LIGHT_PALETTE, paletteDeclarations } from "./board-tokens";
+import { BoardStyles, useBoardStyles } from "./board-styles";
 import {
   FeedbackAdminClient,
   FeedbackAdminError,
   type FeedbackBoardWire,
+  type FeedbackCategoryWire,
+  type FeedbackEventWire,
   type FeedbackMessageWire,
+  type FeedbackPersonWire,
   type FeedbackTicketDetailWire,
+  type TicketPatch,
 } from "./board-client";
+import { EMPTY_FILTERS, FILTER_PRIORITIES, PRIORITY_LABELS, SOURCE_LABELS, isUnfiltered, type FilterSource } from "./board-filters";
+import {
+  BoardToolbar,
+  boardFilterFields,
+  boardQuickFilters,
+  filtersForRequest,
+  useBoardFilters,
+  windowFilterUrl,
+  type BoardFilterUrl,
+} from "./board-toolbar";
+import { NewTicketDialog } from "./ticket-dialog";
 
 export * from "./board-client";
+export * from "./board-filters";
+export * from "./board-toolbar";
+export { NewTicketDialog, type NewTicketDialogProps } from "./ticket-dialog";
 
 /**
  * The Kanban board — the `./board` entry, and the only client code in this
@@ -50,6 +67,12 @@ export interface BoardTicketView {
   category?: string | null;
   status: string;
   assignee?: string | null;
+  /** The host's id of the assignee, when picked from the company's people (0.11.0). */
+  assigneeId?: string | null;
+  /** "widget" | "page" | "staff" (0.11.0): shown in the panel as where it came from. */
+  source?: string | null;
+  /** False (0.11.0): the reporter isn't emailed about it — the reply box says so. */
+  notifyReporter?: boolean | null;
   reporterName?: string | null;
   reporterEmail?: string | null;
   /** Optional so a consumer on a pre-0.5 server half still typechecks. */
@@ -161,297 +184,15 @@ export interface FeedbackBoardProps {
    * why (a toast). Without it the rollback is silent.
    */
   onMoveError?: (error: unknown, ticketIds: string[], statusKey: string) => void;
+  /**
+   * New ticket in a column (0.11.0): each column's header grows a "+" that
+   * calls this with the column's key. Absent, there is no "+".
+   */
+  onCreateInColumn?: (statusKey: string) => void;
   /** See `BoardTheme`. Default `auto`. */
   theme?: BoardTheme;
 }
 
-const STYLE_ID = "aib-styles";
-
-/** React 19 can render a deduplicated, hoisted <style> during SSR; React 18 injects after mount. */
-const HOISTED_STYLES = Number.parseInt(reactVersion, 10) >= 19;
-
-/** Every theme-able declaration sits under `:where()` — zero specificity, so a
- *  host's own `.aib-root { --aib-accent: … }` wins in any order, either theme.
- *  Declared ONLY on the outermost element of each surface (the board's root,
- *  the panel's layer around scrim + dialog): a token set on an inner element
- *  would re-declare the defaults beneath a host's override. */
-const TOKEN_SCOPE = ":where(.aib-root, .aib-panel-layer, .aib-toolbar)";
-
-/*
- * The board's own token set, `--aib-*`, built from `board-tokens.ts`. Dark is
- * decided by prefers-color-scheme unless the `theme` prop pins it — this
- * renders inside a consuming app whose theme it cannot know, and a hardcoded
- * white board in a dark admin reads as a foreign object. Every colour resolves
- * through a token; one bare hex is a rule nobody re-tests in the other theme.
- *
- * 0.9.0: the tokens are declared on `.aib-root` — the board's OUTER element —
- * not `.aib-board`, because the bulk bar renders beside `.aib-board`, where
- * 0.8.0's tokens resolved to nothing and the bar painted transparent.
- */
-const CSS_TEXT = `
-${TOKEN_SCOPE} { ${paletteDeclarations(LIGHT_PALETTE)} color-scheme: light;
-  --aib-z-bar: 40; --aib-bar-bottom: 16px; --aib-bar-left: 50%; --aib-z-panel: 2147483003; }
-@media (prefers-color-scheme: dark) {
-  ${TOKEN_SCOPE}:where(:not([data-aib-theme="light"])) { ${paletteDeclarations(DARK_PALETTE)} color-scheme: dark; }
-}
-${TOKEN_SCOPE}:where([data-aib-theme="dark"]) { ${paletteDeclarations(DARK_PALETTE)} color-scheme: dark; }
-
-/* Host-overridable without a specificity fight, like the tokens. */
-:where(.aib-root, .aib-panel-layer, .aib-toolbar) { color: var(--aib-ink);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-.aib-root:focus { outline: none; }
-/* Containing blocks for the screen-reader-only text (.aib-sr is absolutely
-   positioned). Without a positioned ancestor INSIDE the board's horizontal
-   scroller, the column counts and aging words escaped it and widened the
-   whole page — 0.9.0 made a 412px phone page 999px wide. */
-.aib-root, .aib-col, .aib-card { position: relative; }
-.aib-root.aib-selecting { padding-bottom: 96px; }
-/* While the fixed bulk bar is up, a card focused near the bottom of the window
-   scrolls clear of it instead of landing underneath (WCAG 2.4.11). */
-.aib-root.aib-selecting :is(.aib-card-open, .aib-check) { scroll-margin-bottom: 112px; }
-.aib-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
-  clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
-.aib-board { display: flex; gap: 12px; align-items: flex-start; overflow-x: auto; padding-bottom: 8px; }
-.aib-col { flex: 1 0 240px; max-width: 360px; background: var(--aib-surface-2); border: 1px solid var(--aib-line);
-  border-radius: 12px; }
-.aib-col-orphan { border-style: dashed; }
-.aib-col-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--aib-line);
-  isolation: isolate;
-  min-height: 44px; box-sizing: border-box; }
-.aib-col-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
-.aib-col-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--aib-ink-muted); }
-.aib-col-count { margin-left: auto; font-size: 11px; color: var(--aib-ink-faint); font-variant-numeric: tabular-nums; }
-.aib-col-body { padding: 10px; min-height: 60px; }
-.aib-col-list { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
-.aib-col.aib-over { outline: 2px dashed var(--aib-accent); outline-offset: -4px; }
-.aib-card { background: var(--aib-surface); border: 1px solid var(--aib-line); border-radius: 10px; padding: 10px 11px;
-  cursor: grab; box-shadow: var(--aib-shadow-card); transition: border-color .12s ease; isolation: isolate; }
-.aib-card:hover { border-color: var(--aib-line-strong); }
-.aib-card:active { cursor: grabbing; }
-.aib-card.aib-dragging { opacity: .45; }
-/* Busy (a move in flight): a dashed edge, not 0.8.0's opacity — focus is put
-   back on a moved card while it is busy, and faded text and a faded focus ring
-   both fell below contrast minimums. */
-.aib-card.aib-busy { pointer-events: none; border-color: var(--aib-accent); border-style: dashed; cursor: progress; }
-.aib-card-top { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
-/* The 44px checkbox overhangs its row by 12px; keep the title clear of it. */
-.aib-card-top.aib-has-check { margin-bottom: 12px; }
-.aib-num { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; color: var(--aib-ink-faint); }
-.aib-chip { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
-  border: 1px solid; border-radius: 999px; padding: 1px 6px; margin-left: auto; }
-.aib-chip-critical { color: var(--aib-danger); border-color: var(--aib-danger); }
-.aib-chip-high { color: var(--aib-warn); border-color: var(--aib-warn); }
-.aib-chip-medium, .aib-chip-low { color: var(--aib-ink-faint); border-color: var(--aib-line-strong); }
-.aib-card-title { font-size: 13px; line-height: 1.4; color: var(--aib-ink); overflow-wrap: anywhere; }
-/* The title is the card's keyboard handle (0.9.0): a button (onOpen) or a link
-   (ticketHref) that LOOKS like the title — reachable by Tab, opened by Enter,
-   and Alt+←/→ moves the card a column. */
-.aib-card-open { all: unset; display: block; cursor: pointer; color: inherit; font: inherit;
-  overflow-wrap: anywhere; border-radius: 4px; }
-.aib-card-open:hover { text-decoration: underline; }
-.aib-card-open:is(:link, :visited, :hover, :active) { color: inherit; }
-.aib-card-open:focus-visible { outline: 2px solid var(--aib-accent); outline-offset: 3px; }
-.aib-card-meta { margin-top: 6px; display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--aib-ink-muted); flex-wrap: wrap; }
-.aib-card-meta a { color: var(--aib-accent); text-decoration: none; }
-.aib-card-meta a:hover { text-decoration: underline; }
-.aib-empty { font-size: 12px; color: var(--aib-ink-faint); text-align: center; padding: 14px 0; }
-.aib-assignee { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--aib-accent);
-  background: var(--aib-accent-soft); border-radius: 999px; padding: 1px 8px; }
-.aib-unread { display: inline-flex; align-items: center; gap: 4px; font-size: 9px; font-weight: 700;
-  text-transform: uppercase; letter-spacing: .05em; color: var(--aib-on-accent);
-  background: var(--aib-accent); border-radius: 999px; padding: 1px 7px; }
-
-/* WIP limits (0.7.0): the count turns into count/limit and the header speaks
-   up — amber at the limit, loud past it. A limit, not a lock. */
-.aib-col-head.aib-wip-full { box-shadow: inset 0 -2px 0 var(--aib-warn); }
-.aib-col-head.aib-wip-over { box-shadow: inset 0 -2px 0 var(--aib-danger); }
-.aib-col-count.aib-wip-full { color: var(--aib-warn); font-weight: 700; }
-.aib-col-count.aib-wip-over { color: var(--aib-danger); font-weight: 700; }
-
-/* Card aging (0.7.0): a mark that escalates as the card sits in its column.
-   0.9.0: shape as well as colour (a ring when aging, a filled dot when stale)
-   and words for screen readers — 0.8.0 told the two apart by hue alone. */
-.aib-age { width: 8px; height: 8px; border-radius: 50%; flex: none; box-sizing: border-box; }
-.aib-age-warn { border: 2px solid var(--aib-warn); }
-.aib-age-stale { background: var(--aib-danger); }
-
-/* Archived cards (visible only when the consumer asked for them). 0.9.0: a
-   dashed edge on the column's tint instead of 0.8.0's opacity, which took the
-   card's text below AA. */
-.aib-card.aib-archived { background: var(--aib-surface-2); border-style: dashed; box-shadow: none; }
-.aib-archived-chip { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
-  color: var(--aib-ink-faint); border: 1px dashed var(--aib-line-strong); border-radius: 999px; padding: 1px 6px; }
-
-/* Bulk selection (0.7.0). The checkbox only exists when onMoveMany does.
-   0.9.0: a 44px target (touch) drawn from tokens — the input itself is the hit
-   area, overhanging its neighbours by a negative margin so the card keeps a
-   20px box; ::before draws the box, ::after the tick or dash. */
-.aib-check { appearance: none; -webkit-appearance: none; display: inline-grid; place-content: center; flex: none;
-  width: 44px; height: 44px; margin: -12px; background: transparent; border: 0; cursor: pointer;
-  position: relative; z-index: 1; }
-.aib-check::before, .aib-check::after { content: ""; grid-area: 1 / 1; }
-.aib-check::before { box-sizing: border-box; width: 18px; height: 18px; border: 2px solid var(--aib-ink-muted);
-  border-radius: 4px; background: var(--aib-surface); }
-.aib-check:checked::before, .aib-check:indeterminate::before { border-color: var(--aib-accent); background: var(--aib-accent); }
-.aib-check::after { width: 11px; height: 11px; background: var(--aib-on-accent);
-  clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%); transform: scale(0); }
-.aib-check:checked::after { transform: scale(1); }
-.aib-check:indeterminate::after { transform: scale(1); clip-path: inset(40% 0); }
-.aib-check:focus-visible { outline: none; }
-.aib-check:focus-visible::before { outline: 2px solid var(--aib-accent); outline-offset: 2px; }
-.aib-col-check { margin-right: -6px; }
-
-/* Windows High Contrast / forced colours: backgrounds are forced to Canvas,
-   which would erase the drawn box, tick and dots — use system colours. */
-@media (forced-colors: active) {
-  .aib-check::before, .aib-check::after, .aib-age, .aib-col-dot { forced-color-adjust: none; }
-  .aib-check::before { border-color: CanvasText; background: Canvas; }
-  .aib-check:checked::before, .aib-check:indeterminate::before { border-color: Highlight; background: Highlight; }
-  .aib-check::after { background: HighlightText; }
-  .aib-age-warn { border-color: CanvasText; }
-  .aib-age-stale { background: CanvasText; }
-  .aib-col-dot { border: 1px solid CanvasText; }
-  .aib-check:focus-visible::before { outline-color: Highlight; }
-}
-
-/* 0.9.0: fixed to the viewport, not sticky — sticky only floats when the
-   nearest overflow ancestor is the one actually scrolling, and in common admin
-   shells (an overflow-y-auto <main> the document scrolls past) 0.8.0's bar sat
-   under the tallest column, below the fold. Position it with --aib-bar-bottom,
-   --aib-bar-left and --aib-z-bar on .aib-root. */
-.aib-bulkbar { position: fixed; left: var(--aib-bar-left); bottom: var(--aib-bar-bottom); transform: translateX(-50%);
-  z-index: var(--aib-z-bar); display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
-  max-width: calc(100vw - 32px); box-sizing: border-box; padding: 10px 14px; border: 1px solid var(--aib-line-strong);
-  border-radius: 12px; background: var(--aib-surface); color: var(--aib-ink); box-shadow: var(--aib-shadow-panel); }
-.aib-bulkbar-count { font-size: 13px; font-weight: 600; }
-.aib-bulkbar .aib-select { width: auto; }
-.aib-bulk-clear { border: 0; background: transparent; color: var(--aib-ink-muted); font-size: 13px;
-  cursor: pointer; padding: 4px 10px; border-radius: 8px; min-height: 44px; min-width: 44px; }
-.aib-bulk-clear:hover { background: var(--aib-surface-2); color: var(--aib-ink); }
-.aib-bulk-apply { border: 0; border-radius: 8px; background: var(--aib-accent); color: var(--aib-on-accent);
-  font-size: 13px; font-weight: 600; padding: 7px 14px; cursor: pointer; min-height: 44px; min-width: 44px; }
-.aib-bulk-apply:hover { background: var(--aib-accent-strong); }
-.aib-bulk-apply:disabled { background: var(--aib-ink-faint); cursor: default; }
-.aib-archive-btn { align-self: flex-end; flex: none; border: 1px solid var(--aib-line-strong); border-radius: 8px;
-  background: var(--aib-surface); color: var(--aib-ink-muted); font-size: 12px; padding: 7px 10px; cursor: pointer;
-  min-height: 44px; }
-.aib-archive-btn:hover { color: var(--aib-ink); border-color: var(--aib-ink-faint); }
-
-/* Ticket panel. 0.9.0: a real modal dialog (focus moves in, Tab stays in,
-   Escape closes, focus returns), stacked by --aib-z-panel — still 2147483003
-   by default, above the feedback widget's launcher (2147483000), which would
-   otherwise sit on the Send button. Set --aib-z-panel on .aib-panel-layer to
-   let a host's toasts show above the scrim. */
-.aib-panel-backdrop { position: fixed; inset: 0; z-index: calc(var(--aib-z-panel) - 1); background: var(--aib-scrim); }
-.aib-panel { position: fixed; top: 0; right: 0; bottom: 0; z-index: var(--aib-z-panel); width: min(480px, 96vw);
-  background: var(--aib-surface); border-left: 1px solid var(--aib-line); box-shadow: var(--aib-shadow-panel);
-  display: flex; flex-direction: column; }
-.aib-panel:focus { outline: none; }
-.aib-panel-head { display: flex; align-items: flex-start; gap: 10px; padding: 14px 16px;
-  border-bottom: 1px solid var(--aib-line); }
-.aib-panel-title { font-size: 15px; font-weight: 700; line-height: 1.35; letter-spacing: -.01em; overflow-wrap: anywhere; margin: 0; }
-.aib-panel-sub { margin-top: 3px; font-size: 12px; color: var(--aib-ink-muted); display: flex; gap: 8px; flex-wrap: wrap; }
-.aib-panel-sub a { color: var(--aib-accent); }
-.aib-panel-close { margin-left: auto; flex: none; border: 0; background: transparent; cursor: pointer;
-  font-size: 20px; line-height: 1; color: var(--aib-ink-muted); width: 44px; height: 44px; margin: -8px -8px -8px auto;
-  border-radius: 8px; }
-.aib-panel-close:hover { background: var(--aib-surface-2); color: var(--aib-ink); }
-.aib-panel-close:focus-visible, .aib-send:focus-visible, .aib-archive-btn:focus-visible,
-.aib-bulk-apply:focus-visible, .aib-bulk-clear:focus-visible { outline: 2px solid var(--aib-accent); outline-offset: 2px; }
-.aib-panel-controls { display: flex; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--aib-line); }
-.aib-panel-controls label { display: flex; flex-direction: column; gap: 3px; flex: 1; font-size: 10px;
-  font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--aib-ink-muted); }
-/* Control edges use ink-faint (≥3:1, WCAG 1.4.11); line-strong is 1.6:1 and
-   left 0.8.0's inputs without a visible boundary. */
-.aib-select, .aib-input { border: 1px solid var(--aib-ink-faint); border-radius: 8px; padding: 6px 8px; font: inherit;
-  font-size: 13px; background: var(--aib-surface); color: var(--aib-ink); width: 100%; box-sizing: border-box; min-height: 44px; }
-.aib-select:focus-visible, .aib-input:focus-visible { outline: 2px solid var(--aib-accent); outline-offset: 1px; }
-.aib-thread { flex: 1; overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
-.aib-msg { border: 1px solid var(--aib-line); border-radius: 10px; padding: 8px 11px; font-size: 13px; }
-.aib-msg-staff { background: var(--aib-accent-soft); border-color: transparent; }
-.aib-msg-reporter { background: var(--aib-surface); }
-.aib-msg-system { background: transparent; border-style: dashed; color: var(--aib-ink-muted); font-size: 12px; }
-.aib-msg-meta { display: flex; gap: 8px; font-size: 11px; color: var(--aib-ink-muted); margin-bottom: 3px; }
-.aib-msg-meta b { color: var(--aib-ink); }
-.aib-msg-body { white-space: pre-wrap; overflow-wrap: anywhere; }
-.aib-thread-empty { font-size: 12px; color: var(--aib-ink-faint); text-align: center; padding: 18px 0; }
-.aib-compose { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--aib-line); }
-.aib-input::placeholder, .aib-compose textarea::placeholder { color: var(--aib-ink-faint); opacity: 1; }
-.aib-compose textarea { flex: 1; min-height: 58px; resize: vertical; border: 1px solid var(--aib-ink-faint);
-  border-radius: 8px; padding: 8px 10px; font: inherit; font-size: 13px;
-  background: var(--aib-surface); color: var(--aib-ink); }
-.aib-compose textarea:focus-visible { outline: 2px solid var(--aib-accent); outline-offset: 1px; }
-.aib-send { align-self: flex-end; border: 0; border-radius: 8px; background: var(--aib-accent); color: var(--aib-on-accent);
-  font-size: 13px; font-weight: 600; padding: 9px 14px; cursor: pointer; transition: background .12s ease; min-height: 44px; }
-.aib-send:hover { background: var(--aib-accent-strong); }
-.aib-send:disabled { background: var(--aib-ink-faint); cursor: default; }
-
-/* Ticket detail (0.7.1): the report, its annotated screenshot inline, and the
-   captured context — everything in the one panel, no new tabs. */
-.aib-detail { display: flex; flex-direction: column; gap: 12px; padding-bottom: 12px;
-  border-bottom: 1px solid var(--aib-line); margin-bottom: 2px; }
-.aib-report { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.5; color: var(--aib-ink); }
-.aib-shot-wrap { display: block; }
-.aib-shot { display: block; width: 100%; border: 1px solid var(--aib-line); border-radius: 10px; }
-.aib-shot-label { display: block; margin-top: 5px; font-size: 11px; color: var(--aib-ink-faint); }
-.aib-detail-h { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
-  color: var(--aib-ink-muted); margin: 2px 0 4px; }
-.aib-kv { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; font-size: 12px; color: var(--aib-ink);
-  overflow-wrap: anywhere; }
-.aib-kv b { color: var(--aib-ink-muted); font-weight: 600; margin-right: 5px; }
-.aib-trail { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px;
-  color: var(--aib-ink-muted); overflow-wrap: anywhere; }
-.aib-errs { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
-.aib-err { font-size: 12px; color: var(--aib-danger); overflow-wrap: anywhere; }
-.aib-err b { color: var(--aib-ink); }
-
-/* The connected workspace's toolbar (0.10.0): a sibling of the board, so it
-   carries the token scope itself rather than nesting the board inside it. */
-.aib-toolbar { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
-.aib-toolbar-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.aib-toolbar-note { font-size: 13px; color: var(--aib-ink-muted); }
-.aib-tool-btn { border: 1px solid var(--aib-ink-faint); border-radius: 8px; background: var(--aib-surface); color: var(--aib-ink);
-  font: inherit; font-size: 13px; padding: 7px 12px; cursor: pointer; min-height: 44px; text-decoration: none;
-  display: inline-flex; align-items: center; box-sizing: border-box; }
-.aib-tool-btn:hover { background: var(--aib-surface-2); }
-.aib-tool-btn:disabled { color: var(--aib-ink-faint); cursor: default; }
-.aib-tool-btn:focus-visible { outline: 2px solid var(--aib-accent); outline-offset: 2px; }
-.aib-tool-primary { border-color: transparent; background: var(--aib-accent); color: var(--aib-on-accent); font-weight: 600; }
-.aib-tool-primary:hover { background: var(--aib-accent-strong); }
-.aib-notice { border: 1px solid var(--aib-warn); border-radius: 10px; padding: 10px 12px; font-size: 13px;
-  background: var(--aib-surface); color: var(--aib-ink); display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-`;
-
-function injectStyles(): void {
-  if (typeof document === "undefined" || document.getElementById(STYLE_ID)) return;
-  const style = document.createElement("style");
-  style.id = STYLE_ID;
-  style.textContent = CSS_TEXT;
-  document.head.appendChild(style);
-}
-
-/**
- * The stylesheet, server-rendered where React can (0.9.0). React 19 hoists a
- * `<style href precedence>` into <head> during SSR and dedupes it, so the
- * board's first paint is styled — 0.8.0 injected after hydration, and the
- * server HTML painted as a stack of unstyled divs first. On React 18 this
- * renders nothing and `useBoardStyles` injects on mount, as before.
- */
-function BoardStyles(): ReactElement | null {
-  if (!HOISTED_STYLES) return null;
-  return (
-    <style href={STYLE_ID} precedence="medium">
-      {CSS_TEXT}
-    </style>
-  );
-}
-
-function useBoardStyles(): void {
-  useEffect(() => {
-    if (!HOISTED_STYLES) injectStyles();
-  }, []);
-}
 
 function toDate(value: Date | string): Date | null {
   const date = typeof value === "string" ? new Date(value) : value;
@@ -493,7 +234,17 @@ const STEP_KEYS: ReadonlySet<string> = new Set([
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-export type TicketPanelAction = "move" | "assign" | "archive" | "send";
+export type TicketPanelAction = "move" | "assign" | "archive" | "send" | "update";
+
+/** One line of the activity trail, as the panel reads it (FeedbackEventWire is one). */
+export interface TicketEventView {
+  id: string;
+  kind: string;
+  fromValue: string | null;
+  toValue: string | null;
+  actorName: string;
+  createdAt: Date | string;
+}
 
 export interface TicketPanelProps {
   ticket: BoardTicketView;
@@ -528,6 +279,84 @@ export interface TicketPanelProps {
   formatTime?: (date: Date) => string;
   /** See `BoardTheme`. Default `auto`. */
   theme?: BoardTheme;
+  /**
+   * Editing (0.11.0): given, the title, priority and category become
+   * editable (and, with `people`, the assignee is picked from a list). Same
+   * contract as the other callbacks — throw to refuse; the panel puts the
+   * old value back and hands the error to `onError`.
+   */
+  onUpdate?: (patch: TicketPatch) => void | Promise<void>;
+  /** The board's categories, for the editor's Category choice. */
+  categories?: ReadonlyArray<{ key: string; label: string }>;
+  /** The company's people: the assignee becomes a list (`onUpdate({ assigneeId })`) instead of a typed name. */
+  people?: ReadonlyArray<{ id: string; name: string }> | null;
+  /** The activity trail, oldest first; shown under the report. */
+  events?: ReadonlyArray<TicketEventView> | null;
+  /**
+   * Does this board email the reporter when the team replies (0.11.0)? The
+   * reply box says plainly who reads a reply — emailed to the customer, seen
+   * under "My reports", or kept to the team. Pass false where no email is
+   * sent (no mail set up). Default true.
+   */
+  emailsReporters?: boolean;
+}
+
+/**
+ * Who reads a reply, in words, for the reply box (0.11.0): it must never be
+ * a surprise that what you type goes to the customer.
+ */
+export function replyAudience(
+  ticket: Pick<BoardTicketView, "reporterName" | "reporterEmail" | "source" | "notifyReporter">,
+  emailsReporters = true,
+): { label: string; note: string } {
+  const who = ticket.reporterName?.trim() || ticket.reporterEmail?.trim() || null;
+  const email = ticket.reporterEmail?.trim() || null;
+  const emailed = emailsReporters && email !== null && ticket.notifyReporter !== false;
+  if (ticket.source === "staff") {
+    return emailed
+      ? { label: `Reply to ${who}`, note: `Your reply is emailed to ${who === email ? email : `${who} (${email})`}.` }
+      : { label: "Note for your team", note: "Only your team sees what you write here: the customer isn't told about this ticket." };
+  }
+  if (emailed) {
+    return {
+      label: `Reply to ${who}`,
+      note: `Your reply is emailed to ${who === email ? email : `${who} (${email})`}, and shows under "My reports".`,
+    };
+  }
+  return {
+    label: `Reply to ${who ?? "the customer"}`,
+    note: `${who ?? "The customer"} sees your reply under "My reports", on the device they sent this from. It isn't emailed.`,
+  };
+}
+
+/** The assignee select's value for a name typed the 0.10 way (no person id). */
+const TYPED_ASSIGNEE = "\u0000typed";
+
+/** "Ada moved it from Open to In progress." — one trail line, in words. */
+function eventWords(event: TicketEventView): string {
+  const who = event.actorName;
+  const from = event.fromValue;
+  const to = event.toValue;
+  switch (event.kind) {
+    case "created":
+      return `${who} filed it`;
+    case "title":
+      return `${who} renamed it to “${to ?? ""}”`;
+    case "priority":
+      return `${who} changed the priority from ${from ?? "none"} to ${to ?? "none"}`;
+    case "category":
+      return to ? `${who} filed it under ${to}${from ? ` (was ${from})` : ""}` : `${who} took it out of ${from ?? "its category"}`;
+    case "assignee":
+      return to ? `${who} assigned it to ${to}` : `${who} unassigned it${from ? ` (was ${from})` : ""}`;
+    case "status":
+      return `${who} moved it from ${from ?? "?"} to ${to ?? "?"}`;
+    case "archived":
+      return `${who} archived it`;
+    case "unarchived":
+      return `${who} brought it back from the archive`;
+    default:
+      return `${who} changed it`;
+  }
 }
 
 /**
@@ -554,9 +383,18 @@ export function TicketPanel({
   onError,
   formatTime = defaultFormatTime,
   theme = "auto",
+  onUpdate,
+  categories = [],
+  people = null,
+  events = null,
+  emailsReporters = true,
 }: TicketPanelProps): ReactElement {
   useBoardStyles();
   const [draft, setDraft] = useState("");
+  /** The title being edited (null: not editing). */
+  const [titleDraft, setTitleDraft] = useState<string | null>(null);
+  /** An applied edit shown until the `ticket` prop catches up (or the edit is refused). */
+  const [pendingPatch, setPendingPatch] = useState<TicketPatch>({});
   const [sending, setSending] = useState(false);
   /** A keyboard choice not yet applied (arrows on the closed select). */
   const [statusDraft, setStatusDraft] = useState<string | null>(null);
@@ -578,6 +416,8 @@ export function TicketPanel({
     setShownId(ticket.id);
     setStatusDraft(null);
     setStatusSent(null);
+    setTitleDraft(null);
+    setPendingPatch({});
     assigneeSent.current = undefined;
   }
 
@@ -708,6 +548,46 @@ export function TicketPanel({
 
   const knownStatus = statuses.some((status) => status.key === ticket.status);
 
+  // An edit shows at once, and holds until the server's copy says the same.
+  const shown = {
+    title: pendingPatch.title ?? ticket.title,
+    priority: pendingPatch.priority ?? ticket.priority,
+    category: pendingPatch.category !== undefined ? pendingPatch.category : (ticket.category ?? null),
+    assigneeId: pendingPatch.assigneeId !== undefined ? pendingPatch.assigneeId : (ticket.assigneeId ?? null),
+  };
+  const caughtUp =
+    (pendingPatch.title === undefined || pendingPatch.title === ticket.title) &&
+    (pendingPatch.priority === undefined || pendingPatch.priority === ticket.priority) &&
+    (pendingPatch.category === undefined || pendingPatch.category === (ticket.category ?? null)) &&
+    (pendingPatch.assigneeId === undefined || pendingPatch.assigneeId === (ticket.assigneeId ?? null));
+  if (Object.keys(pendingPatch).length > 0 && caughtUp) setPendingPatch({});
+
+  const applyPatch = (patch: TicketPatch) => {
+    if (!onUpdate) return;
+    setPendingPatch((current) => ({ ...current, ...patch }));
+    void run("update", () => onUpdate(patch)).then((ok) => {
+      if (!ok) {
+        setPendingPatch((current) => {
+          const next = { ...current };
+          for (const key of Object.keys(patch) as Array<keyof TicketPatch>) delete next[key];
+          return next;
+        });
+      }
+    });
+  };
+
+  const saveTitle = () => {
+    if (titleDraft === null) return;
+    const next = titleDraft.trim();
+    setTitleDraft(null);
+    if (next && next !== ticket.title) applyPatch({ title: next });
+  };
+
+  const sourceLabel = ticket.source ? (SOURCE_LABELS[ticket.source as FilterSource] ?? null) : null;
+  const audience = replyAudience(ticket, emailsReporters);
+  const categoryKnown = shown.category === null || categories.some((category) => category.key === shown.category);
+  const assigneeKnown = shown.assigneeId === null || (people ?? []).some((person) => person.id === shown.assigneeId);
+
   return (
     <div className="aib-panel-layer" data-aib-theme={theme}>
       <BoardStyles />
@@ -723,11 +603,49 @@ export function TicketPanel({
       >
         <div className="aib-panel-head">
           <div>
-            <h2 id={titleId} className="aib-panel-title">
-              {ticket.ticketNumber} — {ticket.title}
-            </h2>
+            {titleDraft !== null ? (
+              <div className="aib-title-edit">
+                <h2 id={titleId} className="aib-sr">
+                  {ticket.ticketNumber} — {shown.title}
+                </h2>
+                <input
+                  className="aib-input"
+                  aria-label="Title"
+                  value={titleDraft}
+                  maxLength={200}
+                  autoFocus
+                  onChange={(event) => setTitleDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      saveTitle();
+                    } else if (event.key === "Escape") {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setTitleDraft(null);
+                    }
+                  }}
+                />
+                <button type="button" className="aib-tool-btn aib-tool-primary" onClick={saveTitle}>
+                  Save
+                </button>
+                <button type="button" className="aib-tool-btn" onClick={() => setTitleDraft(null)}>
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <h2 id={titleId} className="aib-panel-title">
+                {ticket.ticketNumber} — {shown.title}
+                {onUpdate ? (
+                  <button type="button" className="aib-edit-btn" onClick={() => setTitleDraft(shown.title)}>
+                    Edit<span className="aib-sr"> the title</span>
+                  </button>
+                ) : null}
+              </h2>
+            )}
             <div className="aib-panel-sub">
               <span>{ageOf(ticket.createdAt)}</span>
+              {sourceLabel ? <span>{sourceLabel}</span> : null}
               {ticket.pagePathname ? <span>{ticket.pagePathname}</span> : null}
               {ticket.reporterName || ticket.reporterEmail ? (
                 <span>from {ticket.reporterName ?? ticket.reporterEmail}</span>
@@ -801,6 +719,78 @@ export function TicketPanel({
               ))}
             </select>
           </label>
+          {onUpdate ? (
+            <>
+              <label>
+                Priority
+                <select
+                  className="aib-select"
+                  value={shown.priority}
+                  onChange={(event) => applyPatch({ priority: event.target.value as TicketPatch["priority"] })}
+                >
+                  {(FILTER_PRIORITIES as readonly string[]).includes(shown.priority) ? null : (
+                    <option value={shown.priority} disabled>
+                      {shown.priority}
+                    </option>
+                  )}
+                  {FILTER_PRIORITIES.map((value) => (
+                    <option key={value} value={value}>
+                      {PRIORITY_LABELS[value]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Category
+                <select
+                  className="aib-select"
+                  value={shown.category ?? ""}
+                  onChange={(event) => applyPatch({ category: event.target.value || null })}
+                >
+                  <option value="">No category</option>
+                  {categoryKnown ? null : (
+                    <option value={shown.category ?? ""} disabled>
+                      {shown.category} (not offered any more)
+                    </option>
+                  )}
+                  {categories.map((category) => (
+                    <option key={category.key} value={category.key}>
+                      {category.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
+          ) : null}
+          {onUpdate && people && people.length > 0 ? (
+            <label>
+              Assigned to
+              <select
+                className="aib-select"
+                // A name typed the 0.10 way is shown as itself (not "Nobody")
+                // until someone picks a person from the list.
+                value={shown.assigneeId ?? (pendingPatch.assigneeId === undefined && ticket.assignee ? TYPED_ASSIGNEE : "")}
+                onChange={(event) => applyPatch({ assigneeId: event.target.value || null })}
+              >
+                <option value="">Nobody</option>
+                {assigneeKnown ? null : (
+                  <option value={shown.assigneeId ?? ""} disabled>
+                    {ticket.assignee ?? "Someone not on the team"}
+                  </option>
+                )}
+                {shown.assigneeId === null && ticket.assignee ? (
+                  <option value={TYPED_ASSIGNEE} disabled>
+                    {ticket.assignee}
+                  </option>
+                ) : null}
+                {people.map((person) => (
+                  <option key={person.id} value={person.id}>
+                    {person.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
           <label>
             Assignee
             <input
@@ -821,6 +811,7 @@ export function TicketPanel({
               }}
             />
           </label>
+          )}
           {onArchive ? (
             <button type="button" className="aib-archive-btn" onClick={() => void run("archive", onArchive)}>
               {ticket.archivedAt != null ? "Unarchive" : "Archive"}
@@ -830,8 +821,23 @@ export function TicketPanel({
 
         <div className="aib-thread">
           <TicketReport ticket={ticket} detail={detail} />
+          {events && events.length > 0 ? (
+            <details className="aib-activity">
+              <summary>Activity ({events.length})</summary>
+              <ol>
+                {events.map((event) => (
+                  <li key={event.id}>
+                    {eventWords(event)}
+                    <time>{timeOf(event.createdAt, formatTime)}</time>
+                  </li>
+                ))}
+              </ol>
+            </details>
+          ) : null}
           {messages.length === 0 ? (
-            <div className="aib-thread-empty">No notes yet — the report above is the whole story so far.</div>
+            <div className="aib-thread-empty">
+              {detail?.description ? "No notes yet — the report above is the whole story so far." : "No notes yet."}
+            </div>
           ) : null}
           {messages.map((message) => (
             <div key={message.id} className={`aib-msg aib-msg-${message.senderType}`}>
@@ -852,12 +858,16 @@ export function TicketPanel({
           ))}
         </div>
 
+        <p className="aib-compose-note" id={`${titleId}-audience`}>
+          {audience.note}
+        </p>
         <div className="aib-compose">
           <textarea
             ref={composeRef}
             value={draft}
-            aria-label={`Note as ${currentUser}`}
-            placeholder={`Note as ${currentUser}…`}
+            aria-label={audience.label}
+            aria-describedby={`${titleId}-audience`}
+            placeholder={`${audience.label}…`}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) void send();
@@ -1082,6 +1092,7 @@ export function FeedbackBoard({
   ticketHref,
   onMoveMany,
   onMoveError,
+  onCreateInColumn,
   theme = "auto",
 }: FeedbackBoardProps): ReactElement {
   useBoardStyles();
@@ -1465,6 +1476,17 @@ export function FeedbackBoard({
                   <span aria-hidden="true">{limit === null ? cards.length : `${cards.length}/${limit}`}</span>
                   <span className="aib-sr">{countWords}</span>
                 </span>
+                {onCreateInColumn && !isOrphan ? (
+                  <button
+                    type="button"
+                    className="aib-col-add"
+                    aria-label={`New ticket in ${status.label}`}
+                    title={`New ticket in ${status.label}`}
+                    onClick={() => onCreateInColumn(status.key)}
+                  >
+                    +
+                  </button>
+                ) : null}
               </div>
               <div className="aib-col-body">
                 {cards.length === 0 ? (
@@ -1642,8 +1664,8 @@ export interface FeedbackWorkspaceProps {
   currentUser?: string;
   /**
    * Offer the controls that change tickets (moving, replying, assigning,
-   * archiving). Only what is OFFERED: the server refuses them anyway to
-   * someone without the permission. Default true.
+   * archiving, New ticket, editing). Only what is OFFERED: the server refuses
+   * them anyway to someone without the permission. Default true.
    */
   canManage?: boolean;
   /** A link to the board's settings (columns, categories, website keys), shown in the toolbar. */
@@ -1652,6 +1674,20 @@ export interface FeedbackWorkspaceProps {
   initialTicketId?: string | null;
   /** Told when the open ticket changes (null: closed), so a page can keep it in its address. */
   onOpenTicket?: (ticketId: string | null) => void;
+  /**
+   * Where the filters are kept (0.11.0): the page's own query string by
+   * default (`?status=open&assignee=__me`, so a link shares the view and
+   * Back undoes a filter), or your own adapter, or `false` for memory only.
+   */
+  filterUrl?: BoardFilterUrl | false;
+  /**
+   * The name filters are remembered under in this browser, so the board
+   * opens the way it was left (a link with filters always wins). Default: one
+   * per `baseUrl`. `false` remembers nothing.
+   */
+  rememberFiltersAs?: string | false;
+  /** Does this board email the reporter on a reply (see TicketPanel)? Default true. */
+  emailsReporters?: boolean;
   /** See `BoardTheme`. Default `auto`. */
   theme?: BoardTheme;
   /** A client to use instead of one over `baseUrl` (tests). */
@@ -1676,16 +1712,17 @@ function detailOf(ticket: FeedbackTicketDetailWire | null): TicketDetailView | n
 }
 
 /**
- * A company's whole feedback board, connected: fetches the columns and
- * tickets, moves cards (one or a selection), opens a ticket into the panel
- * with its report and conversation, sends replies, assigns, archives, and
- * sweeps finished columns — every change through the staff routes at
+ * A company's whole feedback board, connected: the toolbar (search, filters,
+ * quick filters, New ticket), the columns and tickets (filtered on the
+ * server), moving cards one at a time or as a selection, a "+" per column,
+ * and the ticket panel — the report, the conversation, replies, the editor
+ * (title, priority, category, assignee picked from the company's people) and
+ * the activity trail. Every change goes through the staff routes at
  * `baseUrl`, then a fresh read, because the server's copy is the board.
  *
  *   <FeedbackWorkspace baseUrl={`/api/app/${company.id}/feedback`} canManage={can.includes("feedback.manage")} />
  *
- * Not included (next): server-side filters and search, a "new ticket" button
- * for staff, and epics.
+ * Not included (next): epics; per-person saved views; custom fields.
  */
 export function FeedbackWorkspace({
   baseUrl,
@@ -1694,38 +1731,70 @@ export function FeedbackWorkspace({
   settingsHref = null,
   initialTicketId = null,
   onOpenTicket,
+  filterUrl,
+  rememberFiltersAs,
+  emailsReporters = true,
   theme = "auto",
   client: given,
 }: FeedbackWorkspaceProps): ReactElement {
   useBoardStyles();
   const client = useMemo(() => given ?? new FeedbackAdminClient(baseUrl), [given, baseUrl]);
+  const { filters, setFilters, isReady } = useBoardFilters({
+    url: filterUrl === undefined ? windowFilterUrl : filterUrl,
+    persistKey: rememberFiltersAs === undefined ? `aib-board:${baseUrl}` : rememberFiltersAs,
+  });
 
   const [board, setBoard] = useState<FeedbackBoardWire | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [showArchived, setShowArchived] = useState(false);
   const [sweeping, setSweeping] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [detail, setDetail] = useState<FeedbackTicketDetailWire | null>(null);
   const [messages, setMessages] = useState<FeedbackMessageWire[]>([]);
+  const [events, setEvents] = useState<FeedbackEventWire[]>([]);
+  const [categories, setCategories] = useState<FeedbackCategoryWire[]>([]);
+  const [people, setPeople] = useState<FeedbackPersonWire[]>([]);
+  const [me, setMe] = useState<string | null>(null);
+  /** The New ticket dialog: closed (null), or open on a column ("" = the default one). */
+  const [creating, setCreating] = useState<string | null>(null);
   const loadSeq = useRef(0);
+  const filtersRef = useRef(filters);
+  filtersRef.current = filters;
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (): Promise<FeedbackBoardWire | null> => {
     const seq = ++loadSeq.current;
     try {
-      const next = await client.board({ archived: showArchived });
-      if (seq !== loadSeq.current) return;
+      const next = await client.board({ filters: filtersForRequest(filtersRef.current) });
+      if (seq !== loadSeq.current) return null;
       setBoard(next);
       setLoadError(null);
+      return next;
     } catch (error) {
-      if (seq !== loadSeq.current) return;
+      if (seq !== loadSeq.current) return null;
       setLoadError(messageOf(error));
+      return null;
     }
-  }, [client, showArchived]);
+  }, [client]);
 
+  // Not before remembered filters are back: no flash of the whole board first.
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    if (isReady) void refresh();
+  }, [isReady, filters, refresh]);
+
+  // What the filters and the editor choose from: the categories and the
+  // company's people. Either failing leaves the board working without it.
+  useEffect(() => {
+    void client.categories().then(setCategories, () => undefined);
+    if (typeof client.people === "function") {
+      void client.people().then(
+        (answer) => {
+          setPeople(answer.people);
+          setMe(answer.me);
+        },
+        () => undefined,
+      );
+    }
+  }, [client]);
 
   // Coming back to the tab is when someone expects new feedback to be there.
   useEffect(() => {
@@ -1738,13 +1807,27 @@ export function FeedbackWorkspace({
   const loadTicket = useCallback(
     async (ticketId: string) => {
       try {
-        const [ticket, thread] = await Promise.all([client.ticket(ticketId), client.messages(ticketId)]);
+        const [ticket, thread, trail] = await Promise.all([
+          client.ticket(ticketId),
+          client.messages(ticketId),
+          client.events(ticketId).catch(() => [] as FeedbackEventWire[]),
+        ]);
         setDetail(ticket);
         setMessages(thread);
+        setEvents(trail);
       } catch (error) {
         setNotice(messageOf(error));
         setOpenId(null);
       }
+    },
+    [client],
+  );
+
+  const reloadTrail = useCallback(
+    async (ticketId: string) => {
+      const [ticket, trail] = await Promise.all([client.ticket(ticketId), client.events(ticketId).catch(() => null)]);
+      setDetail(ticket);
+      if (trail) setEvents(trail);
     },
     [client],
   );
@@ -1755,6 +1838,7 @@ export function FeedbackWorkspace({
       onOpenTicket?.(ticketId);
       setDetail(null);
       setMessages([]);
+      setEvents([]);
       if (ticketId === null) return;
       void loadTicket(ticketId);
       // Opening the panel IS reading it: the card's reply mark clears the way
@@ -1783,6 +1867,7 @@ export function FeedbackWorkspace({
     if (!canManage) refuseReadOnly();
     await client.move(ticketId, statusKey);
     await refresh();
+    if (ticketId === openId) void reloadTrail(ticketId).catch(() => undefined);
   };
 
   const statuses: BoardStatusView[] = board?.statuses ?? [];
@@ -1790,37 +1875,51 @@ export function FeedbackWorkspace({
   const openCard: BoardTicketView | null =
     tickets.find((ticket) => ticket.id === openId) ?? (detail && detail.id === openId ? detail : null);
   const archivable = board?.archivableCount ?? 0;
+  const fields = boardFilterFields({ statuses, categories, people, me, facets: board?.facets ?? null });
+  const quick = boardQuickFilters({ me: people.length > 0 ? me : null, facets: board?.facets ?? null });
+  const narrowed = !isUnfiltered(filters);
 
   return (
     <>
+      <BoardToolbar
+        filters={filters}
+        onChange={setFilters}
+        fields={fields}
+        quickFilters={quick}
+        theme={theme}
+        totalCount={board?.totalCount ?? null}
+        matchCount={board?.matchCount ?? null}
+        shownCount={board ? board.tickets.length : null}
+        truncated={board?.truncated ?? false}
+        onCreate={canManage && board ? () => setCreating("") : null}
+        actions={
+          <>
+            {canManage && archivable > 0 ? (
+              <button
+                type="button"
+                className="aib-tool-btn"
+                disabled={sweeping}
+                onClick={() => {
+                  setSweeping(true);
+                  void client
+                    .archiveDone()
+                    .then(() => refresh())
+                    .catch((error: unknown) => setNotice(messageOf(error)))
+                    .finally(() => setSweeping(false));
+                }}
+              >
+                {sweeping ? "Archiving…" : `Archive finished (${archivable})`}
+              </button>
+            ) : null}
+            {settingsHref ? (
+              <a className="aib-tool-btn" href={settingsHref}>
+                Columns, categories and website keys
+              </a>
+            ) : null}
+          </>
+        }
+      />
       <div className="aib-toolbar" data-aib-theme={theme === "auto" ? undefined : theme}>
-        <div className="aib-toolbar-row">
-          <button type="button" className="aib-tool-btn" onClick={() => setShowArchived((current) => !current)}>
-            {showArchived ? "Hide archived" : "Show archived"}
-          </button>
-          {canManage && archivable > 0 ? (
-            <button
-              type="button"
-              className="aib-tool-btn aib-tool-primary"
-              disabled={sweeping}
-              onClick={() => {
-                setSweeping(true);
-                void client
-                  .archiveDone()
-                  .then(() => refresh())
-                  .catch((error: unknown) => setNotice(messageOf(error)))
-                  .finally(() => setSweeping(false));
-              }}
-            >
-              {sweeping ? "Archiving…" : `Archive finished (${archivable})`}
-            </button>
-          ) : null}
-          {settingsHref ? (
-            <a className="aib-tool-btn" href={settingsHref}>
-              Columns, categories and website keys
-            </a>
-          ) : null}
-        </div>
         {notice ? (
           <div className="aib-notice" role="status">
             <span>{notice}</span>
@@ -1840,7 +1939,11 @@ export function FeedbackWorkspace({
         {board === null && !loadError ? <p className="aib-toolbar-note">Loading the board…</p> : null}
         {board !== null && board.tickets.length === 0 ? (
           <p className="aib-toolbar-note">
-            {showArchived ? "Nothing here yet, archived or not." : "No feedback yet. It appears here as soon as someone sends some."}
+            {narrowed
+              ? "Nothing matches these filters. Remove one, or clear them all."
+              : filters.archived
+                ? "Nothing here yet, archived or not."
+                : "No feedback yet. It appears here as soon as someone sends some."}
           </p>
         ) : null}
       </div>
@@ -1859,9 +1962,33 @@ export function FeedbackWorkspace({
                   await refresh();
                   return result.failed.length > 0 ? { failed: result.failed } : undefined;
                 },
+                onCreateInColumn: (statusKey: string) => setCreating(statusKey),
               }
             : {})}
           onMoveError={(error) => setNotice(messageOf(error))}
+        />
+      ) : null}
+
+      {creating !== null && board !== null ? (
+        <NewTicketDialog
+          statuses={statuses}
+          categories={categories}
+          people={people}
+          defaultStatus={creating || null}
+          theme={theme}
+          onClose={() => setCreating(null)}
+          onCreate={async (input) => {
+            if (!canManage) refuseReadOnly();
+            const created = await client.createTicket(input);
+            const next = await refresh();
+            // Made, but the filters may leave it off the board: say so (0.11.0 review).
+            return { ...created, hidden: next !== null && !next.tickets.some((ticket) => ticket.id === created.id) };
+          }}
+          onClearFilters={() => setFilters(EMPTY_FILTERS)}
+          onOpenTicket={(ticketId) => {
+            setCreating(null);
+            open(ticketId);
+          }}
         />
       ) : null}
 
@@ -1873,6 +2000,10 @@ export function FeedbackWorkspace({
           detail={detailOf(detail)}
           currentUser={currentUser}
           theme={theme}
+          categories={categories}
+          people={people.length > 0 ? people : null}
+          events={events}
+          emailsReporters={emailsReporters}
           onClose={() => open(null)}
           onSend={async (body) => {
             if (!canManage) refuseReadOnly();
@@ -1882,7 +2013,7 @@ export function FeedbackWorkspace({
           onAssign={async (assignee) => {
             if (!canManage) refuseReadOnly();
             await client.assign(openId, assignee);
-            const [thread] = await Promise.all([client.messages(openId), refresh()]);
+            const [thread] = await Promise.all([client.messages(openId), refresh(), reloadTrail(openId)]);
             setMessages(thread);
           }}
           onMove={async (statusKey) => {
@@ -1890,6 +2021,10 @@ export function FeedbackWorkspace({
           }}
           {...(canManage
             ? {
+                onUpdate: async (patch: TicketPatch) => {
+                  await client.updateTicket(openId, patch);
+                  await Promise.all([refresh(), reloadTrail(openId)]);
+                },
                 onArchive: async () => {
                   if (openCard.archivedAt != null) {
                     await client.unarchive(openId);
@@ -1897,7 +2032,7 @@ export function FeedbackWorkspace({
                     await client.archive(openId);
                     // An archived ticket leaves the default board; close the
                     // panel rather than leave it over a card that vanished.
-                    if (!showArchived) open(null);
+                    if (!filters.archived) open(null);
                   }
                   await refresh();
                 },

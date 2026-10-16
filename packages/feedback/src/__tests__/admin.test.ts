@@ -11,6 +11,7 @@ import {
   feedbackPermissions,
   issueClientKey,
   submitPayloadSchema,
+  updateTicket,
   type FeedbackEvent,
   type FeedbackPermission,
   type FeedbackRoute,
@@ -48,6 +49,11 @@ function handlers(asked: Asked[] = [], events: FeedbackEvent[] = []) {
       return { userId: `user-of-${tenantId}` };
     },
     staffName: (userId) => (userId ? `Person ${userId}` : null),
+    // Each company's people (0.11.0): its one person, and the viewer.
+    listPeople: (tenantId) => [
+      { id: `person-of-${tenantId}`, name: `Person of ${tenantId}` },
+      { id: `user-of-${tenantId}`, name: `User of ${tenantId}` },
+    ],
     onEvent: (event) => void events.push(event),
   });
 }
@@ -81,9 +87,24 @@ async function plant(tenantId: string, label: string) {
   const column = await createStatus(t.db, tenantId, { key: "waiting", label: `${label} waiting` });
   const category = await createCategory(t.db, tenantId, { key: "billing", label: `${label} billing` });
   const key = await issueClientKey(t.db, { tenantId, label: `${label} website` });
+  await createCategory(t.db, tenantId, { key: "triage", label: `${label} triage` });
+  // 0.11.0: the ticket is filed under the category and assigned to the
+  // company's person, so a filter or search that forgot the company would
+  // find it from the other company (and the trail has a row of its own).
+  const person = `person-of-${tenantId}`;
+  await updateTicket(t.db, tenantId, { ticketId: ticket.id, category: "triage", assignee: { id: person, name: `${label} Person` } }, { id: null, name: `${label} Office` });
   return {
-    rows: { ticket: ticket.id, column: column.id, category: category.id, "feedback-key": key.id } as Record<string, string>,
-    strings: [tenantId, ticket.id, ticket.ticketToken, column.id, category.id, key.id, key.key, `${label} probe report`, `${label} Reporter`, `${label}@reporter.test`, `${label} staff note`, `${label} waiting`, `${label} billing`, `${label} website`],
+    rows: {
+      ticket: ticket.id,
+      column: column.id,
+      category: category.id,
+      "feedback-key": key.id,
+      "column-key": "waiting",
+      "category-key": "triage",
+      assignee: person,
+      "ticket-number": ticket.ticketNumber,
+    } as Record<string, string>,
+    strings: [tenantId, ticket.id, ticket.ticketToken, column.id, category.id, key.id, key.key, person, `${label} probe report`, `${label} Reporter`, `${label}@reporter.test`, `${label} staff note`, `${label} waiting`, `${label} billing`, `${label} website`, `${label} Person`, `${label} Office`, `${label} triage`],
   };
 }
 
@@ -95,6 +116,7 @@ async function snapshot(tenantId: string): Promise<string> {
     await rows(sql`select * from feedback_categories where tenant_id = ${tenantId} order by id`),
     await rows(sql`select * from feedback_client_keys where tenant_id = ${tenantId} order by id`),
     await rows(sql`select m.* from feedback_messages m join feedback_tickets t on t.id = m.ticket_id where t.tenant_id = ${tenantId} order by m.id`),
+    await rows(sql`select * from feedback_ticket_events where tenant_id = ${tenantId} order by id`),
   ]);
 }
 
@@ -118,7 +140,16 @@ describe("the route table", () => {
 
   it("answers not found for every row-reading route on an empty company (each example reaches its lookup)", async () => {
     const empty = tenant("empty");
-    const rows = { ticket: "nope", column: "nope", category: "nope", "feedback-key": "nope" };
+    const rows = {
+      ticket: "nope",
+      column: "nope",
+      category: "nope",
+      "feedback-key": "nope",
+      "column-key": "nope",
+      "category-key": "nope",
+      assignee: "nope",
+      "ticket-number": "FB-99999",
+    };
     const { handle } = handlers();
     for (const route of FEEDBACK_ADMIN_ROUTES.filter((r) => /\{/.test(r.path))) {
       const res = await handle(requestFor(empty, route, rows));
@@ -232,7 +263,7 @@ describe("the seams", () => {
     expect(listed).not.toContain(issued.key.secret);
   });
 
-  it("refuses a duplicate column key with a sentence, and a column that holds tickets", async () => {
+  it("refuses a duplicate column NAME with a sentence, and a column that holds tickets", async () => {
     const a = tenant();
     const A = await plant(a, "Alpha");
     const { handle } = handlers();
@@ -240,7 +271,7 @@ describe("the seams", () => {
       new Request(`http://localhost/api/app/${a}/feedback/v1/admin/columns`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ key: "waiting", label: "Again" }),
+        body: JSON.stringify({ key: "waiting", label: "Alpha waiting" }),
       }),
     );
     expect(dupe.status).toBe(409);
@@ -254,7 +285,7 @@ describe("the seams", () => {
       new Request(`http://localhost/api/app/${a}/feedback/v1/admin/columns/${open.id}/delete`, { method: "POST", body: "{}" }),
     );
     expect(occupied.status).toBe(409);
-    expect(((await occupied.json()) as { error: { message: string } }).error.message).toBe("This column holds 1 ticket. Move it to another column first.");
+    expect(((await occupied.json()) as { error: { message: string } }).error.message).toBe("This column holds 1 ticket. Choose another column to move it to first.");
     void A;
   });
 });

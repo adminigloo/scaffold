@@ -4,10 +4,12 @@ import {
   archiveTerminalTickets,
   archiveTicket,
   assignTicket,
+  boardFilterSchema,
   createCategory,
   createCategorySchema,
   createStatus,
   createStatusSchema,
+  createStaffTicket,
   deleteCategory,
   deleteStatus,
   DuplicateKeyError,
@@ -18,6 +20,8 @@ import {
   listCategories,
   listClientKeys,
   listColumnsWithCounts,
+  linkTypedAssignees,
+  listTicketEvents,
   listTicketMessages,
   markTicketRead,
   MAX_BULK_MOVE,
@@ -26,13 +30,21 @@ import {
   reorderCategories,
   reorderStatuses,
   revokeClientKey,
+  staffTicketSchema,
+  TicketChangeError,
+  ticketPatchSchema,
   unarchiveTicket,
   updateCategory,
   updateCategorySchema,
   updateStatus,
   updateStatusSchema,
+  updateTicket,
+  type TicketActor,
+  type TicketAssignee,
+  type BoardStatus,
   type TicketDetail,
 } from "./board-data.js";
+import { filtersFromSearchParams } from "./board-filters.js";
 import { isTenantId, type FeedbackDb, type FeedbackEvent, type FeedbackEventListener } from "./core.js";
 import {
   FEEDBACK_ERROR_STATUS,
@@ -96,6 +108,14 @@ export interface CreateFeedbackAdminHandlersOptions {
   /** The business's name as its customers know it ("Green Acres"): a reply's sender when there's no person's name. Default "The team". */
   teamName?: (tenantId: string) => string | null | Promise<string | null>;
   /**
+   * The people of `tenantId` a ticket can be assigned to (0.11.0): the
+   * assignee picker, the "Assigned to" filter, and the check that an assignee
+   * is one of THIS company's people (an id from anywhere else is refused).
+   * The host's own user ids and the names to show. Absent: the board has no
+   * picker and tickets are assigned by typing a name, as in 0.10.
+   */
+  listPeople?: (tenantId: string, req: Request) => ReadonlyArray<FeedbackPerson> | Promise<ReadonlyArray<FeedbackPerson>>;
+  /**
    * Told after the team replies to a reporter or moves a ticket — the hook a
    * host hangs the reporter's emails on. Awaited and caught: a broken listener
    * never fails the change it announces.
@@ -104,6 +124,12 @@ export interface CreateFeedbackAdminHandlersOptions {
   /** Told about an unexpected error (the answer is still a plain 500) and a listener that threw. */
   onError?: (error: unknown, context: { tenantId: string | null; route: string }) => void;
   now?: () => Date;
+}
+
+/** Someone a ticket can be assigned to: the host's user id and the name the card shows. */
+export interface FeedbackPerson {
+  readonly id: string;
+  readonly name: string;
 }
 
 export interface FeedbackAdminHandlers {
@@ -135,14 +161,18 @@ function route(method: string, pathname: string): Matched | null {
   switch (head) {
     case "board":
       return get && parts.length === 1 ? { kind: "board" } : null;
+    case "people":
+      return get && parts.length === 1 ? { kind: "people" } : null;
     case "archive-done":
       return post && parts.length === 1 ? { kind: "archive-done" } : null;
     case "tickets": {
+      if (parts.length === 1) return post ? { kind: "ticket-create" } : null;
       if (parts.length === 2 && second === "move") return post ? { kind: "move-many" } : null;
       if (!id) return null;
-      if (parts.length === 2) return get ? { kind: "ticket-get", id } : null;
+      if (parts.length === 2) return get ? { kind: "ticket-get", id } : post ? { kind: "ticket-update", id } : null;
       if (parts.length !== 3) return null;
       if (third === "messages") return get ? { kind: "messages", id } : post ? { kind: "reply", id } : null;
+      if (third === "events") return get ? { kind: "events", id } : null;
       if (!post) return null;
       const kinds: Record<string, FeedbackAdminRouteKind> = {
         assign: "assign",
@@ -186,12 +216,38 @@ const moveManyBody = z.object({
   status: z.string().min(1).max(50),
 });
 const orderBody = z.object({ ids: z.array(z.string().min(1).max(200)).min(1).max(50) });
+/** A person picked from the list, by the host's id; null unassigns; absent leaves the assignee alone. */
+const assigneeIdField = z.string().trim().min(1).max(200).nullable().optional();
+const createTicketBody = staffTicketSchema.extend({ assigneeId: assigneeIdField });
+const updateTicketBody = ticketPatchSchema.extend({ assigneeId: assigneeIdField });
+const deleteColumnBody = z.object({ moveTo: z.string().trim().min(1).max(50).nullable().optional() });
 const keyBody = z.object({ label: z.string().trim().min(1, "Name the website this key is for.").max(80) });
 const empty = z.object({}).passthrough();
 // The editors' bodies: the package's schemas without the id (the id is in the path).
 const columnPatch = z.object({}).passthrough();
 
 const STALE_COLUMN = "That column isn't on this board any more. Refresh to see the board as it is.";
+const NOT_ON_TEAM = "That person isn't on this team. Pick someone from the list.";
+
+/** "This ticket moved": the one shape a drag, a bulk move and a column delete all announce. */
+function movedEvent(tenantId: string, ticket: TicketDetail, from: string, to: BoardStatus, userId: string | null): FeedbackEvent {
+  return {
+    type: "ticket.moved",
+    tenantId,
+    ticketId: ticket.id,
+    ticketNumber: ticket.ticketNumber,
+    title: ticket.title,
+    fromStatus: from,
+    toStatus: to.key,
+    toLabel: to.label,
+    toTerminal: to.isTerminal,
+    userId,
+    reporterName: ticket.reporterName,
+    reporterEmail: ticket.reporterEmail,
+    source: ticket.source,
+    notifyReporter: ticket.notifyReporter,
+  };
+}
 
 /** The panel's wire: the card fields plus the report and what was captured with it. */
 function ticketWire(ticket: TicketDetail) {
@@ -249,6 +305,9 @@ export function createFeedbackAdminHandlers(options: CreateFeedbackAdminHandlers
     if (error instanceof DuplicateKeyError) {
       return json({ error: { code: "conflict", message: error.message } }, 409);
     }
+    if (error instanceof TicketChangeError) {
+      return json({ error: { code: "invalid", message: error.message } }, 400);
+    }
     if (error instanceof z.ZodError) {
       return json({ error: { code: "invalid", message: error.issues[0]?.message ?? "Check the form and try again." } }, 400);
     }
@@ -295,12 +354,105 @@ export function createFeedbackAdminHandlers(options: CreateFeedbackAdminHandlers
     }
   }
 
+  /**
+   * The company's people, as the host lists them — bounded and cleaned, so a
+   * host answer can't put an empty name or a giant list on the board.
+   */
+  async function peopleOf(tenantId: string, req: Request): Promise<FeedbackPerson[]> {
+    if (!options.listPeople) return [];
+    const listed = await options.listPeople(tenantId, req);
+    const people: FeedbackPerson[] = [];
+    const seen = new Set<string>();
+    for (const person of listed ?? []) {
+      const id = typeof person?.id === "string" ? person.id : String(person?.id ?? "");
+      const name = typeof person?.name === "string" ? person.name.trim().slice(0, 120) : "";
+      if (!id || id.length > 200 || !name || seen.has(id)) continue;
+      seen.add(id);
+      people.push({ id, name });
+      if (people.length >= 500) break;
+    }
+    return people;
+  }
+
+  /**
+   * An assignee from the body: absent leaves it, null unassigns, an id must be
+   * one of THIS company's people — an id of anyone else (another company's
+   * person, a made-up one) is refused before anything is written.
+   */
+  async function assigneeOf(
+    tenantId: string,
+    req: Request,
+    assigneeId: string | null | undefined,
+  ): Promise<TicketAssignee | null | undefined> {
+    if (assigneeId === undefined) return undefined;
+    if (assigneeId === null) return null;
+    const person = (await peopleOf(tenantId, req)).find((candidate) => candidate.id === assigneeId);
+    if (!person) throw new FeedbackHttpError("invalid", NOT_ON_TEAM);
+    return person;
+  }
+
+  /**
+   * Once per company per process (0.11.0): names typed as assignees in 0.10
+   * are linked to the person with that name, when exactly one has it — so
+   * "Mine" and "Assigned to" find them. Best-effort: the board loads anyway.
+   */
+  const linked = new Set<string>();
+  async function linkOnce(tenantId: string, req: Request): Promise<void> {
+    if (!options.listPeople || linked.has(tenantId)) return;
+    linked.add(tenantId);
+    try {
+      await linkTypedAssignees(db, tenantId, await peopleOf(tenantId, req));
+    } catch (error) {
+      linked.delete(tenantId);
+      report(error, tenantId, "link-assignees");
+    }
+  }
+
+  async function actorOf(userId: string | null, tenantId: string, req: Request): Promise<TicketActor> {
+    return { id: userId, name: await nameOf(userId, tenantId, req) };
+  }
+
   async function dispatch(req: Request, matched: Matched, tenantId: string, userId: string | null): Promise<Response> {
     const ticketId = matched.id ?? "";
     switch (matched.kind) {
       case "board": {
-        const archived = new URL(req.url).searchParams.get("archived");
-        return json(await listBoardData(db, tenantId, { includeArchived: archived === "1" || archived === "true" }));
+        // The filters and search ride in the query string under the same
+        // names the board's address uses (board-filters.ts); "Mine" is the
+        // person authorize named.
+        const parsed = boardFilterSchema.safeParse(filtersFromSearchParams(new URL(req.url).searchParams));
+        if (!parsed.success) throw new FeedbackHttpError("invalid", parsed.error.issues[0]?.message ?? "Those filters couldn't be read.");
+        await linkOnce(tenantId, req);
+        return json(await listBoardData(db, tenantId, { filters: parsed.data, viewerId: userId }));
+      }
+      case "people":
+        return json({ people: await peopleOf(tenantId, req), me: userId });
+      case "ticket-create": {
+        const { assigneeId, ...input } = await readJson(req, createTicketBody);
+        const assignee = await assigneeOf(tenantId, req, assigneeId);
+        const created = await createStaffTicket(db, tenantId, { ...input, assignee: assignee ?? null }, await actorOf(userId, tenantId, req));
+        return json({ ticket: created }, 201);
+      }
+      case "ticket-update": {
+        const { assigneeId, ...patch } = await readJson(req, updateTicketBody);
+        // The ticket first: another company's ticket is "not found" whatever
+        // the body says, before the body's own references are looked at.
+        const ticket = await getTicket(db, tenantId, ticketId);
+        if (!ticket) throw notFound();
+        const assignee = await assigneeOf(tenantId, req, assigneeId);
+        const result = await updateTicket(
+          db,
+          tenantId,
+          { ticketId: ticket.id, ...patch, ...(assignee === undefined ? {} : { assignee }) },
+          await actorOf(userId, tenantId, req),
+          clock(),
+        );
+        if (!result) throw notFound();
+        return json({ ok: true, changed: result.changed });
+      }
+      case "events": {
+        const ticket = await getTicket(db, tenantId, ticketId);
+        if (!ticket) throw notFound();
+        return json({ events: await listTicketEvents(db, tenantId, ticket.id) });
       }
       case "ticket-get": {
         const ticket = await getTicket(db, tenantId, ticketId);
@@ -338,6 +490,8 @@ export function createFeedbackAdminHandlers(options: CreateFeedbackAdminHandlers
           userId,
           reporterName: ticket.reporterName,
           reporterEmail: ticket.reporterEmail,
+          source: ticket.source,
+          notifyReporter: ticket.notifyReporter,
         });
         return json({ message }, 201);
       }
@@ -347,6 +501,7 @@ export function createFeedbackAdminHandlers(options: CreateFeedbackAdminHandlers
           ticketId,
           assignee: body.assignee,
           actorName: await nameOf(userId, tenantId, req),
+          actorId: userId,
         });
         if (!done) throw notFound();
         return json({ ok: true });
@@ -355,31 +510,28 @@ export function createFeedbackAdminHandlers(options: CreateFeedbackAdminHandlers
         const body = await readJson(req, moveBody);
         const ticket = await getTicket(db, tenantId, ticketId);
         if (!ticket) throw notFound();
-        const result = await moveTicket(db, tenantId, { ticketId: ticket.id, statusKey: body.status }, clock());
+        const result = await moveTicket(
+          db,
+          tenantId,
+          { ticketId: ticket.id, statusKey: body.status, actor: await actorOf(userId, tenantId, req) },
+          clock(),
+        );
         if (!result.moved) {
           if (result.reason === "not-found") throw notFound();
           if (result.reason === "unknown-status") throw new FeedbackHttpError("invalid", STALE_COLUMN);
           return json({ moved: false });
         }
-        await emit({
-          type: "ticket.moved",
-          tenantId,
-          ticketId: ticket.id,
-          ticketNumber: ticket.ticketNumber,
-          title: ticket.title,
-          fromStatus: result.from,
-          toStatus: result.to.key,
-          toLabel: result.to.label,
-          toTerminal: result.to.isTerminal,
-          userId,
-          reporterName: ticket.reporterName,
-          reporterEmail: ticket.reporterEmail,
-        });
+        await emit(movedEvent(tenantId, ticket, result.from, result.to, userId));
         return json({ moved: true });
       }
       case "move-many": {
         const body = await readJson(req, moveManyBody);
-        const result = await moveTickets(db, tenantId, { ticketIds: body.ticketIds, statusKey: body.status }, clock());
+        const result = await moveTickets(
+          db,
+          tenantId,
+          { ticketIds: body.ticketIds, statusKey: body.status, actor: await actorOf(userId, tenantId, req) },
+          clock(),
+        );
         if ("reason" in result) throw new FeedbackHttpError("invalid", STALE_COLUMN);
         // The board puts back only the cards that didn't land (BulkMoveResult).
         // The answer names the ones that DID — this board's own tickets — and
@@ -388,20 +540,7 @@ export function createFeedbackAdminHandlers(options: CreateFeedbackAdminHandlers
         for (const moved of result.tickets) {
           const ticket = await getTicket(db, tenantId, moved.id);
           if (!ticket) continue;
-          await emit({
-            type: "ticket.moved",
-            tenantId,
-            ticketId: ticket.id,
-            ticketNumber: ticket.ticketNumber,
-            title: ticket.title,
-            fromStatus: moved.from,
-            toStatus: result.to.key,
-            toLabel: result.to.label,
-            toTerminal: result.to.isTerminal,
-            userId,
-            reporterName: ticket.reporterName,
-            reporterEmail: ticket.reporterEmail,
-          });
+          await emit(movedEvent(tenantId, ticket, moved.from, result.to, userId));
         }
         return json({ moved: result.moved, landed: result.found });
       }
@@ -409,18 +548,25 @@ export function createFeedbackAdminHandlers(options: CreateFeedbackAdminHandlers
         await readJson(req, empty);
         const ticket = await getTicket(db, tenantId, ticketId);
         if (!ticket) throw notFound();
-        const archived = await archiveTicket(db, tenantId, { ticketId: ticket.id, archivedBy: await nameOf(userId, tenantId, req) }, clock());
+        const archived = await archiveTicket(
+          db,
+          tenantId,
+          { ticketId: ticket.id, archivedBy: await nameOf(userId, tenantId, req), actorId: userId },
+          clock(),
+        );
         return json({ archived });
       }
       case "unarchive": {
         await readJson(req, empty);
-        const done = await unarchiveTicket(db, tenantId, ticketId);
+        const done = await unarchiveTicket(db, tenantId, ticketId, await actorOf(userId, tenantId, req), clock());
         if (!done) throw notFound();
         return json({ unarchived: true });
       }
       case "archive-done": {
         await readJson(req, empty);
-        return json(await archiveTerminalTickets(db, tenantId, { archivedBy: await nameOf(userId, tenantId, req) }, clock()));
+        return json(
+          await archiveTerminalTickets(db, tenantId, { archivedBy: await nameOf(userId, tenantId, req), actorId: userId }, clock()),
+        );
       }
       case "read": {
         await readJson(req, empty);
@@ -442,12 +588,32 @@ export function createFeedbackAdminHandlers(options: CreateFeedbackAdminHandlers
         return json({ ok: true });
       }
       case "column-delete": {
-        await readJson(req, empty);
-        const result = await deleteStatus(db, tenantId, ticketId);
-        if (result.deleted) return json({ deleted: true });
+        // `moveTo` (0.11.0): another column of THIS board for the tickets in
+        // this one, so a column with tickets can go in one step.
+        const body = await readJson(req, deleteColumnBody);
+        const result = await deleteStatus(db, tenantId, ticketId, {
+          moveTo: body.moveTo ?? null,
+          actor: await actorOf(userId, tenantId, req),
+          now: clock(),
+        });
+        if (result.deleted) {
+          // Each moved ticket is told about like a drag (0.11.0): the
+          // reporter's email and the team's listeners hear it moved.
+          for (const moved of result.tickets ?? []) {
+            const ticket = await getTicket(db, tenantId, moved.id);
+            if (!ticket || !result.to) continue;
+            await emit(movedEvent(tenantId, ticket, moved.from, result.to, userId));
+          }
+          return json({ deleted: true, moved: result.moved ?? 0 });
+        }
         if (result.reason === "unknown") throw notFound();
+        if (result.reason === "unknown-target") throw new FeedbackHttpError("invalid", STALE_COLUMN);
+        if (result.reason === "last") throw new FeedbackHttpError("conflict", "A board needs at least one column. Add another before you delete this one.");
         const n = result.ticketCount ?? 0;
-        throw new FeedbackHttpError("conflict", `This column holds ${n} ticket${n === 1 ? "" : "s"}. Move ${n === 1 ? "it" : "them"} to another column first.`);
+        throw new FeedbackHttpError(
+          "conflict",
+          `This column holds ${n} ticket${n === 1 ? "" : "s"}. Choose another column to move ${n === 1 ? "it" : "them"} to first.`,
+        );
       }
       case "columns-order": {
         const body = await readJson(req, orderBody);
@@ -525,7 +691,12 @@ export function createFeedbackAdminHandlers(options: CreateFeedbackAdminHandlers
       await prepare(tenantId);
       return await dispatch(req, matched, tenantId, userId);
     } catch (error) {
-      if (!(error instanceof FeedbackHttpError) && !(error instanceof DuplicateKeyError) && !(error instanceof z.ZodError)) {
+      if (
+        !(error instanceof FeedbackHttpError) &&
+        !(error instanceof DuplicateKeyError) &&
+        !(error instanceof TicketChangeError) &&
+        !(error instanceof z.ZodError)
+      ) {
         report(error, resolved, matched.kind);
       }
       return failure(error);

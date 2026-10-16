@@ -12,7 +12,11 @@ import type { FeedbackEvent } from "./core.js";
  * per company if absent (never over an owner's edit) by the host.
  */
 
-export type FeedbackEmailTemplateKey = "feedback_staff_reply" | "feedback_status_changed";
+export type FeedbackEmailTemplateKey =
+  | "feedback_staff_reply"
+  | "feedback_status_changed"
+  | "feedback_team_ticket_reply"
+  | "feedback_team_ticket_status";
 
 export const FEEDBACK_EMAIL_TEMPLATES: ReadonlyArray<{ readonly key: FeedbackEmailTemplateKey; readonly label: string; readonly subject: string; readonly body: string }> =
   Object.freeze([
@@ -43,6 +47,40 @@ export const FEEDBACK_EMAIL_TEMPLATES: ReadonlyArray<{ readonly key: FeedbackEma
         "Your feedback \"{{title}}\" ({{ticketNumber}}) is now {{statusLabel}}.",
         "",
         "See the whole conversation on our feedback page: {{feedbackUrl}}",
+        "",
+        "{{businessName}}",
+      ].join("\n"),
+    },
+    // 0.11.0: a ticket the TEAM filed for a customer (New ticket, "tell
+    // them"). That customer never used the feedback form, so these never
+    // send them to "My reports", never call it "your feedback", and never
+    // quote the team's own title for it: the way to answer is this email.
+    {
+      key: "feedback_team_ticket_reply",
+      label: "Feedback: the team wrote about a request it opened for a customer",
+      subject: "A message from {{businessName}} ({{ticketNumber}})",
+      body: [
+        "Hi {{reporterName}},",
+        "",
+        "{{staffName}} at {{businessName}} wrote to you about the request we opened for you ({{ticketNumber}}):",
+        "",
+        "{{reply}}",
+        "",
+        "To answer, reply to this email.",
+        "",
+        "{{businessName}}",
+      ].join("\n"),
+    },
+    {
+      key: "feedback_team_ticket_status",
+      label: "Feedback: a request the team opened for a customer moved",
+      subject: "An update from {{businessName}} ({{ticketNumber}})",
+      body: [
+        "Hi {{reporterName}},",
+        "",
+        "The request we opened for you ({{ticketNumber}}) is now {{statusLabel}}.",
+        "",
+        "Questions? Reply to this email.",
         "",
         "{{businessName}}",
       ].join("\n"),
@@ -79,8 +117,13 @@ function clean(value: string, max: number): string {
  * email and still sees the reply under "My reports"), or an event the
  * reporter isn't told about.
  *
- *   staff.replied → feedback_staff_reply
- *   ticket.moved  → feedback_status_changed
+ *   staff.replied → feedback_staff_reply   (a team-filed ticket: feedback_team_ticket_reply)
+ *   ticket.moved  → feedback_status_changed (a team-filed ticket: feedback_team_ticket_status)
+ *
+ * 0.11.0: a ticket the team filed is emailed only when the team chose "tell
+ * them" (`notifyReporter`), and in words for a request the team opened —
+ * the reply-to (the company's own address, which comms sets) is how that
+ * customer answers.
  *
  * `businessName` is the company's name as its customers know it;
  * `feedbackUrl` is the company's public feedback page (absolute — it leaves
@@ -91,6 +134,8 @@ export function feedbackReporterEmailFor(
   context: { readonly businessName: string; readonly feedbackUrl: string },
 ): FeedbackReporterEmail | null {
   if (event.type !== "staff.replied" && event.type !== "ticket.moved") return null;
+  if (event.notifyReporter === false) return null;
+  const team = event.source === "staff";
   const to = event.reporterEmail?.trim() ?? "";
   if (!EMAIL.test(to)) return null;
   const base = {
@@ -104,7 +149,7 @@ export function feedbackReporterEmailFor(
     return {
       tenantId: event.tenantId,
       to,
-      templateKey: "feedback_staff_reply",
+      templateKey: team ? "feedback_team_ticket_reply" : "feedback_staff_reply",
       vars: { ...base, staffName: clean(event.staffName, 80) || "The team", reply: event.body },
       idempotencyKey: `feedback-reply:${event.messageId}`,
     };
@@ -112,7 +157,7 @@ export function feedbackReporterEmailFor(
   return {
     tenantId: event.tenantId,
     to,
-    templateKey: "feedback_status_changed",
+    templateKey: team ? "feedback_team_ticket_status" : "feedback_status_changed",
     vars: { ...base, statusLabel: clean(event.toLabel, 60) },
     idempotencyKey: `feedback-moved:${event.ticketId}:${event.fromStatus}:${event.toStatus}`,
   };

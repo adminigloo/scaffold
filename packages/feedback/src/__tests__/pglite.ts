@@ -3,7 +3,16 @@ import { is, SQL } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
 import { getTableConfig, PgDialect, type PgTable } from "drizzle-orm/pg-core";
 import type { FeedbackDb } from "../index.js";
-import { feedbackCategories, feedbackClientKeys, feedbackMessages, feedbackStatuses, feedbackTickets, feedbackUploads } from "../schema.js";
+import {
+  feedbackBoards,
+  feedbackCategories,
+  feedbackClientKeys,
+  feedbackMessages,
+  feedbackStatuses,
+  feedbackTicketEvents,
+  feedbackTickets,
+  feedbackUploads,
+} from "../schema.js";
 
 /**
  * A REAL Postgres for the tests — PGlite is Postgres compiled to WASM,
@@ -18,7 +27,16 @@ import { feedbackCategories, feedbackClientKeys, feedbackMessages, feedbackStatu
  * checked against the same tables in upgrade.test.ts.
  */
 
-export const TABLES: PgTable[] = [feedbackClientKeys, feedbackStatuses, feedbackCategories, feedbackTickets, feedbackMessages, feedbackUploads];
+export const TABLES: PgTable[] = [
+  feedbackClientKeys,
+  feedbackStatuses,
+  feedbackCategories,
+  feedbackTickets,
+  feedbackMessages,
+  feedbackUploads,
+  feedbackTicketEvents,
+  feedbackBoards,
+];
 
 const dialect = new PgDialect();
 

@@ -1,6 +1,7 @@
 import { FeedbackWorkspace } from "__SCOPE__/feedback/board";
 import { CompanyGate } from "@/components/CompanyGate";
 import { PageHeader } from "@/components/ui";
+import { FEEDBACK_EMAILS_REPORTERS } from "@/server/feedback";
 
 export const dynamic = "force-dynamic";
 
@@ -36,6 +37,7 @@ export default async function CompanyFeedbackPage({
             canManage={can.includes("feedback.manage")}
             settingsHref={can.includes("feedback.settings.manage") ? "/app/feedback/settings" : null}
             initialTicketId={typeof ticket === "string" ? ticket : null}
+            emailsReporters={FEEDBACK_EMAILS_REPORTERS}
           />
         </main>
       )}

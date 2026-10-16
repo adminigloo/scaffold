@@ -1,17 +1,22 @@
 # @adminigloo/feedback
 
-A feedback board for each company: the intake its customers' reports land in (from its own website, or its own feedback page), and the Kanban board its team answers and sorts them on. Your own site gets one too, for what your users report with the feedback button.
+A feedback board for each company, complete: the intake its customers' reports land in (from its own website, or its own feedback page), and the Kanban board its team answers and sorts them on — with filters and search, New ticket, editing with an activity trail, and the column, category and website-key screens. Your own site gets one too, for what your users report with the feedback button.
 
 ## What each install gets you
 
+ONE package for the team's side, with an entry point per job, and the widget for the reporter's side. There are no separate npm packages per feature: every screen below ships in `@adminigloo/feedback`.
+
 | You install | You get |
 | --- | --- |
-| `@adminigloo/feedback` | **The intake** (`createFeedbackHandlers`): what the [feedback widget](../feedback-widget) talks to — by a company's website key, or by the company in the request's address (`resolveTenant`), closed to new tickets for a company that isn't taking them (`admit`). **The staff routes** (`createFeedbackAdminHandlers`): the board, a ticket's report and conversation, replies, assign, move, archive, columns, categories and website keys — one company per request. **The server functions** under both, every one of which takes the company. **The contract**: `FEEDBACK_ADMIN_ROUTES` / `FEEDBACK_PUBLIC_ROUTES` (the routes as data, for an isolation proof), `feedbackPermissions` (the keys and their default roles), `feedbackAlertKinds` / `feedbackAlertsFor` (alerts for the team), `FEEDBACK_EMAIL_TEMPLATES` / `feedbackReporterEmailFor` (emails for the reporter). |
-| `@adminigloo/feedback/schema` | The Drizzle tables to add to your schema and migrate. Shipped SQL for a host without drizzle-kit: `@adminigloo/feedback/sql/feedback-0.10.0.sql` and `…/sql/upgrade-0.9-to-0.10.sql`. |
-| `@adminigloo/feedback/board` | `FeedbackWorkspace` — the whole board connected to the staff routes by a base URL (toolbar, board, ticket panel). `FeedbackBoard` and `TicketPanel` on their own, controlled, for tickets you store elsewhere. `FeedbackAdminClient`, the browser's client for the staff routes. React, `"use client"`. |
+| `@adminigloo/feedback` | **The intake** (`createFeedbackHandlers`): what the [feedback widget](../feedback-widget) talks to — by a company's website key, or by the company in the request's address (`resolveTenant`), closed to new tickets for a company that isn't taking them (`admit`). **The staff routes** (`createFeedbackAdminHandlers`): the board with its filters and search, New ticket, a ticket's report, conversation, editing and activity trail, replies, assign, move, archive, the company's people, columns, categories and website keys — one company per request. **The server functions** under both, every one of which takes the company. **The contract**: `FEEDBACK_ADMIN_ROUTES` / `FEEDBACK_PUBLIC_ROUTES` (the routes as data, for an isolation proof), `feedbackPermissions` (the keys and their default roles), `feedbackAlertKinds` / `feedbackAlertsFor` (alerts for the team), `FEEDBACK_EMAIL_TEMPLATES` / `feedbackReporterEmailFor` (emails for the reporter). |
+| `@adminigloo/feedback/schema` | The Drizzle tables to add to your schema and migrate. Shipped SQL for a host without drizzle-kit: `@adminigloo/feedback/sql/feedback-0.11.0.sql` (a fresh install), `…/sql/upgrade-0.10-to-0.11.sql` (from 0.10) and `…/sql/upgrade-0.9-to-0.10.sql` (from 0.9, before that one). |
+| `@adminigloo/feedback/board` | `FeedbackWorkspace` — the whole board connected to the staff routes by a base URL: the toolbar (search, filters with counts, Mine / Unassigned / Critical, the active filters as chips, Clear, "Showing X of Y"), filters kept in the page's address and remembered per browser, **New ticket** (and a **+** on each column), the board, and the ticket panel with editing (title, priority, category, assignee picked from the company's people) and the activity trail. The pieces on their own, controlled, for tickets you store elsewhere: `BoardToolbar`, `useBoardFilters`, `NewTicketDialog`, `FeedbackBoard`, `TicketPanel`. `FeedbackAdminClient`, the browser's client for the staff routes. React, `"use client"`. |
+| `@adminigloo/feedback/admin` | The board's settings as screens: `ColumnEditor` (add, rename, colour, reorder, mark finished, limits and aging; deleting a column that holds tickets asks which column they go to), `CategoryEditor` (add, rename, describe, reorder, offer to customers or keep for sorting), `KeysPanel` (the company's feedback page address, and website keys: make, see once, switch off), and `FeedbackSettingsPanel` (all three). Over the staff routes by `baseUrl`, or any `FeedbackSettingsTransport` you pass. React, `"use client"`. |
 | `@adminigloo/feedback-widget` | The form people send feedback with: a floating button and screenshot for an app, or `FeedbackLauncher` inline on a page (a company's feedback page), and "My reports" to follow a ticket. |
 
-The board components never read a database. `FeedbackBoard` renders the tickets and columns you pass it and tells you when someone moves one; `FeedbackWorkspace` fetches them from the routes at its `baseUrl`.
+The board components never read a database. `FeedbackBoard` renders the tickets and columns you pass it and tells you when someone moves one; `FeedbackWorkspace` and the `./admin` screens fetch from the routes at their `baseUrl`.
+
+**What you still write** with npm alone: one route file per handler (the staff routes, the intake), your `authorize` check, `listPeople` if you want an assignee picker, and a page per screen (a few lines around `FeedbackWorkspace` and `FeedbackSettingsPanel`). A project made with create-app has all of that already. **What none of the installs give you** is listed under [Not included](#not-included).
 
 ## Install
 
@@ -49,7 +54,7 @@ npm install @adminigloo/feedback   # or pnpm add / yarn add
 
 Without it, the build stops at install with `401 Unauthorized`.
 
-Peer dependencies: `react` (only for `./board`), `drizzle-orm ^0.45`, `zod ^3.25 || ^4` (only for the server entries; optional if you use the board alone).
+Peer dependencies: `react` (only for `./board` and `./admin`), `drizzle-orm ^0.45`, `zod ^3.25 || ^4` (only for the server entries; optional if you use the board alone).
 
 ## The board
 
@@ -183,6 +188,59 @@ Toasts raised from the panel's callbacks render under its scrim at the default `
 
 Each callback may throw. The panel catches the error and passes it to `onError`, and a failed send keeps the draft so nothing typed is lost.
 
+## Filters, search and New ticket (0.11.0)
+
+`FeedbackWorkspace` has all of this switched on. The pieces, for a board over your own data:
+
+```tsx
+"use client";
+import { BoardToolbar, boardFilterFields, boardQuickFilters, filtersForRequest, useBoardFilters } from "@adminigloo/feedback/board";
+
+const { filters, setFilters, isReady } = useBoardFilters({ persistKey: "my-board" }); // the page's ?query, remembered per browser
+// Load only once isReady is true: remembered filters are back by then, so the board never flashes unfiltered.
+const board = await client.board({ filters: filtersForRequest(filters) });
+
+<BoardToolbar
+  filters={filters}
+  onChange={setFilters}
+  fields={boardFilterFields({ statuses, categories, people, me, facets: board.facets })}
+  quickFilters={boardQuickFilters({ me, facets: board.facets })}
+  totalCount={board.totalCount}
+  matchCount={board.matchCount}
+  shownCount={board.tickets.length}
+  truncated={board.truncated}
+  onCreate={() => setCreating(true)}
+/>
+```
+
+- **Every filter runs on the server**, in the same query as the company: status, priority, category (and "No category"), assigned to (a person, "Unassigned", and "Me" — the person asking, so a shared "mine" link means mine for whoever opens it), came in through (the feedback button, the feedback page, your team), and when it was sent. Text a database can't hold (a NUL character) and dates outside 1970–2999 are refused with a sentence. OR within a field, AND across fields, and the search ANDs with them.
+- **Search** covers the ticket number (typed any way: `12`, `#12`, `fb-12`), the title, the report, and the reporter's name and email, in any case. `%`, `_` and `\` mean themselves.
+- **Counts:** each choice shows how many tickets it would give with the other filters on — always exactly what ticking it gives, and the Assigned-to choices add up to the board. A name typed as the assignee before 0.11 is linked to the person with that name (when exactly one of `listPeople` has it) the first time the board opens (`linkTypedAssignees`); any other typed name is its own choice, "<name> (not linked)". "Showing X of Y" counts in the database; past the board's caps (300 unfinished, 100 finished — read separately, so a busy Done column never pushes open work off) the toolbar says how many more match instead of hiding them.
+- **The address carries the filters** under the names the routes read (`?q=gate&status=open&assignee=__me`), so a link shares the view and Back undoes a filter; other parameters of the page (`?ticket=…`) are left alone. A visit with no filters in its address gets the ones this browser had last.
+- **On a phone** the rows wrap and each menu is a sheet along the bottom of the screen. Menus close on Escape and move with the arrow keys.
+
+**New ticket** — `NewTicketDialog`, or the routes' `POST v1/admin/tickets`: only a title is needed; it lands in the column whose **+** was pressed (else the first unfinished one), numbered in the company after the reports (race-safe with the intake), marked as from your team. "Filing this for a customer" takes their name and email (checked); they're emailed only if the team ticks "Email them when you reply or move it" (`tellReporter`) — they never used the feedback form, so those emails are worded for a request the team opened, without "My reports", and they answer by replying to the email (comms sends with the company's reply-to). If the board's filters hide the new ticket, the dialog says so, with "Clear filters" and "Open it". Server side: `createStaffTicket(db, tenantId, input, actor)`.
+
+**Editing and the trail.** The panel edits the title, priority, category and assignee (`updateTicket(db, tenantId, …, actor)`; route `POST v1/admin/tickets/{id}`). Every change — and every move, archive and the ticket's arrival — is a line of its activity trail (`listTicketEvents`, route `GET v1/admin/tickets/{id}/events`, table `feedback_ticket_events`), in words: "Ada moved it from Open to In progress". The reply box says who reads a reply: emailed to the customer, seen under "My reports", or — on a team ticket nobody is told about — kept to the team. Pass `emailsReporters={false}` to `FeedbackWorkspace` on a board that sends no email.
+
+**People.** Give the staff routes `listPeople(tenantId, req)` — the company's people, `{ id, name }`, your user ids — and the panel and New ticket offer a picker, the Assigned-to filter lists them, and an assignee id is checked against them (anyone else's is refused). Without it the board works as 0.10 did: the assignee is a typed name.
+
+## The settings screens (./admin, 0.11.0)
+
+```tsx
+"use client";
+import { FeedbackSettingsPanel } from "@adminigloo/feedback/admin";
+
+<FeedbackSettingsPanel
+  baseUrl={`/api/app/${company.id}/feedback`}
+  canManage={can("feedback.settings.manage")}          // only what is OFFERED; the routes refuse the rest
+  intakeUrl="https://app.example.com/api/igloo"           // for the website-key snippet
+  publicPageUrl={`https://app.example.com/t/${company.slug}/feedback`}
+/>
+```
+
+Or one at a time: `<ColumnEditor baseUrl=… />`, `<CategoryEditor … />`, `<KeysPanel … />`. Each takes `transport` instead of `baseUrl` — any object with the editors' methods (`FeedbackSettingsTransport`) — for a host whose columns live in its own tables. A column's short name (what tickets point at) is made from its name when it's added — with a number when it's taken ("open_2") — and is never shown or changed; renaming changes what people read, and only a NAME already on the board is refused. Deleting a column with tickets asks which column they go to (`deleteStatus(db, tenantId, id, { moveTo })`); each move goes on the ticket's trail and is announced as `ticket.moved`, like a drag. The last column can't be deleted. The default columns and categories come once per company (`feedback_boards` remembers): delete every category and the list stays empty.
+
 ## A board per company
 
 Every staff function, route and table row belongs to ONE company (its `tenantId`, your id for it). A ticket, column, category or website key of another company, asked for by id, is "not found" — the same answer as an id that never existed. Each company's board gets the default columns and categories the first time it's used, its tickets are numbered on their own (each company starts at FB-00001), and `"*"` (`FEEDBACK_PLATFORM_BOARD`) is your own site's board.
@@ -257,6 +315,19 @@ With [@adminigloo/storage](../storage), keep a company's screenshots private: re
 
 `feedbackReporterEmailFor(event, { businessName, feedbackUrl })` turns a staff event into the reporter's email (the team replied; the ticket moved), or null when the reporter left no address — hand it to [@adminigloo/comms](../comms)' `sendNow` so it goes out in the company's name, with `FEEDBACK_EMAIL_TEMPLATES` added to the company's templates once.
 
+## Upgrading from 0.10
+
+Additions only: every 0.10 call keeps working.
+
+1. **The tables: run `sql/upgrade-0.10-to-0.11.sql`** (safe to run twice), or with drizzle-kit generate and run a migration as usual — nothing in it needs hand-editing. Tickets gain `assignee_id`, `source`, `created_by` and `notify_reporter`; `feedback_ticket_events` (the trail) and `feedback_boards` (boards already set up, so their defaults never come back) are created. Every 0.10 ticket shows as from the feedback button (0.10 didn't record which tickets came from a company's feedback page) and starts with an empty trail. A typed assignee is linked to the matching person the first time the board opens, or stays its own "(not linked)" choice.
+2. **`listBoardData(db, tenantId, { filters, viewerId })`** takes the filters and who is asking, and answers `totalCount`, `matchCount`, `truncated` and `facets` beside the tickets. `{ includeArchived }` still works. Finished columns are read separately (up to 100 cards) from unfinished ones (up to 300).
+3. **The board route reads the filters from its query** (`?q=&status=&priority=&category=&assignee=&source=&from=&to=&archived=1`). `?archived=1` means what it did.
+4. **New routes** — `POST v1/admin/tickets` (New ticket), `POST v1/admin/tickets/{id}` (edit), `GET v1/admin/tickets/{id}/events`, `GET v1/admin/people` — are in `FEEDBACK_ADMIN_ROUTES`, so an isolation proof driven from the table covers them. `POST v1/admin/columns/{id}/delete` takes `{ moveTo }`.
+5. **Reporter emails:** two more templates, `feedback_team_ticket_reply` and `feedback_team_ticket_status`, for tickets the team filed (add `FEEDBACK_EMAIL_TEMPLATES` again; existing ones are kept). Events carry `source` and `notifyReporter`, and `feedbackReporterEmailFor` returns null when the reporter isn't to be told.
+6. **Short names:** `createStatus` / `createCategory` take `key` as a suggestion and return the key actually stored.
+7. **The trail needs who did it.** `moveTicket`, `moveTickets`, `unarchiveTicket`, `archiveTicket`, `archiveTerminalTickets` and `assignTicket` take an optional actor; without one the trail says "The team".
+8. **create-app projects** replace their own `src/components/FeedbackSettings.tsx` with `FeedbackSettingsPanel` (create-app 0.27 does).
+
 ## Upgrading from 0.9
 
 0.9 had one board for the whole install. In 0.10 every board belongs to a company.
@@ -269,8 +340,10 @@ With [@adminigloo/storage](../storage), keep a company's screenshots private: re
 
 ## Not included
 
-- **Filters and search on the board**, a **"new ticket" button for the team**, and **epics** (grouping tickets) — next.
-- **Column and category editors as package screens.** The routes are here (`columns`, `categories`); the screens are your app's own.
+- **Epics** (grouping tickets under a bigger piece of work) — the next release, in this same package.
+- **Saved views per person.** Filters are kept in the address and remembered per browser; there is no list of named views that follows a person between devices.
+- **Custom fields** on a ticket. A ticket has the fields above; anything else goes in its report or conversation.
+- **Swimlanes** (a row per person) and sorting the board by anything but newest first.
 - **Custom domains** for a company's feedback page.
 - **Checking a reporter's email address.** The address someone types on a feedback form isn't confirmed; the team's answer is emailed to it as typed.
 - **Answering while a company's plan has ended.** Its customers can still read and reply on their tickets, but its team can't answer them until the company has a plan again (the host's plan check closes the staff routes).

@@ -30,6 +30,10 @@ export interface FeedbackRoute<K extends string = string> {
 export type FeedbackAdminRouteKind =
   | "board"
   | "ticket-get"
+  | "ticket-create"
+  | "ticket-update"
+  | "events"
+  | "people"
   | "messages"
   | "reply"
   | "assign"
@@ -59,6 +63,13 @@ export type FeedbackPublicRouteKind = "config" | "upload" | "submit" | "thread" 
 export const FEEDBACK_ADMIN_ROUTE_PERMISSIONS: Readonly<Record<FeedbackAdminRouteKind, FeedbackPermission>> = Object.freeze({
   board: "feedback.view",
   "ticket-get": "feedback.view",
+  // Filing a ticket and editing one are working the board, like moving one.
+  "ticket-create": "feedback.manage",
+  "ticket-update": "feedback.manage",
+  // The trail is part of the ticket; the people are who the board can be
+  // filtered by, so anyone who sees the board sees both.
+  events: "feedback.view",
+  people: "feedback.view",
   messages: "feedback.view",
   reply: "feedback.manage",
   assign: "feedback.manage",
@@ -96,13 +107,40 @@ function freeze<T extends readonly FeedbackRoute[]>(routes: T): T {
 /**
  * Entities: `{ticket}` (a ticket on the company's board), `{column}` (one of
  * its columns), `{category}` (one of its categories), `{feedback-key}` (one
- * of its website keys). A placeholder in the PATH means the route reads that
+ * of its website keys); 0.11.0 adds the values the board's filters and the
+ * ticket editor take: `{column-key}` and `{category-key}` (a column's and a
+ * category's short name), `{assignee}` (the id of a person a ticket is
+ * assigned to) and `{ticket-number}` (a number to search for). A placeholder in the PATH means the route reads that
  * row (another company's → 404); one only in the body is a reference (any
  * answer below 500 that says nothing of the other company).
  */
 export const FEEDBACK_ADMIN_ROUTES: readonly FeedbackRoute<FeedbackAdminRouteKind>[] = freeze([
-  { kind: "board", method: "GET", path: "v1/admin/board", permission: "feedback.view", query: { archived: "1" } },
+  // The board WITH filters and a search (0.11.0): another company's category,
+  // assignee and number must narrow this company's board to nothing of theirs.
+  {
+    kind: "board",
+    method: "GET",
+    path: "v1/admin/board",
+    permission: "feedback.view",
+    query: { archived: "1", q: "{ticket-number}", category: "{category-key}", assignee: "{assignee}" },
+  },
   { kind: "ticket-get", method: "GET", path: "v1/admin/tickets/{ticket}", permission: "feedback.view" },
+  {
+    kind: "ticket-create",
+    method: "POST",
+    path: "v1/admin/tickets",
+    permission: "feedback.manage",
+    body: { title: "Isolation probe ticket", status: "{column-key}", category: "{category-key}", assigneeId: "{assignee}" },
+  },
+  {
+    kind: "ticket-update",
+    method: "POST",
+    path: "v1/admin/tickets/{ticket}",
+    permission: "feedback.manage",
+    body: { title: "Isolation probe title", priority: "low", category: "{category-key}", assigneeId: "{assignee}" },
+  },
+  { kind: "events", method: "GET", path: "v1/admin/tickets/{ticket}/events", permission: "feedback.view" },
+  { kind: "people", method: "GET", path: "v1/admin/people", permission: "feedback.view" },
   { kind: "messages", method: "GET", path: "v1/admin/tickets/{ticket}/messages", permission: "feedback.view" },
   { kind: "reply", method: "POST", path: "v1/admin/tickets/{ticket}/messages", permission: "feedback.manage", body: { body: "Isolation probe reply" } },
   { kind: "assign", method: "POST", path: "v1/admin/tickets/{ticket}/assign", permission: "feedback.manage", body: { assignee: "Probe" } },
@@ -127,7 +165,14 @@ export const FEEDBACK_ADMIN_ROUTES: readonly FeedbackRoute<FeedbackAdminRouteKin
     body: { key: "probe_column", label: "Probe column" },
   },
   { kind: "column-update", method: "POST", path: "v1/admin/columns/{column}", permission: "feedback.settings.manage", body: { label: "Renamed" } },
-  { kind: "column-delete", method: "POST", path: "v1/admin/columns/{column}/delete", permission: "feedback.settings.manage", body: {} },
+  // Its tickets (if any) go to the default "open" column every board starts with (0.11.0).
+  {
+    kind: "column-delete",
+    method: "POST",
+    path: "v1/admin/columns/{column}/delete",
+    permission: "feedback.settings.manage",
+    body: { moveTo: "open" },
+  },
   { kind: "columns-order", method: "POST", path: "v1/admin/columns-order", permission: "feedback.settings.manage", body: { ids: ["{column}"] } },
   { kind: "categories", method: "GET", path: "v1/admin/categories", permission: "feedback.view" },
   {

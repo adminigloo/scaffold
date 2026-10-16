@@ -1,7 +1,7 @@
 {
   "name": "@adminigloo/feedback",
   "version": "0.10.0",
-  "description": "A feedback board for each company: the website button and public feedback page they speak to, the board and ticket panel each company works its own customers' feedback on, website keys per company, alerts for the team and emails for the reporter.",
+  "description": "A feedback board for each company, complete: the website button and public feedback page they speak to, the board with filters, search and New ticket, the ticket panel with editing and an activity trail, the column, category and website-key screens, alerts for the team and emails for the reporter.",
   "license": "UNLICENSED",
   "type": "module",
   "repository": {
@@ -27,6 +27,11 @@
       "types": "./dist/board.d.ts",
       "import": "./dist/board.js",
       "require": "./dist/board.cjs"
+    },
+    "./admin": {
+      "types": "./dist/admin.d.ts",
+      "import": "./dist/admin.js",
+      "require": "./dist/admin.cjs"
     },
     "./sql/*": "./sql/*",
     "./package.json": "./package.json"
@@ -54,7 +59,10 @@
     "drizzle-orm": "catalog:",
     "zod": "catalog:",
     "react": "^19.2.4",
-    "@types/react": "^19.2.7"
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.4",
+    "happy-dom": "^20.0.0",
+    "react-dom": "^19.2.4"
   },
   "scripts": {
     "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsup",

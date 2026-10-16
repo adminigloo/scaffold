@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { FeedbackSettings } from "@/components/FeedbackSettings";
+import { FeedbackSettingsPanel } from "__SCOPE__/feedback/admin";
 import { env } from "@/env";
 import { currentPrincipal } from "@/server/auth";
 import { loadStaffPermissions } from "@/server/permissions";
@@ -12,6 +12,11 @@ export const dynamic = "force-dynamic";
  * people choose from, and the website keys that put this board's feedback
  * button on another site. Anyone who can see the board can read them; only
  * staff.feedback.settings changes them (the routes refuse everyone else).
+ *
+ * The screens are the package's own (__SCOPE__/feedback/admin,
+ * <FeedbackSettingsPanel>), over this board's routes — the same screens a
+ * company's /app/feedback/settings uses over its own. Restyle them with the
+ * --aib-* tokens rather than copying them.
  */
 export default async function FeedbackSettingsPage() {
   const principal = await currentPrincipal();
@@ -36,7 +41,7 @@ export default async function FeedbackSettingsPage() {
           </Link>
         }
       />
-      <FeedbackSettings
+      <FeedbackSettingsPanel
         baseUrl="/api/admin/feedback"
         canManage={can.can("staff.feedback.settings")}
         intakeUrl={new URL("api/igloo", app).toString()}

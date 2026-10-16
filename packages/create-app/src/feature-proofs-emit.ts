@@ -186,8 +186,10 @@ export const FEATURE_ENTITIES: Readonly<Record<string, readonly string[]>> = {
   // Tenancy 2b-1 (3.1).
   notifications: ["alert", "person"],
   storage: ["file", "file-token", "public-key", "record-type", "record"],
-  // Tenancy 2b-2a.
-  feedback: ["ticket", "column", "category", "feedback-key", "ticket-number", "ticket-token"],
+  // Tenancy 2b-2a; feedback 0.11 adds the values its board's filters, New
+  // ticket and the ticket editor take: a column's and a category's short name,
+  // and the person a ticket is assigned to.
+  feedback: ["ticket", "column", "category", "feedback-key", "ticket-number", "ticket-token", "column-key", "category-key", "assignee"],
 };
 
 // ---------------------------------------------------------------------------
@@ -249,6 +251,7 @@ export function renderCompanyRows(answers: Answers): string {
   ensureFeedbackBoard,
   issueClientKey as issueFeedbackKey,
   submitPayloadSchema,
+  updateTicket,
 } from "${scope}/feedback";`,
         ]
       : []),
@@ -540,6 +543,20 @@ export function renderCompanyRows(answers: Answers): string {
   const category = await createCategory(database, tenantId, { key: \`\${label}_billing\`, label: \`\${Label} billing\` });
   rows.category = category.id;
   strings.push(\`\${Label} billing\`, \`\${label}_billing\`);
+  // Feedback 0.11: the short names the board's filters, New ticket and the
+  // editor take, and the ticket filed under the category and assigned to a
+  // person of this ${noun}'s — so a filter or a search that forgot the
+  // ${noun} finds it from the other one, and its activity trail has rows.
+  rows["column-key"] = column.key;
+  rows["category-key"] = category.key;
+  rows.assignee = \`\${label}-assignee\`;
+  await updateTicket(
+    database,
+    tenantId,
+    { ticketId: report.id, category: category.key, assignee: { id: rows.assignee, name: \`\${Label} Assignee\` } },
+    { id: null, name: \`\${Label} Office\` },
+  );
+  strings.push(\`\${Label} Assignee\`);
   const websiteKey = await issueFeedbackKey(database, { tenantId, label: \`\${Label} feedback website\` });
   rows["feedback-key"] = websiteKey.id;
   strings.push(\`\${Label} feedback website\`);
@@ -1233,6 +1250,9 @@ export function renderFeatureIsolationTest(answers: Answers): string {
       `    feedback_categories: await all(sql\`select * from feedback_categories where tenant_id = \${a} order by id\`),`,
       `    feedback_client_keys: await all(sql\`select * from feedback_client_keys where tenant_id = \${a} order by id\`),`,
       `    feedback_messages: await all(sql\`select * from feedback_messages where ticket_id in (select id from feedback_tickets where tenant_id = \${a}) order by id\`),`,
+      // Feedback 0.11: each ticket's activity trail, with the company on every row.
+      `    feedback_ticket_events: await all(sql\`select * from feedback_ticket_events where tenant_id = \${a} order by id\`),`,
+      `    feedback_boards: await all(sql\`select * from feedback_boards where tenant_id = \${a}\`),`,
     );
   }
 
@@ -2055,8 +2075,12 @@ export function renderCompanyAlertsTest(answers: Answers): string {
     expect(told[0]?.email_status).toBe("none");
 
     // A team alert that fails is the alerts' own retry's job: no alert about it.
+    // With a body, so it fails AT THE PROVIDER (the case this is about) and
+    // uses up the failure it was given — an empty body was refused before the
+    // provider, and the unused failure failed the next test's customer email.
     mail.failNext = 1;
-    await sendNow(db, { tenantId: fx.aId, to: fx.A.email, templateKey: "team_alert", vars: { title: "Probe", body: "", linkLine: "", settingsLine: "", businessName: "Alpha Lawn Care" } }, commsSenders);
+    await sendNow(db, { tenantId: fx.aId, to: fx.A.email, templateKey: "team_alert", vars: { title: "Probe", body: "A probe team alert.", linkLine: "", settingsLine: "", businessName: "Alpha Lawn Care" } }, commsSenders);
+    expect(mail.failNext).toBe(0);
     expect((await alertsFor(fx.aId, fx.A.id, "comms.message.failed")).length).toBe(1);` : ""}${!mail ? `
     // Without the email package nothing is sent at all — a skip, never a failure — so nothing is told.
     expect(failed.status).toBe("skipped");

@@ -96,6 +96,12 @@ export function wireIssues(error: z.ZodError): FeedbackWireIssue[] {
 /** The most a staff JSON body may be: a 5000-character reply with room to spare. */
 const MAX_JSON_BYTES = 64 * 1024;
 
+function hasNul(value: unknown, depth = 0): boolean {
+  if (typeof value === "string") return value.includes("\u0000");
+  if (depth > 20 || value === null || typeof value !== "object") return false;
+  return (Array.isArray(value) ? value : Object.values(value)).some((item) => hasNul(item, depth + 1));
+}
+
 /** Read a JSON body and parse it; a bad one is a 400 with a plain sentence. */
 export async function readJson<T>(req: Request, schema: z.ZodType<T>): Promise<T> {
   const text = await req.text().catch(() => "");
@@ -106,6 +112,9 @@ export async function readJson<T>(req: Request, schema: z.ZodType<T>): Promise<T
   } catch {
     throw new FeedbackHttpError("invalid", "That request couldn't be read. Please try again.");
   }
+  // A NUL character can't be stored in Postgres text: refused here, for
+  // every field of every staff body at once, rather than a 500 later (0.11.0).
+  if (hasNul(raw)) throw new FeedbackHttpError("invalid", "That has a character in it that can't be saved. Type it again without it.");
   const parsed = schema.safeParse(raw);
   if (!parsed.success) {
     throw new FeedbackHttpError("invalid", parsed.error.issues[0]?.message ?? "Check the form and try again.", wireIssues(parsed.error));

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { FeedbackSettings } from "@/components/FeedbackSettings";
+import { FeedbackSettingsPanel } from "__SCOPE__/feedback/admin";
 import { CompanyGate } from "@/components/CompanyGate";
 import { PageHeader } from "@/components/ui";
 import { env } from "@/env";
@@ -16,6 +16,11 @@ export const dynamic = "force-dynamic";
  * Anyone who can see the board can read the columns and categories; only
  * owners and admins (`feedback.settings.manage`) change them or see the keys —
  * the server decides, and the page offers nothing it would refuse.
+ *
+ * The screens are the package's own (__SCOPE__/feedback/admin,
+ * <FeedbackSettingsPanel>: the column editor — a column with tickets asks
+ * where they go before it's deleted — the category editor and the website
+ * keys), over THIS company's routes.
  */
 export default async function CompanyFeedbackSettingsPage() {
   const app = (env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000").replace(/\/?$/, "/");
@@ -32,7 +37,7 @@ export default async function CompanyFeedbackSettingsPage() {
               </Link>
             }
           />
-          <FeedbackSettings
+          <FeedbackSettingsPanel
             baseUrl={`/api/app/${company.id}/feedback`}
             canManage={can.includes("feedback.settings.manage")}
             intakeUrl={new URL("api/igloo", app).toString()}

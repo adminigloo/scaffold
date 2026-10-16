@@ -140,10 +140,13 @@ describe("reporter emails", () => {
 
   it("have a template for every key the mapper uses, each naming only variables it is given", () => {
     const keys = FEEDBACK_EMAIL_TEMPLATES.map((t) => t.key).sort();
-    expect(keys).toEqual(["feedback_staff_reply", "feedback_status_changed"]);
+    expect(keys).toEqual(["feedback_staff_reply", "feedback_status_changed", "feedback_team_ticket_reply", "feedback_team_ticket_status"]);
     const given: Record<string, string[]> = {
       feedback_staff_reply: ["businessName", "reporterName", "ticketNumber", "title", "feedbackUrl", "staffName", "reply"],
       feedback_status_changed: ["businessName", "reporterName", "ticketNumber", "title", "feedbackUrl", "statusLabel"],
+      // A team-filed ticket's emails never quote the team's own title, nor point at My reports.
+      feedback_team_ticket_reply: ["businessName", "reporterName", "ticketNumber", "staffName", "reply"],
+      feedback_team_ticket_status: ["businessName", "reporterName", "ticketNumber", "statusLabel"],
     };
     for (const template of FEEDBACK_EMAIL_TEMPLATES) {
       const used = [...`${template.subject} ${template.body}`.matchAll(/\{\{(\w+)\}\}/g)].map((m) => m[1]);

@@ -187,11 +187,17 @@ class Refusal extends Error {
 async function readBody(req: Request): Promise<unknown> {
   const text = await req.text().catch(() => "");
   if (text.length > MAX_JSON_BYTES) throw new Refusal(fail(413, "too_large", "That report is too large to send."));
+  let parsed: unknown;
   try {
-    return JSON.parse(text);
+    parsed = JSON.parse(text);
   } catch {
     throw new Refusal(fail(400, "invalid", "That report couldn't be read. Please try again."));
   }
+  // A NUL character can't be stored in Postgres text (0.11.0): a sentence, not a 500.
+  if (text.includes("\\u0000") || text.includes("\u0000")) {
+    throw new Refusal(fail(400, "invalid", "That report has a character in it that can't be saved. Type it again without it."));
+  }
+  return parsed;
 }
 
 export function createFeedbackHandlers(options: CreateFeedbackHandlersOptions): FeedbackHandlers {
@@ -397,7 +403,9 @@ export function createFeedbackHandlers(options: CreateFeedbackHandlersOptions): 
       annotatedScreenshotUrl: keep(parsed.data.annotatedScreenshotUrl),
       website: undefined,
     };
-    const created = await createTicket(db, { tenantId: caller.tenantId, payload });
+    // How it arrived (0.11.0, the board's "From" filter): with a website key
+    // it is the feedback button; without one, the company's own feedback page.
+    const created = await createTicket(db, { tenantId: caller.tenantId, payload, source: caller.keyId ? "widget" : "page" });
     const used = [payload.screenshotUrl, payload.annotatedScreenshotUrl].flatMap((url) => (url ? [claim.get(url)!] : []));
     await markUploadsUsed(db, caller.tenantId, used.map((upload) => upload.id), created.id);
     // A private file goes on its ticket: from now on the ticket's

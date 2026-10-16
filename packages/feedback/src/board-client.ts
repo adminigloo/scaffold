@@ -9,7 +9,15 @@
  * through the same client, and only the address differs. Same-origin, cookie
  * credentials, no-store. A refusal throws `FeedbackAdminError` carrying the
  * server's own plain sentence, which the screens show as it is.
+ *
+ * 0.11.0: the board read takes the filters (board-filters.ts, the same names
+ * the address bar carries), and the client gains New ticket, editing, the
+ * activity trail and the company's people. The settings screens (./admin)
+ * take any object with the editors' methods — `FeedbackSettingsTransport` —
+ * so a host with its own API can drive them without these routes.
  */
+
+import { EMPTY_FILTERS, filtersToSearchParams, type BoardFilters } from "./board-filters";
 
 export interface FeedbackColumnWire {
   id: string;
@@ -34,6 +42,12 @@ export interface FeedbackTicketWire {
   category: string | null;
   status: string;
   assignee: string | null;
+  /** The host's id of the assignee, when picked from the company's people (0.11.0). */
+  assigneeId?: string | null;
+  /** "widget" | "page" | "staff" (0.11.0). */
+  source?: string;
+  /** False: the reporter isn't emailed about it (a team ticket filed without "tell them"). */
+  notifyReporter?: boolean;
   reporterName: string | null;
   reporterEmail: string | null;
   pagePathname: string | null;
@@ -46,10 +60,65 @@ export interface FeedbackTicketWire {
   hasUnreadReporterReply: boolean;
 }
 
+/** Per-option counts with every OTHER filter applied; "__none" counts the empty value. */
+export interface FeedbackFacetsWire {
+  status: Record<string, number>;
+  priority: Record<string, number>;
+  category: Record<string, number>;
+  assignee: Record<string, number>;
+  source: Record<string, number>;
+}
+
 export interface FeedbackBoardWire {
   statuses: FeedbackColumnWire[];
   tickets: FeedbackTicketWire[];
   archivableCount: number;
+  /** 0.11.0: the board's size, the filtered size, whether some matches were left out, and the option counts. */
+  totalCount?: number;
+  matchCount?: number;
+  truncated?: boolean;
+  facets?: FeedbackFacetsWire;
+}
+
+/** One line of a ticket's activity trail (0.11.0). */
+export interface FeedbackEventWire {
+  id: string;
+  ticketId: string;
+  kind: "created" | "title" | "priority" | "category" | "assignee" | "status" | "archived" | "unarchived";
+  fromValue: string | null;
+  toValue: string | null;
+  actorId: string | null;
+  actorName: string;
+  createdAt: string;
+}
+
+/** Someone a ticket can be assigned to (0.11.0). */
+export interface FeedbackPersonWire {
+  id: string;
+  name: string;
+}
+
+/** What the team fills in on "New ticket" (0.11.0). */
+export interface NewTicketInput {
+  title: string;
+  description?: string;
+  priority?: "low" | "medium" | "high" | "critical";
+  category?: string | null;
+  /** A column's key; absent = the board's first unfinished column. */
+  status?: string;
+  assigneeId?: string | null;
+  reporterName?: string | null;
+  reporterEmail?: string | null;
+  /** Email the customer when the team replies or moves it. Off unless chosen: they never used the form. */
+  tellReporter?: boolean;
+}
+
+/** What the ticket editor changes (0.11.0). Absent = unchanged; null clears. */
+export interface TicketPatch {
+  title?: string;
+  priority?: "low" | "medium" | "high" | "critical";
+  category?: string | null;
+  assigneeId?: string | null;
 }
 
 export interface FeedbackTicketDetailWire extends FeedbackTicketWire {
@@ -83,6 +152,31 @@ export interface FeedbackKeyWire {
   revokedAt: string | null;
 }
 
+/**
+ * What the settings screens (./admin) need, and nothing else (0.11.0): the
+ * columns, the categories and the website keys. `FeedbackAdminClient` is one;
+ * a host whose tickets live in its own tables passes its own.
+ */
+export interface FeedbackSettingsTransport {
+  columns(): Promise<FeedbackColumnWire[]>;
+  createColumn(input: { key: string; label: string; color?: string | null; isTerminal?: boolean }): Promise<FeedbackColumnWire>;
+  updateColumn(
+    id: string,
+    patch: Partial<Pick<FeedbackColumnWire, "label" | "color" | "isTerminal" | "wipLimit" | "agingWarnHours" | "agingStaleHours">>,
+  ): Promise<void>;
+  /** `moveTo`: another column's key, for the tickets in this one. */
+  deleteColumn(id: string, moveTo?: string | null): Promise<void>;
+  reorderColumns(ids: readonly string[]): Promise<void>;
+  categories(): Promise<FeedbackCategoryWire[]>;
+  createCategory(input: { key: string; label: string; description?: string | null }): Promise<FeedbackCategoryWire>;
+  updateCategory(id: string, patch: Partial<Pick<FeedbackCategoryWire, "label" | "description" | "showToCustomer">>): Promise<void>;
+  deleteCategory(id: string): Promise<void>;
+  reorderCategories(ids: readonly string[]): Promise<void>;
+  keys?(): Promise<FeedbackKeyWire[]>;
+  issueKey?(label: string): Promise<FeedbackKeyWire & { secret: string }>;
+  revokeKey?(id: string): Promise<void>;
+}
+
 /** A refused request, with the server's sentence. `status` 401 means signed out. */
 export class FeedbackAdminError extends Error {
   readonly name = "FeedbackAdminError";
@@ -100,7 +194,7 @@ export interface FeedbackAdminClientOptions {
   readonly fetch?: typeof fetch;
 }
 
-export class FeedbackAdminClient {
+export class FeedbackAdminClient implements FeedbackSettingsTransport {
   private readonly base: string;
   private readonly fetcher: typeof fetch;
 
@@ -141,8 +235,27 @@ export class FeedbackAdminClient {
     return parsed as T;
   }
 
-  board(options: { archived?: boolean } = {}): Promise<FeedbackBoardWire> {
-    return this.call("GET", `board${options.archived ? "?archived=1" : ""}`);
+  /** The board, filtered on the server (0.11.0). `archived` is kept for 0.10 callers. */
+  board(options: { archived?: boolean; filters?: Partial<BoardFilters> } = {}): Promise<FeedbackBoardWire> {
+    const filters: BoardFilters = { ...EMPTY_FILTERS, ...(options.filters ?? {}) };
+    if (options.archived) filters.archived = true;
+    const query = filtersToSearchParams(filters).toString();
+    return this.call("GET", `board${query ? `?${query}` : ""}`);
+  }
+  /** File a ticket from the board (0.11.0). */
+  async createTicket(input: NewTicketInput): Promise<{ id: string; ticketNumber: string; title: string; status: string }> {
+    return (await this.call<{ ticket: { id: string; ticketNumber: string; title: string; status: string } }>("POST", "tickets", input)).ticket;
+  }
+  /** Change a ticket's title, priority, category or assignee (0.11.0). */
+  async updateTicket(id: string, patch: TicketPatch): Promise<void> {
+    await this.call("POST", `tickets/${encodeURIComponent(id)}`, patch);
+  }
+  async events(id: string): Promise<FeedbackEventWire[]> {
+    return (await this.call<{ events: FeedbackEventWire[] }>("GET", `tickets/${encodeURIComponent(id)}/events`)).events;
+  }
+  /** Who tickets can be assigned to, and which of them is the viewer (`me`). */
+  people(): Promise<{ people: FeedbackPersonWire[]; me: string | null }> {
+    return this.call("GET", "people");
   }
   async ticket(id: string): Promise<FeedbackTicketDetailWire> {
     return (await this.call<{ ticket: FeedbackTicketDetailWire }>("GET", `tickets/${encodeURIComponent(id)}`)).ticket;
@@ -195,8 +308,8 @@ export class FeedbackAdminClient {
   ): Promise<void> {
     await this.call("POST", `columns/${encodeURIComponent(id)}`, patch);
   }
-  async deleteColumn(id: string): Promise<void> {
-    await this.call("POST", `columns/${encodeURIComponent(id)}/delete`, {});
+  async deleteColumn(id: string, moveTo?: string | null): Promise<void> {
+    await this.call("POST", `columns/${encodeURIComponent(id)}/delete`, moveTo ? { moveTo } : {});
   }
   async reorderColumns(ids: readonly string[]): Promise<void> {
     await this.call("POST", "columns-order", { ids });

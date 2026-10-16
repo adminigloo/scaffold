@@ -213,6 +213,10 @@ export type FeedbackEvent =
       userId: string | null;
       reporterName: string | null;
       reporterEmail: string | null;
+      /** How the ticket came in (0.11.0): a ticket the team filed is worded as theirs. */
+      source?: "widget" | "page" | "staff";
+      /** False (0.11.0): the reporter isn't to be emailed — a ticket the team filed without "tell them". */
+      notifyReporter?: boolean;
     }
   | {
       type: "ticket.moved";
@@ -229,6 +233,8 @@ export type FeedbackEvent =
       userId: string | null;
       reporterName: string | null;
       reporterEmail: string | null;
+      source?: "widget" | "page" | "staff";
+      notifyReporter?: boolean;
     };
 
 export type FeedbackEventListener = (event: FeedbackEvent) => void | Promise<void>;

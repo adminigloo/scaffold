@@ -163,13 +163,18 @@ describe("a company's board on first use", () => {
     expect((await listStatuses(t.db, b)).find((s) => s.key === "open")?.label).toBe("Open");
   });
 
-  it("lets two companies have the same column key, but not one company twice", async () => {
+  it("lets two companies have the same column key; inside one, a taken short name gets a number and only a taken NAME is refused", async () => {
     const a = tenant();
     const b = tenant();
     await createStatus(t.db, a, { key: "waiting", label: "Waiting" });
     await createStatus(t.db, b, { key: "waiting", label: "Waiting" });
-    await expect(createStatus(t.db, a, { key: "waiting", label: "Again" })).rejects.toBeInstanceOf(DuplicateKeyError);
-    await expect(createCategory(t.db, a, { key: "bug", label: "Bug" })).rejects.toBeInstanceOf(DuplicateKeyError);
+    // 0.11.0 review: the short name is never shown, so a new name whose short
+    // name is taken gets the next number — only the same NAME is refused.
+    expect((await createStatus(t.db, a, { key: "waiting", label: "Again" })).key).toBe("waiting_2");
+    expect((await createStatus(t.db, a, { label: "Waiting!" })).key).toBe("waiting_3");
+    await expect(createStatus(t.db, a, { label: "  waiting " })).rejects.toBeInstanceOf(DuplicateKeyError);
+    expect((await createCategory(t.db, a, { key: "bug", label: "Bug" })).key).toBe("bug_2");
+    await expect(createCategory(t.db, a, { label: "bug REPORT" })).rejects.toBeInstanceOf(DuplicateKeyError);
   });
 });
 

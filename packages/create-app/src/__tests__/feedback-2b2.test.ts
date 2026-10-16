@@ -89,7 +89,9 @@ describe("the overlays", () => {
       expect(file(p, "app", "admin", "feedback", "page.tsx")).toContain('baseUrl="/api/admin/feedback"');
       expect(file(p, "app", "admin", "feedback", "page.tsx")).toContain('can?.can("staff.feedback.view")');
       expect(file(p, "app", "admin", "feedback", "settings", "page.tsx")).toContain('can.can("staff.feedback.settings")');
-      expect(file(p, "src", "components", "FeedbackSettings.tsx")).toContain("new FeedbackAdminClient(baseUrl)");
+      // Feedback 0.11: the settings screens are the package's (./admin), not a project component.
+      expect(file(p, "app", "admin", "feedback", "settings", "page.tsx")).toContain("<FeedbackSettingsPanel");
+      expect(has(p, "src", "components", "FeedbackSettings.tsx")).toBe(false);
       // The old pages lead to the new ones.
       expect(file(p, "app", "admin", "feedback", "board", "page.tsx")).toContain('redirect("/admin/feedback")');
       expect(file(p, "app", "admin", "feedback", "statuses", "page.tsx")).toContain('redirect("/admin/feedback/settings")');

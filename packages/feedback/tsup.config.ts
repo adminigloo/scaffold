@@ -20,7 +20,9 @@ export default defineConfig([
     clean: false,
   },
   {
-    entry: ["src/board.tsx"],
+    // ./board and ./admin (0.11.0) are both client entries; one config, so
+    // the shared modules (styles, the client, the filters) are split once.
+    entry: ["src/board.tsx", "src/admin.tsx"],
     format: ["esm", "cjs"],
     dts: true,
     banner: { js: '"use client";' },
