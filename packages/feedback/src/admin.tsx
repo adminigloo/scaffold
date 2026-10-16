@@ -174,6 +174,7 @@ function ColumnRow({
   const [label, setLabel] = useState(column.label);
   const [color, setColor] = useState(column.color ?? "");
   const [finished, setFinished] = useState(column.isTerminal);
+  const [waiting, setWaiting] = useState(column.isWaiting ?? false);
   const [wip, setWip] = useState(column.wipLimit?.toString() ?? "");
   const [warn, setWarn] = useState(column.agingWarnHours?.toString() ?? "");
   const [stale, setStale] = useState(column.agingStaleHours?.toString() ?? "");
@@ -186,6 +187,7 @@ function ColumnRow({
     label.trim() !== column.label ||
     (color.trim() || null) !== column.color ||
     finished !== column.isTerminal ||
+    waiting !== (column.isWaiting ?? false) ||
     wholeOrNull(wip) !== column.wipLimit ||
     wholeOrNull(warn) !== column.agingWarnHours ||
     wholeOrNull(stale) !== column.agingStaleHours;
@@ -218,6 +220,7 @@ function ColumnRow({
           {count} ticket{count === 1 ? "" : "s"}
         </span>
         {column.isTerminal ? <span className="aib-pill">Finished</span> : null}
+        {column.isWaiting && !column.isTerminal ? <span className="aib-pill">Waiting</span> : null}
         {canManage ? (
           <div className="aib-admin-actions">
             <button type="button" className="aib-tool-btn" disabled={isFirst || busy} aria-label={`Move ${column.label} left`} onClick={() => onMove(-1)}>
@@ -236,6 +239,7 @@ function ColumnRow({
                     label: label.trim(),
                     color: color.trim() || null,
                     isTerminal: finished,
+                    isWaiting: waiting,
                     wipLimit: wholeOrNull(wip),
                     agingWarnHours: wholeOrNull(warn),
                     agingStaleHours: wholeOrNull(stale),
@@ -256,6 +260,10 @@ function ColumnRow({
         <label>
           <input type="checkbox" checked={finished} disabled={!canManage} onChange={(event) => setFinished(event.target.checked)} />
           Finished: tickets here are done
+        </label>
+        <label title="An epic's progress counts tickets in this column as waiting">
+          <input type="checkbox" checked={waiting} disabled={!canManage || finished} onChange={(event) => setWaiting(event.target.checked)} />
+          Waiting on someone else (the customer, a supplier)
         </label>
         <label title="How many tickets this column comfortably holds; past it, its header turns red">
           At most

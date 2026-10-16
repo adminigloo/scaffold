@@ -45,6 +45,20 @@ import {
   type TicketDetail,
 } from "./board-data.js";
 import { filtersFromSearchParams } from "./board-filters.js";
+import {
+  createEpic,
+  createEpicSchema,
+  deleteEpic,
+  EpicChangeError,
+  epicPatchSchema,
+  epicTicketsSchema,
+  findEpic,
+  getEpic,
+  listEpics,
+  setEpicStatus,
+  setEpicTickets,
+  updateEpic,
+} from "./epics-data.js";
 import { isTenantId, type FeedbackDb, type FeedbackEvent, type FeedbackEventListener } from "./core.js";
 import {
   FEEDBACK_ERROR_STATUS,
@@ -62,7 +76,9 @@ import { FEEDBACK_ADMIN_ROUTE_PERMISSIONS, type FeedbackAdminRouteKind } from ".
 /**
  * The HTTP surface a company's feedback screens speak (0.10.0): every route
  * under `{base}/v1/admin/`, one `handle(req)` routed by path. The board, the
- * ticket panel, the columns, the categories and the website keys.
+ * ticket panel, the columns, the categories and the website keys — and
+ * (0.12.0) the epics, on the board's own two keys: feedback.view to look,
+ * feedback.manage to change.
  *
  *   // app/api/app/[tenantId]/feedback/[...path]/route.ts
  *   const { handle } = createFeedbackAdminHandlers({ db, resolveTenant, authorize });
@@ -141,11 +157,16 @@ interface Matched {
   id?: string;
 }
 
-/** A row id from the path: bounded, so a made-up one never becomes a giant WHERE. */
+/**
+ * A row id from the path: bounded, so a made-up one never becomes a giant
+ * WHERE — and never holding a NUL character, which Postgres can't compare
+ * text with (0.12.0 review M2: `tickets/%00` was a 500 and an error report).
+ * Anything else is "not found", like any id that isn't there.
+ */
 function idOf(part: string | undefined): string | null {
   if (part === undefined) return null;
   const decoded = safeDecode(part);
-  return decoded.length > 0 && decoded.length <= 200 ? decoded : null;
+  return decoded.length > 0 && decoded.length <= 200 && !decoded.includes("\u0000") ? decoded : null;
 }
 
 function route(method: string, pathname: string): Matched | null {
@@ -198,6 +219,15 @@ function route(method: string, pathname: string): Matched | null {
       return parts.length === 3 && third === "delete" ? { kind: "category-delete", id } : null;
     case "categories-order":
       return post && parts.length === 1 ? { kind: "categories-order" } : null;
+    case "epics": {
+      if (parts.length === 1) return get ? { kind: "epics" } : post ? { kind: "epic-create" } : null;
+      if (!id) return null;
+      if (parts.length === 2) return get ? { kind: "epic-get", id } : post ? { kind: "epic-update", id } : null;
+      if (parts.length !== 3 || !post) return null;
+      const kinds: Record<string, FeedbackAdminRouteKind> = { status: "epic-status", tickets: "epic-tickets", delete: "epic-delete" };
+      const kind = kinds[third as string];
+      return kind ? { kind, id } : null;
+    }
     case "keys":
       if (parts.length === 1) return get ? { kind: "keys" } : post ? { kind: "key-issue" } : null;
       return post && id && parts.length === 3 && third === "revoke" ? { kind: "key-revoke", id } : null;
@@ -221,6 +251,10 @@ const assigneeIdField = z.string().trim().min(1).max(200).nullable().optional();
 const createTicketBody = staffTicketSchema.extend({ assigneeId: assigneeIdField });
 const updateTicketBody = ticketPatchSchema.extend({ assigneeId: assigneeIdField });
 const deleteColumnBody = z.object({ moveTo: z.string().trim().min(1).max(50).nullable().optional() });
+/** An epic's owner: one of the company's people by id; null for nobody; absent leaves it. */
+const createEpicBody = createEpicSchema.extend({ ownerId: assigneeIdField });
+const updateEpicBody = epicPatchSchema.extend({ ownerId: assigneeIdField });
+const epicStatusBody = z.object({ status: z.string().min(1).max(30) });
 const keyBody = z.object({ label: z.string().trim().min(1, "Name the website this key is for.").max(80) });
 const empty = z.object({}).passthrough();
 // The editors' bodies: the package's schemas without the id (the id is in the path).
@@ -307,6 +341,9 @@ export function createFeedbackAdminHandlers(options: CreateFeedbackAdminHandlers
     }
     if (error instanceof TicketChangeError) {
       return json({ error: { code: "invalid", message: error.message } }, 400);
+    }
+    if (error instanceof EpicChangeError) {
+      return json({ error: { code: error.status === 409 ? "conflict" : "invalid", message: error.message } }, error.status);
     }
     if (error instanceof z.ZodError) {
       return json({ error: { code: "invalid", message: error.issues[0]?.message ?? "Check the form and try again." } }, 400);
@@ -649,6 +686,51 @@ export function createFeedbackAdminHandlers(options: CreateFeedbackAdminHandlers
         await reorderCategories(db, tenantId, body.ids);
         return json({ ok: true });
       }
+      case "epics":
+        return json({ epics: await listEpics(db, tenantId) });
+      case "epic-create": {
+        const { ownerId, ...input } = await readJson(req, createEpicBody);
+        const owner = await assigneeOf(tenantId, req, ownerId);
+        const epic = await createEpic(db, tenantId, { ...input, owner: owner ?? null }, await actorOf(userId, tenantId, req), clock());
+        return json({ epic }, 201);
+      }
+      case "epic-get": {
+        const epic = await getEpic(db, tenantId, ticketId);
+        if (!epic) throw notFound();
+        return json({ epic });
+      }
+      case "epic-update": {
+        const { ownerId, ...patch } = await readJson(req, updateEpicBody);
+        // The epic first: another company's epic is "not found" whatever the
+        // body names, before the body's own references are looked at.
+        const epic = await findEpic(db, tenantId, ticketId);
+        if (!epic) throw notFound();
+        // The leader it already has is no change (review M1): someone who has
+        // since left the team stays its leader until another is picked, and
+        // never blocks an edit of its name or date.
+        const owner = ownerId !== undefined && ownerId !== null && ownerId === epic.ownerId ? undefined : await assigneeOf(tenantId, req, ownerId);
+        const updated = await updateEpic(db, tenantId, epic.id, { ...patch, ...(owner === undefined ? {} : { owner }) }, clock());
+        if (!updated) throw notFound();
+        return json({ epic: updated });
+      }
+      case "epic-status": {
+        const body = await readJson(req, epicStatusBody);
+        const result = await setEpicStatus(db, tenantId, ticketId, body.status, clock());
+        if (!result) throw notFound();
+        return json({ changed: result.changed, epic: result.epic });
+      }
+      case "epic-tickets": {
+        const body = await readJson(req, epicTicketsSchema);
+        const result = await setEpicTickets(db, tenantId, ticketId, body, await actorOf(userId, tenantId, req), clock());
+        if (!result) throw notFound();
+        return json(result);
+      }
+      case "epic-delete": {
+        await readJson(req, empty);
+        const result = await deleteEpic(db, tenantId, ticketId, await actorOf(userId, tenantId, req), clock());
+        if (!result) throw notFound();
+        return json(result);
+      }
       case "keys":
         return json({ keys: await listClientKeys(db, tenantId) });
       case "key-issue": {
@@ -695,6 +777,7 @@ export function createFeedbackAdminHandlers(options: CreateFeedbackAdminHandlers
         !(error instanceof FeedbackHttpError) &&
         !(error instanceof DuplicateKeyError) &&
         !(error instanceof TicketChangeError) &&
+        !(error instanceof EpicChangeError) &&
         !(error instanceof z.ZodError)
       ) {
         report(error, resolved, matched.kind);

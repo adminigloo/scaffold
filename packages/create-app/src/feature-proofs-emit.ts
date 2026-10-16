@@ -188,8 +188,8 @@ export const FEATURE_ENTITIES: Readonly<Record<string, readonly string[]>> = {
   storage: ["file", "file-token", "public-key", "record-type", "record"],
   // Tenancy 2b-2a; feedback 0.11 adds the values its board's filters, New
   // ticket and the ticket editor take: a column's and a category's short name,
-  // and the person a ticket is assigned to.
-  feedback: ["ticket", "column", "category", "feedback-key", "ticket-number", "ticket-token", "column-key", "category-key", "assignee"],
+  // and the person a ticket is assigned to; 0.12 adds an epic.
+  feedback: ["ticket", "column", "category", "feedback-key", "ticket-number", "ticket-token", "column-key", "category-key", "assignee", "epic"],
 };
 
 // ---------------------------------------------------------------------------
@@ -246,10 +246,12 @@ export function renderCompanyRows(answers: Answers): string {
           `import {
   addTicketMessage,
   createCategory,
+  createEpic,
   createStatus,
   createTicket,
   ensureFeedbackBoard,
   issueClientKey as issueFeedbackKey,
+  setEpicTickets,
   submitPayloadSchema,
   updateTicket,
 } from "${scope}/feedback";`,
@@ -557,6 +559,18 @@ export function renderCompanyRows(answers: Answers): string {
     { id: null, name: \`\${Label} Office\` },
   );
   strings.push(\`\${Label} Assignee\`);
+  // Feedback 0.12: an epic, led by that person, with the ticket in it — so an
+  // epic route that forgot the ${noun} hands B A's epic, its name or its
+  // ticket, and the mixed pass can put A's ticket into B's epic.
+  const epic = await createEpic(
+    database,
+    tenantId,
+    { name: \`\${Label} spring launch\`, description: \`\${Label} epic notes\`, owner: { id: rows.assignee, name: \`\${Label} Assignee\` } },
+    { id: null, name: \`\${Label} Office\` },
+  );
+  await setEpicTickets(database, tenantId, epic.id, { add: [report.id] }, { id: null, name: \`\${Label} Office\` });
+  rows.epic = epic.id;
+  strings.push(\`\${Label} spring launch\`, \`\${Label} epic notes\`);
   const websiteKey = await issueFeedbackKey(database, { tenantId, label: \`\${Label} feedback website\` });
   rows["feedback-key"] = websiteKey.id;
   strings.push(\`\${Label} feedback website\`);
@@ -1253,6 +1267,8 @@ export function renderFeatureIsolationTest(answers: Answers): string {
       // Feedback 0.11: each ticket's activity trail, with the company on every row.
       `    feedback_ticket_events: await all(sql\`select * from feedback_ticket_events where tenant_id = \${a} order by id\`),`,
       `    feedback_boards: await all(sql\`select * from feedback_boards where tenant_id = \${a}\`),`,
+      // Feedback 0.12: A's epics.
+      `    feedback_epics: await all(sql\`select * from feedback_epics where tenant_id = \${a} order by id\`),`,
     );
   }
 

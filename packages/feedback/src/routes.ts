@@ -53,6 +53,13 @@ export type FeedbackAdminRouteKind =
   | "category-update"
   | "category-delete"
   | "categories-order"
+  | "epics"
+  | "epic-create"
+  | "epic-get"
+  | "epic-update"
+  | "epic-status"
+  | "epic-tickets"
+  | "epic-delete"
   | "keys"
   | "key-issue"
   | "key-revoke";
@@ -92,6 +99,17 @@ export const FEEDBACK_ADMIN_ROUTE_PERMISSIONS: Readonly<Record<FeedbackAdminRout
   "category-update": "feedback.settings.manage",
   "category-delete": "feedback.settings.manage",
   "categories-order": "feedback.settings.manage",
+  // Epics (0.12.0) are working the board, on the board's own keys: anyone who
+  // sees the board sees its epics; whoever works tickets changes them. (A
+  // company whose plan has ended keeps reading them, and can't change them —
+  // the plan gate refuses feedback.manage, never feedback.view.)
+  epics: "feedback.view",
+  "epic-get": "feedback.view",
+  "epic-create": "feedback.manage",
+  "epic-update": "feedback.manage",
+  "epic-status": "feedback.manage",
+  "epic-tickets": "feedback.manage",
+  "epic-delete": "feedback.manage",
   // Even the list: a key's label and when it was made say which websites
   // carry the company's button, which is the settings holder's business.
   keys: "feedback.settings.manage",
@@ -110,7 +128,8 @@ function freeze<T extends readonly FeedbackRoute[]>(routes: T): T {
  * of its website keys); 0.11.0 adds the values the board's filters and the
  * ticket editor take: `{column-key}` and `{category-key}` (a column's and a
  * category's short name), `{assignee}` (the id of a person a ticket is
- * assigned to) and `{ticket-number}` (a number to search for). A placeholder in the PATH means the route reads that
+ * assigned to) and `{ticket-number}` (a number to search for); 0.12.0 adds
+ * `{epic}` (one of its epics). A placeholder in the PATH means the route reads that
  * row (another company's → 404); one only in the body is a reference (any
  * answer below 500 that says nothing of the other company).
  */
@@ -122,7 +141,7 @@ export const FEEDBACK_ADMIN_ROUTES: readonly FeedbackRoute<FeedbackAdminRouteKin
     method: "GET",
     path: "v1/admin/board",
     permission: "feedback.view",
-    query: { archived: "1", q: "{ticket-number}", category: "{category-key}", assignee: "{assignee}" },
+    query: { archived: "1", q: "{ticket-number}", category: "{category-key}", assignee: "{assignee}", epic: "{epic}" },
   },
   { kind: "ticket-get", method: "GET", path: "v1/admin/tickets/{ticket}", permission: "feedback.view" },
   {
@@ -130,14 +149,14 @@ export const FEEDBACK_ADMIN_ROUTES: readonly FeedbackRoute<FeedbackAdminRouteKin
     method: "POST",
     path: "v1/admin/tickets",
     permission: "feedback.manage",
-    body: { title: "Isolation probe ticket", status: "{column-key}", category: "{category-key}", assigneeId: "{assignee}" },
+    body: { title: "Isolation probe ticket", status: "{column-key}", category: "{category-key}", assigneeId: "{assignee}", epicId: "{epic}" },
   },
   {
     kind: "ticket-update",
     method: "POST",
     path: "v1/admin/tickets/{ticket}",
     permission: "feedback.manage",
-    body: { title: "Isolation probe title", priority: "low", category: "{category-key}", assigneeId: "{assignee}" },
+    body: { title: "Isolation probe title", priority: "low", category: "{category-key}", assigneeId: "{assignee}", epicId: "{epic}" },
   },
   { kind: "events", method: "GET", path: "v1/admin/tickets/{ticket}/events", permission: "feedback.view" },
   { kind: "people", method: "GET", path: "v1/admin/people", permission: "feedback.view" },
@@ -203,6 +222,34 @@ export const FEEDBACK_ADMIN_ROUTES: readonly FeedbackRoute<FeedbackAdminRouteKin
     permission: "feedback.settings.manage",
     body: { ids: ["{category}"] },
   },
+  // Epics (0.12.0). Another company's epic in the path is "not found"; one of
+  // its tickets put into this company's epic, or one of its people made the
+  // owner, is refused before anything is written.
+  { kind: "epics", method: "GET", path: "v1/admin/epics", permission: "feedback.view" },
+  {
+    kind: "epic-create",
+    method: "POST",
+    path: "v1/admin/epics",
+    permission: "feedback.manage",
+    body: { name: "Isolation probe epic", ownerId: "{assignee}" },
+  },
+  { kind: "epic-get", method: "GET", path: "v1/admin/epics/{epic}", permission: "feedback.view" },
+  {
+    kind: "epic-update",
+    method: "POST",
+    path: "v1/admin/epics/{epic}",
+    permission: "feedback.manage",
+    body: { name: "Isolation probe epic name", ownerId: "{assignee}" },
+  },
+  { kind: "epic-status", method: "POST", path: "v1/admin/epics/{epic}/status", permission: "feedback.manage", body: { status: "in_progress" } },
+  {
+    kind: "epic-tickets",
+    method: "POST",
+    path: "v1/admin/epics/{epic}/tickets",
+    permission: "feedback.manage",
+    body: { add: ["{ticket}"] },
+  },
+  { kind: "epic-delete", method: "POST", path: "v1/admin/epics/{epic}/delete", permission: "feedback.manage", body: {} },
   { kind: "keys", method: "GET", path: "v1/admin/keys", permission: "feedback.settings.manage" },
   { kind: "key-issue", method: "POST", path: "v1/admin/keys", permission: "feedback.settings.manage", body: { label: "Probe website" } },
   { kind: "key-revoke", method: "POST", path: "v1/admin/keys/{feedback-key}/revoke", permission: "feedback.settings.manage", body: {} },

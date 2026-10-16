@@ -131,6 +131,18 @@ export function renderDeploymentUpgradeNotes(answers: Answers): string {
             "node_modules/@adminigloo/feedback/sql/upgrade-0.10-to-0.11.sql.",
           "- Tickets assigned by a typed name before are linked to the person with that name the first time each board opens (when exactly one person has it); any other name stays its own choice in the Assigned-to filter, \"(not linked)\", until you pick a person.",
           "",
+          // Feedback 0.12: additions only again.
+          "### From create-app 0.27 to 0.28 (epics on the feedback boards)",
+          "",
+          "`upgrade` raises feedback to 0.12 and adds the epics pages (/app/feedback/epics for each " +
+            (companies ? "company" : "business") +
+            "'s board where there is one, /admin/feedback/epics for this site's own). After it:",
+          "",
+          "- Run `pnpm db:generate`, then `pnpm db:migrate`. It only adds: the epics table, a ticket's epic, and a column's " +
+            "\"waiting on someone else\" flag (off for every column). Without drizzle-kit, the same change is " +
+            "node_modules/@adminigloo/feedback/sql/upgrade-0.11-to-0.12.sql.",
+          "- Mark a column like \"Waiting on customer\" as waiting in Feedback settings, and epics count its tickets as waiting.",
+          "",
         ]
       : []),
   ].join("\n");

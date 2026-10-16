@@ -1,5 +1,5 @@
 /**
- * @adminigloo/feedback — a feedback board per company, complete (0.11.0).
+ * @adminigloo/feedback — a feedback board per company, complete, with epics (0.12.0).
  *
  *   the intake      createFeedbackHandlers: what a reporter's widget calls
  *                   (by a company's website key, or a company's own public
@@ -20,14 +20,21 @@
  * `./schema` holds the tables; `./board` the React board, its toolbar and
  * filters, New ticket, the ticket panel, the connected workspace and the
  * browser client for the staff routes; `./admin` the settings screens
- * (columns, categories, website keys).
+ * (columns, categories, website keys); `./epics` (0.12.0) the epic screens —
+ * the list, an epic's page and its create/edit dialog.
+ *
+ * 0.12.0, epics: a company's bigger pieces of work, each with its tickets and
+ * its progress (epics-data.ts, epic-core.ts), on the board's own routes and
+ * keys. Included in this package, not sold apart.
  */
 
 export * from "./core.js";
 export { FEEDBACK_PLATFORM_BOARD } from "./schema.js";
-export type { FeedbackPriority, FeedbackTicketEventKind, FeedbackTicketSource, FeedbackTicketStatus } from "./schema.js";
+export type { FeedbackEpicStatus, FeedbackPriority, FeedbackTicketEventKind, FeedbackTicketSource, FeedbackTicketStatus } from "./schema.js";
 export * from "./board-data.js";
 export * from "./board-filters.js";
+export * from "./epics-data.js";
+export * from "./epic-core.js";
 export {
   createFeedbackHandlers,
   FEEDBACK_CLOSED_MESSAGE,

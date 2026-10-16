@@ -207,6 +207,12 @@ export function boardFilterFields(input: {
   people?: ReadonlyArray<{ id: string; name: string }>;
   /** The viewer's own id, when the board knows it: "Me" heads the people. */
   me?: string | null;
+  /**
+   * The company's epics (0.12.0): those still being worked on, plus any
+   * finished one that still has tickets showing, then "No epic". None at all
+   * (a board that has never had one) leaves the Epic filter out.
+   */
+  epics?: ReadonlyArray<{ id: string; name: string; status?: string | null }>;
   facets?: Partial<FeedbackFacetsWire> | null;
 }): BoardFilterFieldDef[] {
   const facets = input.facets ?? {};
@@ -217,6 +223,30 @@ export function boardFilterFields(input: {
     return n === undefined ? option : { ...option, count: n };
   };
   const meCount = input.me ? count("assignee", input.me) : undefined;
+  const epics = input.epics ?? [];
+  const epicCounts = facets.epic ?? {};
+  const shownEpics = epics.filter(
+    (epic) => epic.status === "open" || epic.status === "in_progress" || !epic.status || (epicCounts[epic.id] ?? 0) > 0,
+  );
+  const epicField: BoardFilterFieldDef[] =
+    epics.length === 0
+      ? []
+      : [
+          {
+            field: "epic",
+            label: "Epic",
+            options: [
+              ...shownEpics.map((epic) =>
+                withCount("epic", {
+                  value: epic.id,
+                  label: epic.status === "completed" || epic.status === "archived" ? `${epic.name} (${epic.status})` : epic.name,
+                }),
+              ),
+              withCount("epic", { value: FILTER_NONE, label: "No epic" }),
+            ],
+            searchable: shownEpics.length > 8,
+          },
+        ];
   return [
     {
       field: "status",
@@ -255,6 +285,7 @@ export function boardFilterFields(input: {
       ],
       searchable: people.length > 6,
     },
+    ...epicField,
     {
       field: "source",
       // Not "From": that reads as the person who sent it.
@@ -621,7 +652,9 @@ function chipsOf(filters: BoardFilters, fields: BoardFilterFieldDef[]): Array<{ 
             ? "None"
             : value.startsWith(FILTER_NAMED_PREFIX)
               ? namedLabel(value)
-              : "Someone not listed");
+              : field === "epic"
+                ? "An epic not listed"
+                : "Someone not listed");
       chips.push({
         key: `${field}:${value}`,
         text: `${def?.label ?? field}: ${label}`,

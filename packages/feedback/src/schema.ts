@@ -1,4 +1,5 @@
-import { boolean, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { boolean, date, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, type AnyPgColumn } from "drizzle-orm/pg-core";
 import { createdAt, idColumn } from "@adminigloo/db";
 
 export type FeedbackPriority = "low" | "medium" | "high" | "critical";
@@ -14,7 +15,12 @@ export type FeedbackTicketEventKind =
   | "assignee"
   | "status"
   | "archived"
-  | "unarchived";
+  | "unarchived"
+  /** Put into an epic, moved to another, or taken out of one (0.12.0). */
+  | "epic";
+
+/** Where an epic is in its life (0.12.0). Only `setEpicStatus` changes it, by FEEDBACK_EPIC_TRANSITIONS. */
+export type FeedbackEpicStatus = "open" | "in_progress" | "completed" | "archived";
 
 /**
  * The platform's own board (0.10.0): the site's own support queue, fed by the
@@ -97,6 +103,14 @@ export const feedbackStatuses = pgTable(
      * a client who renames "closed" to "shipped" has not changed its meaning.
      */
     isTerminal: boolean("is_terminal").notNull().default(false),
+    /**
+     * "Work here is waiting on someone else" (0.12.0): the customer, a
+     * supplier, another team. Read by nothing but an epic's progress, which
+     * counts these tickets as "waiting" — by this flag, never by the column's
+     * name (Ask Lou bucketed by name, and tickets went missing every time a
+     * column was renamed).
+     */
+    isWaiting: boolean("is_waiting").notNull().default(false),
     /**
      * How many tickets this column comfortably holds. Null = uncounted. The
      * board renders count/limit and turns the column's header loud past it —
@@ -213,6 +227,18 @@ export const feedbackTickets = pgTable(
     /** Who on the team filed it (the host's user id), for a staff ticket; null otherwise. */
     createdBy: text("created_by"),
     /**
+     * The epic this ticket is part of (0.12.0): one of THIS company's
+     * feedback_epics, or none. Plain text like every other reference here, and
+     * only ever written after the epic was found inside the ticket's company —
+     * so a ticket never points at another company's epic. Deleting an epic
+     * clears it on every ticket (the tickets stay).
+     *
+     * A FOREIGN KEY, ON DELETE SET NULL (review L2): whatever runs at the same
+     * moment as a delete — on any driver, in a transaction or not — no ticket
+     * is ever left pointing at an epic that doesn't exist.
+     */
+    epicId: text("epic_id").references((): AnyPgColumn => feedbackEpics.id, { onDelete: "set null" }),
+    /**
      * Is the reporter emailed when the team replies or moves it (0.11.0)?
      * True for everything the intake takes (the person sent it, and left an
      * address to hear back). A ticket the team files for a customer is only
@@ -274,6 +300,54 @@ export const feedbackTickets = pgTable(
     // The board's default read is WHERE archived_at IS NULL; the eye-toggle
     // read is the complement. Both walk this.
     index("feedback_tickets_archived_idx").on(table.archivedAt),
+    // An epic's tickets (its progress, its page) and the board's Epic filter.
+    index("feedback_tickets_tenant_epic_idx").on(table.tenantId, table.epicId),
+  ],
+);
+
+/**
+ * A bigger piece of work a company's tickets are grouped under (0.12.0):
+ * "New checkout", "Spring price list". A ticket is in one epic or none.
+ * Ask Lou's epic, with its rough edges filed off — see epics-data.ts.
+ *
+ * Company-scoped like everything here: every read and write names the
+ * company, and another company's epic, asked for by id, is "not found".
+ */
+export const feedbackEpics = pgTable(
+  "feedback_epics",
+  {
+    id: idColumn(),
+    tenantId: text("tenant_id").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    status: text("status").$type<FeedbackEpicStatus>().notNull().default("open"),
+    /**
+     * Who leads it: one of the company's people (the `listPeople` seam), by
+     * the host's user id, with the name shown beside it — like a ticket's
+     * assignee. Null: nobody yet. (Ask Lou's "Me (default)" saved no owner
+     * while saying it would; here no owner is only ever chosen.)
+     */
+    ownerId: text("owner_id"),
+    ownerName: text("owner_name"),
+    /** When it should be done, as a day ("2026-11-30"); null: no date. */
+    targetDate: date("target_date", { mode: "string" }),
+    /** One of FEEDBACK_EPIC_COLORS ("blue", "teal" …) — a name, so both themes can draw it. */
+    color: text("color").notNull().default("blue"),
+    /** Set when it was marked completed; cleared when it's reopened. */
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    /** Set when it was archived; cleared when it's restored. */
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    /** The host's user id of whoever made it. */
+    createdBy: text("created_by"),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("feedback_epics_tenant_idx").on(table.tenantId, table.status),
+    // One epic per NAME per company, as a person reads a name — case and
+    // spacing don't count (review L1: two "New epic"s pressed at once made two
+    // epics; the check before the insert can't see the other insert, this can).
+    uniqueIndex("feedback_epics_tenant_name_idx").on(table.tenantId, sql`lower(regexp_replace(btrim("name"), '\\s+', ' ', 'g'))`),
   ],
 );
 

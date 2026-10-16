@@ -1,6 +1,6 @@
 # @adminigloo/feedback
 
-A feedback board for each company, complete: the intake its customers' reports land in (from its own website, or its own feedback page), and the Kanban board its team answers and sorts them on — with filters and search, New ticket, editing with an activity trail, and the column, category and website-key screens. Your own site gets one too, for what your users report with the feedback button.
+A feedback board for each company, complete: the intake its customers' reports land in (from its own website, or its own feedback page), and the Kanban board its team answers and sorts them on — with filters and search, New ticket, editing with an activity trail, **epics** (bigger pieces of work, each with its tickets and its progress), and the column, category and website-key screens. Your own site gets one too, for what your users report with the feedback button.
 
 ## What each install gets you
 
@@ -8,15 +8,16 @@ ONE package for the team's side, with an entry point per job, and the widget for
 
 | You install | You get |
 | --- | --- |
-| `@adminigloo/feedback` | **The intake** (`createFeedbackHandlers`): what the [feedback widget](../feedback-widget) talks to — by a company's website key, or by the company in the request's address (`resolveTenant`), closed to new tickets for a company that isn't taking them (`admit`). **The staff routes** (`createFeedbackAdminHandlers`): the board with its filters and search, New ticket, a ticket's report, conversation, editing and activity trail, replies, assign, move, archive, the company's people, columns, categories and website keys — one company per request. **The server functions** under both, every one of which takes the company. **The contract**: `FEEDBACK_ADMIN_ROUTES` / `FEEDBACK_PUBLIC_ROUTES` (the routes as data, for an isolation proof), `feedbackPermissions` (the keys and their default roles), `feedbackAlertKinds` / `feedbackAlertsFor` (alerts for the team), `FEEDBACK_EMAIL_TEMPLATES` / `feedbackReporterEmailFor` (emails for the reporter). |
-| `@adminigloo/feedback/schema` | The Drizzle tables to add to your schema and migrate. Shipped SQL for a host without drizzle-kit: `@adminigloo/feedback/sql/feedback-0.11.0.sql` (a fresh install), `…/sql/upgrade-0.10-to-0.11.sql` (from 0.10) and `…/sql/upgrade-0.9-to-0.10.sql` (from 0.9, before that one). |
-| `@adminigloo/feedback/board` | `FeedbackWorkspace` — the whole board connected to the staff routes by a base URL: the toolbar (search, filters with counts, Mine / Unassigned / Critical, the active filters as chips, Clear, "Showing X of Y"), filters kept in the page's address and remembered per browser, **New ticket** (and a **+** on each column), the board, and the ticket panel with editing (title, priority, category, assignee picked from the company's people) and the activity trail. The pieces on their own, controlled, for tickets you store elsewhere: `BoardToolbar`, `useBoardFilters`, `NewTicketDialog`, `FeedbackBoard`, `TicketPanel`. `FeedbackAdminClient`, the browser's client for the staff routes. React, `"use client"`. |
+| `@adminigloo/feedback` | **The intake** (`createFeedbackHandlers`): what the [feedback widget](../feedback-widget) talks to — by a company's website key, or by the company in the request's address (`resolveTenant`), closed to new tickets for a company that isn't taking them (`admit`). **The staff routes** (`createFeedbackAdminHandlers`): the board with its filters and search, New ticket, a ticket's report, conversation, editing and activity trail, replies, assign, move, archive, the company's people, columns, categories and website keys, and the epics — one company per request. **The server functions** under both, every one of which takes the company. **The contract**: `FEEDBACK_ADMIN_ROUTES` / `FEEDBACK_PUBLIC_ROUTES` (the routes as data, for an isolation proof), `feedbackPermissions` (the keys and their default roles), `feedbackAlertKinds` / `feedbackAlertsFor` (alerts for the team), `FEEDBACK_EMAIL_TEMPLATES` / `feedbackReporterEmailFor` (emails for the reporter). |
+| `@adminigloo/feedback/schema` | The Drizzle tables to add to your schema and migrate. Shipped SQL for a host without drizzle-kit: `@adminigloo/feedback/sql/feedback-0.12.0.sql` (a fresh install), `…/sql/upgrade-0.11-to-0.12.sql` (from 0.11), `…/sql/upgrade-0.10-to-0.11.sql` (from 0.10, before that one) and `…/sql/upgrade-0.9-to-0.10.sql` (from 0.9, before both). |
+| `@adminigloo/feedback/board` | `FeedbackWorkspace` — the whole board connected to the staff routes by a base URL: the toolbar (search, filters with counts, Mine / Unassigned / Critical, the active filters as chips, Clear, "Showing X of Y"), filters kept in the page's address and remembered per browser, **New ticket** (and a **+** on each column), the board — each card showing its epic — and the ticket panel with editing (title, priority, category, assignee picked from the company's people, epic) and the activity trail. The Epic filter ("No epic" included) is in the toolbar. The pieces on their own, controlled, for tickets you store elsewhere: `BoardToolbar`, `useBoardFilters`, `NewTicketDialog`, `FeedbackBoard`, `TicketPanel`. `FeedbackAdminClient`, the browser's client for the staff routes. React, `"use client"`. |
 | `@adminigloo/feedback/admin` | The board's settings as screens: `ColumnEditor` (add, rename, colour, reorder, mark finished, limits and aging; deleting a column that holds tickets asks which column they go to), `CategoryEditor` (add, rename, describe, reorder, offer to customers or keep for sorting), `KeysPanel` (the company's feedback page address, and website keys: make, see once, switch off), and `FeedbackSettingsPanel` (all three). Over the staff routes by `baseUrl`, or any `FeedbackSettingsTransport` you pass. React, `"use client"`. |
+| `@adminigloo/feedback/epics` | The epic screens (0.12.0): `FeedbackEpics` (the list — progress bar, status, who leads it, when it's due — with New epic) and `FeedbackEpic` (one epic: its tickets grouped as its progress counts them, add and take out tickets, move it along, edit, delete, and "every ticket is done — mark it completed?"), over the staff routes by `baseUrl`, or any `FeedbackEpicsTransport` you pass. The pieces, controlled: `EpicList`, `EpicDetail`, `EpicDialog`, `AddTicketsDialog`, `EpicProgressBar`, `EpicBadge`. React, `"use client"`. Included in `@adminigloo/feedback`: same install, same key. |
 | `@adminigloo/feedback-widget` | The form people send feedback with: a floating button and screenshot for an app, or `FeedbackLauncher` inline on a page (a company's feedback page), and "My reports" to follow a ticket. |
 
 The board components never read a database. `FeedbackBoard` renders the tickets and columns you pass it and tells you when someone moves one; `FeedbackWorkspace` and the `./admin` screens fetch from the routes at their `baseUrl`.
 
-**What you still write** with npm alone: one route file per handler (the staff routes, the intake), your `authorize` check, `listPeople` if you want an assignee picker, and a page per screen (a few lines around `FeedbackWorkspace` and `FeedbackSettingsPanel`). A project made with create-app has all of that already. **What none of the installs give you** is listed under [Not included](#not-included).
+**What you still write** with npm alone: one route file per handler (the staff routes, the intake — the epics ride on the staff routes), your `authorize` check, `listPeople` if you want an assignee picker and epic owners, and a page per screen (a few lines around `FeedbackWorkspace`, `FeedbackSettingsPanel`, `FeedbackEpics` and `FeedbackEpic`). A project made with create-app has all of that already. **What none of the installs give you** is listed under [Not included](#not-included).
 
 ## Install
 
@@ -54,7 +55,7 @@ npm install @adminigloo/feedback   # or pnpm add / yarn add
 
 Without it, the build stops at install with `401 Unauthorized`.
 
-Peer dependencies: `react` (only for `./board` and `./admin`), `drizzle-orm ^0.45`, `zod ^3.25 || ^4` (only for the server entries; optional if you use the board alone).
+Peer dependencies: `react` (only for `./board`, `./admin` and `./epics`), `drizzle-orm ^0.45`, `zod ^3.25 || ^4` (only for the server entries; optional if you use the board alone).
 
 ## The board
 
@@ -241,6 +242,33 @@ import { FeedbackSettingsPanel } from "@adminigloo/feedback/admin";
 
 Or one at a time: `<ColumnEditor baseUrl=… />`, `<CategoryEditor … />`, `<KeysPanel … />`. Each takes `transport` instead of `baseUrl` — any object with the editors' methods (`FeedbackSettingsTransport`) — for a host whose columns live in its own tables. A column's short name (what tickets point at) is made from its name when it's added — with a number when it's taken ("open_2") — and is never shown or changed; renaming changes what people read, and only a NAME already on the board is refused. Deleting a column with tickets asks which column they go to (`deleteStatus(db, tenantId, id, { moveTo })`); each move goes on the ticket's trail and is announced as `ticket.moved`, like a drag. The last column can't be deleted. The default columns and categories come once per company (`feedback_boards` remembers): delete every category and the list stays empty.
 
+## Epics (./epics, 0.12.0)
+
+An epic is a bigger piece of work a company's tickets are grouped under — "New checkout", "Spring price list". A ticket is in one epic or none. Epics come with the board: same package, same routes, same two keys (`feedback.view` to look, `feedback.manage` to change).
+
+```tsx
+"use client";
+import { FeedbackEpic, FeedbackEpics } from "@adminigloo/feedback/epics";
+
+// /app/feedback/epics
+<FeedbackEpics baseUrl={`/api/app/${company.id}/feedback`} canManage={can("feedback.manage")} epicsHref="/app/feedback/epics" boardHref="/app/feedback" />
+// /app/feedback/epics/[id]
+<FeedbackEpic baseUrl={`/api/app/${company.id}/feedback`} epicId={id} canManage={can("feedback.manage")} epicsHref="/app/feedback/epics" boardHref="/app/feedback" />
+// and on the board, a link to them:
+<FeedbackWorkspace baseUrl={…} epicsHref="/app/feedback/epics" />
+```
+
+- **On the board.** Every card in an epic shows its badge (the epic's colour and name). The toolbar's **Epic** filter lists the epics being worked on (and a finished one that still has tickets showing), then "No epic", each with its count; `?epic=` carries it in the address. The ticket panel and New ticket pick a ticket's epic from those still being worked on; the panel always shows the ticket's own epic, finished or not, and its badge opens the epic's page.
+- **An epic** has a name (the only thing needed, unique in the company — case and spacing don't count, and the database holds to it even when two people press "Make the epic" at once), what it's for, who leads it (one of `listPeople` — a new epic starts with whoever makes it, and "Nobody yet" is a real choice; someone who has since left the team stays its leader, shown as "(no longer on the team)", until another is picked), a "done by" date, and one of ten colours (`EPIC_COLORS`).
+- **Its life:** not started → in progress → completed → archived, by Ask Lou's moves (`EPIC_TRANSITIONS`): any live status to any other, and an archived epic only back to not started. The status picker offers only those, and a refusal is said in words. Completing stamps `completedAt`; archiving stamps `archivedAt`; going back to work clears both.
+- **It starts by itself** the moment one of its tickets leaves the column new tickets land in — whatever that column is called — from a drag, a bulk move, a column delete, New ticket or the editor. **Nothing completes it by itself:** when every ticket is done, its page asks "Mark the epic completed?".
+- **Progress is one rule, by the columns' flags** (`epicProgress`, `epic-core`): done = a finished column, or archived (an archived ticket has been put away, so it never holds an epic short of 100%); waiting = a column marked "Waiting on someone else" in the column editor (`isWaiting`); not started = the column new tickets land in; anything else in progress. The list, the epic's page and its groups all use it, so the numbers never disagree. The percent rounds down: 100% only ever means every ticket.
+- **Adding and taking out tickets** is one change (`setEpicTickets(db, tenantId, epicId, { add, remove }, actor)`; route `POST v1/admin/epics/{id}/tickets`): every id must be one of the company's tickets, or nothing is changed; tickets are only added to an epic still being worked on ("Reopen it before adding tickets"); a ticket in another epic moves, and "Add tickets" says so first. Each change is a line on the ticket's trail: "Ada put it in the epic Checkout (was Pricing)".
+- **Deleting an epic** is never refused: its tickets — archived ones too — stay on the board and leave the epic, each with a trail line. The page waits for the answer before it leaves, and the list then says "Deleted. Its N tickets are still on the board." A ticket's epic is a foreign key (ON DELETE SET NULL), so nothing done at the same moment — on any driver, in a transaction or not — can leave a ticket pointing at a deleted epic; an add that comes after the delete is refused in words.
+- **Reopening or restoring** an epic whose tickets are already under way lands on In progress, not Not started. A refused change (someone else moved the epic first) is said in words and the page shows the epic as it now is.
+
+The routes (all in `FEEDBACK_ADMIN_ROUTES`, so an isolation proof covers them): `GET v1/admin/epics` (with progress), `POST v1/admin/epics`, `GET v1/admin/epics/{id}` (with its tickets), `POST v1/admin/epics/{id}`, `POST v1/admin/epics/{id}/status`, `POST v1/admin/epics/{id}/tickets`, `POST v1/admin/epics/{id}/delete`; and `epicId` on New ticket and the ticket edit. Another company's epic is "not found"; one of its tickets put into this company's epic, one of its people as an owner, or its epic on this company's ticket is refused before anything is written. A company whose plan has ended keeps reading its epics and can't change them (the plan check refuses `feedback.manage`). The server functions: `listEpics`, `getEpic`, `createEpic`, `updateEpic`, `setEpicStatus`, `setEpicTickets`, `deleteEpic` — each takes the company.
+
 ## A board per company
 
 Every staff function, route and table row belongs to ONE company (its `tenantId`, your id for it). A ticket, column, category or website key of another company, asked for by id, is "not found" — the same answer as an id that never existed. Each company's board gets the default columns and categories the first time it's used, its tickets are numbered on their own (each company starts at FB-00001), and `"*"` (`FEEDBACK_PLATFORM_BOARD`) is your own site's board.
@@ -279,7 +307,7 @@ The same component serves your own board over its own routes (`baseUrl="/api/adm
 | Key | Lets someone | Default roles |
 | --- | --- | --- |
 | `feedback.view` | see the board, a ticket and its conversation | owner, admin, member, viewer |
-| `feedback.manage` | reply (the reporter is emailed), move, assign, archive | owner, admin, member |
+| `feedback.manage` | reply (the reporter is emailed), move, assign, archive; make, change and delete epics | owner, admin, member |
 | `feedback.settings.manage` | change the columns and categories; make and switch off website keys | owner, admin |
 
 Crew holds none. Spread `feedbackPermissions` into your `definePermissions("tenant", …)`, or map the keys onto your own checks.
@@ -315,11 +343,21 @@ With [@adminigloo/storage](../storage), keep a company's screenshots private: re
 
 `feedbackReporterEmailFor(event, { businessName, feedbackUrl })` turns a staff event into the reporter's email (the team replied; the ticket moved), or null when the reporter left no address — hand it to [@adminigloo/comms](../comms)' `sendNow` so it goes out in the company's name, with `FEEDBACK_EMAIL_TEMPLATES` added to the company's templates once.
 
+## Upgrading from 0.11
+
+Additions only: every 0.11 call keeps working.
+
+1. **The tables: run `sql/upgrade-0.11-to-0.12.sql`** (safe to run twice), or with drizzle-kit generate and run a migration as usual — nothing in it needs hand-editing. `feedback_epics` is created (with a unique index on the company and the epic's name, case and spacing aside); tickets gain `epic_id` (empty for every 0.11 ticket, a foreign key to the epic, cleared when it's deleted); columns gain `is_waiting` (off — mark a column like "Waiting on customer" in the column editor and epics count its tickets as waiting).
+2. **The board's answer** carries `epics` (the company's epics, for the badges and pickers), each ticket's `epicId`, and `facets.epic`. `BoardFilters` has an `epic` field (`?epic=`); a filters object built by hand needs `epic: []` (`EMPTY_FILTERS` has it).
+3. **New routes** — the seven `epics` routes above — are in `FEEDBACK_ADMIN_ROUTES`, on `feedback.view` and `feedback.manage`. An isolation proof driven from the table needs an `{epic}` row planted for each company.
+4. **The trail** has a new kind, `"epic"`; a screen that lists events by kind should word it ("put it in the epic …", as `TicketPanel` does).
+5. **Pages:** add the epics pages (a few lines each, above) and pass `epicsHref` to `FeedbackWorkspace` for its link. create-app 0.28 does all of this.
+
 ## Upgrading from 0.10
 
-Additions only: every 0.10 call keeps working.
+Additions only: every 0.10 call keeps working. Then run the 0.11 → 0.12 upgrade above.
 
-1. **The tables: run `sql/upgrade-0.10-to-0.11.sql`** (safe to run twice), or with drizzle-kit generate and run a migration as usual — nothing in it needs hand-editing. Tickets gain `assignee_id`, `source`, `created_by` and `notify_reporter`; `feedback_ticket_events` (the trail) and `feedback_boards` (boards already set up, so their defaults never come back) are created. Every 0.10 ticket shows as from the feedback button (0.10 didn't record which tickets came from a company's feedback page) and starts with an empty trail. A typed assignee is linked to the matching person the first time the board opens, or stays its own "(not linked)" choice.
+1. **The tables: run `sql/upgrade-0.10-to-0.11.sql`, then `sql/upgrade-0.11-to-0.12.sql`** (each safe to run twice), or with drizzle-kit generate and run a migration as usual — nothing in it needs hand-editing. Tickets gain `assignee_id`, `source`, `created_by` and `notify_reporter`; `feedback_ticket_events` (the trail) and `feedback_boards` (boards already set up, so their defaults never come back) are created. Every 0.10 ticket shows as from the feedback button (0.10 didn't record which tickets came from a company's feedback page) and starts with an empty trail. A typed assignee is linked to the matching person the first time the board opens, or stays its own "(not linked)" choice.
 2. **`listBoardData(db, tenantId, { filters, viewerId })`** takes the filters and who is asking, and answers `totalCount`, `matchCount`, `truncated` and `facets` beside the tickets. `{ includeArchived }` still works. Finished columns are read separately (up to 100 cards) from unfinished ones (up to 300).
 3. **The board route reads the filters from its query** (`?q=&status=&priority=&category=&assignee=&source=&from=&to=&archived=1`). `?archived=1` means what it did.
 4. **New routes** — `POST v1/admin/tickets` (New ticket), `POST v1/admin/tickets/{id}` (edit), `GET v1/admin/tickets/{id}/events`, `GET v1/admin/people` — are in `FEEDBACK_ADMIN_ROUTES`, so an isolation proof driven from the table covers them. `POST v1/admin/columns/{id}/delete` takes `{ moveTo }`.
@@ -340,10 +378,12 @@ Additions only: every 0.10 call keeps working.
 
 ## Not included
 
-- **Epics** (grouping tickets under a bigger piece of work) — the next release, in this same package.
-- **Saved views per person.** Filters are kept in the address and remembered per browser; there is no list of named views that follows a person between devices.
+- **Sprints** (a time box tickets are planned into). Epics say what a piece of work is for; when it's done is its "done by" date.
+- **Swimlanes by epic** (a row of columns per epic). Filter the board by an epic instead, or open the epic's page.
+- **An epic's health** (on track, at risk, stalled) and a summary to copy. The list says how many days an epic has left or is late.
+- **Saved views per person.** Filters (the Epic filter too) are kept in the address and remembered per browser; there is no list of named views that follows a person between devices.
 - **Custom fields** on a ticket. A ticket has the fields above; anything else goes in its report or conversation.
-- **Swimlanes** (a row per person) and sorting the board by anything but newest first.
+- **Swimlanes by person** (a row per person) and sorting the board by anything but newest first.
 - **Custom domains** for a company's feedback page.
 - **Checking a reporter's email address.** The address someone types on a feedback form isn't confirmed; the team's answer is emailed to it as typed.
 - **Answering while a company's plan has ended.** Its customers can still read and reply on their tickets, but its team can't answer them until the company has a plan again (the host's plan check closes the staff routes).
@@ -372,6 +412,6 @@ export const OPTIONS = feedback.handle;
 
 **Screenshots: only the board's own uploads.** A report keeps a screenshot address only if this board's upload route stored it (see "Screenshots" above), so nobody can plant an image from somewhere else for whoever triages the ticket to open. Any store works (`screenshots`, or 0.9's `storeFile`); without one, reports are submitted without images.
 
-The board's server functions — `listBoardData`, `getTicket`, `createTicket`, `moveTicket`, `moveTickets`, `archiveTicket`, `createStatus`, `reorderStatuses`, `listCategories`, `addTicketMessage`, `assignTicket`, and the rest — take your `db` and the company, and return plain data, so you can call them from route handlers, server actions or tRPC procedures. Gate them with your own check; the staff routes above already do.
+The board's server functions — `listBoardData`, `getTicket`, `createTicket`, `moveTicket`, `moveTickets`, `archiveTicket`, `createStatus`, `reorderStatuses`, `listCategories`, `addTicketMessage`, `assignTicket`, `listEpics`, `setEpicTickets`, and the rest — take your `db` and the company, and return plain data, so you can call them from route handlers, server actions or tRPC procedures. Gate them with your own check; the staff routes above already do.
 
 The tests run on PGlite (a real Postgres, in-process), including a pass where one company calls every function and every route with another company's ids.

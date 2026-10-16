@@ -16,7 +16,8 @@ export const dynamic = "force-dynamic";
  * answering and moving tickets `feedback.manage`; the columns, categories and
  * website keys `feedback.settings.manage` — `canManage` and the settings link
  * only decide what is offered; the server refuses the rest anyway.
- * `?ticket=` opens that ticket (an alert's link).
+ * `?ticket=` opens that ticket (an alert's link). Each card shows its epic,
+ * and the toolbar links to the company's epics (/app/feedback/epics).
  */
 export default async function CompanyFeedbackPage({
   searchParams,
@@ -36,6 +37,7 @@ export default async function CompanyFeedbackPage({
             baseUrl={`/api/app/${company.id}/feedback`}
             canManage={can.includes("feedback.manage")}
             settingsHref={can.includes("feedback.settings.manage") ? "/app/feedback/settings" : null}
+            epicsHref="/app/feedback/epics"
             initialTicketId={typeof ticket === "string" ? ticket : null}
             emailsReporters={FEEDBACK_EMAILS_REPORTERS}
           />

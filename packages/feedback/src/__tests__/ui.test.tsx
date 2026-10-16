@@ -350,7 +350,12 @@ describe("./admin: the settings screens over a transport", () => {
     await type(first.querySelector("input.aib-input"), "New");
     await click(button(first, "Colour #12b23b"));
     await click(button(first, "Save"));
-    expect(t.of("updateColumn")[0]?.args).toEqual(["c1", { label: "New", color: "#12b23b", isTerminal: false, wipLimit: null, agingWarnHours: null, agingStaleHours: null }]);
+    expect(t.of("updateColumn")[0]?.args).toEqual(["c1", { label: "New", color: "#12b23b", isTerminal: false, isWaiting: false, wipLimit: null, agingWarnHours: null, agingStaleHours: null }]);
+    // 0.12.0: a column can be marked waiting — what an epic's progress counts as waiting.
+    const second = rows[1]!;
+    await click(second.querySelector("label[title^='An epic'] input"));
+    await click(button(second, "Save"));
+    expect(t.of("updateColumn")[1]?.args[1]).toMatchObject({ isWaiting: true });
     await click(button(container, "Move Doing left"));
     expect(t.of("reorderColumns")[0]?.args[0]).toEqual(["c2", "c1", "c3"]);
     expect(shortNameOf("1st line!")).toBe("c_1st_line");

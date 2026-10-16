@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactElement } from "react";
 import { FILTER_PRIORITIES, PRIORITY_LABELS } from "./board-filters";
+import { takesTickets, type EpicStatus } from "./epic-core";
 import type { NewTicketInput } from "./board-client";
 import { BoardStyles, useBoardStyles } from "./board-styles";
 
@@ -55,6 +56,10 @@ export interface NewTicketDialogProps {
   categories?: ReadonlyArray<{ key: string; label: string }>;
   /** The company's people; absent or empty hides "Assigned to". */
   people?: ReadonlyArray<{ id: string; name: string }>;
+  /** The company's epics (0.12.0): those still being worked on are offered. None hides "Epic". */
+  epics?: ReadonlyArray<{ id: string; name: string; status?: EpicStatus | null }>;
+  /** Start in this epic (an epic's own "New ticket"). */
+  defaultEpicId?: string | null;
   /** The column the "+" was pressed on. */
   defaultStatus?: string | null;
   /**
@@ -86,6 +91,8 @@ export function NewTicketDialog({
   statuses,
   categories = [],
   people = [],
+  epics = [],
+  defaultEpicId = null,
   defaultStatus = null,
   onCreate,
   onClose,
@@ -102,6 +109,8 @@ export function NewTicketDialog({
   const [priority, setPriority] = useState<NewTicketInput["priority"]>("medium");
   const [category, setCategory] = useState("");
   const [assigneeId, setAssigneeId] = useState("");
+  const offeredEpics = epics.filter((epic) => takesTickets(epic.status ?? "open"));
+  const [epicId, setEpicId] = useState(defaultEpicId && offeredEpics.some((epic) => epic.id === defaultEpicId) ? defaultEpicId : "");
   const [forCustomer, setForCustomer] = useState(false);
   const [reporterName, setReporterName] = useState("");
   const [reporterEmail, setReporterEmail] = useState("");
@@ -125,6 +134,7 @@ export function NewTicketDialog({
         priority,
         category: category || null,
         ...(assigneeId ? { assigneeId } : {}),
+        ...(epicId ? { epicId } : {}),
         ...(forCustomer && reporterName.trim() ? { reporterName: reporterName.trim() } : {}),
         ...(forCustomer && reporterEmail.trim() ? { reporterEmail: reporterEmail.trim() } : {}),
         ...(forCustomer && reporterEmail.trim() && tellThem ? { tellReporter: true } : {}),
@@ -261,6 +271,19 @@ export function NewTicketDialog({
                   {people.map((person) => (
                     <option key={person.id} value={person.id}>
                       {person.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            {offeredEpics.length > 0 ? (
+              <label className="aib-field">
+                Epic
+                <select className="aib-select" value={epicId} onChange={(event) => setEpicId(event.target.value)}>
+                  <option value="">No epic</option>
+                  {offeredEpics.map((epic) => (
+                    <option key={epic.id} value={epic.id}>
+                      {epic.name}
                     </option>
                   ))}
                 </select>

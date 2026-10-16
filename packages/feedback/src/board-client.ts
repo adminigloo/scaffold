@@ -10,6 +10,8 @@
  * credentials, no-store. A refusal throws `FeedbackAdminError` carrying the
  * server's own plain sentence, which the screens show as it is.
  *
+ * 0.12.0: the epics — list, read, make, edit, move along, fill and delete.
+ *
  * 0.11.0: the board read takes the filters (board-filters.ts, the same names
  * the address bar carries), and the client gains New ticket, editing, the
  * activity trail and the company's people. The settings screens (./admin)
@@ -18,6 +20,7 @@
  */
 
 import { EMPTY_FILTERS, filtersToSearchParams, type BoardFilters } from "./board-filters";
+import type { EpicBucket, EpicProgress, EpicStatus } from "./epic-core";
 
 export interface FeedbackColumnWire {
   id: string;
@@ -26,6 +29,8 @@ export interface FeedbackColumnWire {
   color: string | null;
   sortOrder: number;
   isTerminal: boolean;
+  /** Work here waits on someone else (0.12.0): an epic counts these tickets as waiting. */
+  isWaiting?: boolean;
   wipLimit: number | null;
   agingWarnHours: number | null;
   agingStaleHours: number | null;
@@ -48,6 +53,8 @@ export interface FeedbackTicketWire {
   source?: string;
   /** False: the reporter isn't emailed about it (a team ticket filed without "tell them"). */
   notifyReporter?: boolean;
+  /** The epic it's part of (0.12.0), one of `FeedbackBoardWire.epics`. */
+  epicId?: string | null;
   reporterName: string | null;
   reporterEmail: string | null;
   pagePathname: string | null;
@@ -66,12 +73,24 @@ export interface FeedbackFacetsWire {
   priority: Record<string, number>;
   category: Record<string, number>;
   assignee: Record<string, number>;
+  /** Per epic id, and "__none" for no epic (0.12.0). */
+  epic?: Record<string, number>;
   source: Record<string, number>;
+}
+
+/** An epic as the board carries it (0.12.0): the badge, the filter, the pickers. */
+export interface FeedbackBoardEpicWire {
+  id: string;
+  name: string;
+  color: string;
+  status: EpicStatus;
 }
 
 export interface FeedbackBoardWire {
   statuses: FeedbackColumnWire[];
   tickets: FeedbackTicketWire[];
+  /** The company's epics, every status (0.12.0). */
+  epics?: FeedbackBoardEpicWire[];
   archivableCount: number;
   /** 0.11.0: the board's size, the filtered size, whether some matches were left out, and the option counts. */
   totalCount?: number;
@@ -84,7 +103,7 @@ export interface FeedbackBoardWire {
 export interface FeedbackEventWire {
   id: string;
   ticketId: string;
-  kind: "created" | "title" | "priority" | "category" | "assignee" | "status" | "archived" | "unarchived";
+  kind: "created" | "title" | "priority" | "category" | "assignee" | "status" | "archived" | "unarchived" | "epic";
   fromValue: string | null;
   toValue: string | null;
   actorId: string | null;
@@ -111,6 +130,8 @@ export interface NewTicketInput {
   reporterEmail?: string | null;
   /** Email the customer when the team replies or moves it. Off unless chosen: they never used the form. */
   tellReporter?: boolean;
+  /** The epic it's part of (0.12.0). */
+  epicId?: string | null;
 }
 
 /** What the ticket editor changes (0.11.0). Absent = unchanged; null clears. */
@@ -119,6 +140,54 @@ export interface TicketPatch {
   priority?: "low" | "medium" | "high" | "critical";
   category?: string | null;
   assigneeId?: string | null;
+  /** The epic it's part of (0.12.0); null takes it out. */
+  epicId?: string | null;
+}
+
+/** An epic as the epics list shows it (0.12.0): with its progress. */
+export interface FeedbackEpicWire {
+  id: string;
+  name: string;
+  description: string | null;
+  status: EpicStatus;
+  ownerId: string | null;
+  ownerName: string | null;
+  /** "YYYY-MM-DD", or null. */
+  targetDate: string | null;
+  color: string;
+  completedAt: string | null;
+  archivedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  progress: EpicProgress;
+}
+
+/** One of an epic's tickets, with the bucket its progress counts it in. */
+export interface FeedbackEpicTicketWire {
+  id: string;
+  ticketNumber: string;
+  title: string;
+  status: string;
+  statusLabel: string;
+  priority: string;
+  assignee: string | null;
+  archivedAt: string | null;
+  createdAt: string;
+  bucket: EpicBucket;
+}
+
+export interface FeedbackEpicDetailWire extends FeedbackEpicWire {
+  tickets: FeedbackEpicTicketWire[];
+  truncated: boolean;
+}
+
+/** What the epic form sends (0.12.0). `ownerId`: one of the company's people, or null for nobody. */
+export interface EpicInput {
+  name?: string;
+  description?: string | null;
+  targetDate?: string | null;
+  color?: string;
+  ownerId?: string | null;
 }
 
 export interface FeedbackTicketDetailWire extends FeedbackTicketWire {
@@ -162,7 +231,7 @@ export interface FeedbackSettingsTransport {
   createColumn(input: { key: string; label: string; color?: string | null; isTerminal?: boolean }): Promise<FeedbackColumnWire>;
   updateColumn(
     id: string,
-    patch: Partial<Pick<FeedbackColumnWire, "label" | "color" | "isTerminal" | "wipLimit" | "agingWarnHours" | "agingStaleHours">>,
+    patch: Partial<Pick<FeedbackColumnWire, "label" | "color" | "isTerminal" | "isWaiting" | "wipLimit" | "agingWarnHours" | "agingStaleHours">>,
   ): Promise<void>;
   /** `moveTo`: another column's key, for the tickets in this one. */
   deleteColumn(id: string, moveTo?: string | null): Promise<void>;
@@ -304,7 +373,7 @@ export class FeedbackAdminClient implements FeedbackSettingsTransport {
   }
   async updateColumn(
     id: string,
-    patch: Partial<Pick<FeedbackColumnWire, "label" | "color" | "isTerminal" | "wipLimit" | "agingWarnHours" | "agingStaleHours">>,
+    patch: Partial<Pick<FeedbackColumnWire, "label" | "color" | "isTerminal" | "isWaiting" | "wipLimit" | "agingWarnHours" | "agingStaleHours">>,
   ): Promise<void> {
     await this.call("POST", `columns/${encodeURIComponent(id)}`, patch);
   }
@@ -329,6 +398,33 @@ export class FeedbackAdminClient implements FeedbackSettingsTransport {
   }
   async reorderCategories(ids: readonly string[]): Promise<void> {
     await this.call("POST", "categories-order", { ids });
+  }
+
+  // --- Epics (0.12.0) -------------------------------------------------------
+
+  async epics(): Promise<FeedbackEpicWire[]> {
+    return (await this.call<{ epics: FeedbackEpicWire[] }>("GET", "epics")).epics;
+  }
+  async epic(id: string): Promise<FeedbackEpicDetailWire> {
+    return (await this.call<{ epic: FeedbackEpicDetailWire }>("GET", `epics/${encodeURIComponent(id)}`)).epic;
+  }
+  async createEpic(input: EpicInput & { name: string }): Promise<FeedbackEpicWire> {
+    return (await this.call<{ epic: FeedbackEpicWire }>("POST", "epics", input)).epic;
+  }
+  async updateEpic(id: string, patch: EpicInput): Promise<void> {
+    await this.call("POST", `epics/${encodeURIComponent(id)}`, patch);
+  }
+  /** Only the moves EPIC_TRANSITIONS allows; anything else is refused with a sentence. */
+  async setEpicStatus(id: string, status: EpicStatus): Promise<void> {
+    await this.call("POST", `epics/${encodeURIComponent(id)}/status`, { status });
+  }
+  /** Put tickets in and take others out, in one change. */
+  setEpicTickets(id: string, change: { add?: readonly string[]; remove?: readonly string[] }): Promise<{ added: number; movedFromOther: number; removed: number }> {
+    return this.call("POST", `epics/${encodeURIComponent(id)}/tickets`, { add: change.add ?? [], remove: change.remove ?? [] });
+  }
+  /** Its tickets stay on the board and leave the epic. */
+  deleteEpic(id: string): Promise<{ deleted: true; detached: number }> {
+    return this.call("POST", `epics/${encodeURIComponent(id)}/delete`, {});
   }
 
   async keys(): Promise<FeedbackKeyWire[]> {

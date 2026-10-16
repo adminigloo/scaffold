@@ -47,7 +47,7 @@ export const feedbackPermissions = {
   },
   "feedback.manage": {
     label: "Answer and sort feedback",
-    description: "Reply to customers (they're emailed), move tickets between columns, assign them and archive finished ones.",
+    description: "Reply to customers (they're emailed), move tickets between columns, assign them and archive finished ones, and make and change epics.",
     category: "Feedback",
     defaultFor: ["owner", "admin", "member"],
   },

@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import {
   addTicketMessage,
   createCategory,
+  createEpic,
   createFeedbackAdminHandlers,
   createStatus,
   createTicket,
@@ -10,6 +11,7 @@ import {
   FEEDBACK_ADMIN_ROUTES,
   feedbackPermissions,
   issueClientKey,
+  setEpicTickets,
   submitPayloadSchema,
   updateTicket,
   type FeedbackEvent,
@@ -93,6 +95,9 @@ async function plant(tenantId: string, label: string) {
   // find it from the other company (and the trail has a row of its own).
   const person = `person-of-${tenantId}`;
   await updateTicket(t.db, tenantId, { ticketId: ticket.id, category: "triage", assignee: { id: person, name: `${label} Person` } }, { id: null, name: `${label} Office` });
+  // 0.12.0: an epic led by the company's person, with the ticket in it.
+  const epic = await createEpic(t.db, tenantId, { name: `${label} launch`, description: `${label} epic notes`, owner: { id: person, name: `${label} Person` } }, { id: null, name: `${label} Office` });
+  await setEpicTickets(t.db, tenantId, epic.id, { add: [ticket.id] }, { id: null, name: `${label} Office` });
   return {
     rows: {
       ticket: ticket.id,
@@ -103,8 +108,9 @@ async function plant(tenantId: string, label: string) {
       "category-key": "triage",
       assignee: person,
       "ticket-number": ticket.ticketNumber,
+      epic: epic.id,
     } as Record<string, string>,
-    strings: [tenantId, ticket.id, ticket.ticketToken, column.id, category.id, key.id, key.key, person, `${label} probe report`, `${label} Reporter`, `${label}@reporter.test`, `${label} staff note`, `${label} waiting`, `${label} billing`, `${label} website`, `${label} Person`, `${label} Office`, `${label} triage`],
+    strings: [tenantId, ticket.id, ticket.ticketToken, column.id, category.id, key.id, key.key, person, `${label} probe report`, `${label} Reporter`, `${label}@reporter.test`, `${label} staff note`, `${label} waiting`, `${label} billing`, `${label} website`, `${label} Person`, `${label} Office`, `${label} triage`, epic.id, `${label} launch`, `${label} epic notes`],
   };
 }
 
@@ -117,6 +123,7 @@ async function snapshot(tenantId: string): Promise<string> {
     await rows(sql`select * from feedback_client_keys where tenant_id = ${tenantId} order by id`),
     await rows(sql`select m.* from feedback_messages m join feedback_tickets t on t.id = m.ticket_id where t.tenant_id = ${tenantId} order by m.id`),
     await rows(sql`select * from feedback_ticket_events where tenant_id = ${tenantId} order by id`),
+    await rows(sql`select * from feedback_epics where tenant_id = ${tenantId} order by id`),
   ]);
 }
 
@@ -149,6 +156,7 @@ describe("the route table", () => {
       "category-key": "nope",
       assignee: "nope",
       "ticket-number": "FB-99999",
+      epic: "nope",
     };
     const { handle } = handlers();
     for (const route of FEEDBACK_ADMIN_ROUTES.filter((r) => /\{/.test(r.path))) {

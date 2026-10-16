@@ -19,7 +19,8 @@ export const dynamic = "force-dynamic";
  * company's /app/feedback uses over its own routes. The page checks the staff
  * key first so someone without it gets a sentence rather than a board that
  * fails on every call; the routes check it again on every call anyway.
- * `?ticket=` opens that ticket (an alert's or a colleague's link).
+ * `?ticket=` opens that ticket (an alert's or a colleague's link). Each card
+ * shows its epic, and the toolbar links to the epics (/admin/feedback/epics).
  */
 export default async function FeedbackBoardPage({
   searchParams,
@@ -48,6 +49,7 @@ export default async function FeedbackBoardPage({
         baseUrl="/api/admin/feedback"
         canManage={can.can("staff.feedback.manage")}
         settingsHref={can.can("staff.feedback.settings") ? "/admin/feedback/settings" : null}
+        epicsHref="/admin/feedback/epics"
         initialTicketId={typeof ticket === "string" ? ticket : null}
         // This site's own board emails nobody: its reporters read the team's
         // answer under "My reports". The reply box says so.

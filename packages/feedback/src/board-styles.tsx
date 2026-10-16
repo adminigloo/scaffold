@@ -1,6 +1,7 @@
 import { useEffect, version as reactVersion, type ReactElement } from "react";
 import { DARK_PALETTE, LIGHT_PALETTE, paletteDeclarations } from "./board-tokens";
 import { EXTRA_CSS } from "./board-styles-extra";
+import { EPIC_CSS } from "./epic-styles";
 
 /**
  * The board's stylesheet and the two ways it reaches the page (moved out of
@@ -269,8 +270,8 @@ ${TOKEN_SCOPE}:where([data-aib-theme="dark"]) { ${paletteDeclarations(DARK_PALET
   background: var(--aib-surface); color: var(--aib-ink); display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 `;
 
-/** The whole stylesheet: the board's own, then the 0.11.0 surfaces'. */
-export const CSS_TEXT = BASE_CSS + EXTRA_CSS;
+/** The whole stylesheet: the board's own, then the 0.11.0 surfaces', then the epics' (0.12.0). */
+export const CSS_TEXT = BASE_CSS + EXTRA_CSS + EPIC_CSS;
 
 function injectStyles(): void {
   if (typeof document === "undefined" || document.getElementById(STYLE_ID)) return;

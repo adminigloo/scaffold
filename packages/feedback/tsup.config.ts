@@ -20,9 +20,10 @@ export default defineConfig([
     clean: false,
   },
   {
-    // ./board and ./admin (0.11.0) are both client entries; one config, so
-    // the shared modules (styles, the client, the filters) are split once.
-    entry: ["src/board.tsx", "src/admin.tsx"],
+    // ./board, ./admin (0.11.0) and ./epics (0.12.0) are client entries; one
+    // config, so the shared modules (styles, the client, the filters, the
+    // epic badge) are split once.
+    entry: ["src/board.tsx", "src/admin.tsx", "src/epics.tsx"],
     format: ["esm", "cjs"],
     dts: true,
     banner: { js: '"use client";' },

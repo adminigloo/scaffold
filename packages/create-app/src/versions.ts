@@ -160,7 +160,10 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // listPeople, and the isolation proof plants rows for the new routes
   // (New ticket, editing, the trail) and the board's filters — none of which
   // exist in 0.10.
-  feedback: "0.11.0",
+  // 0.12.0: epics. The emitted epics pages import the new ./epics entry, the
+  // boards pass `epicsHref`, and the isolation proof plants an epic (createEpic,
+  // setEpicTickets) for the epic routes — none of which exist in 0.11.
+  feedback: "0.12.0",
   // 0.2.1 — 0.2.0 brought the "My reports" view the thread endpoints exist
   // to serve; the patch is the glacier re-skin with the widget's own dark
   // theme, which a caret would cover anyway. Pinned at the workspace version

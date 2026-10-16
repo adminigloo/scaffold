@@ -2482,7 +2482,7 @@ export function renderPermissionsCatalog(answers: Answers): string {
   },
   "staff.feedback.manage": {
     label: "Answer and sort feedback",
-    description: "Reply to the people who sent feedback, move tickets between columns, assign and archive them.",
+    description: "Reply to the people who sent feedback, move tickets between columns, assign and archive them, and make and change the board's epics.",
     category: "Feedback",
     defaultFor: ["admin", "cs_lead", "cs_agent"],
   },
@@ -5088,6 +5088,15 @@ export function renderSiteNav(answers: Answers): string {
         "website, as a board to answer and sort; its columns, categories and " +
         "website keys are under Feedback settings.",
     });
+    // Feedback 0.12: the company's epics, beside its board.
+    companyFeatureLinks.push({
+      href: "/app/feedback/epics",
+      label: "Epics",
+      permission: "feedback.view",
+      why:
+        `The bigger pieces of work the ${label}'s feedback tickets are grouped ` +
+        "under, each with its progress, who leads it and when it's due.",
+    });
   }
   if (!single && answers.includeStorage) {
     companyFeatureLinks.push({
@@ -5543,6 +5552,16 @@ export function renderAdminNav(answers: Answers): string {
             "columns, open it for the report, the screenshot, what the person " +
             "clicked and the conversation, and answer them. Fed by the " +
             "feedback button on every page of this app.",
+        },
+        {
+          href: "/admin/feedback/epics",
+          label: "Epics",
+          permission: "staff.feedback.view",
+          why:
+            "The bigger pieces of work this board's tickets are grouped under " +
+            "(feedback 0.12): each epic's progress, who leads it and when it's " +
+            "due; its page adds and takes out tickets. Changing them is " +
+            "staff.feedback.manage.",
         },
         {
           href: "/admin/feedback/settings",

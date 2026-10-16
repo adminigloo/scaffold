@@ -188,7 +188,24 @@ render `@adminigloo/feedback/admin`'s screens (columns, categories, website
 keys); `src/components/FeedbackSettings.tsx` is gone. `upgrade` removes it;
 then `pnpm db:generate && pnpm db:migrate` (additions only).
 
-Not included yet: epics, saved views per person, custom fields, custom domains.
+Not included yet: saved views per person, custom fields, custom domains.
+
+### Epics on the feedback boards (feedback 0.12, create-app 0.28)
+
+Each company's epics are at `/app/feedback/epics` (and `/app/feedback/epics/{id}`),
+this site's own board's at `/admin/feedback/epics` — the bigger pieces of work
+tickets are grouped under, each with its progress (done, in progress, waiting,
+not started, counted by the board's columns), who leads it and when it's due.
+The pages are a few lines around `@adminigloo/feedback/epics`' `FeedbackEpics`
+and `FeedbackEpic`, on the board's own keys (`feedback.view` to look,
+`feedback.manage` to change; `staff.feedback.*` on this site's own board), with
+a nav entry each. On the boards, each card shows its epic, the toolbar filters
+by epic ("No epic" too), and the ticket panel and New ticket pick one. The
+isolation proof plants an epic per company and drives every epic route from
+the package's table. `upgrade` adds the pages; then `pnpm db:generate && pnpm
+db:migrate` (additions only).
+
+Not included: sprints, swimlanes by epic, saved views per person.
 
 ### Not included (Tenancy 2b-1)
 
@@ -196,7 +213,7 @@ What a generated project does NOT do yet, so nobody sells it as doing so. The
 generated `README.md` carries the same lists (single-business projects leave
 out the items that are only about companies).
 
-- **Epics on the feedback board** (grouping tickets under a bigger piece of work) — its next release. Its filters, search, New ticket, editing and settings screens are here (feedback 0.11), and so are the board per company, its alerts and its private screenshots (Tenancy 2b-2a).
+- **Sprints and swimlanes by epic on the feedback board.** Its epics, filters, search, New ticket, editing and settings screens are here (feedback 0.12), and so are the board per company, its alerts and its private screenshots (Tenancy 2b-2a).
 - **The AI assistant per company** — Tenancy 2b-3.
 - **Website analytics, SEO/AEO and book-a-call (booking) per company** —
   Tenancy 2b-4.

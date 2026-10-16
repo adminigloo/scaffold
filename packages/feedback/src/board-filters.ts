@@ -9,8 +9,8 @@
  *   - OR within a field, AND across fields, and search ANDs with them too
  *     (Ask Lou's search silently dropped every other filter).
  *   - ONE set of names for the address bar and the request: `status`,
- *     `priority`, `category`, `assignee`, `source`, `q`, `from`, `to`,
- *     `archived` — so a shared link and a refresh read the same board.
+ *     `priority`, `category`, `assignee`, `epic` (0.12.0), `source`, `q`,
+ *     `from`, `to`, `archived` — so a shared link and a refresh read the same board.
  *   - `NONE` ("Unassigned", "No category") and `ME` ("Mine") are values in
  *     their field, not separate flags: the "Unassigned" option and the
  *     "Unassigned" quick filter are the same thing, and Clear clears both.
@@ -52,8 +52,11 @@ export const PRIORITY_LABELS: Readonly<Record<FilterPriority, string>> = Object.
   low: "Low",
 });
 
-/** The fields that take several values. */
-export const FILTER_FIELDS = ["status", "priority", "category", "assignee", "source"] as const;
+/**
+ * The fields that take several values. `epic` (0.12.0): an epic's id, or
+ * `FILTER_NONE` for "No epic".
+ */
+export const FILTER_FIELDS = ["status", "priority", "category", "assignee", "epic", "source"] as const;
 export type FilterField = (typeof FILTER_FIELDS)[number];
 
 export interface BoardFilters {
@@ -63,6 +66,8 @@ export interface BoardFilters {
   priority: string[];
   category: string[];
   assignee: string[];
+  /** Epic ids, and `FILTER_NONE` for "No epic" (0.12.0). */
+  epic: string[];
   source: string[];
   /** Sent on or after this moment (ISO), inclusive. */
   from: string | null;
@@ -78,6 +83,7 @@ export const EMPTY_FILTERS: BoardFilters = Object.freeze({
   priority: [],
   category: [],
   assignee: [],
+  epic: [],
   source: [],
   from: null,
   to: null,
@@ -123,6 +129,7 @@ export function filtersFromSearchParams(params: URLSearchParams): BoardFilters {
     priority: many("priority").filter((value) => (FILTER_PRIORITIES as readonly string[]).includes(value)),
     category: many("category"),
     assignee: many("assignee"),
+    epic: many("epic"),
     source: many("source").filter((value) => (FILTER_SOURCES as readonly string[]).includes(value)),
     from: cleanMoment(params.get("from")),
     to: cleanMoment(params.get("to")),

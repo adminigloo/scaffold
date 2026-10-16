@@ -32,12 +32,23 @@ import { createTestDb, report, schemaDdl } from "./pglite.js";
 
 const SQL_DIR = join(__dirname, "..", "..", "sql");
 const read = (name: string) => readFileSync(join(SQL_DIR, name), "utf8");
-/** A 0.9 database brought all the way to 0.11. */
+/** A 0.9 database brought all the way to 0.12. */
 async function upgradeFrom09(client: { exec: (q: string) => Promise<unknown> }): Promise<void> {
   await client.exec(read("upgrade-0.9-to-0.10.sql"));
   await client.exec(read("upgrade-0.10-to-0.11.sql"));
+  await client.exec(read("upgrade-0.11-to-0.12.sql"));
 }
-const TABLES = ["feedback_client_keys", "feedback_statuses", "feedback_categories", "feedback_tickets", "feedback_messages", "feedback_uploads", "feedback_ticket_events", "feedback_boards"];
+const TABLES = [
+  "feedback_client_keys",
+  "feedback_statuses",
+  "feedback_categories",
+  "feedback_tickets",
+  "feedback_messages",
+  "feedback_uploads",
+  "feedback_ticket_events",
+  "feedback_boards",
+  "feedback_epics",
+];
 
 /** 0.9.1's tables, as its drizzle schema made them. */
 const V09 = [
@@ -63,27 +74,38 @@ async function indexesOf(client: { query: (q: string) => Promise<{ rows: unknown
   return (result.rows as Array<{ indexname: string }>).map((row) => row.indexname);
 }
 
-describe("sql/feedback-0.11.0.sql", () => {
+describe("sql/feedback-0.12.0.sql", () => {
   it("makes the same tables, columns and indexes as the schema", async () => {
     const fromSchema = await createTestDb();
-    const fromSql = await createTestDb({ sql: [read("feedback-0.11.0.sql")] });
+    const fromSql = await createTestDb({ sql: [read("feedback-0.12.0.sql")] });
     for (const table of TABLES) {
       expect(await columnsOf(fromSql.client, table), table).toEqual(await columnsOf(fromSchema.client, table));
       expect((await indexesOf(fromSql.client, table)).filter((n) => !n.endsWith("_pkey")), table).toEqual(
         (await indexesOf(fromSchema.client, table)).filter((n) => !n.endsWith("_pkey")),
       );
     }
+    // The same foreign keys — which table points at which, and what a delete
+    // does (0.12.0: a ticket's epic). By table, not name: the 0.11 SQL named
+    // its two the Postgres way.
+    const keys = async (client: { query: (q: string) => Promise<{ rows: unknown[] }> }) =>
+      (
+        await client.query(
+          `select conrelid::regclass::text as "from", confrelid::regclass::text as "to", confdeltype from pg_constraint where contype = 'f' and conrelid::regclass::text like '%feedback_%' order by 1, 2`,
+        )
+      ).rows;
+    expect(await keys(fromSql.client)).toEqual(await keys(fromSchema.client));
     // And the package runs on it.
     await createTicket(fromSql.db, { tenantId: "co-1", payload: submitPayloadSchema.parse(report()) });
     expect((await listBoardData(fromSql.db, "co-1")).tickets).toHaveLength(1);
     await fromSchema.close();
     await fromSql.close();
     expect(schemaDdl().length).toBeGreaterThan(0);
-  });
+    // Two databases built from scratch: slower than the default 5s on a busy machine.
+  }, 30_000);
 });
 
 describe("sql/upgrade-0.10-to-0.11.sql", () => {
-  it("brings a 0.10 install to the schema, keeps every ticket as it was, and runs twice without harm", async () => {
+  it("brings a 0.10 install to the schema (with the 0.12 upgrade after it), keeps every ticket as it was, and runs twice without harm", async () => {
     const fromSchema = await createTestDb();
     const t = await createTestDb({ sql: [read("feedback-0.10.0.sql")] });
     await t.client.exec(`insert into feedback_statuses (id, tenant_id, key, label, sort_order) values ('s1', 'co-a', 'open', 'Open', 10)`);
@@ -93,6 +115,7 @@ describe("sql/upgrade-0.10-to-0.11.sql", () => {
     const upgrade = read("upgrade-0.10-to-0.11.sql");
     await t.client.exec(upgrade);
     await t.client.exec(upgrade);
+    await t.client.exec(read("upgrade-0.11-to-0.12.sql"));
     for (const table of TABLES) {
       expect(await columnsOf(t.client, table), table).toEqual(await columnsOf(fromSchema.client, table));
       expect((await indexesOf(t.client, table)).filter((n) => !n.endsWith("_pkey")), table).toEqual(
@@ -206,7 +229,7 @@ describe("sql/upgrade-0.9-to-0.10.sql", () => {
   });
 
   it("drops the default after filling it (L4): an insert that forgets the company fails", async () => {
-    for (const sqlText of [read("upgrade-0.9-to-0.10.sql"), read("feedback-0.10.0.sql"), read("feedback-0.11.0.sql")]) {
+    for (const sqlText of [read("upgrade-0.9-to-0.10.sql"), read("feedback-0.10.0.sql"), read("feedback-0.11.0.sql"), read("feedback-0.12.0.sql")]) {
       const t = await createTestDb({ sql: sqlText.startsWith("-- @adminigloo/feedback: upgrade") ? V09 : [] });
       await t.client.exec(sqlText);
       await expect(t.client.exec(`insert into feedback_statuses (id, key, label) values ('x', 'loose', 'Loose')`)).rejects.toThrow();

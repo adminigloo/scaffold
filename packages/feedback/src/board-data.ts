@@ -36,6 +36,17 @@ import {
   type FeedbackTicketEventKind,
   type FeedbackTicketSource,
 } from "./schema.js";
+import { isUniqueViolation, noNul, NUL_MESSAGE, recordEventsQuietly, sameName, type EventDraft } from "./board-shared.js";
+import {
+  autoStartEpics,
+  autoStartEpicsOfTickets,
+  epicForTicket,
+  epicNameOf,
+  isForeignKeyViolation,
+  listBoardEpics,
+  staleEpicError,
+  type BoardEpic,
+} from "./epics-data.js";
 
 /**
  * The board's server half: every read and write a company's staff screens
@@ -142,6 +153,8 @@ export interface BoardStatus {
   color: string | null;
   sortOrder: number;
   isTerminal: boolean;
+  /** Work here waits on someone else (0.12.0): an epic's progress counts it as "waiting". */
+  isWaiting: boolean;
   wipLimit: number | null;
   agingWarnHours: number | null;
   agingStaleHours: number | null;
@@ -155,6 +168,7 @@ const BOARD_STATUS_COLUMNS = {
   color: feedbackStatuses.color,
   sortOrder: feedbackStatuses.sortOrder,
   isTerminal: feedbackStatuses.isTerminal,
+  isWaiting: feedbackStatuses.isWaiting,
   wipLimit: feedbackStatuses.wipLimit,
   agingWarnHours: feedbackStatuses.agingWarnHours,
   agingStaleHours: feedbackStatuses.agingStaleHours,
@@ -219,6 +233,7 @@ export const createStatusSchema = z
     color: z.string().max(30).nullish(),
     sortOrder: z.number().int().min(0).max(100000).optional(),
     isTerminal: z.boolean().optional(),
+    isWaiting: z.boolean().optional(),
     wipLimit: z.number().int().min(1).max(9999).nullish(),
     agingWarnHours: z.number().int().min(1).max(8760).nullish(),
     agingStaleHours: z.number().int().min(1).max(8760).nullish(),
@@ -239,6 +254,7 @@ export const updateStatusSchema = z
     color: z.string().max(30).nullish(),
     sortOrder: z.number().int().min(0).max(100000).optional(),
     isTerminal: z.boolean().optional(),
+    isWaiting: z.boolean().optional(),
     wipLimit: z.number().int().min(1).max(9999).nullish(),
     agingWarnHours: z.number().int().min(1).max(8760).nullish(),
     agingStaleHours: z.number().int().min(1).max(8760).nullish(),
@@ -268,10 +284,6 @@ export function keyFromLabel(label: string): string {
   return /^[a-z]/.test(base) ? base : `c_${base}`.slice(0, 50);
 }
 
-/** Two names a person would call the same: case and spacing don't count. */
-function sameName(a: string, b: string): boolean {
-  return a.trim().replace(/\s+/g, " ").toLowerCase() === b.trim().replace(/\s+/g, " ").toLowerCase();
-}
 
 /**
  * The short name to store (0.11.0): the suggestion if it's free, else the
@@ -289,10 +301,6 @@ function freeKey(base: string, taken: ReadonlySet<string>): string {
   }
 }
 
-function isUniqueViolation(error: unknown): boolean {
-  const code = (error as { code?: unknown } | null)?.code ?? (error as { cause?: { code?: unknown } } | null)?.cause?.code;
-  return code === "23505";
-}
 
 export async function createStatus(
   db: FeedbackDb,
@@ -334,6 +342,7 @@ export async function createStatus(
           color: parsed.color ?? null,
           sortOrder,
           isTerminal: parsed.isTerminal ?? false,
+          isWaiting: parsed.isWaiting ?? false,
           wipLimit: parsed.wipLimit ?? null,
           agingWarnHours: parsed.agingWarnHours ?? null,
           agingStaleHours: parsed.agingStaleHours ?? null,
@@ -372,6 +381,7 @@ export async function updateStatus(
   if (parsed.color !== undefined) patch["color"] = parsed.color;
   if (parsed.sortOrder !== undefined) patch["sortOrder"] = parsed.sortOrder;
   if (parsed.isTerminal !== undefined) patch["isTerminal"] = parsed.isTerminal;
+  if (parsed.isWaiting !== undefined) patch["isWaiting"] = parsed.isWaiting;
   if (parsed.wipLimit !== undefined) patch["wipLimit"] = parsed.wipLimit;
   if (parsed.agingWarnHours !== undefined) patch["agingWarnHours"] = parsed.agingWarnHours;
   if (parsed.agingStaleHours !== undefined) patch["agingStaleHours"] = parsed.agingStaleHours;
@@ -468,6 +478,14 @@ export async function deleteStatus(
     );
   }
   await db.delete(feedbackStatuses).where(and(eq(feedbackStatuses.tenantId, tenantId), eq(feedbackStatuses.id, statusId)));
+  // Tickets that moved may start their epics (0.12.0) — judged on the board as
+  // it is now, without the deleted column.
+  await autoStartEpicsOfTickets(
+    db,
+    tenantId,
+    movedTickets.map((ticket) => ticket.id),
+    options.now ?? new Date(),
+  );
   return target ? { deleted: true, moved, to: target, tickets: movedTickets } : { deleted: true };
 }
 
@@ -519,6 +537,8 @@ export interface BoardTicket {
   source: FeedbackTicketSource;
   /** Is the reporter emailed about it (0.11.0; false for a team ticket filed without "tell them"). */
   notifyReporter: boolean;
+  /** The epic it's part of (0.12.0): one of this company's, named in `BoardData.epics`. */
+  epicId: string | null;
   reporterName: string | null;
   reporterEmail: string | null;
   pagePathname: string | null;
@@ -545,12 +565,20 @@ export interface BoardFacets {
   priority: Record<string, number>;
   category: Record<string, number>;
   assignee: Record<string, number>;
+  /** Per epic id, and `FILTER_NONE` for tickets in no epic (0.12.0). */
+  epic: Record<string, number>;
   source: Record<string, number>;
 }
 
 export interface BoardData {
   statuses: BoardStatus[];
   tickets: BoardTicket[];
+  /**
+   * This company's epics (0.12.0), every status: what a card's badge names,
+   * what the Epic filter and the pickers offer. A ticket's `epicId` is always
+   * one of these.
+   */
+  epics: BoardEpic[];
   /**
    * How many un-archived tickets sit in finished columns right now — the
    * number on the "Archive done (N)" button, counted in the database rather
@@ -587,6 +615,7 @@ const TICKET_CARD_COLUMNS = {
   assigneeId: feedbackTickets.assigneeId,
   source: feedbackTickets.source,
   notifyReporter: feedbackTickets.notifyReporter,
+  epicId: feedbackTickets.epicId,
   reporterName: feedbackTickets.reporterName,
   reporterEmail: feedbackTickets.reporterEmail,
   pagePathname: feedbackTickets.pagePathname,
@@ -603,12 +632,7 @@ const TICKET_CARD_COLUMNS = {
 // Filters and search (0.11.0)
 // ---------------------------------------------------------------------------
 
-/**
- * A NUL character can't be stored or searched in Postgres text (0.11.0: it
- * was a 500). Refused at the boundary with a sentence instead.
- */
-export const NUL_MESSAGE = "That has a character in it that can't be saved. Type it again without it.";
-const noNul = (value: string) => !value.includes("\u0000");
+export { NUL_MESSAGE };
 
 const filterValues = z
   .array(z.string().trim().min(1).max(200).refine(noNul, NUL_MESSAGE))
@@ -639,6 +663,7 @@ export const boardFilterSchema = z.object({
   priority: z.array(z.enum(FILTER_PRIORITIES)).max(FILTER_PRIORITIES.length).default([]),
   category: filterValues.default([]),
   assignee: filterValues.default([]),
+  epic: filterValues.default([]),
   source: z.array(z.enum(FILTER_SOURCES)).max(FILTER_SOURCES.length).default([]),
   from: filterMoment.default(null),
   to: filterMoment.default(null),
@@ -661,7 +686,7 @@ function ticketNumberOf(text: string): string | null {
   return `FB-${match[1]!.padStart(5, "0")}`;
 }
 
-type FilterPart = "status" | "priority" | "category" | "assignee" | "source" | "q" | "dates";
+type FilterPart = "status" | "priority" | "category" | "assignee" | "epic" | "source" | "q" | "dates";
 
 /**
  * The filters as WHERE conditions, one per field, so a facet can leave its own
@@ -696,6 +721,16 @@ function filterConditions(filters: BoardFilters, viewerId: string | null): Parti
         ids.length > 0 ? inArray(feedbackTickets.assigneeId, ids) : undefined,
         named.length > 0 ? and(isNull(feedbackTickets.assigneeId), inArray(feedbackTickets.assignee, named)) : undefined,
         none ? and(isNull(feedbackTickets.assigneeId), isNull(feedbackTickets.assignee)) : undefined,
+      ) ?? sql`false`;
+  }
+  if (filters.epic.length > 0) {
+    // An epic id is compared against THIS company's tickets only (the WHERE
+    // starts with the company), so another company's epic id matches nothing.
+    const ids = filters.epic.filter((value) => value !== FILTER_NONE);
+    parts.epic =
+      or(
+        ids.length > 0 ? inArray(feedbackTickets.epicId, ids) : undefined,
+        filters.epic.includes(FILTER_NONE) ? isNull(feedbackTickets.epicId) : undefined,
       ) ?? sql`false`;
   }
   if (filters.source.length > 0) parts.source = inArray(feedbackTickets.source, filters.source as FeedbackTicketSource[]);
@@ -744,6 +779,7 @@ const FACET_COLUMNS = {
   status: feedbackTickets.status,
   priority: feedbackTickets.priority,
   category: feedbackTickets.category,
+  epic: feedbackTickets.epicId,
   source: feedbackTickets.source,
 } as const;
 
@@ -778,9 +814,9 @@ export async function listBoardData(
     viewerId?: string | null;
   } = {},
 ): Promise<BoardData> {
-  const emptyFacets: BoardFacets = { status: {}, priority: {}, category: {}, assignee: {}, source: {} };
+  const emptyFacets: BoardFacets = { status: {}, priority: {}, category: {}, assignee: {}, epic: {}, source: {} };
   if (!isTenantId(tenantId)) {
-    return { statuses: [], tickets: [], archivableCount: 0, totalCount: 0, matchCount: 0, truncated: false, facets: emptyFacets };
+    return { statuses: [], tickets: [], epics: [], archivableCount: 0, totalCount: 0, matchCount: 0, truncated: false, facets: emptyFacets };
   }
   const filters: BoardFilters = boardFilterSchema.parse({ ...EMPTY_FILTERS, ...(options.filters ?? {}) });
   const includeArchived = options.includeArchived === true || filters.archived;
@@ -818,7 +854,7 @@ export async function listBoardData(
     terminalKeys.length === 0 ? 0 : await countWhere(db, ticketWhere(tenantId, false, inArray(feedbackTickets.status, terminalKeys)));
 
   // Per-option counts: each field counted with every OTHER field's filter on.
-  const facets: BoardFacets = { status: {}, priority: {}, category: {}, assignee: {}, source: {} };
+  const facets: BoardFacets = { status: {}, priority: {}, category: {}, assignee: {}, epic: {}, source: {} };
   for (const field of Object.keys(FACET_COLUMNS) as Array<keyof typeof FACET_COLUMNS>) {
     const others = (Object.entries(parts) as Array<[FilterPart, SQL]>)
       .filter(([part]) => part !== field)
@@ -880,7 +916,8 @@ export async function listBoardData(
     };
   });
 
-  return { statuses, tickets, archivableCount, totalCount, matchCount, truncated: matchCount > tickets.length, facets };
+  const epics = await listBoardEpics(db, tenantId);
+  return { statuses, tickets, epics, archivableCount, totalCount, matchCount, truncated: matchCount > tickets.length, facets };
 }
 
 /** The heavy half of a ticket, for the panel: the report, its captured context and errors. */
@@ -1073,14 +1110,6 @@ export interface TicketEvent {
   createdAt: Date;
 }
 
-interface EventDraft {
-  ticketId: string;
-  kind: FeedbackTicketEventKind;
-  fromValue: string | null;
-  toValue: string | null;
-  actorId: string | null;
-  actorName: string;
-}
 
 const EVENT_COLUMNS = {
   id: feedbackTicketEvents.id,
@@ -1093,31 +1122,6 @@ const EVENT_COLUMNS = {
   createdAt: feedbackTicketEvents.createdAt,
 } as const;
 
-/** Callers have already found every ticket INSIDE `tenantId`; the rows carry it too. */
-async function recordEvents(db: FeedbackDb, tenantId: string, drafts: readonly EventDraft[], now?: Date): Promise<void> {
-  if (drafts.length === 0) return;
-  await db.insert(feedbackTicketEvents).values(
-    drafts.map((draft) => ({
-      tenantId,
-      ticketId: draft.ticketId,
-      kind: draft.kind,
-      fromValue: draft.fromValue?.slice(0, 200) ?? null,
-      toValue: draft.toValue?.slice(0, 200) ?? null,
-      actorId: draft.actorId,
-      actorName: draft.actorName.trim().slice(0, 120) || "The team",
-      ...(now ? { createdAt: now } : {}),
-    })),
-  );
-}
-
-/** The trail is a record of a change, never the change itself: a failed write never undoes one. */
-async function recordEventsQuietly(db: FeedbackDb, tenantId: string, drafts: readonly EventDraft[], now?: Date): Promise<void> {
-  try {
-    await recordEvents(db, tenantId, drafts, now);
-  } catch {
-    /* the change stands */
-  }
-}
 
 /** One of this company's tickets' trail, oldest first ([] for any other ticket). */
 export async function listTicketEvents(db: FeedbackDb, tenantId: string, ticketId: string): Promise<TicketEvent[]> {
@@ -1173,6 +1177,11 @@ export const staffTicketSchema = z.object({
    * unless asked: the customer never used the feedback form.
    */
   tellReporter: z.boolean().optional(),
+  /**
+   * The epic it's part of (0.12.0): one of THIS company's, still being worked
+   * on. Another company's id is refused with a sentence, never written.
+   */
+  epicId: z.string().trim().min(1).max(200).nullish(),
 });
 
 export interface CreatedStaffTicket {
@@ -1219,6 +1228,8 @@ export async function createStaffTicket(
   const category = parsed.category ?? null;
   if (category !== null && (await categoryLabel(db, tenantId, category)) === null) throw new TicketChangeError(UNKNOWN_CATEGORY);
   const assignee = input.assignee ?? null;
+  // Checked before anything is written, like the column and the category.
+  const epic = parsed.epicId ? await epicForTicket(db, tenantId, parsed.epicId) : null;
 
   const { id, ticketNumber } = await insertNumbered(db, tenantId, {
     title: parsed.title,
@@ -1233,10 +1244,18 @@ export async function createStaffTicket(
     reporterName: parsed.reporterName || null,
     reporterEmail: parsed.reporterEmail || null,
     notifyReporter: parsed.tellReporter === true && Boolean(parsed.reporterEmail),
+    epicId: epic ? epic.id : null,
+  }).catch((error: unknown) => {
+    // The epic was deleted between the check above and this insert (review L2).
+    if (isForeignKeyViolation(error)) throw staleEpicError();
+    throw error;
   });
   await recordEventsQuietly(db, tenantId, [
     { ticketId: id, kind: "created", fromValue: null, toValue: null, actorId: actor.id, actorName: actor.name },
+    ...(epic ? [{ ticketId: id, kind: "epic" as const, fromValue: null, toValue: epic.name, actorId: actor.id, actorName: actor.name }] : []),
   ]);
+  // Filed straight into a later column, it starts its epic.
+  if (epic) await autoStartEpics(db, tenantId, [epic.id]).catch(() => undefined);
   return { id, ticketNumber, title: parsed.title, status };
 }
 
@@ -1252,6 +1271,8 @@ export const ticketPatchSchema = z
       .optional(),
     priority: priorityEnum.optional(),
     category: z.string().trim().min(1).max(50).nullable().optional(),
+    /** The epic it's part of (0.12.0); null takes it out of its epic. */
+    epicId: z.string().trim().min(1).max(200).nullable().optional(),
   });
 
 export type UpdateTicketResult = { readonly updated: true; readonly changed: readonly FeedbackTicketEventKind[] } | null;
@@ -1281,6 +1302,7 @@ export async function updateTicket(
       category: feedbackTickets.category,
       assignee: feedbackTickets.assignee,
       assigneeId: feedbackTickets.assigneeId,
+      epicId: feedbackTickets.epicId,
     })
     .from(feedbackTickets)
     .where(and(eq(feedbackTickets.tenantId, tenantId), eq(feedbackTickets.id, ticketId)))
@@ -1291,6 +1313,7 @@ export async function updateTicket(
     category: string | null;
     assignee: string | null;
     assigneeId: string | null;
+    epicId: string | null;
   }>;
   if (!ticket) return null;
 
@@ -1322,12 +1345,29 @@ export async function updateTicket(
       if (nextName !== ticket.assignee) drafts.push({ ...by, kind: "assignee", fromValue: ticket.assignee, toValue: nextName });
     }
   }
+  let startEpic: string | null = null;
+  if (patch.epicId !== undefined && patch.epicId !== ticket.epicId) {
+    // One of THIS company's epics, still taking tickets — checked before
+    // anything is written, so a refused epic leaves no half an edit.
+    const next = patch.epicId === null ? null : await epicForTicket(db, tenantId, patch.epicId, ticket.epicId);
+    set.epicId = next ? next.id : null;
+    drafts.push({ ...by, kind: "epic", fromValue: await epicNameOf(db, tenantId, ticket.epicId), toValue: next ? next.name : null });
+    startEpic = next ? next.id : null;
+  }
   if (Object.keys(set).length === 0) return { updated: true, changed: [] };
-  await db
-    .update(feedbackTickets)
-    .set(set)
-    .where(and(eq(feedbackTickets.tenantId, tenantId), eq(feedbackTickets.id, ticket.id)));
+  try {
+    await db
+      .update(feedbackTickets)
+      .set(set)
+      .where(and(eq(feedbackTickets.tenantId, tenantId), eq(feedbackTickets.id, ticket.id)));
+  } catch (error) {
+    // The epic was deleted between the check and the write (review L2).
+    if (isForeignKeyViolation(error)) throw staleEpicError();
+    throw error;
+  }
   await recordEventsQuietly(db, tenantId, drafts, now);
+  // A ticket already under way, put into an epic, starts it.
+  if (startEpic) await autoStartEpics(db, tenantId, [startEpic], now).catch(() => undefined);
   return { updated: true, changed: drafts.map((draft) => draft.kind) };
 }
 
@@ -1450,6 +1490,8 @@ export async function moveTicket(
     [{ ticketId: ticket.id, kind: "status", fromValue: label(ticket.status), toValue: status.label, actorId: actor.id, actorName: actor.name }],
     now,
   );
+  // A ticket that starts moving starts its epic (0.12.0).
+  await autoStartEpicsOfTickets(db, tenantId, [ticket.id], now);
   return { moved: true, from: ticket.status, to: status };
 }
 
@@ -1510,6 +1552,12 @@ export async function moveTickets(
       actorId: actor.id,
       actorName: actor.name,
     })),
+    now,
+  );
+  await autoStartEpicsOfTickets(
+    db,
+    tenantId,
+    moving.map((row) => row.id),
     now,
   );
   return { moved: moving.length, to: status, tickets: moving.map((row) => ({ id: row.id, from: row.status })), found };

@@ -7,6 +7,7 @@ import {
   feedbackBoards,
   feedbackCategories,
   feedbackClientKeys,
+  feedbackEpics,
   feedbackMessages,
   feedbackStatuses,
   feedbackTicketEvents,
@@ -36,6 +37,7 @@ export const TABLES: PgTable[] = [
   feedbackUploads,
   feedbackTicketEvents,
   feedbackBoards,
+  feedbackEpics,
 ];
 
 const dialect = new PgDialect();
@@ -49,6 +51,7 @@ function literal(value: unknown): string {
 
 export function schemaDdl(tables: readonly PgTable[] = TABLES): string[] {
   const statements: string[] = [];
+  const later: string[] = [];
   for (const table of tables) {
     const config = getTableConfig(table);
     const lines = config.columns.map((column) => {
@@ -60,11 +63,22 @@ export function schemaDdl(tables: readonly PgTable[] = TABLES): string[] {
     });
     statements.push(`CREATE TABLE "${config.name}" (\n  ${lines.join(",\n  ")}\n)`);
     for (const index of config.indexes) {
-      const columns = index.config.columns.map((column) => `"${(column as { name: string }).name}"`).join(", ");
-      statements.push(`CREATE ${index.config.unique ? "UNIQUE " : ""}INDEX "${index.config.name}" ON "${config.name}" (${columns})`);
+      const columns = index.config.columns
+        .map((column) => (is(column, SQL) ? dialect.sqlToQuery(column).sql : `"${(column as { name: string }).name}"`))
+        .join(", ");
+      later.push(`CREATE ${index.config.unique ? "UNIQUE " : ""}INDEX "${index.config.name}" ON "${config.name}" (${columns})`);
+    }
+    // Foreign keys after every table exists (0.12.0: a ticket's epic, its
+    // trail and messages), so a cascade or SET NULL is what the tests see.
+    for (const fk of config.foreignKeys) {
+      const ref = fk.reference();
+      later.push(
+        `ALTER TABLE "${config.name}" ADD CONSTRAINT "${fk.getName()}" FOREIGN KEY (${ref.columns.map((c) => `"${c.name}"`).join(", ")}) ` +
+          `REFERENCES "${getTableConfig(ref.foreignTable).name}" (${ref.foreignColumns.map((c) => `"${c.name}"`).join(", ")}) ON DELETE ${fk.onDelete ?? "no action"}`,
+      );
     }
   }
-  return statements;
+  return [...statements, ...later];
 }
 
 export interface TestDb {

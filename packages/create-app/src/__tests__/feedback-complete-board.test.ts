@@ -133,15 +133,16 @@ describe("the isolation proof drives the new routes", () => {
 });
 
 describe("the release", () => {
-  it("pins feedback 0.11.0, whose ./admin entry and listPeople the emitted code uses", () => {
-    expect(packageVersions()["feedback"] ?? "").toMatch(/^\^?0\.11\.0$/);
+  it("pins a feedback with the ./admin entry and listPeople the emitted code uses (0.11.0 or later)", () => {
+    expect(packageVersions()["feedback"] ?? "").toMatch(/^\^?0\.(1[1-9])\.\d+$/);
   });
 
   it("the README says what the boards do now and what's next, and DEPLOYMENT says how to get there from 0.26", async () => {
     const p = await plan(COMPANIES);
     const readme = file(p, "README.md");
     expect(readme).toContain("**New ticket** for the team");
-    expect(readme).toContain("**Epics** (grouping tickets under a bigger piece of work) — the next release of the feedback board.");
+    // Feedback 0.12 brought epics: the README says what is still not included.
+    expect(readme).toContain("**Sprints** (a time box tickets are planned into) and **swimlanes by epic**");
     expect(readme).not.toContain("src/components/FeedbackSettings.tsx");
     const deployment = file(p, "DEPLOYMENT.md");
     expect(deployment).toContain("### From create-app 0.26 to 0.27 (the complete feedback board)");

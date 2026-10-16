@@ -32,10 +32,14 @@ import {
   type BoardFilterUrl,
 } from "./board-toolbar";
 import { NewTicketDialog } from "./ticket-dialog";
+import { EPIC_STATUS_LABELS, takesTickets, type EpicStatus } from "./epic-core";
+import { EpicBadge } from "./epic-parts";
 
 export * from "./board-client";
 export * from "./board-filters";
 export * from "./board-toolbar";
+export * from "./epic-core";
+export { EpicBadge, EpicProgressBar, EpicStatusPill, type EpicBadgeProps, type EpicProgressBarProps } from "./epic-parts";
 export { NewTicketDialog, type NewTicketDialogProps } from "./ticket-dialog";
 
 /**
@@ -69,6 +73,8 @@ export interface BoardTicketView {
   assignee?: string | null;
   /** The host's id of the assignee, when picked from the company's people (0.11.0). */
   assigneeId?: string | null;
+  /** The epic it's part of (0.12.0): the card shows it, named from the board's `epics`. */
+  epicId?: string | null;
   /** "widget" | "page" | "staff" (0.11.0): shown in the panel as where it came from. */
   source?: string | null;
   /** False (0.11.0): the reporter isn't emailed about it — the reply box says so. */
@@ -86,6 +92,14 @@ export interface BoardTicketView {
   statusChangedAt?: Date | string | null;
   /** Set = archived. The card renders with a dashed edge and a badge; it never renders at all unless the consumer asked the server for archived rows. */
   archivedAt?: Date | string | null;
+}
+
+/** An epic as the board shows it (0.12.0): the badge's name and colour, and its status for the pickers. */
+export interface BoardEpicView {
+  id: string;
+  name: string;
+  color?: string | null;
+  status?: EpicStatus | null;
 }
 
 export interface TicketMessageView {
@@ -189,6 +203,11 @@ export interface FeedbackBoardProps {
    * calls this with the column's key. Absent, there is no "+".
    */
   onCreateInColumn?: (statusKey: string) => void;
+  /**
+   * The company's epics (0.12.0): a card whose `epicId` is one of them shows
+   * the epic's badge. Ask Lou's board never showed a card's epic.
+   */
+  epics?: ReadonlyArray<BoardEpicView>;
   /** See `BoardTheme`. Default `auto`. */
   theme?: BoardTheme;
 }
@@ -293,6 +312,15 @@ export interface TicketPanelProps {
   /** The activity trail, oldest first; shown under the report. */
   events?: ReadonlyArray<TicketEventView> | null;
   /**
+   * The company's epics (0.12.0): with `onUpdate`, the ticket's Epic is picked
+   * from those still being worked on (`onUpdate({ epicId })`). The ticket's
+   * own epic is always shown, finished or not (Ask Lou's picker showed "No
+   * epic" for a ticket in a completed one).
+   */
+  epics?: ReadonlyArray<BoardEpicView> | null;
+  /** A link to an epic's page, for "Open the epic". */
+  epicHref?: ((epicId: string) => string) | null;
+  /**
    * Does this board email the reporter when the team replies (0.11.0)? The
    * reply box says plainly who reads a reply — emailed to the customer, seen
    * under "My reports", or kept to the team. Pass false where no email is
@@ -354,6 +382,8 @@ function eventWords(event: TicketEventView): string {
       return `${who} archived it`;
     case "unarchived":
       return `${who} brought it back from the archive`;
+    case "epic":
+      return to ? `${who} put it in the epic ${to}${from ? ` (was ${from})` : ""}` : `${who} took it out of the epic ${from ?? ""}`.trimEnd();
     default:
       return `${who} changed it`;
   }
@@ -388,6 +418,8 @@ export function TicketPanel({
   people = null,
   events = null,
   emailsReporters = true,
+  epics = null,
+  epicHref = null,
 }: TicketPanelProps): ReactElement {
   useBoardStyles();
   const [draft, setDraft] = useState("");
@@ -554,12 +586,14 @@ export function TicketPanel({
     priority: pendingPatch.priority ?? ticket.priority,
     category: pendingPatch.category !== undefined ? pendingPatch.category : (ticket.category ?? null),
     assigneeId: pendingPatch.assigneeId !== undefined ? pendingPatch.assigneeId : (ticket.assigneeId ?? null),
+    epicId: pendingPatch.epicId !== undefined ? pendingPatch.epicId : (ticket.epicId ?? null),
   };
   const caughtUp =
     (pendingPatch.title === undefined || pendingPatch.title === ticket.title) &&
     (pendingPatch.priority === undefined || pendingPatch.priority === ticket.priority) &&
     (pendingPatch.category === undefined || pendingPatch.category === (ticket.category ?? null)) &&
-    (pendingPatch.assigneeId === undefined || pendingPatch.assigneeId === (ticket.assigneeId ?? null));
+    (pendingPatch.assigneeId === undefined || pendingPatch.assigneeId === (ticket.assigneeId ?? null)) &&
+    (pendingPatch.epicId === undefined || pendingPatch.epicId === (ticket.epicId ?? null));
   if (Object.keys(pendingPatch).length > 0 && caughtUp) setPendingPatch({});
 
   const applyPatch = (patch: TicketPatch) => {
@@ -587,6 +621,11 @@ export function TicketPanel({
   const audience = replyAudience(ticket, emailsReporters);
   const categoryKnown = shown.category === null || categories.some((category) => category.key === shown.category);
   const assigneeKnown = shown.assigneeId === null || (people ?? []).some((person) => person.id === shown.assigneeId);
+  const currentEpic = shown.epicId === null ? null : ((epics ?? []).find((epic) => epic.id === shown.epicId) ?? null);
+  // What the picker offers: the epics still being worked on — and the
+  // ticket's own, whatever its status, so the picker never says "No epic"
+  // for a ticket that has one.
+  const offeredEpics = (epics ?? []).filter((epic) => takesTickets(epic.status ?? "open") || epic.id === shown.epicId);
 
   return (
     <div className="aib-panel-layer" data-aib-theme={theme}>
@@ -644,6 +683,15 @@ export function TicketPanel({
               </h2>
             )}
             <div className="aib-panel-sub">
+              {currentEpic ? (
+                epicHref ? (
+                  <a href={epicHref(currentEpic.id)} aria-label={`Open the epic ${currentEpic.name}`}>
+                    <EpicBadge name={currentEpic.name} color={currentEpic.color ?? null} status={currentEpic.status ?? null} />
+                  </a>
+                ) : (
+                  <EpicBadge name={currentEpic.name} color={currentEpic.color ?? null} status={currentEpic.status ?? null} />
+                )
+              ) : null}
               <span>{ageOf(ticket.createdAt)}</span>
               {sourceLabel ? <span>{sourceLabel}</span> : null}
               {ticket.pagePathname ? <span>{ticket.pagePathname}</span> : null}
@@ -812,6 +860,29 @@ export function TicketPanel({
             />
           </label>
           )}
+          {onUpdate && epics && (epics.length > 0 || shown.epicId !== null) ? (
+            <label>
+              Epic
+              <select
+                className="aib-select"
+                value={shown.epicId ?? ""}
+                onChange={(event) => applyPatch({ epicId: event.target.value || null })}
+              >
+                <option value="">No epic</option>
+                {shown.epicId !== null && !currentEpic ? (
+                  <option value={shown.epicId} disabled>
+                    An epic that isn&rsquo;t on this board any more
+                  </option>
+                ) : null}
+                {offeredEpics.map((epic) => (
+                  <option key={epic.id} value={epic.id}>
+                    {epic.name}
+                    {epic.status && !takesTickets(epic.status) ? ` (${EPIC_STATUS_LABELS[epic.status].toLowerCase()})` : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           {onArchive ? (
             <button type="button" className="aib-archive-btn" onClick={() => void run("archive", onArchive)}>
               {ticket.archivedAt != null ? "Unarchive" : "Archive"}
@@ -1093,10 +1164,12 @@ export function FeedbackBoard({
   onMoveMany,
   onMoveError,
   onCreateInColumn,
+  epics,
   theme = "auto",
 }: FeedbackBoardProps): ReactElement {
   useBoardStyles();
   const boardId = useId();
+  const epicById = useMemo(() => new Map((epics ?? []).map((epic) => [epic.id, epic])), [epics]);
   const hintId = `${boardId}-move-hint`;
 
   const [pending, setPending] = useState<Record<string, PendingMove>>({});
@@ -1501,6 +1574,7 @@ export function FeedbackBoard({
                       const href = ticketHref?.(ticket);
                       const shot = ticket.annotatedScreenshotUrl ?? ticket.screenshotUrl;
                       const days = Math.floor(hoursInColumn(ticket) / 24);
+                      const epic = ticket.epicId ? epicById.get(ticket.epicId) : undefined;
                       return (
                         <li
                           key={ticket.id}
@@ -1599,6 +1673,11 @@ export function FeedbackBoard({
                               </a>
                             ) : null}
                           </div>
+                          {epic ? (
+                            <div className="aib-card-epic">
+                              <EpicBadge name={epic.name} color={epic.color ?? null} status={epic.status ?? null} />
+                            </div>
+                          ) : null}
                         </li>
                       );
                     })}
@@ -1688,6 +1767,13 @@ export interface FeedbackWorkspaceProps {
   rememberFiltersAs?: string | false;
   /** Does this board email the reporter on a reply (see TicketPanel)? Default true. */
   emailsReporters?: boolean;
+  /**
+   * Where this board's epics page is (0.12.0): `/app/feedback/epics`. Given,
+   * the toolbar links to it and the ticket panel's epic badge opens
+   * `${epicsHref}/${id}`. The epics themselves — the badge on each card, the
+   * Epic filter, the pickers — come with the board either way.
+   */
+  epicsHref?: string | null;
   /** See `BoardTheme`. Default `auto`. */
   theme?: BoardTheme;
   /** A client to use instead of one over `baseUrl` (tests). */
@@ -1722,7 +1808,10 @@ function detailOf(ticket: FeedbackTicketDetailWire | null): TicketDetailView | n
  *
  *   <FeedbackWorkspace baseUrl={`/api/app/${company.id}/feedback`} canManage={can.includes("feedback.manage")} />
  *
- * Not included (next): epics; per-person saved views; custom fields.
+ * 0.12.0: each card shows its epic, the toolbar filters by epic ("No epic"
+ * included), and the panel and New ticket pick one.
+ *
+ * Not included: sprints; swimlanes by epic; per-person saved views; custom fields.
  */
 export function FeedbackWorkspace({
   baseUrl,
@@ -1734,6 +1823,7 @@ export function FeedbackWorkspace({
   filterUrl,
   rememberFiltersAs,
   emailsReporters = true,
+  epicsHref = null,
   theme = "auto",
   client: given,
 }: FeedbackWorkspaceProps): ReactElement {
@@ -1875,7 +1965,9 @@ export function FeedbackWorkspace({
   const openCard: BoardTicketView | null =
     tickets.find((ticket) => ticket.id === openId) ?? (detail && detail.id === openId ? detail : null);
   const archivable = board?.archivableCount ?? 0;
-  const fields = boardFilterFields({ statuses, categories, people, me, facets: board?.facets ?? null });
+  const epics = board?.epics ?? [];
+  const epicsBase = epicsHref ? epicsHref.replace(/\/+$/, "") : null;
+  const fields = boardFilterFields({ statuses, categories, people, me, epics, facets: board?.facets ?? null });
   const quick = boardQuickFilters({ me: people.length > 0 ? me : null, facets: board?.facets ?? null });
   const narrowed = !isUnfiltered(filters);
 
@@ -1910,6 +2002,11 @@ export function FeedbackWorkspace({
               >
                 {sweeping ? "Archiving…" : `Archive finished (${archivable})`}
               </button>
+            ) : null}
+            {epicsBase ? (
+              <a className="aib-tool-btn" href={epicsBase}>
+                Epics
+              </a>
             ) : null}
             {settingsHref ? (
               <a className="aib-tool-btn" href={settingsHref}>
@@ -1952,6 +2049,7 @@ export function FeedbackWorkspace({
         <FeedbackBoard
           statuses={statuses}
           tickets={tickets}
+          epics={epics}
           theme={theme}
           onMove={handleMove}
           onOpen={(ticket) => open(ticket.id)}
@@ -1974,6 +2072,7 @@ export function FeedbackWorkspace({
           statuses={statuses}
           categories={categories}
           people={people}
+          epics={epics}
           defaultStatus={creating || null}
           theme={theme}
           onClose={() => setCreating(null)}
@@ -2004,6 +2103,8 @@ export function FeedbackWorkspace({
           people={people.length > 0 ? people : null}
           events={events}
           emailsReporters={emailsReporters}
+          epics={epics}
+          epicHref={epicsBase ? (epicId: string) => `${epicsBase}/${encodeURIComponent(epicId)}` : null}
           onClose={() => open(null)}
           onSend={async (body) => {
             if (!canManage) refuseReadOnly();
