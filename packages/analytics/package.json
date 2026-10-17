@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/analytics",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "First-party, cookieless traffic analytics for an app's own site: where visitors come from (search, AI assistants by engine, social, campaigns), what they read and click, how fast it loads, and which AI crawlers are reading it — kept in the app's own database under a table prefix you choose, with staff, testers and automation left out of every report through @adminigloo/audience.",
   "license": "UNLICENSED",
   "type": "module",

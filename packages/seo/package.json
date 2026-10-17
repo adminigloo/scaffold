@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/seo",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Search and answer-engine plumbing for an app's own site, with no database: page metadata whose canonical is always the page itself and whose brand is added once, schema.org JSON-LD as one linked @graph with escaping, robots.txt from one path list and the same AI-bot list @adminigloo/analytics classifies, sitemaps with real lastmod that split themselves, llms.txt and llms-full.txt from the app's own content, IndexNow, and a share-image template for next/og.",
   "license": "UNLICENSED",
   "type": "module",

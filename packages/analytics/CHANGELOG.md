@@ -1,5 +1,32 @@
 # @adminigloo/analytics
 
+## 0.3.0
+
+### Minor Changes
+
+- 3a02598: Every company's websites, one deployment (0.3.0).
+  
+  - **The site register.** `addWebsite`, `listWebsites`, `findWebsite`, `updateWebsite`, `removeWebsite` on the instance (table `analytics_websites`): a company's websites, each with its web addresses (typed any way, normalised; `www.` and the bare name both count) and a public site key (`aws_…`). Every function is scoped to the tenant; another tenant's website id is "not found". `limit` refuses past a plan's websites (`limit_reached`), with a sentence for the form.
+  - **One endpoint for every website.** `createHandler({ resolveSite })` asks per request whose beacon it is; `analytics.siteResolver({ admit })` finds the website by its key (cached a minute, misses included) and counts the visit only when the page is on one of that website's addresses — a copied snippet on another site counts nothing. Sessions carry `site_id` (null: the tenant's own pages here), and a visit is kept within its website.
+  - **The snippet**: `BEACON_SCRIPT` (plain JavaScript for a website that isn't this app: page views, in-page navigation, foreground time, outbound/mail/phone and `data-track` clicks; nothing under GPC, DNT, automation or `?analytics=off`) and `websiteSnippet(scriptUrl, key)`.
+  - **Company handlers**: `createAnalyticsAdminHandlers` (report, one website's report, websites, add, rename, remove, "these are my visits" and "count them again") and `createAnalyticsPublicHandlers` (`v1/collect`, `v1/beacon.js`), with `ANALYTICS_ADMIN_ROUTES`, `ANALYTICS_PUBLIC_ROUTES` and the permission fragment `analyticsPermissions` (`analytics.view`: owner, admin, member, viewer; `analytics.manage`: owner, admin). Seams: `resolveTenant`, `authorize`, `timeZone`, `websiteLimit`, `ownPages`, `clientIp`. Plain-word errors.
+  - **Reports per company and website**: every report takes `siteId` (a website, `null` for the tenant's own pages, or omitted for all); `getExcludedBreakdown` takes the same. `buildWebsiteReport` is the whole screen's data as JSON (the adapter a host app calls from its own routes), with the left-out line in an owner's words.
+  - **Drop-in screens** on `./dashboard`: `<WebsiteTraffic>` (range, website filter, left-out line and "count everyone", visits, sources with search engines and AI assistants by name, pages, other sites, AI crawlers, health) and `<WebsitesSettings>` (the websites with the line to paste, adding and removing, "these are my visits"), over `createAnalyticsTransport` or any transport. 44px controls; the faint ink now meets AA in both themes.
+  - **Server-side conversions leave staff out**: `recordConversion` asks the tenant's audience about the person (`userId`) and the visit (`classifyActor`).
+  - `ANALYTICS_PLATFORM_SITE` ("*") for the site's own numbers beside its companies'.
+  - Ships `sql/analytics-0.3.0.sql` and `sql/upgrade-0.2-to-0.3.sql` (one nullable column, one index, one table; safe twice).
+  - The audience peer is now `^0.2.0`.
+  - **The register can't be raced or confused**: a website add counts, checks and inserts in one transaction under a per-company lock (three adds at once against a limit of one save one); an address another of the company's websites has is refused, and `refuse` (`addressRules` on the handlers) refuses the app's own address and, on a deployed app, localhost. `websiteLimitSentence`, `isLocalHost`.
+  - **Is the line working?** `lastVisits(tenantId)` and each website's `lastVisitAt` on the wire: "No visits yet. Paste the line, then open your site once", then "Counting — last visit …". `limitMessage` carries the plan's sentence once the websites are all used.
+  - **Plain words on the screens**: paste steps for WordPress, Wix, Squarespace and "something else"; "Stop counting" asks first and warns that adding the site back means a new line; the websites list shows its error with "Try again"; "Leave out your own visits" links open each website with `?analytics=off` (this device left out from then on) and point an office to its internet connection; "Visits that stayed", "Took action" (shown once any conversion is recorded), "nothing to compare yet", "only a few so far", "confirmed" / "not confirmed"; a new company's trend starts on the day it started counting; no setup message for the operator on the owner's screen (it goes to `onError` once).
+  - `ResolvedSite.pathPrefix`: only pages at or under it count (a company's `/t/{web address}`). `recordConversion({ siteId })` lands on that website's visit.
+  - The package description's dashes and arrows are no longer double-encoded.
+
+### Patch Changes
+
+- Updated dependencies [3a02598]
+  - @adminigloo/audience@0.2.0
+
 ## 0.2.0
 
 ### Minor Changes
