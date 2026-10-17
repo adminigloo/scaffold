@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/assistant",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "description": "An AI assistant for each company, installed into your own app: a personality, business profile, FAQs, house rules and glossary the owner writes in plain words; a whitelisted tool loop that runs as the signed-in person and asks before it changes anything; keyword knowledge search (no database extension); a monthly allowance it checks before every model call; and every token metered from the provider's counts.",
   "license": "UNLICENSED",
   "type": "module",

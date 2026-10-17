@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/assistant-widget",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "The assistant's screens: a launcher (a floating button and a slide-over chat, full screen on a phone) with streamed answers, Stop, starter questions, history, safely rendered Markdown and an \"ask before acting\" card; the owner's settings screen under ./admin (business profile, answers to common questions, house rules, words, the month's AI use). Follows the host's light or dark theme; React is its only peer.",
   "license": "UNLICENSED",
   "type": "module",

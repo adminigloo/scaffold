@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/ai",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "Conventions for AI calls: authorize before the stream opens, meter it through cancellation, record what it cost in integer micros, and refuse \u2014 in plain words, failing closed \u2014 once a company's monthly allowance or the site's daily ceiling is spent.",
   "license": "UNLICENSED",
   "type": "module",
