@@ -235,8 +235,8 @@ export function normalizeRuleValue(kind: RuleKind, raw: string): string {
     }
     case "network": {
       const cidr = canonicalCidr(value);
-      if (!cidr) throw new RuleValueError(`"${value}" is not an IP address or CIDR range (try 203.0.113.0/24).`);
-      if (/\/0$/.test(cidr)) throw new RuleValueError("A /0 range would exclude every visitor.");
+      if (!cidr) throw new RuleValueError(`"${value}" isn't an internet connection's address. It looks like 203.0.113.7.`);
+      if (/\/0$/.test(cidr)) throw new RuleValueError("That would leave out every visitor.");
       return cidr;
     }
     case "host": {
@@ -246,8 +246,8 @@ export function normalizeRuleValue(kind: RuleKind, raw: string): string {
       return wildcard ? `*.${host}` : host;
     }
     case "user_agent": {
-      if (value.length < 3) throw new RuleValueError("A user-agent rule needs at least 3 characters.");
-      if (value.length > ID_MAX) throw new RuleValueError("That user-agent text is too long.");
+      if (value.length < 3) throw new RuleValueError("Type at least 3 letters of the tool's name.");
+      if (value.length > ID_MAX) throw new RuleValueError("That name is too long.");
       return value.toLowerCase();
     }
     default: {

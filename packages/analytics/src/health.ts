@@ -47,3 +47,21 @@ export async function getPipelineHealth(ctx: AnalyticsContext, tenantId: string)
     lastAiCrawlerHit: iso(aiHit[0]?.at),
   };
 }
+
+/**
+ * When each of the tenant's websites (and its own pages, under null) last had
+ * a visit (0.3): the websites list's "Counting — last visit …" line. Liveness,
+ * like the rest of this file: anyone's visit proves the line is pasted, the
+ * team's too.
+ */
+export async function lastVisitsIn(ctx: AnalyticsContext, tenantId: string): Promise<Map<string | null, Date>> {
+  const s = ctx.t.sessions;
+  const rows = await ctx.db
+    .select({ siteId: s.siteId, last: sql<Date | string | null>`max(${s.lastSeenAt})` })
+    .from(s)
+    .where(eq(s.tenantId, tenantId))
+    .groupBy(s.siteId);
+  const out = new Map<string | null, Date>();
+  for (const row of rows) if (row.last) out.set(row.siteId ?? null, new Date(row.last));
+  return out;
+}

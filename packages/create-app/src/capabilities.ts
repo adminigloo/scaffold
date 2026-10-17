@@ -204,8 +204,11 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
       "open: a shared link that renders as a grey box, or a preview " +
       "deployment competing with the client's own site for their brand terms.",
     provenBy: (plan) =>
-      mentions(plan, ["src", "seo.ts"], "metadataBase", "INDEXABLE") &&
-      mentions(plan, ["app", "robots.ts"], "INDEXABLE"),
+      (mentions(plan, ["src", "seo.ts"], "metadataBase", "INDEXABLE") && mentions(plan, ["app", "robots.ts"], "INDEXABLE")) ||
+      // --seo (Tenancy 2b-4a): the same two, from @adminigloo/seo — its
+      // siteMetadata sets metadataBase from the site's address, and
+      // robotsPolicy refuses everything while the site isn't indexable.
+      (mentions(plan, ["src", "seo.ts"], "indexable: INDEXABLE", "buildSiteMetadata(site)") && mentions(plan, ["app", "robots.ts"], "robotsPolicy(site")),
   },
   {
     capability: "marketing.landing",
@@ -494,6 +497,65 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
       mentions(plan, ["src", "server", "assistant.ts"], "buildAssistantHandlers", "companyAuthorizer(") &&
       exists(plan, "app", "api", "app", "[tenantId]", "assistant", "[...path]", "route.ts") &&
       mentions(plan, ["app", "(site)", "app", "assistant", "page.tsx"], "<AssistantSettings"),
+  },
+  // Tenancy 2b-4a: website visits.
+  {
+    capability: "analytics.visits",
+    why:
+      "Visits are counted: this site's own beacon endpoint and the keyed one " +
+      "every website calls, over the package's public handlers, and the beacon " +
+      "on this site's own pages (the (site) layout's slot).",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "server", "website.ts"], "createAnalyticsPublicHandlers", "buildSiteBeaconHandlers", "buildWebsiteBeaconHandlers") &&
+      exists(plan, "app", "api", "analytics", "[...path]", "route.ts") &&
+      exists(plan, "app", "api", "w", "[...path]", "route.ts") &&
+      mentions(plan, ["src", "components", "SiteAnalyticsSlot.tsx"], "<SiteAnalytics />"),
+  },
+  {
+    capability: "analytics.audience",
+    why:
+      "The business's own people are left out of the numbers: one audience per " +
+      "tenant (createAudiences) handed to analytics, asked about every visit, " +
+      "with its rules' routes.",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "server", "website.ts"], "createAudiences<", "audience: (tenantId) => audiences.for(tenantId)", "observe(") &&
+      exists(plan, "app", "api", "admin", "audience", "[...path]", "route.ts"),
+  },
+  {
+    capability: "analytics.dashboard",
+    why: "This site's own numbers under the shell, from the analytics-admin overlay.",
+    provenBy: (plan) => mentions(plan, ["app", "admin", "analytics", "page.tsx"], "<WebsitePage"),
+  },
+  {
+    capability: "analytics.companies",
+    why:
+      "Each company counts its own pages and website (Tenancy 2b-4a): its " +
+      "routes under /api/app/{id}/website and /audience, /app/website, and the " +
+      "beacon on its pages here.",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "server", "website.ts"], "buildAnalyticsAdminHandlers", "companyAuthorizer(", "buildCompanyBeaconHandlers") &&
+      exists(plan, "app", "api", "app", "[tenantId]", "website", "[...path]", "route.ts") &&
+      exists(plan, "app", "api", "t", "[slug]", "website", "[...path]", "route.ts") &&
+      mentions(plan, ["app", "(site)", "app", "website", "page.tsx"], "<WebsitePage") &&
+      mentions(plan, ["src", "components", "PublicCompanyGate.tsx"], "<CompanyAnalytics"),
+  },
+  {
+    capability: "seo.package",
+    why: "The site's metadata, robots.txt and sitemap are built on @adminigloo/seo from one path list.",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "seo.ts"], "defineSite(", "definePaths(") &&
+      mentions(plan, ["app", "robots.ts"], "robotsPolicy(") &&
+      mentions(plan, ["app", "sitemap.ts"], "sitemapEntries("),
+  },
+  {
+    capability: "seo.companies",
+    why:
+      "Each company's public pages are in search (Tenancy 2b-4a): their own " +
+      "canonical address and LocalBusiness details, listed in the sitemap, " +
+      "with the token pages kept out.",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "components", "PublicCompanyGate.tsx"], "localBusiness(", "alternates: { canonical }") &&
+      mentions(plan, ["app", "sitemap.ts"], "PUBLIC_COMPANY_PAGES", "tenants.suspendedAt"),
   },
   {
     capability: "ai.streaming",

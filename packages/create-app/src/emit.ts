@@ -66,6 +66,8 @@ import {
 } from "./features-emit.js";
 import { renderDeploymentFeedback, renderFeedbackCron, renderFeedbackGlue } from "./feedback-emit.js";
 import { assistantChats, renderAssistantGlue, renderAssistantLauncherSlot, renderAssistantTools } from "./assistant-emit.js";
+import { renderAnalyticsCron, renderSiteAnalyticsSlot, renderWebsiteGlue, websitesQuota } from "./website-emit.js";
+import { renderSeoPackageModule, renderSeoRobots, renderSeoSitemap } from "./seo-emit.js";
 import {
   renderCompanyAlertsTest,
   renderCompanyCronsTest,
@@ -410,7 +412,9 @@ export async function planEmit(
       (answers.includeInvoicing || answers.includeComms || answers.includeNotifications || answers.includeStorage)) ||
     answers.includeFeedback ||
     // Tenancy 2b-3: this site's OWN assistant (/admin/assistant) is its staff's, in both modes.
-    answers.includeAssistant
+    answers.includeAssistant ||
+    // Tenancy 2b-4a: and this site's OWN website numbers (/admin/analytics).
+    answers.includeAnalytics
   ) {
     files.set(join("src", "server", "staff-access.ts"), renderStaffAccess(answers));
   }
@@ -432,6 +436,17 @@ export async function planEmit(
   if (answers.includeAssistant && isCompanies(answers)) {
     files.set(join("src", "components", "AssistantLauncherSlot.tsx"), renderAssistantLauncherSlot(answers));
   }
+  // WEBSITE VISITS (Tenancy 2b-4a), both modes, generated: whose numbers a
+  // route is (a company's, by the path; this site's own, fixed), who a
+  // company's own people are, and whether a plan limits its websites are
+  // questions about OTHER answers. See website-emit.ts.
+  if (answers.includeAnalytics) {
+    files.set(join("src", "server", "website.ts"), renderWebsiteGlue(answers));
+    files.set(join("app", "api", "cron", "analytics", "route.ts"), renderAnalyticsCron(answers));
+  }
+  // This site's own visit counter, in EVERY project: the (site) layout mounts
+  // the slot without an `if` — the beacon with --analytics, nothing without.
+  files.set(join("src", "components", "SiteAnalyticsSlot.tsx"), renderSiteAnalyticsSlot(answers));
   if (answers.includeFeedback) {
     files.set(join("src", "server", "feedback.ts"), renderFeedbackGlue(answers));
     // The sweep of screenshots no report used (review M2).
@@ -540,7 +555,9 @@ export async function planEmit(
       answers.includeNotifications ||
       answers.includeStorage ||
       answers.includeFeedback ||
-      answers.includeAssistant)
+      answers.includeAssistant ||
+      // Tenancy 2b-4a: and a company's websites, numbers and who it leaves out.
+      answers.includeAnalytics)
   ) {
     files.set(join("src", "test", "company-rows.ts"), renderCompanyRows(answers));
     files.set(
@@ -668,10 +685,13 @@ export async function planEmit(
   // be indexed. In EVERY project rather than behind the marketing answer: a
   // shared link that renders as a grey box and a staging preview that outranks
   // the client's real site are harms, and a harm must not be opt-in.
-  files.set(join("src", "seo.ts"), renderSeoModule(answers));
+  // Tenancy 2b-4a: with --seo, the same three files on @__SCOPE_NAME__/seo — the
+  // site's own SEO kept, and each company's public pages in search (two
+  // variants of each file, chosen here; see seo-emit.ts).
+  files.set(join("src", "seo.ts"), answers.includeSeo ? renderSeoPackageModule(answers) : renderSeoModule(answers));
   files.set(join("app", "llms.txt", "route.ts"), renderLlmsTxt(answers));
-  files.set(join("app", "robots.ts"), renderRobots(answers));
-  files.set(join("app", "sitemap.ts"), renderSitemap(answers));
+  files.set(join("app", "robots.ts"), answers.includeSeo ? renderSeoRobots(answers) : renderRobots(answers));
+  files.set(join("app", "sitemap.ts"), answers.includeSeo ? renderSeoSitemap(answers) : renderSitemap(answers));
   // The derived half of the legal pages: who else sees a customer's data, and
   // which clauses follow from what this project does. Written on the same
   // condition that copies the pages, because nothing else imports it — and that
@@ -1069,6 +1089,11 @@ export function renderVercelJson(answers: Answers): string {
   if (answers.includeFeedback) {
     crons.push({ path: "/api/cron/feedback", schedule: "30 14 * * *" });
   }
+  // Tenancy 2b-4a: the website numbers' tidy-up — yesterday's salts deleted,
+  // old rows gone, and who is left out re-applied — early, after midnight UTC.
+  if (answers.includeAnalytics) {
+    crons.push({ path: "/api/cron/analytics", schedule: "20 0 * * *" });
+  }
   const config = {
     $schema: "https://openapi.vercel.sh/vercel.json",
     framework: "nextjs",
@@ -1411,6 +1436,15 @@ export function renderEnvLocal(answers: Answers): string {
       "# SCHEDULING_TIME_ZONE=America/Denver",
     );
   }
+  if (answers.includeAnalytics) {
+    lines.push(
+      "",
+      "# --- Website visits -----------------------------------------------------------",
+      "# The key \"leave these people out\" is made with (32+ characters,",
+      "# `openssl rand -base64 48`). Without it one is made from CLERK_SECRET_KEY.",
+      "# AUDIENCE_SECRET=",
+    );
+  }
   if (assistantChats(answers)) {
     lines.push(
       "",
@@ -1444,7 +1478,8 @@ export function renderEnvLocal(answers: Answers): string {
     answers.includeEstimator ||
     answers.includeNotifications ||
     answers.includeStorage ||
-    answers.includeFeedback
+    answers.includeFeedback ||
+    answers.includeAnalytics
   ) {
     lines.push(
       "",
@@ -1507,6 +1542,10 @@ const OPTIONAL_ENV_NOTES: Readonly<Record<string, readonly string[]>> = {
   BILLING_TRIAL_DAYS: [
     "How many days a new company can use everything before choosing a plan",
     "(14 when unset; 0 for no free trial).",
+  ],
+  AUDIENCE_SECRET: [
+    "The key whose marks leave people out of the website numbers (32+",
+    "characters). Unset: one is made from CLERK_SECRET_KEY.",
   ],
   ASSISTANT_MODEL: [
     "The model the assistant answers with. Unset is Claude Haiku 4.5",
@@ -1590,6 +1629,8 @@ const ANSWER_LABELS: Partial<Record<keyof Answers, string>> = {
   includeInvoicing: "Invoicing",
   includeComms: "Customer messages",
   includeAeo: "AI citation tracking",
+  includeAnalytics: "Website visits",
+  includeSeo: "Search basics",
 };
 
 export function renderScaffoldRecord(manifest: ProjectManifest): string {
@@ -1908,7 +1949,8 @@ export function renderEnvModule(answers: Answers): string {
     answers.includeEstimator ||
     answers.includeNotifications ||
     answers.includeStorage ||
-    answers.includeFeedback
+    answers.includeFeedback ||
+    answers.includeAnalytics
   ) {
     // The shared secret the cron routes check. Declared here rather than in an
     // env fragment of @__SCOPE_NAME__/comms or /scheduling because it is not a
@@ -2003,6 +2045,17 @@ export function renderEnvModule(answers: Answers): string {
         `{ name: "Photo reading model", vars: ["ESTIMATOR_TAKEOFF_MODEL"], disables: "Nothing. Unset is Claude Haiku 4.5, the cheapest capable model. Another model needs its price in MODEL_RATES (src/server/ai.ts), or photo reading stays off and the server log says why. The reading needs ANTHROPIC_API_KEY either way." }`,
       );
     }
+  }
+
+  // Tenancy 2b-4a: the key the audience's links and marks are made with.
+  // Optional: without it one is made from CLERK_SECRET_KEY (src/server/website.ts).
+  if (answers.includeAnalytics) {
+    serverSpreads.push('AUDIENCE_SECRET: z.string().min(32, "at least 32 characters").optional()');
+    runtime.push("AUDIENCE_SECRET: process.env.AUDIENCE_SECRET");
+    features.push(
+      `{ name: "Leaving people out of visits", vars: ["AUDIENCE_SECRET"], disables: "Nothing while CLERK_SECRET_KEY is set: the key is made from it. Rotating Clerk's key then means a person named in a rule reaches only visits made after it." }`,
+      `{ name: "Website numbers cron", vars: ["CRON_SECRET"], disables: "The daily tidy-up: /api/cron/analytics answers 401 until the secret is set. Visits are still counted and read; yesterday's visitor keys stop being deletable on schedule, old rows stay past 13 months, and a person's newly linked devices wait to be left out." }`,
+    );
   }
 
   // Tenancy 2b-3: which model the assistant answers with (Haiku 4.5 unless set).
@@ -2285,6 +2338,30 @@ export const PACKAGE_PERMISSION_FRAGMENTS: readonly PackagePermissionFragment[] 
       "Each company has its own assistant, so these are company keys: owners, " +
       "admins and members ask it (each question spends the company's monthly " +
       "allowance), owners and admins write what it knows and see its AI use.",
+  },
+  // WEBSITE VISITS, IN A COMPANIES PROJECT (Tenancy 2b-4a). Each company has
+  // its own websites and numbers, so the keys belong to the company's roles.
+  // This site's OWN numbers stay on the staff ladder in both modes
+  // (staff.analytics.*, staff.audience.manage), mapped in src/server/website.ts.
+  {
+    package: "analytics",
+    binding: "analyticsPermissions",
+    scope: "tenant",
+    installedBy: (answers) => answers.tenantNoun !== "none" && answers.includeAnalytics,
+    why:
+      "Each company has its own websites and visit numbers, so these are " +
+      "company keys: everyone but crew sees the numbers, owners and admins add " +
+      "its websites (and copy the line to paste) and leave their own visits out.",
+  },
+  {
+    package: "audience",
+    binding: "audiencePermissions",
+    scope: "tenant",
+    installedBy: (answers) => answers.tenantNoun !== "none" && answers.includeAnalytics,
+    why:
+      "Each company decides whose visits don't count in ITS numbers, so this " +
+      "is a company key: owners and admins name the people, addresses and " +
+      "networks to leave out.",
   },
   {
     package: "feedback",
@@ -2574,6 +2651,31 @@ export function renderPermissionsCatalog(answers: Answers): string {
     defaultFor: ["admin"],
   },`
     : "";
+  // THIS SITE'S OWN website numbers' staff keys (Tenancy 2b-4a), in BOTH
+  // modes: /admin/analytics is the site's, read by its staff, whether or not
+  // companies count their own. src/server/website.ts maps the packages'
+  // permissions onto these.
+  const analyticsStaffKeys = answers.includeAnalytics
+    ? `
+  "staff.analytics.view": {
+    label: "See this site's visits",
+    description: "How many people visit this site, where they came from (search, AI assistants, other sites), the pages they read and the AI crawlers that read them.",
+    category: "Website",
+    defaultFor: ["admin", "cs_lead"],
+  },
+  "staff.analytics.manage": {
+    label: "Manage this site's websites",
+    description: "Add and remove the websites counted for this site, copy the line to paste, and leave your own visits out.",
+    category: "Website",
+    defaultFor: ["admin"],
+  },
+  "staff.audience.manage": {
+    label: "Leave people out of this site's visits",
+    description: "Name the people, addresses and networks whose visits don't count in this site's numbers, and clean them out of past numbers.",
+    category: "Website",
+    defaultFor: ["admin"],
+  },`
+    : "";
   const staffSpread = [...staffFragments, "appStaffPermissions"];
   const tenantSpread = [...tenantFragments, "appTenantPermissions"];
 
@@ -2680,7 +2782,7 @@ const appStaffPermissions = {
     category: "${plural}",
     // Sealed: an override must not hand this to one person quietly.
     sealed: true,
-  },${schedulingStaffKeys}${estimatorStaffKeys}${invoicingStaffKeys}${commsStaffKeys}${alertsStaffKeys}${filesStaffKeys}${feedbackStaffKeys}${assistantStaffKeys}
+  },${schedulingStaffKeys}${estimatorStaffKeys}${invoicingStaffKeys}${commsStaffKeys}${alertsStaffKeys}${filesStaffKeys}${feedbackStaffKeys}${assistantStaffKeys}${analyticsStaffKeys}
 } as const;
 
 export const staffCatalog = definePermissions(
@@ -4830,6 +4932,9 @@ export function renderSchemaModule(answers: Answers): string {
   if (answers.includeNotifications) owners.push("notifications");
   if (answers.includeStorage) owners.push("storage");
   if (answers.includeAssistant) owners.push("assistant");
+  // Tenancy 2b-4a: the visits and the register (analytics_*), and who is left
+  // out (aig_audience_*). The seo package keeps nothing.
+  if (answers.includeAnalytics) owners.push("analytics", "audience");
   // Field service. Each owns its own tables; the -widget package (estimator)
   // owns none, so only the server package is listed.
   if (answers.includeEstimator) owners.push("estimator");
@@ -5200,6 +5305,18 @@ export function renderSiteNav(answers: Answers): string {
         `What the ${label}'s assistant knows — its profile, answers to common ` +
         "questions, house rules and words — and this month's AI use. Everyone " +
         "else asks it from the button on every page.",
+    });
+  }
+  // Tenancy 2b-4a: the company's website numbers, its websites and who is left out.
+  if (!single && answers.includeAnalytics) {
+    companyFeatureLinks.push({
+      href: "/app/website",
+      label: "Website",
+      permission: "analytics.view",
+      why:
+        `Who visits the ${label}'s pages and its own website — from search, AI ` +
+        "assistants and other sites — which pages they read and which AI crawlers " +
+        "read them, with its own team left out; its websites and the line to paste.",
     });
   }
   if (!single && answers.includeStorage) {
@@ -5710,6 +5827,19 @@ export function renderAdminNav(answers: Answers): string {
         "visits, estimates and invoices, and its own — with what each is " +
         "attached to and how much room is left. Deleting one removes the " +
         "stored copy too.",
+    });
+  }
+  // Tenancy 2b-4a: this site's own website numbers.
+  if (answers.includeAnalytics) {
+    operations.push({
+      href: "/admin/analytics",
+      label: "Website visits",
+      permission: "staff.analytics.view",
+      why:
+        "This site's own visits from the analytics package: where they came " +
+        "from (search, AI assistants by name, other sites), the pages read, the " +
+        "AI crawlers, its websites and who is left out. From the analytics-admin " +
+        "overlay, so a project without the answer has neither this page nor this entry.",
     });
   }
   if (answers.includeAssistant) {
@@ -6911,6 +7041,8 @@ export function renderPlanCatalog(answers: Answers): string {
   // Tenancy 2b-3: the assistant's questions a month, sold only where the gate
   // enforces it — a companies project that sells plans, with the chat (--ai).
   const assistantQuota = assistantChats(answers) && plansEnforced(answers);
+  // Tenancy 2b-4a: how many websites of its own a company may count.
+  const websiteQuotaOn = websitesQuota(answers);
   const scope = answers.scope;
   const label = tenantLabel(answers).toLowerCase();
 
@@ -6990,7 +7122,10 @@ export const plans = definePlans({
     // Checked before every question the assistant answers with AI
     // (src/server/assistant.ts asks src/server/plan-gate.ts); an answer the
     // company wrote itself is free and never counts.
-    assistant_messages: { kind: "quota", label: "AI assistant messages a month", labelOne: "AI assistant message a month" },` : ""}
+    assistant_messages: { kind: "quota", label: "AI assistant messages a month", labelOne: "AI assistant message a month" },` : ""}${websiteQuotaOn ? `
+    // Checked when a company adds a website of its own to count (its pages
+    // here are always counted and never use one up).
+    websites: { kind: "quota", label: "websites of your own counted", labelOne: "website of your own counted" },` : ""}
   },
 
   /**
@@ -7016,7 +7151,8 @@ export const plans = definePlans({
         seats: 3,${answers.includeStorage ? `
         storage_gb: 5,` : ""}${answers.includeEstimator ? `
         estimates: 100,` : ""}${assistantQuota ? `
-        assistant_messages: 100,` : ""}
+        assistant_messages: 100,` : ""}${websiteQuotaOn ? `
+        websites: 1,` : ""}
       },
     },
     {
@@ -7034,7 +7170,8 @@ export const plans = definePlans({
         seats: 10,${answers.includeStorage ? `
         storage_gb: 25,` : ""}${answers.includeEstimator ? `
         estimates: 500,` : ""}${assistantQuota ? `
-        assistant_messages: 500,` : ""}
+        assistant_messages: 500,` : ""}${websiteQuotaOn ? `
+        websites: 3,` : ""}
       },
     },
     {
@@ -7054,7 +7191,8 @@ export const plans = definePlans({
         seats: null,${answers.includeStorage ? `
         storage_gb: null,` : ""}${answers.includeEstimator ? `
         estimates: null,` : ""}${assistantQuota ? `
-        assistant_messages: null,` : ""}
+        assistant_messages: null,` : ""}${websiteQuotaOn ? `
+        websites: null,` : ""}
       },
     },
     {
@@ -7074,7 +7212,8 @@ export const plans = definePlans({
         seats: 3,${answers.includeStorage ? `
         storage_gb: 5,` : ""}${answers.includeEstimator ? `
         estimates: 50,` : ""}${assistantQuota ? `
-        assistant_messages: 100,` : ""}
+        assistant_messages: 100,` : ""}${websiteQuotaOn ? `
+        websites: 1,` : ""}
       },
     },
   ],
@@ -7198,8 +7337,8 @@ export const siteMetadata: Metadata = {
     title: SITE_NAME,
     description: SITE_DESCRIPTION,
     // A copy decision rather than a technical one, and it is here so it is made
-    // once. Change it with the rest of the copy if this site is not British.
-    locale: "en_GB",
+    // once: US English. Change it with the rest of the copy if the site isn't.
+    locale: "en_US",
   },
   twitter: {
     // The large card is the one that shows an image. \`summary\` shows a
@@ -7239,7 +7378,8 @@ export const siteMetadata: Metadata = {
  * and the file to disagree, and the disagreement would be invisible: nothing in
  * the product renders /robots.txt.
  */
-export function renderRobots(answers: Answers): string {
+/** The routes robots.txt asks crawlers to stay out of, with why: one list, for app/robots.ts in either variant (Tenancy 2b-4a). */
+export function robotsDisallowed(answers: Answers): { readonly path: string; readonly why: string }[] {
   const sells = answers.businessModel !== "none";
 
   /**
@@ -7334,6 +7474,11 @@ export function renderRobots(answers: Answers): string {
       },
     );
   }
+  return disallowed;
+}
+
+export function renderRobots(answers: Answers): string {
+  const disallowed = robotsDisallowed(answers);
 
   const entries = disallowed
     .map((entry) => `${indentedComment(entry.why)}  "${entry.path}",\n`)
@@ -7404,7 +7549,8 @@ export default function robots(): MetadataRoute.Robots {
  * every deploy, which is a lie that trains the crawler to disbelieve the real
  * ones. A URL list is the part of a sitemap that does anything.
  */
-export function renderSitemap(answers: Answers): string {
+/** This site's own public pages, with why: one list, for app/sitemap.ts in either variant (Tenancy 2b-4a). */
+export function sitemapPages(answers: Answers): { readonly path: string; readonly why: string }[] {
   const sells = answers.businessModel !== "none";
 
   const pages: { readonly path: string; readonly why: string }[] = [
@@ -7448,6 +7594,11 @@ export function renderSitemap(answers: Answers): string {
       { path: "/terms", why: "The other half of the pair." },
     );
   }
+  return pages;
+}
+
+export function renderSitemap(answers: Answers): string {
+  const pages = sitemapPages(answers);
 
   const entries = pages
     .map((page) => `${indentedComment(page.why)}  "${page.path}",\n`)
@@ -7543,6 +7694,30 @@ export function renderLlmsTxt(answers: Answers): string {
     .map((page) => `- [${page.path === "/" ? "Home" : page.path.slice(1)}](\${base}${page.path === "/" ? "/" : page.path}): ${page.line}`)
     .join("\n");
 
+  // Tenancy 2b-4a: with website visits, the AI crawlers that read this file
+  // (often their first and only fetch of a site) are logged for this site.
+  const counted = answers.includeAnalytics;
+  const crawlerImports = counted
+    ? `import { after } from "next/server";
+import { classifyCrawler } from "${answers.scope}/analytics/crawlers";
+`
+    : "";
+  const crawlerLog = counted
+    ? `
+  // A crawler reading this (runtime data: who is asking), logged after the
+  // answer is sent — AI assistants show up in this site's crawler numbers.
+  const userAgent = request.headers.get("user-agent");
+  if (classifyCrawler(userAgent)) {
+    const facts = {
+      userAgent,
+      path: "/llms.txt",
+      ip: request.headers.get("x-real-ip") ?? request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+      country: request.headers.get("x-vercel-ip-country"),
+    };
+    after(() => recordSiteCrawlerHit(facts));
+  }`
+    : "";
+
   return `/**
  * The routing table answer engines read first — sitemap.xml for the systems
  * that answer instead of listing. Generated from the answers, so a route that
@@ -7553,9 +7728,9 @@ export function renderLlmsTxt(answers: Answers): string {
  * A route handler rather than a static file so the body can derive from the
  * environment. Content is deliberately terse — this is a map, not a pitch.
  */
-import { env } from "@/env";
+${crawlerImports}import { env } from "@/env";${counted ? `\nimport { recordSiteCrawlerHit } from "@/server/website";` : ""}
 
-export function GET(): Response {
+export function GET(${counted ? "request: Request" : ""}): Response {${crawlerLog}
   // Paths stay relative until the deployment knows its own address; engines
   // only ever read this from a live site, where the variable is required.
   const base = env.NEXT_PUBLIC_APP_URL ?? "";

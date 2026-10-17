@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { AuthHeader } from "@/components/AuthHeader";
 import { PlanBannerSlot } from "@/components/PlanBannerSlot";
+import { SiteAnalyticsSlot } from "@/components/SiteAnalyticsSlot";
 import { SiteFooter } from "@/components/SiteFooter";
 
 /**
@@ -56,6 +57,10 @@ export default function SiteLayout({ children }: { children: ReactNode }) {
       <div className="flex-1">{children}</div>
 
       <SiteFooter />
+      {/* This site's own visit counter (Tenancy 2b-4a). Generated in two
+          variants (src/components/SiteAnalyticsSlot.tsx): the cookieless
+          beacon with --analytics, nothing without. */}
+      <SiteAnalyticsSlot />
     </div>
   );
 }

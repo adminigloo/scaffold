@@ -16,17 +16,20 @@ import { PUBLIC_COMPANY_PAGES } from "@/tenancy";
  * __TENANT_LABEL_LOWER__'s page says plainly it isn't taking requests online
  * right now, with how to reach it, and no buttons.
  *
- * Not indexed in this release (D17); robots.txt disallows /t/ too.
+ * Kept out of search (robots.txt disallows /t/ too) — unless the project was
+ * made with --seo (Tenancy 2b-4a): then it is listed while the
+ * __TENANT_LABEL_LOWER__ is taking requests, with its own canonical address and
+ * the business's details, and only its token pages stay out.
  */
 export const dynamic = "force-dynamic";
 
 /**
  * The tab title and link preview are the __TENANT_LABEL_LOWER__'s: "{name}" (review
- * T2A-BO-01), never this site's name. Not indexed (D17).
+ * T2A-BO-01), never this site's name; `path` is its canonical address (--seo).
  */
 export async function generateMetadata({ params }: { readonly params: Promise<{ readonly slug: string }> }): Promise<Metadata> {
   const { slug } = await params;
-  return publicCompanyMetadata(slug, null);
+  return publicCompanyMetadata(slug, null, { path: "" });
 }
 
 export default async function CompanyPublicPage({

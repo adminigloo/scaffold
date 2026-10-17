@@ -92,6 +92,9 @@ export const EVERY_CONFIGURATION: readonly Configuration[] = TENANT_NOUNS.flatMa
                     includeSuite ? "--invoicing" : "--no-invoicing",
                     includeSuite ? "--comms" : "--no-comms",
                     includeSuite ? "--aeo" : "--no-aeo",
+                    // Tenancy 2b-4a: website visits and search basics, on the suite axis too.
+                    includeSuite ? "--analytics" : "--no-analytics",
+                    includeSuite ? "--seo" : "--no-seo",
                     includeMarketing ? "--marketing" : "--no-marketing",
                   ];
                   return {
@@ -115,6 +118,8 @@ export const EVERY_CONFIGURATION: readonly Configuration[] = TENANT_NOUNS.flatMa
                       includeInvoicing: includeSuite,
                       includeComms: includeSuite,
                       includeAeo: includeSuite,
+                      includeAnalytics: includeSuite,
+                      includeSeo: includeSuite,
                       includeMarketing,
                     },
                   };

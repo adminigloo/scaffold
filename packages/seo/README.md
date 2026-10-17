@@ -10,6 +10,8 @@ Everything a search engine and an answer engine read from your site, built from 
 - **IndexNow**, so Bing and the other participating engines hear about a page the moment it is published.
 - **A share-image template** for `next/og`.
 
+**0.2: every business's public pages on one site.** A platform where each company has pages at `/t/{web address}` lists them in its sitemap with their own canonical addresses and LocalBusiness details, and keeps every company's token pages out with one `*` rule (`/t/*/quote`). See [Every company's public pages](#every-companys-public-pages-02).
+
 The path list is the one source for robots.txt, the noindex header and meta tag, the sitemap, llms.txt and IndexNow. A path the list calls private or noindex is never listed, never announced and never blocked by accident somewhere else.
 
 No tables, so nothing can clash with an app's own (Riddler Go already has `aeo_queries`, `analytics_sessions` and the rest).
@@ -33,7 +35,8 @@ No tables, so nothing can clash with an app's own (Riddler Go already has `aeo_q
 
 - **Audits.** Crawling your sitemap and scoring titles, canonicals, robots and llms.txt is `@adminigloo/seo-reports`.
 - **Search Console.** The nightly import of clicks, impressions and positions will be `@adminigloo/search-console` (planned, not built yet).
-- **Citation tracking.** Asking ChatGPT, Claude, Perplexity and Gemini whether they cite you is `@adminigloo/aeo`.
+- **Citation tracking.** Asking ChatGPT, Claude, Perplexity and Gemini whether they cite you is `@adminigloo/aeo` (per company: the next chunk).
+- **A company's own website.** The package describes pages this site serves. A company's site on Wix or WordPress has its own SEO; its visits can be counted with `@adminigloo/analytics` 0.3's snippet.
 - **Content writing.** The package writes structure: titles, tags, links, headings. Every sentence (descriptions, summaries, answers, plan copy) comes from your app. It writes no prose about your product.
 - **Crawler logging.** Counting which bots read which pages is `@adminigloo/analytics` (its `./crawlers` list is the one this package's robots.txt is built from).
 - **Redirects.** www → bare domain, old slugs and permanent redirects are your host's and your router's.
@@ -56,7 +59,7 @@ Your token goes in your **user-level** `~/.npmrc`, never in the repo:
 ```
 
 ```bash
-npm install @adminigloo/seo@0.1.0   # pin exactly
+npm install @adminigloo/seo@0.2.0   # pin exactly
 ```
 
 Peer dependencies, both optional: `react ^18 || ^19` for `./react` and `./og`; `next ^14 || ^15 || ^16` for `./og`. The core entry needs neither, and the package has no runtime dependencies at all. It is vendorable as a tarball (`pnpm pack`).
@@ -349,6 +352,43 @@ export default async function Image() {
 - **Background:** `theme.backgroundImage` takes a CSS gradient (or `url(…)`) over `theme.background`.
 - **Layout:** every box with several children is `display: flex`, as satori requires.
 
+## Every company's public pages (0.2)
+
+A platform where each business has its own public pages (`/t/green-acres`, `/t/green-acres/estimate`) and token pages behind its emails (`/t/green-acres/quote/{token}`):
+
+```ts
+export const paths = definePaths({
+  public: ["/", "/pricing"],
+  // One rule for every company's token pages: `*` is one WHOLE segment (any web address).
+  private: ["/admin", "/app", "/api", "/t/*/quote", "/t/*/visit", "/t/*/invoice"],
+  noindex: ["/sign-in", "/sign-up"],
+});
+```
+
+- **`*` is a whole segment**, in `private` and `noindex` entries only: `/t/*/quote` covers `/t/green-acres/quote/abc`, never `/t/green-acres` or `/t/green-acres/estimate`. Not inside a segment (`/t/a*`), not the first segment (`/*/quote`), never in `public`.
+- **robots.txt** writes it with its own `*` (`Disallow: /t/*/quote$`, `/t/*/quote/`, `/t/*/quote?`), which Google and Bing read as "any characters": the same pages, and also deeper paths that end the same way. `isAllowedByRobots` honours it.
+- **The sitemap** refuses a company's token page like any private path, so listing every company's pages from the database is safe:
+
+```ts
+sitemapEntries(site, [...pathEntries(site), ...companies.map((c) => ({ url: `/t/${c.slug}`, lastModified: null }))], { onInvalid: () => {} });
+```
+
+- **A company's page** sets its own canonical (`pageUrl(site, "/t/green-acres")`, or `pageMetadata` with `brand: false` so the platform's name isn't added to the business's title) and carries its business, never the platform's:
+
+```ts
+localBusiness(site, {
+  id: `${pageUrl(site, "/t/green-acres")}#business`,
+  url: pageUrl(site, "/t/green-acres"),
+  name: "Green Acres",
+  telephone: "+1 208 555 0100",
+  address: { streetAddress: "1 Main St", addressLocality: "Boise", addressRegion: "ID", postalCode: "83702", addressCountry: "US" },
+  parentOrganization: false,   // the business is its own, not part of the platform's organization
+});
+// No address yet: localBusiness(site, { name, url, email, richResult: false, parentOrganization: false })
+```
+
+**Upgrading from 0.1:** nothing changes for a path list without `*`, and `localBusiness` with an address is the same node. A `*` in a private path used to be refused; it is now a segment.
+
 ## Structured data reference
 
 Every builder takes `(site, input)`, checks its input and throws one `SeoError` listing every problem. Empty values never reach the output (no `"sameAs": []`). Nothing that is a fact about the business is defaulted: not `isAccessibleForFree`, not stock status, not a country.
@@ -372,7 +412,7 @@ Every builder takes `(site, input)`, checks its input and throws one `SeoError` 
 | `person` | `{origin}/#person-{key}` | name; `sameAs` on other sites only; `worksFor` → organization |
 | `place` | `{page}#place` or `{origin}/#place-{name}` | type and `additionalType` from a closed list of real types; coordinates in range |
 | `touristAttraction` | `{page}#attraction` | as `place`, plus rating and reviews on the same node: one node per attraction |
-| `localBusiness` | `{origin}/#localbusiness` | a business type from a closed list, an address, hours from 00:00 to 23:59 (open all day is 00:00 to 23:59, never 24:00); `logo` and `sameAs` as for `organization`. **No rating:** this is the site's own business, and Google ignores (and may act on) ratings a business publishes about itself |
+| `localBusiness` | `{origin}/#localbusiness` (or `id`) | a business type from a closed list, an address (0.2: `richResult: false` lifts it, for a business with no address yet), hours from 00:00 to 23:59 (open all day is 00:00 to 23:59, never 24:00); `logo` and `sameAs` as for `organization`. **No rating:** the business's own page, and Google ignores (and may act on) ratings a business publishes about itself |
 
 - **Ratings:** reviews and `aggregateRating` (value within best/worst, count at least 1) are accepted by `product`, `softwareApplication` and `touristAttraction`. A review on a product or app needs a rating and an author's name. `aggregateRatingFrom(ratings, { min: 3 })` averages raw ratings and returns nothing below a credibility threshold.
 - **Dates:** every date is checked as section 4 says: a real calendar day, and a time zone on a date-time.
@@ -416,6 +456,7 @@ The title fixes (the doubled "— Riddler Go" on pricing, templates and use-case
 | `brandTitle(site, title)` | The title with the brand exactly once, as `pageMetadata` writes it |
 | `pathRule(paths, pathname)` | `"private"`, `"noindex"`, `"public"` or `"unlisted"`; the most specific entry wins |
 | `normalizePath(path)`, `pathCovers(prefix, path)` | `"/checkout/"` → `"/checkout"`; whole-segment matching (`/admin` covers `/admin/x`, not `/admin-guide`) |
+| `normalizePattern(path)` | 0.2: the same for a private or noindex entry, where `*` may stand for one whole segment (`/t/*/quote`); null for any other `*` |
 | `hostnameOf(value)` | A hostname from a URL, a host with a port, or a Host header |
 | `sitemapXml(entries)`, `sitemapIndexXml(files)`, `splitSitemap(entries, { maxUrls, maxBytes })` | The pieces `buildSitemaps` is made of |
 | `isIndexNowKey(key)` | Whether a key is one IndexNow accepts |

@@ -239,6 +239,75 @@ Not included: the assistant answering customers on a public page, changing
 records beyond saving an answer, vector search (keyword only unless you add
 the optional table).
 
+### Website visits and search basics per company (Tenancy 2b-4a, create-app 0.30)
+
+`--analytics` (it brings `@adminigloo/audience`) and `--seo`, or later
+`create-app add analytics` / `add seo`:
+
+- **Each company's website numbers** at `/app/website` (`analytics.view`; in
+  the company nav): visits to its pages here (`/t/{web address}`, the beacon
+  `<PublicCompanyGate>` mounts) and to its own website (it adds the website
+  there and pastes one line; `/api/w/v1/beacon.js` posts to
+  `/api/w/v1/collect?site={its key}`, counted only from that website's own
+  addresses), where they came from — search engines, AI assistants by name,
+  other sites — the pages read, the AI crawlers that read its pages, and the
+  "left out" line with "count everyone". Each website shows whether its line
+  is working ("No visits yet. Paste the line, then open your site once", then
+  "Counting — last visit …"), with paste steps for WordPress, Wix, Squarespace
+  and anything else. Its own team is left out of its numbers automatically;
+  owners and admins (`audience.manage`) add a team member's email, everyone
+  at an email domain, an office internet connection or a monitoring tool —
+  found only among the company's own members and invitations, never another
+  company's people — and "leave this device out" links open each website with
+  that phone or computer left out from then on. The routes are `/api/app/{id}/website` and
+  `/api/app/{id}/audience`, and the isolation proof drives
+  `ANALYTICS_ADMIN_ROUTES`, `ANALYTICS_PUBLIC_ROUTES` and
+  `AUDIENCE_ADMIN_ROUTES` as another company, plus A's site key pasted on B's
+  website (nothing counted). A project that sells plans gets "websites of your
+  own counted" on each plan (1 / 3 / unlimited, checked when one is added,
+  under a per-company lock so adds sent at once can't pass it); a closed plan
+  keeps the numbers readable and stops counting. A website can't have an
+  address another of the company's websites has, nor — once deployed — the
+  app's own address or localhost.
+- **This site's own numbers** at `/admin/analytics` (`staff.analytics.view`,
+  `staff.analytics.manage`, `staff.audience.manage`), from the beacon every
+  `(site)` page mounts (`src/components/SiteAnalyticsSlot.tsx`, generated in
+  two variants), signed-in screens not counted, its staff left out. A single
+  business (`--tenant-noun none`) is one site, the way adminigloo.com counts
+  its own.
+- **Search basics** (`--seo`): `src/seo.ts`, `app/robots.ts` and
+  `app/sitemap.ts` on `@adminigloo/seo` from one path list; robots.txt names
+  the AI crawlers. With companies, each company's public pages get their own
+  title, canonical address and LocalBusiness details from its company
+  settings, and the pages of every company taking requests are in the
+  sitemap — the estimate page once its estimator is set up; token pages
+  (`/t/{*}/quote`, `/visit`, `/invoice`) stay out, and nothing is indexed off
+  production. Without `--seo`, company pages stay out of search as before.
+- **A company that isn't taking requests** — suspended, or (when you sell
+  plans) its trial ended or it has no plan — has pages that say so
+  (`<PublicCompanyGate>` asks the plan's standing as well as the status): no
+  widget, no visit counter, no crawler log, noindex, out of the sitemap.
+- `AUDIENCE_SECRET` is optional (made from `CLERK_SECRET_KEY` otherwise); the
+  daily tidy-up is `/api/cron/analytics` (`CRON_SECRET`).
+- `add analytics` on an upgraded project: then `pnpm db:generate && pnpm
+  db:migrate` (the `analytics_*` and `aig_audience_*` tables) and `pnpm
+  db:seed` for the new keys.
+- The site's `openGraph.locale` is `en_US` now (it was `en_GB`); change it in
+  `src/seo.ts` / `app/layout.tsx` with the rest of the copy.
+
+Upgrading a project that already has analytics 0.2 (adminigloo.com is one):
+move `@adminigloo/audience` to `^0.2.0` in the same change as
+`@adminigloo/analytics` `^0.3.0` — analytics 0.3 needs audience 0.2 — and run
+`@adminigloo/analytics/sql/upgrade-0.2-to-0.3.sql` (one nullable column, one
+index and the `analytics_websites` table; safe to run twice) before the new
+code takes traffic. Audience 0.2 changes no tables. A host that gives an
+audience its `listUsers` must return only that tenant's own people (see the
+audience README).
+
+Not included: SEO reports and AI-citation tracking per company (Tenancy 2b-4b),
+book-a-call per company (2b-4c), Google Search Console, crawler counts for a
+company's own website (crawlers don't run the pasted line).
+
 ### Not included (Tenancy 2b-1)
 
 What a generated project does NOT do yet, so nobody sells it as doing so. The
@@ -247,8 +316,9 @@ out the items that are only about companies).
 
 - **Sprints and swimlanes by epic on the feedback board.** Its epics, filters, search, New ticket, editing and settings screens are here (feedback 0.12), and so are the board per company, its alerts and its private screenshots (Tenancy 2b-2a).
 - **The assistant answering customers on a public page.** Each company's assistant is its team's, behind sign-in (Tenancy 2b-3).
-- **Website analytics, SEO/AEO and book-a-call (booking) per company** —
-  Tenancy 2b-4.
+- **SEO reports, AI-citation tracking and book-a-call (booking) per company** —
+  Tenancy 2b-4b and 2b-4c. Website visits and search basics are per company
+  since Tenancy 2b-4a (`--analytics`, `--seo`).
 - **Text (SMS) and push alerts.** Alerts come in the app and by email — S9.
 - **Plans, limits and billing enforcement** — the billing chunk. Each
   company's storage allowance is one setting for everyone

@@ -59,7 +59,7 @@ export const TENANCY_2A_NOT_INCLUDED: readonly string[] = [
 export const TENANCY_2B1_NOT_INCLUDED: readonly string[] = [
   "**Sprints and swimlanes by epic on the feedback board.** Its epics, filters, search, New ticket, editing and settings screens are here (feedback 0.12), and so are the board per company, its alerts and its private screenshots (Tenancy 2b-2a).",
   "**The assistant answering customers on a public page.** Each company's assistant is its team's, behind sign-in (Tenancy 2b-3).",
-  "**Website analytics, SEO/AEO and book-a-call (booking) per company** — Tenancy 2b-4.",
+  "**SEO reports, AI-citation tracking and book-a-call (booking) per company** — Tenancy 2b-4b and 2b-4c. Website visits and search basics are per company since Tenancy 2b-4a (`--analytics`, `--seo`).",
   "**Text (SMS) and push alerts.** Alerts come in the app and by email — S9.",
   "**Plans, limits and billing enforcement** — the billing chunk. Each company's storage allowance is one setting for everyone (`FILES_ALLOWANCE_MB`) until then; the seam the billing chunk fills is there.",
   "**Stripe Connect** (customers paying a company by card).",
@@ -137,10 +137,12 @@ const SINGLE_ONLY_ITEMS: ReadonlySet<string> = new Set([TENANCY_2B1_NOT_INCLUDED
  * The "Not included" list for this project's mode: 2b-1's list, 2a's still-true
  * items, then Tenancy 1's.
  */
-export function notIncludedFor(companies: boolean): readonly string[] {
+export function notIncludedFor(companies: boolean, options: { readonly seo?: boolean } = {}): readonly string[] {
   const all = [
     ...TENANCY_2B1_NOT_INCLUDED,
-    ...TENANCY_2A_NOT_INCLUDED.filter((item) => !TENANCY_2A_SUPERSEDED.has(item)),
+    // Tenancy 2b-4a: with --seo a company's public pages ARE in search, so
+    // 2a's "search indexing of company pages" isn't said of that project.
+    ...TENANCY_2A_NOT_INCLUDED.filter((item) => !TENANCY_2A_SUPERSEDED.has(item) && !(options.seo === true && item === TENANCY_2A_NOT_INCLUDED[5])),
     ...TENANCY_1_NOT_INCLUDED,
   ];
   return companies
@@ -189,6 +191,65 @@ export function assistantSection(answers: ProjectManifest["answers"]): string[] 
   }
   lines.push("", "Not included:", "", ...ASSISTANT_2B3_NOT_INCLUDED.map((line) => `- ${line}`), "");
   return lines;
+}
+
+/** What website visits and search basics don't do (Tenancy 2b-4a), said plainly. */
+export const WEBSITE_2B4A_NOT_INCLUDED: readonly string[] = [
+  "**SEO reports and AI-citation tracking** (how search engines read the pages, whether AI assistants name the business) — the next chunk, Tenancy 2b-4b.",
+  "**Book-a-call per company** — Tenancy 2b-4c.",
+  "**Google Search Console** (clicks and positions in Google search).",
+  "**Crawlers on a website of the business's own.** Crawlers don't run the pasted line, so they are counted on its pages here only.",
+  "**Visitors followed across days.** Nothing here uses cookies: a visitor is the same visitor within a day, and a phone or computer opened once from a \"leave this device out\" link stays left out on that device.",
+];
+
+/**
+ * The "Website visits" and "Search" sections (Tenancy 2b-4a): where visits are
+ * counted, who is left out, where the numbers are read, what search engines
+ * see. Empty without either answer.
+ */
+export function websiteSection(answers: ProjectManifest["answers"]): string[] {
+  if (!answers.includeAnalytics && !answers.includeSeo) return [];
+  const companies = answers.tenantNoun !== "none";
+  const noun = companies ? tenantLabel(answers).toLowerCase() : "business";
+  const shell = answers.adminShell !== "none";
+  const lines: string[] = [];
+  if (answers.includeAnalytics) {
+    lines.push("### Website visits", "");
+    if (companies) {
+      lines.push(
+        `- **Each ${noun}'s own numbers** at /app/website: visits to its pages here (/t/{web address}) and to its own website, where they came from (search engines, AI assistants by name, other sites), the pages read and the AI crawlers that read its pages — with its own team left out of its numbers.`,
+        `- **Its own website**: the ${noun} adds it at /app/website and pastes one line before </head> on every page. A visit counts only from that website's own addresses${plansAnswer(answers) ? `; how many websites it may add is on its plan (src/plans.ts, "websites of your own counted")` : ""}.`,
+        `- **Who is left out** (owners and admins): its team, automatically; a team member's email, everyone at an email domain, an office internet connection or a monitoring tool it adds (found only among its own members and invitations), cleaned out of past numbers at once and put back exactly when removed; and "leave this device out" links for the phones and computers it looks at its website on.`,
+      );
+    }
+    lines.push(
+      shell
+        ? `- **This site's own numbers** at /admin/analytics (staff.analytics.view), its own pages counted by the beacon in every (site) page and any website it registers, with its staff left out.`
+        : `- **This site's own numbers** over /api/admin/analytics, its own pages counted by the beacon in every (site) page, with its staff left out.`,
+      "- **Nothing uses cookies.** A visitor's address and browser become a code that changes every day; Global Privacy Control, Do Not Track and `?analytics=off` are honoured. AUDIENCE_SECRET is optional (one is made from CLERK_SECRET_KEY). The daily tidy-up is /api/cron/analytics (vercel.json; it needs CRON_SECRET).",
+    );
+    lines.push("");
+  }
+  if (answers.includeSeo) {
+    lines.push(
+      "### Search",
+      "",
+      "- **One path list** (src/seo.ts, `paths`) drives robots.txt, the noindex tags and the sitemap, through @adminigloo/seo. Nothing is indexed off production. Replace SITE_DESCRIPTION: it is what search results and AI answers quote.",
+      ...(companies
+        ? [
+            `- **Each ${noun}'s public pages are in search**: its own title, canonical address and business details (LocalBusiness, from its company settings — fill in the address for a local result), and every active ${noun}'s pages in /sitemap.xml. Token pages (quotes, visits, invoices) stay out.`,
+          ]
+        : []),
+      "- **robots.txt names the AI crawlers** and lets them in, so AI assistants can find and quote the site. To keep AI training out, see app/robots.ts.",
+      "",
+    );
+  }
+  lines.push("Not included:", "", ...WEBSITE_2B4A_NOT_INCLUDED.map((line) => `- ${line}`), "");
+  return lines;
+}
+
+function plansAnswer(answers: ProjectManifest["answers"]): boolean {
+  return answers.tenantNoun !== "none" && (answers.businessModel === "subscription" || answers.businessModel === "both");
 }
 
 /** What the feedback boards don't do (feedback 0.12), said plainly. */
@@ -470,7 +531,8 @@ export function renderProjectReadme(manifest: ProjectManifest): string {
   lines.push(...feedbackSection(answers));
   lines.push(...assistantSection(answers));
   lines.push(...alertsAndFilesSection(answers));
-  lines.push("### Not included", "", ...notIncludedFor(companies).map((item) => `- ${item}`), "");
+  lines.push(...websiteSection(answers));
+  lines.push("### Not included", "", ...notIncludedFor(companies, { seo: answers.includeSeo }).map((item) => `- ${item}`), "");
 
   const tables = primaryTables(answers);
   if (companies && tables.length > 0) {

@@ -29,6 +29,15 @@ import type { DateInput } from "./util.js";
  * A trailing slash is ignored, so `/checkout/` and `/checkout` are the same
  * entry (trailcards' `/checkout/` rule did not block `/checkout` itself), and
  * a list that names both (Riddler Go's `NOINDEX_PREFIXES` does) is fine.
+ *
+ * 0.2: A `private` or `noindex` entry may have `*` as a WHOLE segment, standing
+ * for any one segment — written here as `/t/{*}/quote`, in a list as the
+ * plain asterisk — and covers `/t/green-acres/quote/abc` (a
+ * company's token pages under its own web address), never `/t/green-acres`
+ * or `/t/green-acres/estimate`. robots.txt writes it with its own `*`
+ * (`Disallow: /t/{*}/quote/`, with the asterisk), which crawlers read as "any characters" — the
+ * same pages, and in robots.txt also deeper paths ending the same way.
+ * `public` paths are exact pages and never take a `*`.
  */
 
 export const CHANGE_FREQUENCIES = ["always", "hourly", "daily", "weekly", "monthly", "yearly", "never"] as const;
@@ -81,10 +90,29 @@ export function normalizePath(path: string): string | null {
   return trimmed === "" ? "/" : trimmed;
 }
 
-/** Does `prefix` cover `pathname`, by whole segments? `/admin` covers `/admin/x`, not `/admin-guide`. */
+/**
+ * 0.2: a private or noindex entry, where `*` may stand for one WHOLE segment
+ * (`/t/{*}/quote`, with the plain asterisk). An asterisk inside a segment, a first segment that is
+ * `*`, or any other robots.txt character is still refused.
+ */
+export function normalizePattern(path: string): string | null {
+  if (typeof path !== "string" || !path.includes("*")) return normalizePath(path);
+  const plain = normalizePath(path.replace(/\*/g, "x"));
+  if (plain === null || plain === "/") return null;
+  const trimmed = path.replace(/\/+$/, "");
+  const segments = trimmed.split("/").slice(1);
+  if (segments[0] === "*" || segments.some((segment) => segment.includes("*") && segment !== "*")) return null;
+  return trimmed;
+}
+
+/** Does `prefix` cover `pathname`, by whole segments? `/admin` covers `/admin/x`, not `/admin-guide`; `/t/{*}/quote` covers `/t/a/quote/x`. */
 export function pathCovers(prefix: string, pathname: string): boolean {
   if (prefix === "/") return true;
-  return pathname === prefix || pathname.startsWith(`${prefix}/`);
+  if (!prefix.includes("*")) return pathname === prefix || pathname.startsWith(`${prefix}/`);
+  const want = prefix.split("/").slice(1);
+  const have = pathname.split("/").slice(1);
+  if (have.length < want.length) return false;
+  return want.every((segment, i) => (segment === "*" ? (have[i] ?? "") !== "" : segment === have[i]));
 }
 
 /** The path of a request or a URL, without query or fragment. */
@@ -124,9 +152,9 @@ export function definePaths(input: PathListInput): PathList {
 
   const privatePaths: string[] = [];
   for (const raw of input.private ?? []) {
-    const path = normalizePath(raw);
+    const path = normalizePattern(raw);
     if (path === null) {
-      issues.add(`private path "${raw}" must start with "/" and contain no *, $, ?, # or spaces`);
+      issues.add(`private path "${raw}" must start with "/" and contain no $, ?, # or spaces (a * may stand for one whole segment, not the first)`);
       continue;
     }
     if (path === "/") {
@@ -142,12 +170,12 @@ export function definePaths(input: PathListInput): PathList {
 
   const noindexPaths: string[] = [];
   for (const raw of input.noindex ?? []) {
-    const path = normalizePath(raw);
+    const path = normalizePattern(raw);
     if (path === null || path === "/") {
       issues.add(
         path === "/"
           ? '"/" cannot be noindex: an off-production site is closed with defineSite({ indexable: false })'
-          : `noindex path "${raw}" must start with "/" and contain no *, $, ?, # or spaces`,
+          : `noindex path "${raw}" must start with "/" and contain no $, ?, # or spaces (a * may stand for one whole segment, not the first)`,
       );
       continue;
     }

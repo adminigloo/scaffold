@@ -79,7 +79,7 @@ describe("AudienceRulesPanel", () => {
     expect(out).toContain("Add a rule");
     expect((out.match(/>Remove</g) ?? []).length).toBe(3);
     expect(out).toContain("Platform role is super, staff or analytics");
-    expect(out).toContain("cleans history");
+    expect(out).toContain("earlier visits too");
     expect(out).toContain("new visits only");
     expect(out).toContain("12 sessions excluded back to 2026-06-10");
     // Add is disabled until a preview of the same draft exists.
@@ -90,14 +90,14 @@ describe("AudienceRulesPanel", () => {
     const out = html(<AudienceRulesPanel rules={RULES} runs={RUNS} canEdit={false} maskEmails onPreview={noop} onAdd={async () => {}} onRemove={async () => {}} />);
     expect(out).not.toContain("Add a rule");
     expect(out).not.toContain(">Remove<");
-    expect(out).toContain("View only.");
+    expect(out).toContain("View only: you can see these rules");
     expect(out).not.toContain("rachel@gmail.com");
     expect(out).not.toContain("dallin@adminigloo.com");
     expect(out).toContain("r***@gmail.com");
   });
 
   it("an empty list says the defaults still apply", () => {
-    expect(html(<AudienceRulesPanel rules={[]} canEdit={false} />)).toContain("No rules yet. The defaults and the rule in code still apply.");
+    expect(html(<AudienceRulesPanel rules={[]} canEdit={false} />)).toContain("No rules yet. What&#x27;s above is still left out.");
   });
 });
 

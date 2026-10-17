@@ -3,15 +3,13 @@ import { VisitPicker } from "__SCOPE__/scheduling-widget";
 import { PublicCompanyGate, publicCompanyMetadata } from "@/components/PublicCompanyGate";
 
 /**
- * Not indexed (D17): a company's public pages stay out of search engines in
- * this release, and robots.txt disallows /t/ as well.
- *
  * The tab title and link preview are the __TENANT_LABEL_LOWER__'s: "Book a visit · {name}" (review
- * T2A-BO-01), never this site's name. Not indexed (D17).
+ * T2A-BO-01), never this site's name. In search, `publicCompanyMetadata` decides: kept out unless the project
+ * was made with --seo, and then only while the __TENANT_LABEL_LOWER__ is taking requests.
  */
 export async function generateMetadata({ params }: { readonly params: Promise<{ readonly slug: string }> }): Promise<Metadata> {
   const { slug } = await params;
-  return publicCompanyMetadata(slug, "Book a visit");
+  return publicCompanyMetadata(slug, "Book a visit", { path: "/book-visit" });
 }
 
 export const dynamic = "force-dynamic";

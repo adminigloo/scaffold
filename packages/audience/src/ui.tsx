@@ -595,7 +595,7 @@ export function AudienceRulesPanel(props: AudienceRulesPanelProps): ReactElement
       const reach = result.windows.find((w) => w.key === "all") ?? result.windows[result.windows.length - 1];
       setAnnouncement(
         result.retroactive
-          ? `Preview ready: ${reach ? `${number(reach.excluded.sessions)} sessions would be excluded` : subjectWords(result.subjects) || "nothing in history matches"}.`
+          ? `Preview ready: ${reach ? `${number(reach.excluded.sessions)} visits would be left out` : subjectWords(result.subjects) || "no earlier visits match"}.`
           : "Preview ready: this rule applies to new visits only.",
       );
     } catch (error) {
@@ -684,14 +684,14 @@ export function AudienceRulesPanel(props: AudienceRulesPanelProps): ReactElement
 
       {codeRule ? (
         <p className="aiu-code-rule">
-          <span className="aiu-tag">In code</span>
+          <span className="aiu-tag">Set by your developer</span>
           <span>{codeRule}</span>
         </p>
       ) : null}
 
       {defaultsSummary.length ? (
         <details className="aiu-defaults">
-          <summary>Always excluded</summary>
+          <summary>Always left out</summary>
           <ul>
             {defaultsSummary.map((line) => (
               <li key={line}>{line}</li>
@@ -700,19 +700,19 @@ export function AudienceRulesPanel(props: AudienceRulesPanelProps): ReactElement
         </details>
       ) : null}
 
-      {!canEdit ? <p className="aiu-viewonly">View only. Staff can add and remove rules.</p> : null}
+      {!canEdit ? <p className="aiu-viewonly">View only: you can see these rules, but not change them.</p> : null}
 
       <div className="aiu-section">
         <Heading level={sub} className="aiu-h3 aiu-focus" id={ids.rules} tabIndex={-1} headingRef={rulesHeadingRef}>
           Rules ({rules.length})
         </Heading>
         {rules.length === 0 ? (
-          <p className="aiu-empty">No rules yet. The defaults and the rule in code still apply.</p>
+          <p className="aiu-empty">No rules yet. What's above is still left out.</p>
         ) : (
           <ul className="aiu-rules" aria-labelledby={ids.rules}>
             {rules.map((rule) => {
               const kindInfo = KIND_INFO[rule.kind] ?? { label: rule.kind };
-              const reach = isRetroactiveKind(rule.kind) ? "cleans history" : "new visits only";
+              const reach = isRetroactiveKind(rule.kind) ? "earlier visits too" : "new visits only";
               const added = fmt(rule.createdAt);
               const from = fmt(rule.appliesFrom ?? null);
               const by = who(rule.createdBy);
@@ -875,10 +875,10 @@ export function AudienceRulesPanel(props: AudienceRulesPanelProps): ReactElement
               {previewFresh
                 ? preview.status === "ready" && preview.result.duplicateOf
                   ? "An active rule already says this."
-                  : "Adds the rule and applies it to history."
+                  : "Adds the rule and leaves out the earlier visits it matches too."
                 : preview.status === "ready"
                   ? "The rule changed — preview it again."
-                  : "Preview first: see what the rule would exclude before saving it."}
+                  : "Preview first: see what the rule would leave out before saving it."}
             </span>
           </div>
 
@@ -947,13 +947,13 @@ function PreviewBox(props: { result: PreviewView; stale: boolean; formatDate: (v
       {result.duplicateOf ? <p className="aiu-warn">An active rule already says this — there is nothing to add.</p> : null}
       {result.retroactive ? (
         <p>
-          <b>{subjects ? `Matches ${subjects}.` : "Matches nothing in history yet."}</b>
+          <b>{subjects ? `Matches ${subjects}.` : "Matches no earlier visits yet."}</b>
           {already ? ` Already excluded: ${already}.` : ""}
           {all?.earliest ? ` Reaches back to ${formatDate(all.earliest)}.` : ""}
         </p>
       ) : (
         <p>
-          <b>New visits only.</b> This kind of rule is checked as visits arrive; history cannot be matched.
+          <b>New visits only.</b> This kind of rule is checked as visits arrive; earlier visits can&rsquo;t be matched.
         </p>
       )}
       {result.windows.length ? (
@@ -961,9 +961,9 @@ function PreviewBox(props: { result: PreviewView; stale: boolean; formatDate: (v
           <table className="aiu-table">
             <thead>
               <tr>
-                <th scope="col">Window</th>
-                <th scope="col">Sessions now</th>
-                <th scope="col">Would exclude</th>
+                <th scope="col">Over</th>
+                <th scope="col">Visits now</th>
+                <th scope="col">Would leave out</th>
                 <th scope="col">After</th>
               </tr>
             </thead>
@@ -1119,3 +1119,125 @@ export function UnfilteredSourcesNote(props: UnfilteredSourcesNoteProps): ReactE
 // so a client component can use them without importing the root or core
 // entries (which load Node's crypto).
 export { INCLUDE_INTERNAL_PARAM, includeInternalHref, readIncludeInternal } from "./core/defaults.js";
+
+// ---------------------------------------------------------------------------
+// 0.2: the drop-in panel over the company handlers (createAudienceAdminHandlers)
+// ---------------------------------------------------------------------------
+
+/** What `GET v1/rules` answers (the server's `AudienceSettingsWire`, as JSON). */
+export interface AudienceSettingsView {
+  rules: RuleView[];
+  runs: RunView[];
+  codeRule: string | null;
+  kinds: RuleKind[];
+  defaultsSummary: string[];
+  visitorIds: "stable" | "rotating";
+}
+
+/** What `<AudienceSettings>` asks of the server. Each call resolves `{ error }` instead of throwing. */
+export interface AudienceTransport {
+  settings(): Promise<AudienceSettingsView | ActionError>;
+  preview(draft: RuleDraft): Promise<PreviewView | ActionError>;
+  add(draft: RuleDraft): Promise<{ annotation: string | null } | ActionError>;
+  remove(ruleId: string): Promise<{ annotation: string | null } | ActionError>;
+}
+
+/** The transport over the package's company handlers, mounted at `baseUrl` (e.g. `/api/app/${company.id}/audience`). */
+export function createAudienceTransport(options: { baseUrl: string; fetch?: typeof fetch }): AudienceTransport {
+  const base = options.baseUrl.replace(/\/+$/, "");
+  const doFetch = options.fetch ?? ((input: RequestInfo | URL, init?: RequestInit) => fetch(input, init));
+  async function call<T>(path: string, body?: unknown): Promise<T | ActionError> {
+    try {
+      const res = await doFetch(`${base}/${path}`, {
+        method: body === undefined ? "GET" : "POST",
+        credentials: "same-origin",
+        headers: body === undefined ? undefined : { "content-type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      const data = (await res.json().catch(() => null)) as (T & { error?: { message?: string } }) | null;
+      if (!res.ok) return { error: data?.error?.message ?? "Something went wrong. Please try again." };
+      return data as T;
+    } catch {
+      return { error: "Couldn't reach the server. Check your connection and try again." };
+    }
+  }
+  return {
+    settings: () => call<AudienceSettingsView>("v1/rules"),
+    preview: (draft) => call<PreviewView>("v1/rules/preview", draft),
+    add: (draft) => call<{ annotation: string | null }>("v1/rules", draft),
+    remove: (ruleId) => call<{ annotation: string | null }>(`v1/rules/${encodeURIComponent(ruleId)}/remove`, {}),
+  };
+}
+
+export interface AudienceSettingsProps {
+  transport: AudienceTransport;
+  /** The first answer, from the server, so the panel draws before any request. */
+  initial?: AudienceSettingsView | null;
+  /** Default "Leave these people out". */
+  title?: string;
+  headingLevel?: 2 | 3 | 4;
+  theme?: AudienceTheme;
+}
+
+function isError(value: unknown): value is ActionError {
+  return typeof value === "object" && value !== null && typeof (value as { error?: unknown }).error === "string";
+}
+
+/**
+ * A company's "leave these people out", drop-in: its rules, the form that
+ * previews a rule's effect on past numbers before adding it, removing one
+ * (the numbers come back exactly), and the history of each change.
+ */
+export function AudienceSettings(props: AudienceSettingsProps): ReactElement {
+  const [view, setView] = useState<AudienceSettingsView | null>(props.initial ?? null);
+  const [error, setError] = useState<string | null>(null);
+  const { transport } = props;
+
+  async function refresh(): Promise<void> {
+    const next = await transport.settings();
+    if (isError(next)) setError(next.error);
+    else {
+      setError(null);
+      setView(next);
+    }
+  }
+
+  useEffect(() => {
+    if (!props.initial) void refresh();
+    // The transport is stable for a page; asking again on every render would loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (!view) {
+    return (
+      <div className="aiu-root" role={error ? "alert" : "status"}>
+        {error ?? "Loading who is left out…"}
+      </div>
+    );
+  }
+  return (
+    <AudienceRulesPanel
+      title={props.title ?? "Leave these people out"}
+      headingLevel={props.headingLevel ?? 2}
+      theme={props.theme}
+      rules={view.rules}
+      runs={view.runs}
+      canEdit
+      maskEmails={false}
+      codeRule={view.codeRule}
+      kinds={view.kinds}
+      defaultsSummary={view.defaultsSummary}
+      onPreview={(draft) => transport.preview(draft)}
+      onAdd={async (draft) => {
+        const result = await transport.add(draft);
+        if (!isError(result)) await refresh();
+        return result;
+      }}
+      onRemove={async (ruleId) => {
+        const result = await transport.remove(ruleId);
+        if (!isError(result)) await refresh();
+        return result;
+      }}
+    />
+  );
+}

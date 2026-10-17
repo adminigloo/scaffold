@@ -189,5 +189,6 @@ const answer = await alerts.count();       // { ok: true, data: { unread, reacha
   these notifications. Until then, feedback screenshots stay on the public
   Blob store as in 2a.
 - **The assistant answering customers on a public page.** Each company's assistant is its team's, behind sign-in (Tenancy 2b-3).
-- **Website analytics, SEO/AEO and book-a-call (booking) per company** —
-  Tenancy 2b-4.
+- **SEO reports, AI-citation tracking and book-a-call (booking) per company** —
+  Tenancy 2b-4b and 2b-4c. Website visits and search basics are per company
+  since Tenancy 2b-4a (`--analytics`, `--seo`).

@@ -123,43 +123,43 @@ export const DEFAULT_REASON_LABELS: Readonly<Record<AudienceReason, string>> = {
 export const KIND_INFO: Readonly<
   Record<RuleKind, { label: string; hint: string; placeholder: string }>
 > = {
-  user: { label: "Person (user id)", hint: "One account, by its user id.", placeholder: "user_2abc…" },
+  user: { label: "A person's account", hint: "One account, by the account id your developer gives you.", placeholder: "user_2abc…" },
   email: {
-    label: "Person (email)",
-    hint: "One address. Gmail dots and +tags are folded, so j.doe+x@gmail.com matches jdoe@gmail.com.",
+    label: "A team member's email",
+    hint: "One person's email address. A Gmail address still matches when it's written with dots or a +word added.",
     placeholder: "jane@gmail.com",
   },
   email_domain: {
-    label: "Email domain",
-    hint: "Everyone at a domain, and its subdomains.",
-    placeholder: "riddlergo.com",
+    label: "Everyone at an email domain",
+    hint: "Everyone whose email ends in this, like everyone @greenacres.com.",
+    placeholder: "greenacres.com",
   },
   email_pattern: {
-    label: "Email pattern",
-    hint: "Text inside the address (+clerk_test), or a glob with * and ?.",
+    label: "Emails containing some text",
+    hint: "Any email address with this text in it, like +test.",
     placeholder: "+qa",
   },
-  org: { label: "Organization", hint: "A staff workspace or demo org, by id.", placeholder: "org_…" },
+  org: { label: "An organization", hint: "A staff workspace or a demo account, by the id your developer gives you.", placeholder: "org_…" },
   event: { label: "Test event", hint: "An event made for testing, by id.", placeholder: "evt_…" },
   order: { label: "Test order", hint: "A test purchase, by id.", placeholder: "ord_…" },
   visitor: {
-    label: "Device",
-    hint: "One browser, by its visitor id. Prefer the Mark this browser button.",
+    label: "One device",
+    hint: "One browser, by its visitor id. The “leave this device out” button is easier.",
     placeholder: "visitor id",
   },
   network: {
-    label: "Network (IP range)",
-    hint: "An office or home range in CIDR form. New visits only: IPs are never stored.",
-    placeholder: "203.0.113.0/24",
+    label: "An office or home internet connection",
+    hint: "Every device on that connection, from now on. Its address looks like 203.0.113.7 — search “what is my IP” while you're on it. Earlier visits can't be matched.",
+    placeholder: "203.0.113.7",
   },
   host: {
-    label: "Production host",
-    hint: "A host that IS production. Once any is listed, visits to every other host count as non-production. New visits only.",
+    label: "Your live website's address",
+    hint: "Once one is listed, visits to any other address (a test copy) are left out. New visits only.",
     placeholder: "www.example.com",
   },
   user_agent: {
-    label: "Automation (user agent)",
-    hint: "Text inside a monitor's or script's user agent. New visits only.",
-    placeholder: "MyUptimeBot",
+    label: "A monitoring tool",
+    hint: "A tool that checks your site is up, by the name it sends (like UptimeRobot). New visits only.",
+    placeholder: "UptimeRobot",
   },
 };

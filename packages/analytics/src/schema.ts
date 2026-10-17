@@ -133,6 +133,16 @@ export function defineAnalyticsTables(options: DefineAnalyticsTablesOptions = {}
        * below the current version.
        */
       classifierVersion: integer("classifier_version"),
+      // ---- 0.3: additive and nullable — one ALTER and one index.
+      /**
+       * Which of the tenant's registered websites (`…websites.id`) the visit
+       * landed on, when its beacon came in through a site key (a company's own
+       * website). Null: the tenant's own pages on this deployment (a company's
+       * /t/{web address} pages, a single site's own pages) — and every 0.1 and
+       * 0.2 row. A FILTER, never the scope: the tenant is the scope, and every
+       * read still starts from `tenant_id`.
+       */
+      siteId: text("site_id"),
     },
     (table) => [
       index(name("sessions_tenant_started_idx")).on(table.tenantId, table.startedAt),
@@ -141,6 +151,8 @@ export function defineAnalyticsTables(options: DefineAnalyticsTablesOptions = {}
       index(name("sessions_tenant_source_idx")).on(table.tenantId, table.sourceBucket, table.startedAt),
       // The retention purge runs across tenants by age.
       index(name("sessions_started_idx")).on(table.startedAt),
+      // 0.3: one website's visits in a range (the dashboard's website filter).
+      index(name("sessions_tenant_site_idx")).on(table.tenantId, table.siteId, table.startedAt),
     ],
   );
 
@@ -290,7 +302,40 @@ export function defineAnalyticsTables(options: DefineAnalyticsTablesOptions = {}
     (table) => [index(name("annotations_tenant_day_idx")).on(table.tenantId, table.day)],
   );
 
-  return { prefix, sessions, pageViews, events, crawlerHits, salts, rate, sites, annotations };
+  /**
+   * 0.3: THE SITE REGISTER — a tenant's websites (a company's own site,
+   * greenacres.com), each with the web addresses its beacon may come from and
+   * a PUBLIC site key the snippet carries. One deployment serves every
+   * tenant's websites: a beacon names its site by the key, and is counted
+   * only when the page it came from is on one of that site's addresses
+   * (`resolveSite`). The key is not a secret — it is in the page source of
+   * the website — so it decides WHICH site, never WHO may read anything.
+   *
+   * Removing a website sets `removed_at`: its key stops counting at once,
+   * and its visits stay in the reports. Nothing is deleted.
+   */
+  const websites = pgTable(
+    name("websites"),
+    {
+      id: idColumn(),
+      tenantId: text("tenant_id").notNull(),
+      /** What the owner calls it ("Our website"). */
+      name: text("name").notNull(),
+      /** Host names, lower-cased, without "www." (both forms count). At least one. */
+      domains: text("domains").array().notNull(),
+      /** The public site key the snippet carries: "aws_" + 24 random characters. Unique across every tenant. */
+      siteKey: text("site_key").notNull(),
+      createdBy: text("created_by"),
+      createdAt: createdAt(),
+      removedAt: timestamp("removed_at", { withTimezone: true }),
+    },
+    (table) => [
+      uniqueIndex(name("websites_key_idx")).on(table.siteKey),
+      index(name("websites_tenant_idx")).on(table.tenantId, table.createdAt),
+    ],
+  );
+
+  return { prefix, sessions, pageViews, events, crawlerHits, salts, rate, sites, annotations, websites };
 }
 
 export type AnalyticsTables = ReturnType<typeof defineAnalyticsTables>;
@@ -306,3 +351,4 @@ export const analyticsSalts = analyticsTables.salts;
 export const analyticsRate = analyticsTables.rate;
 export const analyticsSites = analyticsTables.sites;
 export const analyticsAnnotations = analyticsTables.annotations;
+export const analyticsWebsites = analyticsTables.websites;

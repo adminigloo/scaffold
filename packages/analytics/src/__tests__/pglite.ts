@@ -68,7 +68,7 @@ export function tableDdl(tables: readonly PgTable[]): string[] {
 }
 
 export function analyticsDdl(tables: AnalyticsTables): string[] {
-  return tableDdl([tables.sessions, tables.pageViews, tables.events, tables.crawlerHits, tables.salts, tables.rate, tables.sites, tables.annotations]);
+  return tableDdl([tables.sessions, tables.pageViews, tables.events, tables.crawlerHits, tables.salts, tables.rate, tables.sites, tables.annotations, tables.websites]);
 }
 
 export function audienceDdl(tables: AudienceTables): string[] {

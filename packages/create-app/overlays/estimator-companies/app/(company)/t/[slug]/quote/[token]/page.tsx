@@ -9,7 +9,7 @@ import { estimateBookHref } from "@/server/estimator-features";
  * The API sends the same two headers on every route that carries one.
  *
  * The tab title and link preview are the __TENANT_LABEL_LOWER__'s: "Your quote · {name}" (review
- * T2A-BO-01), never this site's name. Not indexed (D17); the address carries
+ * T2A-BO-01), never this site's name. Never indexed; the address carries
  * the customer's token, so it never goes to the next site (no-referrer).
  */
 export async function generateMetadata({ params }: { readonly params: Promise<{ readonly slug: string }> }): Promise<Metadata> {

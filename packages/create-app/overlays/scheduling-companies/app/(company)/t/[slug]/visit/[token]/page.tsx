@@ -9,7 +9,7 @@ import { PublicCompanyGate, publicCompanyMetadata } from "@/components/PublicCom
  * browser to send no Referer. The API sends the same two headers.
  *
  * The tab title and link preview are the __TENANT_LABEL_LOWER__'s: "Your visit · {name}" (review
- * T2A-BO-01), never this site's name. Not indexed (D17); the address carries
+ * T2A-BO-01), never this site's name. Never indexed; the address carries
  * the customer's token, so it never goes to the next site (no-referrer).
  */
 export async function generateMetadata({ params }: { readonly params: Promise<{ readonly slug: string }> }): Promise<Metadata> {

@@ -44,6 +44,8 @@ export interface CliFlags {
   readonly invoicing?: boolean;
   readonly comms?: boolean;
   readonly aeo?: boolean;
+  readonly analytics?: boolean;
+  readonly seo?: boolean;
 }
 
 export class UnknownFlagValueError extends Error {
@@ -87,6 +89,8 @@ export function parseArgs(argv: readonly string[]): CliFlags {
   let invoicing: boolean | undefined;
   let comms: boolean | undefined;
   let aeo: boolean | undefined;
+  let analytics: boolean | undefined;
+  let seo: boolean | undefined;
 
   /** Supports both `--flag value` and `--flag=value`. */
   const readValue = (arg: string, prefix: string, index: number): string | undefined =>
@@ -124,6 +128,10 @@ export function parseArgs(argv: readonly string[]): CliFlags {
     else if (arg === "--no-comms") comms = false;
     else if (arg === "--aeo") aeo = true;
     else if (arg === "--no-aeo") aeo = false;
+    else if (arg === "--analytics") analytics = true;
+    else if (arg === "--no-analytics") analytics = false;
+    else if (arg === "--seo") seo = true;
+    else if (arg === "--no-seo") seo = false;
     else if (arg === "--dir" || arg.startsWith("--dir=")) {
       dir = readValue(arg, "--dir", i);
     } else if (arg === "--tenant-noun" || arg.startsWith("--tenant-noun=")) {
@@ -168,6 +176,8 @@ export function parseArgs(argv: readonly string[]): CliFlags {
     invoicing,
     comms,
     aeo,
+    analytics,
+    seo,
   };
 }
 
@@ -240,6 +250,18 @@ export const HELP = `
   --aeo                Field service: answer-engine citation tracking — do the AI
     / --no-aeo         answers to your customers' questions mention you. Staff
                        screen; the model asker is yours to wire.
+  --analytics          Website visits, cookieless: where visitors came from
+    / --no-analytics   (search, AI assistants by name, other sites), the pages
+                       they read and the AI crawlers that read them, with the
+                       business's own people left out. With companies, each
+                       company counts its pages here and its own website (one
+                       line to paste) at /app/website; this site's own numbers
+                       are at /admin/analytics.
+  --seo / --no-seo     Search basics from @adminigloo/seo: titles with the brand
+                       once, canonical addresses, robots.txt naming the AI
+                       crawlers, a sitemap. With companies, each company's
+                       public pages get their own title, address and business
+                       details and join the sitemap; token pages stay out.
 
   With a --tenant-noun (companies), the estimator, scheduling, invoicing and
   messages are EACH COMPANY'S: its own screens at /app, its own public pages
@@ -427,6 +449,23 @@ export async function collectAnswers(
       DEFAULT_ANSWERS.includeAeo,
     ));
 
+  const includeAnalytics =
+    flags.analytics ??
+    (await prompter.confirm(
+      tenantNoun !== "none"
+        ? "Website visits? Each company sees who visits its pages and its own website — from search, AI assistants and other sites — with its own people left out."
+        : "Website visits? Who visits your site — from search, AI assistants and other sites — with your own people left out.",
+      DEFAULT_ANSWERS.includeAnalytics,
+    ));
+  const includeSeo =
+    flags.seo ??
+    (await prompter.confirm(
+      tenantNoun !== "none"
+        ? "Search basics? Titles, addresses and business details search engines and AI assistants read — for this site and each company's public pages."
+        : "Search basics? Titles, addresses and business details search engines and AI assistants read.",
+      DEFAULT_ANSWERS.includeSeo,
+    ));
+
   const answers: Answers = {
     projectName,
     tenantNoun,
@@ -445,6 +484,8 @@ export async function collectAnswers(
     includeInvoicing,
     includeComms,
     includeAeo,
+    includeAnalytics,
+    includeSeo,
     scope: DEFAULT_ANSWERS.scope,
   };
   // Refused here, before a directory is created, with the reason.

@@ -47,13 +47,13 @@ project's isolation test.
 | `assistant-widget` | Per company | The assistant's button and chat on a company's pages, and its settings screen. |
 | `ai` | Per company | Each company's AI use is counted and capped by the month, with a ceiling on the whole site's day. |
 | `billing` | Per company | Each company's plan and limits — its free trial, seats, storage, online estimates and assistant messages — checked at every checkpoint (billing 0.3). |
-| `analytics` | Not yet: 2b-4 website | Visit counts are for the whole site until then. |
-| `audience` | Not yet: 2b-4 website | Who counts as staff in the visit counts, with analytics. |
-| `seo` | Not yet: 2b-4 website | Search-engine settings are the site's own until then. |
-| `seo-reports` | Not yet: 2b-4 website | The site checks how search engines read it; the site's own until then. |
-| `aeo` | Not yet: 2b-4 website | How AI answer engines read the site; the site's own until then. |
-| `booking` | Not yet: 2b-4 website | Book-a-call is the site owner's own until then. |
-| `booking-widget` | Not yet: 2b-4 website | The book-a-call page, with booking. |
+| `analytics` | Per company | Each company's website visits: its pages here and its own websites (each with its own address list and a public key), where visitors came from, the pages they read and the AI crawlers that read them, read at /app/website (Tenancy 2b-4a). The site's own numbers stay the site's. |
+| `audience` | Per company | Who is left out of each company's visit counts — its own team, and the people, addresses and networks it names — and the cleaning of its past numbers (Tenancy 2b-4a). |
+| `seo` | Per company | Each company's public pages get their own title, address and business details for search engines and AI assistants, and a place in the sitemap; its token pages stay out of search (Tenancy 2b-4a, with --seo). The site's own search settings stay the site's. |
+| `seo-reports` | Not yet: 2b-4b website reports | The site checks how search engines read it; the site's own until then. |
+| `aeo` | Not yet: 2b-4b website reports | How AI answer engines read the site; the site's own until then. |
+| `booking` | Not yet: 2b-4c book-a-call | Book-a-call is the site owner's own until then. |
+| `booking-widget` | Not yet: 2b-4c book-a-call | The book-a-call page, with booking. |
 | `commerce` | Not yet: getting-paid | A company taking card payments from its own customers comes with the getting-paid work. |
 | `catalog` | Shared | the site's own plans and products, sold to every company |
 | `stripe` | Shared | the site's own Stripe account; a company taking card payments from its own customers comes with the getting-paid work |

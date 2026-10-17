@@ -1,4 +1,4 @@
-import { and, count, desc, eq, gte, inArray, lt, max, notInArray, sql, type SQL, type SQLWrapper } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, isNull, lt, max, notInArray, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import { audienceSessionsSource, type AnalyticsContext, type AnalyticsExcludedBreakdown } from "./context.js";
 import { aiEngineOf, AI_ENGINE_LABELS, SOURCE_BUCKETS, type AiEngineId, type SourceBucket } from "./sources.js";
 import { ASSISTANT_BOT_ENGINES, CRAWLER_KINDS, isAiCrawlerKind, type CrawlerKind } from "./crawlers.js";
@@ -41,10 +41,19 @@ export interface ReportQuery extends DateRange {
    * Ignored by `getPublicSnapshot`, which always leaves them out.
    */
   includeInternal?: boolean;
+  /**
+   * 0.3: one of the tenant's websites (its id, from the site register), or
+   * `null` for the tenant's own pages on this deployment (a company's
+   * /t/{web address} pages). Omitted: every website of the tenant. A filter
+   * inside the tenant, never instead of it. The crawler reports ignore it:
+   * crawlers are logged where this deployment serves the page, never on a
+   * website of the tenant's own.
+   */
+  siteId?: string | null;
 }
 
-/** Who a read is for: the tenant, and whether this one call counts the internal audience. */
-type Audience = Pick<ReportQuery, "tenantId" | "includeInternal">;
+/** Who a read is for: the tenant, which of its websites, and whether this one call counts the internal audience. */
+type Audience = Pick<ReportQuery, "tenantId" | "includeInternal" | "siteId">;
 
 function zoneOf(timeZone: string | undefined): string {
   const zone = timeZone ?? "UTC";
@@ -88,25 +97,34 @@ function countedSessions(ctx: AnalyticsContext, q: Audience): SQL | undefined {
   return audience.countedVisitorSql(s.visitorKey, { time: s.startedAt, session: s.id, includeInternal: false });
 }
 
+/** One website of the tenant (0.3), or its own pages here (null); undefined: no filter. */
+function siteClause(ctx: AnalyticsContext, q: Audience): SQL | undefined {
+  if (q.siteId === undefined) return undefined;
+  const s = ctx.t.sessions;
+  return q.siteId === null ? isNull(s.siteId) : eq(s.siteId, q.siteId);
+}
+
 /**
- * A page view or event counts when the visit it belongs to counts. The
- * session's tenant is repeated inside the EXISTS (exact: a page view or
- * event is always written under its session's tenant) so the planner reads
- * only this tenant's sessions — the table is shared by every tenant and
- * environment. No time bound is added: a backdated server-side conversion
- * can precede its session's start, so one would not be exact.
+ * A page view or event counts when the visit it belongs to counts (and, with
+ * a website filter, is on that website). The session's tenant is repeated
+ * inside the EXISTS (exact: a page view or event is always written under its
+ * session's tenant) so the planner reads only this tenant's sessions — the
+ * table is shared by every tenant and environment. No time bound is added: a
+ * backdated server-side conversion can precede its session's start, so one
+ * would not be exact.
  */
 function countedThroughSession(ctx: AnalyticsContext, sessionId: SQLWrapper, q: Audience): SQL | undefined {
   const counted = countedSessions(ctx, q);
-  if (!counted) return undefined;
+  const site = siteClause(ctx, q);
+  if (!counted && !site) return undefined;
   const s = ctx.t.sessions;
-  return sql`exists (select 1 from ${s} where ${s.id} = ${sessionId} and ${s.tenantId} = ${q.tenantId} and ${counted})`;
+  return sql`exists (select 1 from ${s} where ${s.id} = ${sessionId} and ${s.tenantId} = ${q.tenantId}${site ? sql` and ${site}` : sql``}${counted ? sql` and ${counted}` : sql``})`;
 }
 
-/** Sessions of this tenant started in the range, that count. */
+/** Sessions of this tenant (and website, when asked) started in the range, that count. */
 function sessionWindow(ctx: AnalyticsContext, q: Audience, range: DateRange): SQL | undefined {
   const s = ctx.t.sessions;
-  return and(eq(s.tenantId, q.tenantId), gte(s.startedAt, range.from), lt(s.startedAt, range.to), countedSessions(ctx, q));
+  return and(eq(s.tenantId, q.tenantId), siteClause(ctx, q), gte(s.startedAt, range.from), lt(s.startedAt, range.to), countedSessions(ctx, q));
 }
 
 /** The bots a crawler report leaves out (the site's own SEO audit, by default) unless `includeInternal`. */
@@ -973,6 +991,8 @@ export async function getAiCoverage(
 
 export interface ExcludedQuery extends DateRange {
   tenantId: string;
+  /** 0.3: the same website filter as the report it sits under (`ReportQuery.siteId`). */
+  siteId?: string | null;
 }
 
 /**
@@ -984,7 +1004,10 @@ export interface ExcludedQuery extends DateRange {
 export async function getExcludedBreakdown(ctx: AnalyticsContext, window: ExcludedQuery): Promise<AnalyticsExcludedBreakdown | null> {
   const audience = ctx.audienceFor(window.tenantId);
   if (!audience) return null;
-  return audience.excludedBreakdown({ from: window.from, to: window.to }, { rows: audienceSessionsSource({ tenantId: window.tenantId, tables: ctx.t }) });
+  return audience.excludedBreakdown(
+    { from: window.from, to: window.to },
+    { rows: audienceSessionsSource({ tenantId: window.tenantId, tables: ctx.t, ...(window.siteId !== undefined ? { siteId: window.siteId } : {}) }) },
+  );
 }
 
 // ---------------------------------------------------------------------------

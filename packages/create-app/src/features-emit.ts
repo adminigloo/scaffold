@@ -21,6 +21,7 @@
 
 import { tenantLabel, tenantLabelPlural, type Answers } from "./answers.js";
 import { COMMS_CRON_DAILY_AT_UTC } from "./emit.js";
+import { plansEnforced } from "./plans-emit.js";
 import { companiesMode } from "./tenancy-emit.js";
 
 /** True when any of the four field-service features is installed. */
@@ -534,12 +535,31 @@ export async function onCompanyEvent(event: TenancyEvent): Promise<void> {
 export function renderPublicCompanyGate(answers: Answers): string {
   const scope = answers.scope;
   const noun = tenantLabel(answers).toLowerCase();
+  // Tenancy 2b-4a: two answers change this file, each in its own lines (the
+  // generator's branches, never an emitted \`if\` about an answer):
+  //   --seo        a page's canonical address and "may be indexed", and the
+  //                ${noun}'s LocalBusiness details on its home page
+  //   --analytics  the visit counter on every page, and crawlers logged
+  const seo = answers.includeSeo;
+  const counted = answers.includeAnalytics;
+  // A project that sells plans: a ${noun} whose plan has closed (an ended
+  // trial, no plan) is shut to the public like a suspended one.
+  const plans = plansEnforced(answers);
+  const extraImports = [
+    ...(counted ? [`import { headers } from "next/headers";`, `import { after } from "next/server";`] : []),
+    ...(counted ? [`import { classifyCrawler } from "${scope}/analytics/crawlers";`] : []),
+    ...(seo ? [`import { graph, localBusiness, pageUrl, tryNode, webPage } from "${scope}/seo";`, `import { JsonLd } from "${scope}/seo/react";`] : []),
+    ...(counted ? [`import { CompanyAnalytics } from "@/components/CompanyAnalytics";`] : []),
+    ...(seo ? [`import { site } from "@/seo";`] : []),
+    ...(plans ? [`import { planStandingOf } from "@/server/plan-gate";`] : []),
+    ...(counted ? [`import { recordCompanyCrawlerHit } from "@/server/website";`] : []),
+  ];
   return `import type { Metadata } from "next";
 import { notFound, permanentRedirect } from "next/navigation";
 import { cache, type ReactNode } from "react";
 import { CompanyBrandBar, CompanyUnavailable, type PublicCompanyWire } from "${scope}/tenancy-widget";
 import { publicCompanyToWire } from "${scope}/tenancy/server";
-import { tenancy } from "@/server/tenancy";
+${extraImports.length ? `${extraImports.join("\n")}\n` : ""}import { tenancy } from "@/server/tenancy";
 
 /**
  * The ${noun} a web address names, looked up ONCE per page render: the page's
@@ -549,26 +569,53 @@ import { tenancy } from "@/server/tenancy";
 const findPublicCompany = cache((slug: string) => tenancy.resolvePublicCompany(slug));
 
 /**
+ * Is the ${noun} a web address names taking requests online? Not suspended${plans ? ` —
+ * and its plan open: one whose trial ended, or that has no plan, is shut like a
+ * suspended one (the APIs behind its pages refuse it too)` : ""}. Its pages then
+ * say "{Name} isn't taking requests online right now", mount no widget and no
+ * counter, and are never indexed. Asked once per render.
+ */
+const companyOpen = cache(async (slug: string): Promise<boolean> => {
+  const found = await findPublicCompany(slug);
+  if (!found || found.status !== "active") return false;${plans ? `
+  return (await planStandingOf(found.company.id)).open;` : `
+  return true;`}
+});
+
+/**
  * A ${noun} page's tab title and link preview, in THE ${noun.toUpperCase()}'S name (Tenancy 2a
  * review T2A-BO-01): "Instant estimate · Green Acres", and \`openGraph.siteName\`
  * Green Acres — never this site's name. When Green Acres texts or posts its
  * booking link, the preview a customer sees is Green Acres'. \`title.absolute\`
- * skips the site's "%s · {site name}" template. Not indexed (D17), and every
- * page says so here, so none can forget.
+ * skips the site's "%s · {site name}" template. ${seo ? `In search (Tenancy 2b-4a):
+ * a page of an active ${noun} carries its own canonical address and may be
+ * indexed once this site may be (\`site.indexable\`, production only); a
+ * token page (\`noReferrer\`), a suspended ${noun}'s and an unknown address
+ * never are; nor is a ${noun} that isn't taking requests (\`companyOpen\`).` : `Not indexed (D17), and every
+ * page says so here, so none can forget.`}
  */
 export async function publicCompanyMetadata(
   slug: string,
   page: string | null,
-  options: { readonly description?: string; readonly noReferrer?: boolean } = {},
+  options: {
+    readonly description?: string;
+    readonly noReferrer?: boolean;
+    /** The page's path after /t/{web address} ("" for the home, "/estimate"): its canonical address${seo ? "" : " (used with --seo)"}. */
+    readonly path?: string;
+  } = {},
 ): Promise<Metadata> {
   const found = await findPublicCompany(slug);
   const name = found?.company.name ?? null;
   const title = name ? (page ? \`\${page} · \${name}\` : name) : (page ?? "Not found");
-  const description = options.description ?? (name ? \`\${name}: \${page ?? "get in touch, get an estimate or book a visit online"}.\` : undefined);
+  const description = options.description ?? (name ? \`\${name}: \${page ?? "get in touch, get an estimate or book a visit online"}.\` : undefined);${seo ? `
+  // Indexed only for a live page of a ${noun} taking requests, with a path to call its own.
+  const listed = site.indexable && found !== null && (await companyOpen(slug)) && !options.noReferrer && options.path !== undefined;
+  const canonical = found && options.path !== undefined ? pageUrl(site, \`/t/\${found.company.slug}\${options.path}\`) : null;` : ""}
   return {
     title: { absolute: title },
     ...(description ? { description } : {}),
-    robots: { index: false, follow: false },
+    ${seo ? `robots: listed ? { index: true, follow: true } : { index: false, follow: false },
+    ...(canonical ? { alternates: { canonical } } : {}),` : `robots: { index: false, follow: false },`}
     ...(options.noReferrer ? { referrer: "no-referrer" as const } : {}),
     openGraph: {
       title,
@@ -600,9 +647,10 @@ export async function publicCompanyMetadata(
  *      old emails keep working.
  *   3. The ${noun}'s name, logo and brand colour head the page
  *      (<CompanyBrandBar>) — here, on its public face, the colour is the point.
- *   4. A SUSPENDED ${noun}: "{Name} isn't taking requests online right now",
- *      and how to reach it (<CompanyUnavailable>). No widget mounts, so no
- *      request is made. (A runtime STATE, not a feature switch.)
+ *   4. A SUSPENDED ${noun}${plans ? ", or one whose plan has closed" : ""}: "{Name} isn't taking requests
+ *      online right now", and how to reach it (<CompanyUnavailable>). No
+ *      widget mounts, so no request is made. (A runtime STATE, not a feature
+ *      switch.)
  *   5. Otherwise, the page — handed the ${noun} as its public wire (no id).
  *
  * The APIs behind the pages refuse a suspended ${noun} as well, for an embed
@@ -633,14 +681,77 @@ export async function PublicCompanyGate(props: {
     const query = search.toString();
     permanentRedirect(\`\${company.publicPath}\${props.path}\${query ? \`?\${query}\` : ""}\`);
   }
+  const open = await companyOpen(props.slug);${counted ? `
+  // A crawler reading this page (runtime data: who is asking), logged for the
+  // ${noun} after the page is sent — never in a person's way. Search engines and
+  // AI assistants show up in its numbers this way: they don't run the counter.
+  // Not for a ${noun} that isn't taking requests: it isn't being counted.
+  const asked = await headers();
+  const userAgent = asked.get("user-agent");
+  if (open && classifyCrawler(userAgent)) {
+    const facts = {
+      userAgent,
+      path: \`\${company.publicPath}\${props.path}\`,
+      ip: asked.get("x-real-ip") ?? asked.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+      country: asked.get("x-vercel-ip-country"),
+    };
+    after(() => recordCompanyCrawlerHit(found.company.id, facts));
+  }` : ""}${seo ? `
+  // The ${noun}'s business details for search engines and AI assistants, on its
+  // home page: its name, address, phone, email and logo from its company
+  // settings — the same page node, never this site's. Without an address yet
+  // it is still named, just not offered as a local result.
+  const details = props.path === "" && open ? await businessDetails(found.company.id) : null;` : ""}
   return (
-    <main className="mx-auto max-w-2xl px-4 py-8 sm:px-6 sm:py-12">
+    <main className="mx-auto max-w-2xl px-4 py-8 sm:px-6 sm:py-12">${seo ? `
+      {details ? <JsonLd data={details} /> : null}` : ""}
       <CompanyBrandBar company={company} />
-      <div className="mt-6">{company.status === "suspended" ? <CompanyUnavailable company={company} /> : props.children(company)}</div>
+      <div className="mt-6">{open ? props.children(company) : <CompanyUnavailable company={company} />}</div>${counted ? `
+      {open ? <CompanyAnalytics slug={company.slug} /> : null}` : ""}
     </main>
   );
 }
-`;
+${seo ? `
+/**
+ * The ${noun}'s home page as JSON-LD: the page, and a LocalBusiness (Tenancy
+ * 2b-4a) — from its company profile, so it changes when the owner changes
+ * company settings. A ${noun} with no street address yet is named for answer
+ * engines but not offered as a local result. Bad data skips the block (and
+ * says so in the server log), never the page.
+ */
+async function businessDetails(tenantId: string) {
+  const profile = await tenancy.companyProfile(tenantId);
+  if (!profile) return null;
+  const url = pageUrl(site, profile.publicPath);
+  const address = profile.address;
+  const hasAddress = Boolean(address.line1 && (address.city || address.postalCode));
+  const business = tryNode(() =>
+    localBusiness(site, {
+      id: \`\${url}#business\`,
+      url,
+      name: profile.name,
+      ...(profile.contactPhone ? { telephone: profile.contactPhone } : {}),
+      ...(profile.contactEmail ? { email: profile.contactEmail } : {}),
+      ...(profile.logoUrl ? { logo: profile.logoUrl } : {}),
+      ...(hasAddress
+        ? {
+            address: {
+              streetAddress: [address.line1, address.line2].filter(Boolean).join(", "),
+              ...(address.city ? { addressLocality: address.city } : {}),
+              ...(address.region ? { addressRegion: address.region } : {}),
+              ...(address.postalCode ? { postalCode: address.postalCode } : {}),
+              ...(address.country ? { addressCountry: address.country } : {}),
+            },
+          }
+        : { richResult: false }),
+      // The ${noun} is its own business, not part of this site's.
+      parentOrganization: false,
+    }),
+  );
+  const page = tryNode(() => webPage(site, { path: profile.publicPath, name: profile.name }));
+  return business || page ? graph(page, business) : null;
+}
+` : ""}`;
 }
 
 // ---------------------------------------------------------------------------

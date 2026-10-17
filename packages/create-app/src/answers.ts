@@ -170,6 +170,34 @@ export interface Answers {
   readonly includeInvoicing: boolean;
   readonly includeComms: boolean;
   readonly includeAeo: boolean;
+  /**
+   * WEBSITE VISITS (Tenancy 2b-4a): first-party, cookieless visit counts —
+   * where visitors came from (search, AI assistants by name, other sites),
+   * which pages they read, which AI crawlers read them — with the business's
+   * own people left out (@adminigloo/audience comes with it).
+   *
+   * In a companies project EACH COMPANY has its own: its pages here
+   * (/t/{web address}) are counted for it, it registers its own website and
+   * pastes one line to count that too, and it reads its numbers at
+   * /app/website. This site's own numbers are at /admin/analytics. A single
+   * business counts its one site, as adminigloo.com does.
+   *
+   * DEFAULTS TO FALSE: it is a sellable feature, and what is for sale arrives
+   * by being asked for (the SEO reports' rule).
+   */
+  readonly includeAnalytics: boolean;
+  /**
+   * SEARCH AND AI-ANSWER BASICS (Tenancy 2b-4a), through @adminigloo/seo:
+   * page titles with the brand once, canonical addresses, robots.txt that
+   * names the AI crawlers, a sitemap. In a companies project each company's
+   * public pages (/t/{web address}) get their own title, description,
+   * canonical address and LocalBusiness details from its company profile, and
+   * are listed in the sitemap — token pages stay out of search.
+   *
+   * Without it the project keeps its own, thinner SEO (src/seo.ts), and a
+   * company's pages stay out of search (Tenancy 2a, D17).
+   */
+  readonly includeSeo: boolean;
   /** Scope the packages are published under. */
   readonly scope: string;
 }
@@ -192,6 +220,8 @@ export const DEFAULT_ANSWERS: Answers = {
   includeInvoicing: false,
   includeComms: false,
   includeAeo: false,
+  includeAnalytics: false,
+  includeSeo: false,
   scope: "@adminigloo",
 };
 
@@ -367,6 +397,13 @@ export function packagesFor(answers: Answers): readonly string[] {
   if (answers.includeInvoicing) optional.push("invoicing", "invoicing-widget");
   if (answers.includeComms) optional.push("comms", "comms-widget");
   if (answers.includeAeo) optional.push("aeo");
+  // Two packages for one answer (Tenancy 2b-4a): `analytics` counts the
+  // visits and draws the screens; `audience` decides whose visits don't count
+  // (the business's own people). Analytics leaves people out only through an
+  // audience, so selling one without the other would sell numbers with the
+  // owner's own browsing in them.
+  if (answers.includeAnalytics) optional.push("analytics", "audience");
+  if (answers.includeSeo) optional.push("seo");
 
   return [...base, ...optional].map((p) => `${answers.scope}/${p}`);
 }
@@ -510,7 +547,9 @@ export function optionalEnvFor(answers: Answers): readonly string[] {
     // The alerts cron (email retries, the time-based alerts, clean-up) and
     // the files cron (the purge, the move to private) check it too.
     answers.includeNotifications ||
-    answers.includeStorage
+    answers.includeStorage ||
+    // Tenancy 2b-4a: the website numbers' daily tidy-up checks it too.
+    answers.includeAnalytics
   ) {
     // What the /api/cron/* routes check. Optional because a laptop drains
     // nothing on a schedule; on a deployment, unset means every cron call is
@@ -539,6 +578,10 @@ export function optionalEnvFor(answers: Answers): readonly string[] {
   // Tenancy 2b-3: which model the assistant answers with — Claude Haiku 4.5
   // unless this names another, the founder's cheapest-capable rule.
   if (answers.includeAssistant && answers.includeAi) vars.push("ASSISTANT_MODEL");
+  // Tenancy 2b-4a: the key whose visitor links and "leave this person out"
+  // marks are made with. Optional: without it one is made from
+  // CLERK_SECRET_KEY, which a deployment already requires.
+  if (answers.includeAnalytics) vars.push("AUDIENCE_SECRET");
   // PLANS (billing 0.3), in a companies project that sells subscriptions (the
   // same test as plans-emit.ts's `plansEnforced`, inlined to keep this module
   // free of the emitters): the free trial's length, and the day plans were
@@ -808,6 +851,17 @@ export function overlayNamesFor(answers: Answers): readonly string[] {
   if (answers.includeAeo && answers.adminShell !== "none") {
     names.push("aeo-admin");
   }
+  // WEBSITE VISITS (Tenancy 2b-4a), cut by its conditions:
+  //   analytics             both modes: this site's own beacon endpoint, the
+  //                         keyed endpoint every website calls (/api/w), this
+  //                         site's own report and audience routes, and the
+  //                         screens' client components
+  //   analytics-admin       this site's own numbers at /admin/analytics
+  //   analytics-companies   each company's /app/website, its routes, and the
+  //                         beacon on its pages here (/t/{web address})
+  if (answers.includeAnalytics) names.push("analytics");
+  if (answers.includeAnalytics && answers.adminShell !== "none") names.push("analytics-admin");
+  if (answers.includeAnalytics && answers.tenantNoun !== "none") names.push("analytics-companies");
 
   // THE PUBLIC FACE, in three overlays rather than one, because the three have
   // three different conditions and folding them together would make one of the
@@ -1063,6 +1117,14 @@ export function capabilitiesFor(answers: Answers): readonly string[] {
   if (answers.includeAeo && answers.adminShell !== "none") {
     keys.push("aeo.dashboard");
   }
+  // Tenancy 2b-4a: counting visits (and leaving the business's own people out
+  // of them), this site's own report under the shell, and each company's own.
+  if (answers.includeAnalytics) keys.push("analytics.visits", "analytics.audience");
+  if (answers.includeAnalytics && answers.adminShell !== "none") keys.push("analytics.dashboard");
+  if (answers.includeAnalytics && companies) keys.push("analytics.companies");
+  // Search basics through @adminigloo/seo, and each company's public pages in search.
+  if (answers.includeSeo) keys.push("seo.package");
+  if (answers.includeSeo && companies) keys.push("seo.companies");
 
   // The public face. Three keys rather than one, because a consumer asking
   // "does this project have a pricing page" is asking something a single

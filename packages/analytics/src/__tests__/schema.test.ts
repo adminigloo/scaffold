@@ -37,7 +37,7 @@ function describeTable(table: PgTable) {
   };
 }
 
-const TABLE_KEYS = ["annotations", "crawlerHits", "events", "pageViews", "rate", "salts", "sessions", "sites"] as const;
+const TABLE_KEYS = ["annotations", "crawlerHits", "events", "pageViews", "rate", "salts", "sessions", "sites", "websites"] as const;
 
 function describeAll(tables: AnalyticsTables) {
   return TABLE_KEYS.map((key) => describeTable(tables[key]));
@@ -180,6 +180,8 @@ const MIGRATION_0025_PLUS_0_2 = [
       "internal_reason text",
       "actor_key text",
       "classifier_version integer",
+      // ---- 0.3, additive and nullable (one ADD COLUMN, one index):
+      "site_id text",
     ],
     primaryKeys: [],
     foreignKeys: [],
@@ -189,6 +191,8 @@ const MIGRATION_0025_PLUS_0_2 = [
       "analytics_sessions_tenant_doc_idx (tenant_id, last_doc_id)",
       "analytics_sessions_tenant_source_idx (tenant_id, source_bucket, started_at)",
       "analytics_sessions_started_idx (started_at)",
+      // ---- 0.3:
+      "analytics_sessions_tenant_site_idx (tenant_id, site_id, started_at)",
     ],
   },
   {
@@ -198,18 +202,35 @@ const MIGRATION_0025_PLUS_0_2 = [
     foreignKeys: [],
     indexes: [],
   },
+  // ---- 0.3: the site register, a new table (CREATE TABLE; nothing existing changes).
+  {
+    name: "analytics_websites",
+    columns: [
+      "id text PRIMARY KEY",
+      "tenant_id text NOT NULL",
+      "name text NOT NULL",
+      "domains text[] NOT NULL",
+      "site_key text NOT NULL",
+      "created_by text",
+      `created_at ${TS} NOT NULL DEFAULT now()`,
+      `removed_at ${TS}`,
+    ],
+    primaryKeys: [],
+    foreignKeys: [],
+    indexes: ["UNIQUE analytics_websites_key_idx (site_key)", "analytics_websites_tenant_idx (tenant_id, created_at)"],
+  },
 ];
 
 describe("the default prefix reproduces 0.1's migration exactly", () => {
-  it("every table, column, default, key and index name matches 0025 (plus 0.2's three nullable columns)", () => {
+  it("every table, column, default, key and index name matches 0025 (plus 0.2's three nullable columns, and 0.3's site column and register)", () => {
     expect(describeAll(analyticsTables)).toEqual(MIGRATION_0025_PLUS_0_2);
     expect(describeAll(defineAnalyticsTables())).toEqual(MIGRATION_0025_PLUS_0_2);
     expect(describeAll(defineAnalyticsTables({ prefix: "analytics_" }))).toEqual(MIGRATION_0025_PLUS_0_2);
   });
 
-  it("the 0.2 columns are nullable with no default, so the upgrade is three ADD COLUMNs and touches no row", () => {
-    const columns = getTableConfig(analyticsTables.sessions).columns.filter((c) => ["internal_reason", "actor_key", "classifier_version"].includes(c.name));
-    expect(columns).toHaveLength(3);
+  it("the 0.2 and 0.3 session columns are nullable with no default, so each upgrade only ADDs COLUMNs and touches no row", () => {
+    const columns = getTableConfig(analyticsTables.sessions).columns.filter((c) => ["internal_reason", "actor_key", "classifier_version", "site_id"].includes(c.name));
+    expect(columns).toHaveLength(4);
     for (const column of columns) {
       expect(column.notNull).toBe(false);
       expect(column.default).toBeUndefined();
@@ -225,8 +246,9 @@ describe("the default prefix reproduces 0.1's migration exactly", () => {
     expect(schemaModule.analyticsRate).toBe(analyticsTables.rate);
     expect(schemaModule.analyticsSites).toBe(analyticsTables.sites);
     expect(schemaModule.analyticsAnnotations).toBe(analyticsTables.annotations);
+    expect(schemaModule.analyticsWebsites).toBe(analyticsTables.websites);
     // A drizzle-kit schema spread with `export * from "@adminigloo/analytics/schema"`
-    // sees exactly the eight tables: the set object and the factory are not tables.
+    // sees exactly the nine tables (0.3 adds the register): the set object and the factory are not tables.
     const tableExports = Object.entries(schemaModule).filter(([, value]) => {
       try {
         getTableConfig(value as PgTable);
@@ -244,6 +266,7 @@ describe("the default prefix reproduces 0.1's migration exactly", () => {
       "analyticsSalts",
       "analyticsSessions",
       "analyticsSites",
+      "analyticsWebsites",
     ]);
   });
 });

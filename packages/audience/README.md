@@ -2,7 +2,9 @@
 
 Keep your own people out of your numbers, and clean up the numbers they already polluted.
 
-Staff browsing the site, the client's consultant, test sign-ups, end-to-end runs, uptime monitors and preview deployments all count as visitors unless something stops them. This package decides **who does not count** and applies that decision to history:
+Staff browsing the site, the client's consultant, test sign-ups, end-to-end runs, uptime monitors and preview deployments all count as visitors unless something stops them.
+
+**0.2: one audience per company.** A platform with many businesses keeps one audience per company over one store and one secret (`createAudiences`): each company's own team is left out of ITS numbers only, and each company edits its own rules through company-scoped handlers (`createAudienceAdminHandlers`) and a drop-in panel (`<AudienceSettings>`). See [One audience per company](#one-audience-per-company-02). This package decides **who does not count** and applies that decision to history:
 
 - **Rules** name who is internal: a person (by user id or email), an email domain or pattern, an org, a test event or order, a device, an office network, a production host, an automation user agent. Your app's own rule in code (`isInternal(user)`) sits beside them.
 - **Marks** record what does not count: a visitor, a user, an org, an event, an order or a single session. A report leaves marked rows out with a `NOT EXISTS` anti-join. **Your analytics rows are never rewritten or deleted.**
@@ -25,20 +27,23 @@ It ships five entry points:
 | `@adminigloo/audience` + `./schema` (Drizzle + Postgres) | Rules, the classifier and defaults, the four tables, intake (`observe`, `classifyActor`), `preview` → `apply` → `remove`, `mark` / `unmark`, `backfill`, `maintain`, `excludedBreakdown`, `countedVisitorSql` / `countedSubjectSql`, device links, server-side masking (`viewModel`) | One additive migration (generate it with drizzle-kit, run it yourself); `AUDIENCE_SECRET`; a call to `observe()` in your beacon route (with the session id and the request headers) and `classifyActor()` in your server-side event writer; `countedVisitorSql(...)` with `time` and `session` added to each report query; `listUsers` over your users table (with each user's `orgIds` if you use org rules); a daily call to `maintain()` |
 | `+ ./ui` | The five admin components, styled, accessible, themeable | A page (your auth decides `canEdit` and `canSeeEmails`), and the callbacks: server actions, tRPC or fetch handlers that call the server functions above and return `{ error }` for a refusal |
 | `+ ./testing` | `assertCountedReads` | One test file naming your tables, the predicate and any exemptions, each with its reason |
+| 0.2: `createAudiences` + `createAudienceAdminHandlers` | One audience per company (`audiences.for(companyId)`, the same instance every time), each company's rules over HTTP — list, preview, add, remove — with a route table (`AUDIENCE_ADMIN_ROUTES`) and a permission fragment (`audience.manage`) | The route that mounts the handlers, your `resolveTenant` and `authorize`, and each company's `forTenant` facts (who its team is, its people, its sessions) |
+| `+ ./ui`'s `<AudienceSettings>` | The rules panel, drop-in, over `createAudienceTransport({ baseUrl })` | A page that renders it |
 | `./core` only (MySQL, no Drizzle, not React) | Everything that is not Postgres-specific: rules, classifier, `createAudience` over any store, SQL text with `?` placeholders, `indexMarks` / `excludedReasonOf` for sessions built in JavaScript | An `AudienceStore` over your own driver (11 methods, plus 2 optional ones whose queries come ready-made from `countRowsParts` / `breakdownParts`), and your own four tables. See [Not on Drizzle](#not-on-drizzle-road-rally) for the two rules a store must keep |
 
 ### Not included
 
 Say these out loud before anyone assumes otherwise:
 
-- **No analytics.** This package does not collect visits. It has no beacon, no sessions table and no reports of its own. It filters the analytics you already have. `@adminigloo/analytics` 0.1 does not use it yet and cannot be wired to it as it stands: its handler does not tell the app the visitor key or session id, and its reports have no place for the predicate. That needs analytics 0.1.1 or 0.2.
+- **No analytics.** This package does not collect visits. It has no beacon, no sessions table and no reports of its own. It filters the analytics you already have: `@adminigloo/analytics` 0.2 and later take an audience (0.3 takes one per company).
 - **Numbers kept outside your app cannot be cleaned:** Google Search Console, AI answer engines (AEO citations), the Stripe and Clerk dashboards, Resend open rates, Vercel Analytics, digests already emailed, and ad-network conversions (Meta, Google Ads, Floodlight). `UnfilteredSourcesNote` labels them on screen. Ad pixels can only be prevented at the source, and 0.1 has no pixel-suppression helper.
 - **Network, host and user-agent rules cannot reach back.** IP addresses, hosts and user agents are never stored, so these rules apply to new visits only. Preview says so.
 - **Test event and test order rules do not change session counts.** They mark the event or order itself, for event and order counts. The package cannot tell which past visits touched one.
 - **No drop-at-intake.** The package tags; it never stops your beacon from writing a row. Drop privacy opt-outs and (if you want) non-production traffic yourself, before you write.
 - **No MySQL store.** `./core` defines the interface; Road Rally's store is a later release.
-- **No auth or roles.** You decide who may edit (`canEdit`) and who sees emails (`viewModel({ canSeeEmails })`).
-- **No routes, no cron, no migration files.** You call the functions from your own server actions, jobs and drizzle-kit setup.
+- **No auth or roles of its own.** You decide who may edit (`canEdit`, or `authorize` for the 0.2 handlers) and who sees emails (`viewModel({ canSeeEmails })`).
+- **No cron.** You call `maintain()` from your own daily job (for every company, from a loop of yours). The 0.2 handlers are mounted in your own routes. Migrations: drizzle-kit, or the plain SQL in `sql/audience-0.2.0.sql`.
+- **No per-company website numbers.** Those are `@adminigloo/analytics` 0.3. SEO reports, AI-citation tracking and Search Console are other packages (the first two per company are the next chunk).
 - **No link retention.** Visitor-to-user links are kept until you delete them (`last_seen` tells you how old each is).
 - **No browser-side device storage.** "Mark this browser" uses the visitor cookie your app already sets.
 
@@ -57,7 +62,7 @@ Your token goes in your **user-level** `~/.npmrc`, never in the repo:
 ```
 
 ```bash
-npm install @adminigloo/audience@0.1.0   # pin exactly
+npm install @adminigloo/audience@0.2.0   # pin exactly
 ```
 
 Every place that installs needs the token: on Vercel, an `NPM_RC` environment variable holding both lines; in GitHub Actions, `NODE_AUTH_TOKEN` through `actions/setup-node`. Without it the install fails with `401 Unauthorized`.
@@ -123,6 +128,46 @@ Everything that "reaches back" works through the visitor id your app already sto
 
 - **A first-party cookie** (Riddler Go's two-year `rg_visitor`): naming a person excludes their past visits on every device they signed in on, "Mark this browser" lasts as long as the cookie, and a staff member who signs out stays excluded on that device.
 - **A cookieless key that changes daily** (`@adminigloo/analytics` 0.1: an HMAC of IP, user agent and a daily salt): a person rule reaches only the days that person was signed in; their anonymous visits on other days stay counted. A visitor mark also catches everyone sharing that key that day (coworkers behind one office address, same browser). Set `visitorIds: "rotating"`: `markVisitor` and device links then refuse (a browser cannot be marked for good) and preview says how far a rule reaches.
+
+## One audience per company (0.2)
+
+```ts
+// lib/website.ts — one store, one secret, one instance per company
+import { audienceSessionsSource, createAnalytics } from "@adminigloo/analytics";
+import { createAudienceAdminHandlers, createAudiences, createDrizzleAudienceStore } from "@adminigloo/audience";
+
+export const audiences = createAudiences({
+  store: createDrizzleAudienceStore({ db }),
+  secret: process.env.AUDIENCE_SECRET!,
+  visitorIds: "rotating",
+  link: "pseudonymous",
+  forTenant: (companyId) => ({
+    isInternal: (user) => (user.companies.includes(companyId) ? "team" : false), // its own team, in its own numbers
+    getUser: (id) => loadUserWithCompanies(id),
+    listUsers: ({ rule }) => usersNamedBy(rule, companyId),                    // narrow by the rule; null: its team
+    sessions: audienceSessionsSource({ tenantId: companyId }),
+  }),
+});
+export const analytics = createAnalytics({ db, audience: (tenantId) => audiences.for(tenantId) });
+
+// app/api/app/[tenantId]/audience/[...path]/route.ts
+const { handle } = createAudienceAdminHandlers({
+  audienceFor: (tenantId) => audiences.for(tenantId),
+  resolveTenant: (req) => companyIdFromPath(req),
+  authorize: (req, permission, tenantId) => mayDo(req, permission, tenantId), // Response | false | { userId }
+});
+export { handle as GET, handle as POST };
+```
+
+- **Each company's own.** An instance writes its company on every row and reads only its company's rows. A rule id of another company's is "not found" — through `remove`, and through the handlers (404).
+- **The same instance every time.** `audiences.for(id)` keeps up to 500 instances (least recently used first out), because each caches its rules and its user lookups for a minute.
+- **The routes** (`AUDIENCE_ADMIN_ROUTES`, all `audience.manage`): `GET v1/rules` (the rules, the run history, the rule in code and the kinds offered), `POST v1/rules/preview`, `POST v1/rules` (add, which cleans history at once), `POST v1/rules/{rule}/remove` (the numbers come back exactly). Errors are `{ error: { code, message } }` in plain words: `invalid` 400, `duplicate` 409, `not_found` 404, `forbidden` 403, `cross_site` 403.
+- **The kinds offered** default to `COMPANY_RULE_KINDS`, each a thing an owner knows: a team member's email, everyone at an email domain, an office or home internet connection, a monitoring tool. Ids (`user`, `org`) and email patterns are left out of the company form (a rule of those kinds added before still shows and can be removed); device marks are "leave this device out" in `@adminigloo/analytics` (a cookieless key changes daily), and the site register already says which addresses count. Every label is in an owner's words ("An office or home internet connection", not "Network (IP range)").
+- **Only the company's own people.** `forTenant`'s `getUser` and `listUsers` must find only that tenant's people — its members and the people it has invited — never every account in the app: a rule naming an address finds that person only if they belong to the company. On top of that, the handlers never say whether one address has an account: a preview of a one-person rule (`email`, `user`) reports the visits it would leave out with no people count. An email-domain preview counts the people your `listUsers` returns.
+- **`audiencePermissions`**: `audience.manage` (owner, admin), to spread into your company catalog.
+- **The panel**: `<AudienceSettings transport={createAudienceTransport({ baseUrl })} />` from `./ui` — the rules panel, its preview and history, loaded and refreshed through the routes.
+
+**Upgrading from 0.1: no table changes.** Move to 0.2 in the same change as `@adminigloo/analytics` 0.3 (it needs this version). The form's labels and a few messages are in plainer words, and the rule panel's "In code" tag reads "Set by your developer". One addition a store must honour: a row source's `where` may now carry `null`, meaning `IS NULL` (analytics 0.3's "a company's own pages here"); the Postgres builders and the Drizzle store do. A custom `AudienceStore` that renders `where` itself should do the same.
 
 ## Privacy: exactly what is stored
 

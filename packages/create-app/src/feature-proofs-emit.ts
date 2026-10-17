@@ -187,6 +187,34 @@ function suitesFor(answers: Answers): readonly FeatureSuite[] {
       adminExpr: "(overrides) => buildAssistantHandlers({ ...overrides, provider: proofAssistantModel })",
     });
   }
+  // TENANCY 2b-4a: a company's website numbers and websites (and its pages'
+  // beacon, at its web address), and who it leaves out of them.
+  if (answers.includeAnalytics) {
+    suites.push({
+      feature: "analytics",
+      glue: "@/server/website",
+      adminBuilder: "buildAnalyticsAdminHandlers",
+      adminRoutes: "ANALYTICS_ADMIN_ROUTES",
+      adminSegment: "website",
+      publicBuilder: "buildCompanyBeaconHandlers",
+      publicRoutes: "ANALYTICS_PUBLIC_ROUTES",
+      publicSegment: "website",
+      pkg: "analytics",
+      permissions: "analyticsPermissions",
+    });
+    suites.push({
+      feature: "audience",
+      glue: "@/server/website",
+      adminBuilder: "buildAudienceAdminHandlers",
+      adminRoutes: "AUDIENCE_ADMIN_ROUTES",
+      adminSegment: "audience",
+      publicBuilder: null,
+      publicRoutes: null,
+      publicSegment: null,
+      pkg: "audience",
+      permissions: "audiencePermissions",
+    });
+  }
   return suites;
 }
 
@@ -210,6 +238,9 @@ export const FEATURE_ENTITIES: Readonly<Record<string, readonly string[]>> = {
   feedback: ["ticket", "column", "category", "feedback-key", "ticket-number", "ticket-token", "column-key", "category-key", "assignee", "epic"],
   // Tenancy 2b-3: a conversation, a change it offered, a house rule, a word and an answer.
   assistant: ["conversation", "action", "house-rule", "glossary-term", "faq"],
+  // Tenancy 2b-4a: a website of the company's own, and a rule naming who is left out.
+  analytics: ["website"],
+  audience: ["rule"],
 };
 
 // ---------------------------------------------------------------------------
@@ -253,6 +284,12 @@ export function renderCompanyRows(answers: Answers): string {
         ]
       : []),
     ...(storage ? [`import type { Storage } from "${scope}/storage";`] : []),
+    ...(answers.includeAnalytics
+      ? [
+          `import { createAnalytics } from "${scope}/analytics";`,
+          `import { createAudience, createDrizzleAudienceStore } from "${scope}/audience";`,
+        ]
+      : []),
     ...(comms ? [`import { enqueueMessage, sendNow, upsertTemplate } from "${scope}/comms";`] : []),
     ...(estimator
       ? [
@@ -662,6 +699,45 @@ export function renderCompanyRows(answers: Answers): string {
   );
 `);
   }
+  if (answers.includeAnalytics) {
+    blocks.push(`
+  // WEBSITE VISITS (Tenancy 2b-4a): a website of the ${noun}'s own, with an
+  // address and a public key that name this ${noun}; one visit to it, through
+  // the package's own beacon handler (two pages, so the reports have this
+  // ${noun}'s pages and sources to leak); and a rule naming someone it leaves
+  // out of its numbers.
+  const counting = createAnalytics({ db: database });
+  const website = await counting.addWebsite({ tenantId, name: \`\${Label} website\`, domains: [\`www.\${label}-lawncare.com\`] });
+  rows.website = website.id;
+  // The website's public key. Not a route placeholder: the keyed beacon
+  // (/api/w) names its website by this alone, so the proof sends A's from B's site.
+  rows["site-key"] = website.siteKey;
+  strings.push(\`\${Label} website\`, \`\${label}-lawncare.com\`, website.siteKey);
+  const beacon = counting.createHandler({
+    resolveSite: () => ({ tenantId, siteId: website.id, allowedHosts: website.domains }),
+    clientIp: () => \`198.51.100.\${label.length}\`,
+  });
+  const pageView = (body: Record<string, unknown>) =>
+    beacon.handle(
+      new Request("http://localhost/api/w/v1/collect", {
+        method: "POST",
+        headers: { origin: \`https://www.\${label}-lawncare.com\`, "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Safari/537.36" },
+        body: JSON.stringify(body),
+      }),
+    );
+  await pageView({ t: "pageview", d: \`proof\${label}visit1\`, p: \`/\${label}-spring-cleanup\`, r: \`https://\${label}-referrer.com/\` });
+  await pageView({ t: "pageview", d: \`proof\${label}visit1\`, p: \`/\${label}-prices\` });
+  strings.push(\`/\${label}-spring-cleanup\`, \`/\${label}-prices\`, \`\${label}-referrer.com\`);
+  const leaving = createAudience({
+    store: createDrizzleAudienceStore({ db: database }),
+    secret: "proof-audience-key-0123456789-abcdefghij",
+    tenantId,
+  });
+  const rule = await leaving.addRule({ kind: "email", value: \`owner@\${label}-lawncare.com\`, reasonLabel: \`\${Label} owner\` });
+  rows.rule = rule.rule.id;
+  strings.push(\`owner@\${label}-lawncare.com\`, \`\${Label} owner\`);
+`);
+  }
   if (alerts) {
     blocks.push(`
   // ALERTS (Tenancy 2b-1, 14.1): one alert for the ${noun}'s owner through
@@ -892,6 +968,85 @@ const proofAssistantModel: ProviderAdapter = {
   },
 };
 `;
+
+/**
+ * A WEBSITE'S BEACON COUNTS ONLY FROM ITS OWN ADDRESSES, FOR ITS OWN COMPANY
+ * (Tenancy 2b-4a): the keyed endpoint every company's own website calls
+ * (/api/w) — A's key pasted on B's website, and B's on A's, count nothing for
+ * anyone; and A's key on A's own website does count, for A, so the check can
+ * fail.
+ */
+function websiteBeaconsSuite(answers: Answers): string {
+  const noun = tenantLabel(answers).toLowerCase();
+  const nouns = tenantLabelPlural(answers).toLowerCase();
+  return `
+describe("feature isolation: website beacons", () => {
+  it("count a website's visit only from its own addresses, and only for its own ${noun}", async () => {
+    const before = await snapshotOfA();
+    const keyed = buildWebsiteBeaconHandlers();
+    const send = (key: string, origin: string, doc: string) =>
+      keyed.handle(
+        new Request(\`http://localhost/api/w/v1/collect?site=\${encodeURIComponent(key)}\`, {
+          method: "POST",
+          headers: { origin, "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Safari/537.36" },
+          body: JSON.stringify({ t: "pageview", d: doc, p: "/copied-snippet" }),
+        }),
+      );
+    const aKey = fx.aRows["site-key"];
+    const bKey = fx.bRows["site-key"];
+    if (!aKey || !bKey) throw new Error("the ${nouns} have no website keys");
+    const copied = async (tenantId: string) =>
+      Number((await all(sql\`select count(*)::int as n from analytics_sessions where tenant_id = \${tenantId} and landing_path = '/copied-snippet'\`))[0]?.n ?? 0);
+    // A's key on B's website (a copied snippet), and B's on A's: nothing, for anyone.
+    expect((await send(aKey, "https://www.bravo-lawncare.com", "proofcopied00001")).status).toBe(204);
+    expect((await send(bKey, "https://www.alpha-lawncare.com", "proofcopied00002")).status).toBe(204);
+    expect(await snapshotOfA()).toBe(before);
+    expect([await copied(fx.aId), await copied(fx.bId)]).toEqual([0, 0]);
+    // The check can fail: A's key on A's own website counts — for A, never B.
+    await send(aKey, "https://www.alpha-lawncare.com", "proofowned000001");
+    expect([await copied(fx.aId), await copied(fx.bId)]).toEqual([1, 0]);
+  });
+});
+`;
+}
+
+/**
+ * A COMPANY CAN ONLY EVER NAME ITS OWN PEOPLE (Tenancy 2b-4a review): who a
+ * company leaves out of its numbers is looked up among ITS members and
+ * invitations only. B, previewing a rule in B's company for A's people (by
+ * their email domain, or one of them by address), finds nobody and learns
+ * nothing of whether they have accounts; A, in A's company, finds them — so
+ * the check can fail.
+ */
+function audiencePeopleSuite(answers: Answers): string {
+  const noun = tenantLabel(answers).toLowerCase();
+  return `
+describe("feature isolation: who a ${noun} can leave out", () => {
+  it("finds only the ${noun}'s own people: another ${noun}'s are never found, counted or left out", async () => {
+    const before = await snapshotOfA();
+    const preview = async (who: Person, tenantId: string, body: Record<string, string>) => {
+      const handlers = buildAudienceAdminHandlers({ principal: async () => ({ userId: who.id }) });
+      const res = await handlers.handle(
+        new Request(\`http://localhost/api/app/\${tenantId}/audience/v1/rules/preview\`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+      );
+      expect(res.status).toBe(200);
+      return (await res.json()) as { subjects: { users: number; visitors: number } };
+    };
+    const domain = fx.A2.email.split("@")[1] ?? "";
+    // B, in B's own ${noun}: A's people by their domain, and one of them by address — nobody.
+    expect((await preview(fx.B, fx.bId, { kind: "email_domain", value: domain })).subjects).toMatchObject({ users: 0, visitors: 0 });
+    expect((await preview(fx.B, fx.bId, { kind: "email", value: fx.A2.email })).subjects).toMatchObject({ users: 0, visitors: 0 });
+    // The check can fail: A, in A's own ${noun}, finds A's people by their domain.
+    expect((await preview(fx.A, fx.aId, { kind: "email_domain", value: domain })).subjects.users).toBeGreaterThan(0);
+    expect(await snapshotOfA()).toBe(before);
+  });
+});
+`;
+}
 
 /**
  * B'S ASSISTANT TOOLS NEVER RETURN A'S ROWS (Tenancy 2b-3): every read tool,
@@ -1320,6 +1475,10 @@ export function renderFeatureIsolationTest(answers: Answers): string {
     routeImports.push(`import type { Storage } from "${scope}/storage";`);
     glueImports.push(`import { createFilesStorage } from "@/server/files";`);
   }
+  if (answers.includeAnalytics) {
+    // The keyed beacon every company's own website calls (its own pass below).
+    glueImports.push(`import { buildWebsiteBeaconHandlers } from "@/server/website";`);
+  }
   const suiteRows = suites
     .map((s) => {
       const pub = s.publicBuilder && s.genericPublic !== false
@@ -1407,6 +1566,15 @@ export function renderFeatureIsolationTest(answers: Answers): string {
       `    assistant_messages: await all(sql\`select * from assistant_messages where tenant_id = \${a} order by id\`),`,
       `    assistant_pending_actions: await all(sql\`select * from assistant_pending_actions where tenant_id = \${a} order by id\`),`,
       `    assistant_page_docs: await all(sql\`select * from assistant_page_docs where tenant_id = \${a} order by id\`),`,
+    );
+  }
+  // Tenancy 2b-4a: A's websites, its visits and pages read, and who it leaves out.
+  if (answers.includeAnalytics) {
+    snapshot.push(
+      `    analytics_websites: await all(sql\`select * from analytics_websites where tenant_id = \${a} order by id\`),`,
+      `    analytics_sessions: await all(sql\`select * from analytics_sessions where tenant_id = \${a} order by id\`),`,
+      `    analytics_page_views: await all(sql\`select * from analytics_page_views where tenant_id = \${a} order by id\`),`,
+      `    aig_audience_rules: await all(sql\`select * from aig_audience_rules where tenant_id = \${a} order by id\`),`,
     );
   }
   // Tenancy 2b-2a: A's feedback board — its tickets, columns, categories,
@@ -2017,7 +2185,7 @@ describe("feature isolation: each role is refused what it doesn't hold", () => {
     expect(refused, "no role was refused anything, so the pass checked nothing").toBeGreaterThan(0);
   });
 });
-${filesParts.suites}${assistant ? assistantToolsSuite(answers) : ""}
+${filesParts.suites}${assistant ? assistantToolsSuite(answers) : ""}${answers.includeAnalytics ? websiteBeaconsSuite(answers) + audiencePeopleSuite(answers) : ""}
 describe("feature isolation: the check bites (negative control)", () => {
   it("rejects a handler that answers with company A's row, for a row route and for a reference route", async () => {
     const routes = SUITES.flatMap((suite) => [...suite.adminRoutes, ...suite.publicRoutes]);

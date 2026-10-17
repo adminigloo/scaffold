@@ -271,7 +271,7 @@ describe("cleaning history: preview → apply → remove", () => {
     expect(rule.value).toBe("rachelsmith+riddler@gmail.com");
     expect(applied).toMatchObject({ subjectsChanged: 3, sessionsAffected: 5 });
     expect(applied!.from!.toISOString()).toBe(daysAgo(120).toISOString());
-    expect(applied!.annotation).toBe(`Internal rule added (person (email) r***@gmail.com): 5 sessions excluded back to ${daysAgo(120).toISOString().slice(0, 10)}`);
+    expect(applied!.annotation).toBe(`Internal rule added (a team member's email r***@gmail.com): 5 sessions excluded back to ${daysAgo(120).toISOString().slice(0, 10)}`);
     expect(annotations).toEqual([applied!.annotation]);
     expect(await counted(audience, rows)).toBe(3);
     expect(await counted(audience, rows, true)).toBe(8);
@@ -859,8 +859,8 @@ describe("review: privacy", () => {
     await audience.addRule({ kind: "network", value: "73.12.34.56", reasonLabel: "Sam's home" }, { by: "d" });
     const text = annotations.join(" | ");
     for (const secret of ["husband", "Rachel Smith", "rachel.smith", "73.12.34.56", "Sam's home"]) expect(text).not.toContain(secret);
-    expect(text).toContain("email pattern rac•••");
-    expect(text).toContain("network (ip range) 73.12.•••/32");
+    expect(text).toContain("emails containing some text rac•••");
+    expect(text).toContain("an office or home internet connection 73.12.•••/32");
     const runs = await audience.runs();
     expect(JSON.stringify(runs)).not.toContain("husband");
   });

@@ -4,11 +4,12 @@ import { PublicCompanyGate, publicCompanyMetadata } from "@/components/PublicCom
 
 /**
  * The tab title and link preview are the __TENANT_LABEL_LOWER__'s: "Send feedback · {name}" (review
- * T2A-BO-01), never this site's name. Not indexed (D17).
+ * T2A-BO-01), never this site's name. In search, `publicCompanyMetadata` decides: kept out unless the project
+ * was made with --seo, and then only while the __TENANT_LABEL_LOWER__ is taking requests.
  */
 export async function generateMetadata({ params }: { readonly params: Promise<{ readonly slug: string }> }): Promise<Metadata> {
   const { slug } = await params;
-  return publicCompanyMetadata(slug, "Send feedback");
+  return publicCompanyMetadata(slug, "Send feedback", { path: "/feedback" });
 }
 
 export const dynamic = "force-dynamic";

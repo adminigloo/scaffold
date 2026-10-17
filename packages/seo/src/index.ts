@@ -26,6 +26,7 @@ export {
   definePaths,
   pathRule,
   normalizePath,
+  normalizePattern,
   pathCovers,
   CHANGE_FREQUENCIES,
   type ChangeFrequency,

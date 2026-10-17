@@ -52,6 +52,54 @@ export type {
   VisitorKeysInput,
 } from "./ingest.js";
 
+// 0.3: the site register, the company handlers, the report adapter and the snippet.
+export {
+  bareHost,
+  isLocalHost,
+  MAX_WEBSITE_DOMAINS,
+  newSiteKey,
+  normalizeDomain,
+  SITE_CACHE_MS,
+  SITE_KEY_HEADER,
+  SITE_KEY_PARAM,
+  SITE_KEY_SHAPE,
+  siteKeyOf,
+  websiteLimitSentence,
+} from "./websites.js";
+export type { AddWebsiteInput, ResolvedSite, SiteResolverOptions, UpdateWebsiteInput, Website, WebsiteAddressRules } from "./websites.js";
+export { analyticsPermissions } from "./permissions.js";
+export type { AnalyticsPermission, AnalyticsPermissionDefinition } from "./permissions.js";
+export { ANALYTICS_ADMIN_ROUTE_PERMISSIONS, ANALYTICS_ADMIN_ROUTES, ANALYTICS_PUBLIC_ROUTES } from "./routes.js";
+export type { AnalyticsAdminRouteKind, AnalyticsPublicRouteKind, AnalyticsRoute } from "./routes.js";
+export { createAnalyticsAdminHandlers } from "./admin-handlers.js";
+export type { AnalyticsAdminHandlers, AnalyticsAuthorizeResult, CreateAnalyticsAdminHandlersOptions } from "./admin-handlers.js";
+export { createAnalyticsPublicHandlers } from "./public-handlers.js";
+export type { AnalyticsPublicHandlers, CreateAnalyticsPublicHandlersOptions } from "./public-handlers.js";
+export { buildWebsiteReport, EXCLUDED_REASON_WORDS, excludedWords, REPORT_DAYS, reportDaysOf } from "./report.js";
+export type { ReportDays, WebsiteReportInput } from "./report.js";
+export { BEACON_SCRIPT, websiteSnippet } from "./beacon-script.js";
+export { ANALYTICS_WIRE_VERSION } from "./wire.js";
+export type {
+  AiEngineWire,
+  AnalyticsErrorCodeWire,
+  AnalyticsErrorWire,
+  ExcludedWire,
+  MineWire,
+  ReportRangeWire,
+  WebsiteFilterWire,
+  WebsiteReportWire,
+  WebsitesWire,
+  WebsiteWire,
+} from "./wire.js";
+
+/**
+ * This site's OWN numbers, in a deployment that also serves companies' (0.3):
+ * the tenant the platform's beacon, reports and audience use. "*" can never be
+ * a company id (ids are UUIDs), and it is the same word @adminigloo/feedback
+ * uses for the site's own board.
+ */
+export const ANALYTICS_PLATFORM_SITE = "*";
+
 export { daysInZone, PUBLIC_VITALS_MIN_SAMPLES } from "./reports.js";
 export type {
   ActivityReport,

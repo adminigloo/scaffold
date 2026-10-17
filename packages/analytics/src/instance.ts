@@ -12,7 +12,7 @@ import {
   type AnalyticsLimits,
 } from "./context.js";
 import { DEFAULT_EXCLUDED_BOTS } from "./crawlers.js";
-import { getPipelineHealth, type PipelineHealth } from "./health.js";
+import { getPipelineHealth, lastVisitsIn, type PipelineHealth } from "./health.js";
 import {
   createHandlerIn,
   markVisitorInternalIn,
@@ -33,6 +33,20 @@ import {
   type VisitorKeysInput,
 } from "./ingest.js";
 import { reclassifySources, type ReclassifyOptions, type ReclassifyResult, type ReclassifyWindow } from "./reclassify.js";
+import {
+  addWebsiteIn,
+  createSiteResolverIn,
+  getWebsiteIn,
+  listWebsitesIn,
+  removeWebsiteIn,
+  updateWebsiteIn,
+  websiteByKeyIn,
+  type AddWebsiteInput,
+  type ResolvedSite,
+  type SiteResolverOptions,
+  type UpdateWebsiteInput,
+  type Website,
+} from "./websites.js";
 import * as reports from "./reports.js";
 import { analyticsTables, type AnalyticsTables } from "./schema.js";
 import { createCrawlerVerifier, type CrawlerVerifier } from "./verify.js";
@@ -162,6 +176,7 @@ export function createAnalytics(options: CreateAnalyticsOptions) {
     excludedBots: [...(options.excludeBots ?? DEFAULT_EXCLUDED_BOTS)],
     saltCache: new Map(),
     knownSites: new Set(),
+    siteCache: new Map(),
     verifier,
     gate: () => {
       if (!license) return;
@@ -249,6 +264,28 @@ export function createAnalytics(options: CreateAnalyticsOptions) {
       reclassifySources(c, window, opts),
     ),
 
+    // ------------------------------------------------- the site register (0.3)
+    /** A tenant's websites, oldest first (removed ones only with `includeRemoved`). */
+    listWebsites: (tenantId: string, options?: { includeRemoved?: boolean }): Promise<Website[]> => listWebsitesIn(ctx, tenantId, options),
+    /** When each of the tenant's websites last had a visit (its own pages under null): the websites list's "counting" line. */
+    lastVisits: (tenantId: string): Promise<Map<string | null, Date>> => lastVisitsIn(ctx, tenantId),
+    /** One of the tenant's websites, or null (another tenant's id is null too). */
+    findWebsite: (tenantId: string, id: string): Promise<Website | null> => getWebsiteIn(ctx, tenantId, id),
+    /** Add a website with a new public site key. Throws `invalid_input` or `limit_reached` with a sentence for the form. */
+    addWebsite: (input: AddWebsiteInput): Promise<Website> => addWebsiteIn(ctx, input),
+    /** Rename a website or change its addresses (the key never changes). Null: not this tenant's. */
+    updateWebsite: (input: UpdateWebsiteInput): Promise<Website | null> => updateWebsiteIn(ctx, input),
+    /** Stop counting a website (its visits stay). Null: not this tenant's. */
+    removeWebsite: (input: { tenantId: string; id: string; at?: Date }): Promise<Website | null> => removeWebsiteIn(ctx, input),
+    /** The active website a site key names, whichever tenant's — cached a minute. */
+    websiteByKey: (key: string): Promise<Website | null> => websiteByKeyIn(ctx, key),
+    /**
+     * `resolveSite` for a keyed beacon endpoint that serves every tenant's
+     * websites: the key names the website, its addresses are where the page
+     * may be. Pass `admit` to close a tenant (a suspended company).
+     */
+    siteResolver: (options?: SiteResolverOptions): ((req: Request) => Promise<ResolvedSite | null>) => createSiteResolverIn(ctx, options),
+
     // -------------------------------------------------------- annotations
     listAnnotations: (query: { tenantId: string; fromDay: string; toDay: string }) => reports.listAnnotations(ctx, query),
     addAnnotation: (input: { tenantId: string; day: string; label: string; kind?: string; createdBy?: string | null }) => reports.addAnnotation(ctx, input),
@@ -260,10 +297,11 @@ export function createAnalytics(options: CreateAnalyticsOptions) {
     /** The audience a tenant's reports honour, or null. */
     audienceFor,
 
-    /** Drop this instance's caches (salts, "tracking started"). For tests and after restoring a database. */
+    /** Drop this instance's caches (salts, "tracking started", site keys). For tests and after restoring a database. */
     invalidate(): void {
       ctx.saltCache.clear();
       ctx.knownSites.clear();
+      ctx.siteCache.clear();
     },
   };
 }

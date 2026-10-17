@@ -70,9 +70,15 @@ export function resolveLimits(limits: Partial<AnalyticsLimits> | undefined): Ana
 // Errors
 // ---------------------------------------------------------------------------
 
-export type AnalyticsErrorCode = "unlicensed" | "invalid_config";
+/**
+ * `invalid_input` (0.3): a website's name or address an owner typed, with a
+ * sentence for the form. `limit_reached` (0.3): the tenant already has as
+ * many websites as its plan allows. `not_found` (0.3): a website that isn't
+ * the tenant's.
+ */
+export type AnalyticsErrorCode = "unlicensed" | "invalid_config" | "invalid_input" | "limit_reached" | "not_found";
 
-const STATUS: Record<AnalyticsErrorCode, number> = { unlicensed: 402, invalid_config: 500 };
+const STATUS: Record<AnalyticsErrorCode, number> = { unlicensed: 402, invalid_config: 500, invalid_input: 400, limit_reached: 409, not_found: 404 };
 
 export class AnalyticsError extends Error {
   readonly code: AnalyticsErrorCode;
@@ -99,7 +105,8 @@ export interface AnalyticsAudienceRows {
   visitor: string;
   time: string;
   id?: string;
-  where?: Readonly<Record<string, string | number | boolean>>;
+  /** Equality filters; `null` is IS NULL (audience 0.2). */
+  where?: Readonly<Record<string, string | number | boolean | null>>;
 }
 
 /** What `audience.excludedBreakdown` returns: `{ total, byReason, unit }`, the parts summing to the total. */
@@ -148,6 +155,28 @@ export interface AnalyticsAudience {
     reason?: "device";
     by?: string | null;
   }) => Promise<{ subjectsChanged: number }>;
+  /**
+   * Undo a hand mark (0.3, "Count my visits again"): clears the device's
+   * `device` mark that `mark` wrote, with a run row.
+   */
+  readonly unmark?: (input: {
+    subjectKind: "visitor";
+    subjectId: string;
+    by?: string | null;
+  }) => Promise<{ subjectsChanged: number }>;
+  /**
+   * 0.3: the server-side actor check, so a conversion recorded on the server
+   * (a booking, a sign-up) by someone internal leaves their visit out like
+   * the beacon's intake does — the gap 0.2 left to the app. Never throws
+   * (the audience reports its own failures).
+   */
+  readonly classifyActor?: (input: {
+    visitorId: string;
+    sessionId: string;
+    userId?: string | null;
+    headers?: { get(name: string): string | null } | null;
+    privacyOptOut?: boolean | null;
+  }) => Promise<unknown>;
 }
 
 /** One audience for every tenant, or one per tenant (null: that tenant has none, and nothing is filtered). */
@@ -164,9 +193,19 @@ export type AnalyticsAudienceOption = AnalyticsAudience | ((tenantId: string) =>
  * `analytics_sessions`, and the audience's preview and apply would count the
  * wrong table. (`getExcludedBreakdown` always passes the instance's own.)
  */
-export function audienceSessionsSource(input: { tenantId: string; tables?: Pick<AnalyticsTables, "sessions"> }): AnalyticsAudienceRows {
+export function audienceSessionsSource(input: {
+  tenantId: string;
+  tables?: Pick<AnalyticsTables, "sessions">;
+  /**
+   * 0.3: only one website's sessions (its id), or only the tenant's own pages
+   * here (null). Omitted: every session of the tenant.
+   */
+  siteId?: string | null;
+}): AnalyticsAudienceRows {
   const table = input.tables ? getTableName(input.tables.sessions) : "analytics_sessions";
-  return { table, visitor: "visitor_key", time: "started_at", id: "id", where: { tenant_id: input.tenantId } };
+  const where: Record<string, string | null> = { tenant_id: input.tenantId };
+  if (input.siteId !== undefined) where.site_id = input.siteId;
+  return { table, visitor: "visitor_key", time: "started_at", id: "id", where };
 }
 
 // ---------------------------------------------------------------------------
@@ -189,6 +228,13 @@ export interface AnalyticsContext {
   saltCache: Map<string, string>;
   /** Tenants this instance has already stamped a tracking start for. */
   knownSites: Set<string>;
+  /**
+   * 0.3: site key → the active website it names (or null: no such key), with
+   * when it was read. The beacon asks on every request, so a key is read from
+   * the database at most once a minute per instance — a flood of made-up keys
+   * included. Changing or removing a website through this instance drops it.
+   */
+  siteCache: Map<string, { readonly at: number; readonly site: import("./websites.js").Website | null }>;
   /** The instance's crawler verifier, used when a call passes none. */
   verifier: CrawlerVerifier | null;
   /** Throws `AnalyticsError("unlicensed")` when the license says no; reports call it. */

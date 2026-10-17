@@ -34,8 +34,8 @@ describe("package.json", () => {
     }
   });
 
-  it("declares the audience as an OPTIONAL peer (^0.1), never a dependency — vendorable without it", () => {
-    expect(pkg.peerDependencies["@adminigloo/audience"]).toBe("^0.1.0");
+  it("declares the audience as an OPTIONAL peer (^0.2: the row source's IS NULL filter), never a dependency — vendorable without it", () => {
+    expect(pkg.peerDependencies["@adminigloo/audience"]).toBe("^0.2.0");
     expect(pkg.peerDependenciesMeta["@adminigloo/audience"]).toEqual({ optional: true });
     expect(pkg.dependencies["@adminigloo/audience"]).toBeUndefined();
   });
@@ -47,6 +47,9 @@ describe("the audience's shape", () => {
     const shaped: AnalyticsAudience = audience;
     expect(typeof shaped.countedVisitorSql).toBe("function");
     expect(typeof shaped.mark).toBe("function");
+    // 0.3: the server-side conversion asks it, and "count my visits again" undoes a mark.
+    expect(typeof shaped.classifyActor).toBe("function");
+    expect(typeof shaped.unmark).toBe("function");
   });
 
   it("is checked strictly: an audience whose countedVisitorSql cannot take what analytics passes does not compile", () => {

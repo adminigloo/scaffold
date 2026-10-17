@@ -282,7 +282,11 @@ function rowRefs(rows: RowsSource, dialect: SqlDialect = "postgres") {
 function filterParts(rows: RowsSource, dialect: SqlDialect = "postgres"): SqlPart[] {
   const parts: SqlPart[] = [];
   for (const [column, value] of Object.entries(rows.where ?? {})) {
-    parts.push(text(` AND aig_s.${assertColumnName(column, "rows.where column", dialect)} = `), param(value));
+    const name = `aig_s.${assertColumnName(column, "rows.where column", dialect)}`;
+    // 0.2: null means IS NULL (an analytics session on the tenant's own
+    // pages has no website); `= NULL` would match nothing at all.
+    if (value === null) parts.push(text(` AND ${name} IS NULL`));
+    else parts.push(text(` AND ${name} = `), param(value));
   }
   return parts;
 }

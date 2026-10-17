@@ -19,6 +19,7 @@ import { dayInZone } from "./periods.js";
 import type { CrawlerVerifier } from "./verify.js";
 import { AnalyticsError, DEFAULT_LIMITS, type AnalyticsContext, type AnalyticsDb } from "./context.js";
 import { DEFAULT_ANALYTICS_PREFIX } from "./schema.js";
+import { bareHost, type ResolvedSite } from "./websites.js";
 
 /**
  * The WRITE side: the beacon endpoint, server-side conversions, the crawler
@@ -137,6 +138,8 @@ export interface AnalyticsSessionContext {
   /** The beacon request — read your auth cookie from it (Clerk's `auth()` works in the route too). */
   req: Request;
   tenantId: string;
+  /** 0.3: the registered website the visit is on (its id), or null for the tenant's own pages here. */
+  siteId: string | null;
   /** The `…sessions.id` of the visit — what a visit-only audience mark (automation, a network rule) names. */
   sessionId: string;
   /** The visit's stored visitor key — what a visitor (device) audience mark names. */
@@ -172,9 +175,25 @@ export type AnalyticsSessionVerdict = string | null | undefined | void | { reaso
 export const DEFAULT_ON_SESSION_TIMEOUT_MS = 3000;
 
 export interface AnalyticsHandlerConfig {
-  tenantId: string;
+  /**
+   * The one tenant every beacon here belongs to — a single site's handler.
+   * Give this and `allowedHosts`, or `resolveSite` instead.
+   */
+  tenantId?: string;
   /** This site's own hosts: beacons must come from one, and referrals from one are not referrals. */
-  allowedHosts: readonly string[];
+  allowedHosts?: readonly string[];
+  /**
+   * 0.3: WHOSE BEACON IS THIS, asked per request — so one endpoint serves
+   * every tenant's websites (a company's own site through its site key,
+   * `analytics.siteResolver()`), or a tenant the route names (a company's
+   * /t/{web address} pages). It answers the tenant, the website (null for
+   * the tenant's own pages here) and the hosts the page may be on; null
+   * drops the beacon (still 204). Asked before the body is read, once the
+   * method, the page's presence and the privacy signals passed. When given,
+   * `tenantId` and `allowedHosts` are ignored. A resolver that throws is
+   * reported to `onError` ("resolveSite") and the beacon is dropped.
+   */
+  resolveSite?: (req: Request) => ResolvedSite | null | Promise<ResolvedSite | null>;
   /**
    * The client IP — used only inside the HMACs, never stored. Inject what your
    * host guarantees (on Vercel, `x-real-ip` or the first `x-forwarded-for`
@@ -265,11 +284,17 @@ function pageHost(req: Request): string | null {
   return hostOf(req.headers.get("origin")) ?? hostOf(req.headers.get("referer"));
 }
 
+/** `/t/green-acres` and anything under it — never `/t/green-acres-2`. */
+function pathWithin(path: string, prefix: string): boolean {
+  const base = prefix.endsWith("/") ? prefix.slice(0, -1) : prefix;
+  return path === base || path.startsWith(`${base}/`);
+}
+
 function sameSite(req: Request, allowedHosts: readonly string[]): boolean {
   const host = pageHost(req);
   if (!host) return false;
-  const bare = host.replace(/^www\./, "");
-  return allowedHosts.some((allowed) => bare === allowed.toLowerCase().replace(/^www\./, ""));
+  const bare = bareHost(host);
+  return allowedHosts.some((allowed) => bare === bareHost(allowed));
 }
 
 /** Anything with `get(name)`: a `Headers`, or Next's `headers()` result. */
@@ -388,8 +413,15 @@ const TIMED_OUT: unique symbol = Symbol("onSession timed out");
  * recorders never see a failed analytics request).
  */
 export function createHandlerIn(ctx: AnalyticsContext, options: AnalyticsHandlerConfig): AnalyticsHandler {
-  const { tenantId } = options;
   const { limits } = ctx;
+  // One tenant and its hosts, or a resolver per request (0.3) — never neither.
+  const fixed: ResolvedSite | null =
+    options.resolveSite || typeof options.tenantId !== "string" || options.tenantId === "" || !Array.isArray(options.allowedHosts)
+      ? null
+      : { tenantId: options.tenantId, siteId: null, allowedHosts: options.allowedHosts };
+  if (!options.resolveSite && !fixed) {
+    throw new AnalyticsError("invalid_config", "createHandler needs `tenantId` and `allowedHosts`, or `resolveSite`.");
+  }
   const now = options.now ?? (() => new Date());
   const conversions = new Set(options.conversionEvents ?? []);
   const honorSignals = options.honorPrivacySignals ?? true;
@@ -440,11 +472,12 @@ export function createHandlerIn(ctx: AnalyticsContext, options: AnalyticsHandler
   }
 
   /** The hook's verdict, recorded on the session. Never throws: the page view is already committed. */
-  async function tellApp(req: Request, recorded: RecordedPageView, path: string, userAgent: string, ip: string | null): Promise<void> {
+  async function tellApp(req: Request, site: ResolvedSite, recorded: RecordedPageView, path: string, userAgent: string, ip: string | null): Promise<void> {
     if (!options.onSession) return;
     const verdict = await askApp({
       req,
-      tenantId,
+      tenantId: site.tenantId,
+      siteId: site.siteId,
       sessionId: recorded.sessionId,
       visitorId: recorded.visitorKey,
       isNewSession: recorded.isNew,
@@ -480,10 +513,26 @@ export function createHandlerIn(ctx: AnalyticsContext, options: AnalyticsHandler
     }
   }
 
+  /** Whose beacon this is (0.3): the fixed tenant, or the resolver's answer. Null drops it. */
+  async function siteOf(req: Request): Promise<ResolvedSite | null> {
+    if (!options.resolveSite) return fixed;
+    try {
+      return (await options.resolveSite(req)) ?? null;
+    } catch (error) {
+      report(error, "resolveSite");
+      return null;
+    }
+  }
+
   async function handle(req: Request): Promise<Response> {
     if (req.method !== "POST") return new Response(null, { status: 405, headers: { allow: "POST" } });
-    if (!sameSite(req, options.allowedHosts)) return noContent();
+    // No page behind it (no Origin and no Referer) is never a visit: dropped
+    // before anything is looked up, so a script sending neither costs nothing.
+    if (!pageHost(req)) return noContent();
     if (honorSignals && sendsPrivacySignal(req)) return noContent();
+    const site = await siteOf(req);
+    if (!site || !sameSite(req, site.allowedHosts)) return noContent();
+    const tenantId = site.tenantId;
     const userAgent = req.headers.get("user-agent") ?? "";
     // Crawlers are counted from their own page requests (recordCrawlerHit);
     // one that runs scripts and reaches the beacon is not a visitor. That
@@ -509,16 +558,20 @@ export function createHandlerIn(ctx: AnalyticsContext, options: AnalyticsHandler
       const keys = await resolveVisitorKeysIn(ctx, { tenantId, ip, userAgent, at, timeZone: options.timeZone });
       if (!(await takeHit(ctx, tenantId, keys.network, at))) return noContent();
       const path = normalizePath(payload.p, options.pathPatterns);
+      // A site that is only part of this app's pages (one company's
+      // /t/{web address}): any other page posting here is not its visit.
+      if (site.pathPrefix && !pathWithin(path, site.pathPrefix)) return noContent();
       const durationDelta = Math.min(payload.ms ?? 0, limits.maxDurationDeltaMs);
       await ensureSite(ctx, tenantId, at);
 
       if (payload.t === "pageview") {
         const recorded = await recordPageView(ctx, {
           tenantId,
+          siteId: site.siteId,
           keys,
           docId: payload.d,
           path,
-          referrerHost: payload.r ? referrerHostOf(payload.r, options.allowedHosts) : null,
+          referrerHost: payload.r ? referrerHostOf(payload.r, site.allowedHosts) : null,
           search: payload.q ?? "",
           userAgent,
           country: options.resolveCountry?.(req) ?? null,
@@ -526,10 +579,11 @@ export function createHandlerIn(ctx: AnalyticsContext, options: AnalyticsHandler
           durationDelta,
           at,
         });
-        if (recorded) await tellApp(req, recorded, path, userAgent, clientIp);
+        if (recorded) await tellApp(req, site, recorded, path, userAgent, clientIp);
       } else if (payload.t === "event") {
         await recordEvent(ctx, {
           tenantId,
+          siteId: site.siteId,
           keys,
           docId: payload.d,
           path,
@@ -542,7 +596,7 @@ export function createHandlerIn(ctx: AnalyticsContext, options: AnalyticsHandler
           at,
         });
       } else {
-        await addDuration(ctx, { tenantId, keys, docId: payload.d, durationDelta, at });
+        await addDuration(ctx, { tenantId, siteId: site.siteId, keys, docId: payload.d, durationDelta, at });
       }
     } catch (error) {
       // Analytics must never be the thing that errors. This beacon's write is
@@ -584,8 +638,17 @@ async function ensureSite(ctx: AnalyticsContext, tenantId: string, at: Date): Pr
   ctx.knownSites.add(tenantId);
 }
 
-/** The visit this beacon belongs to: by document first (survives the salt rollover and IP changes), then by visitor key. */
-async function liveSession(ctx: AnalyticsContext, input: { tenantId: string; keys: VisitorKeys; docId: string; at: Date }, db: AnalyticsDb = ctx.db) {
+/**
+ * The visit this beacon belongs to: by document first (survives the salt
+ * rollover and IP changes), then by visitor key — within the tenant AND the
+ * website (0.3): the same person on a company's own site and on its pages
+ * here is two visits, one per website, so each website's numbers are its own.
+ */
+async function liveSession(
+  ctx: AnalyticsContext,
+  input: { tenantId: string; siteId: string | null; keys: VisitorKeys; docId: string; at: Date },
+  db: AnalyticsDb = ctx.db,
+) {
   const { t } = ctx;
   const since = new Date(input.at.getTime() - SESSION_INACTIVITY_MS);
   const [session] = await db
@@ -594,6 +657,7 @@ async function liveSession(ctx: AnalyticsContext, input: { tenantId: string; key
     .where(
       and(
         eq(t.sessions.tenantId, input.tenantId),
+        input.siteId === null ? isNull(t.sessions.siteId) : eq(t.sessions.siteId, input.siteId),
         gte(t.sessions.lastSeenAt, since),
         or(eq(t.sessions.lastDocId, input.docId), inArray(t.sessions.visitorKey, input.keys.candidates)),
       ),
@@ -621,6 +685,7 @@ async function recordPageView(
   ctx: AnalyticsContext,
   input: {
     tenantId: string;
+    siteId: string | null;
     keys: VisitorKeys;
     docId: string;
     path: string;
@@ -660,6 +725,7 @@ async function recordPageView(
         .insert(t.sessions)
         .values({
           tenantId: input.tenantId,
+          siteId: input.siteId,
           visitorKey: input.keys.current,
           lastDocId: input.docId,
           startedAt: input.at,
@@ -714,6 +780,7 @@ async function recordEvent(
   ctx: AnalyticsContext,
   input: {
     tenantId: string;
+    siteId: string | null;
     keys: VisitorKeys;
     docId: string;
     path: string;
@@ -766,7 +833,10 @@ async function recordEvent(
 }
 
 /** Foreground time reported as the visitor leaves (or hides) the page — what makes a long single-page read count as engaged. */
-async function addDuration(ctx: AnalyticsContext, input: { tenantId: string; keys: VisitorKeys; docId: string; durationDelta: number; at: Date }): Promise<void> {
+async function addDuration(
+  ctx: AnalyticsContext,
+  input: { tenantId: string; siteId: string | null; keys: VisitorKeys; docId: string; durationDelta: number; at: Date },
+): Promise<void> {
   if (input.durationDelta <= 0) return;
   const session = await liveSession(ctx, input);
   if (!session) return;
@@ -805,6 +875,23 @@ export interface ConversionInput {
   privacyOptOut?: boolean | null;
   /** Honour the signals in `headers` (default true), like the handler's option of the same name. */
   honorPrivacySignals?: boolean;
+  /**
+   * 0.3: who did it, when someone was signed in (your user id) — so a
+   * conversion by one of your own people leaves their visit out of the
+   * numbers, as the beacon's intake does. With an audience for the tenant,
+   * the conversion asks it (`classifyActor`) about the person and the visit
+   * it landed on: an internal person's visit stops counting, and the
+   * conversion with it. Without `userId` the audience still judges what it
+   * can from the request (an automation header).
+   */
+  userId?: string | null;
+  /**
+   * 0.3: the website the conversion happened on — a website's id, or null
+   * for the tenant's own pages here — so it lands on that website's visit,
+   * never on the same person's visit to another of the tenant's websites.
+   * Left out: any of the tenant's visits (0.2's behaviour).
+   */
+  siteId?: string | null;
 }
 
 /** The visit a server-side conversion landed on — pass both to `audience.classifyActor` when the actor may be internal. */
@@ -831,7 +918,14 @@ export async function recordConversionIn(ctx: AnalyticsContext, input: Conversio
   const [session] = await db
     .select({ id: t.sessions.id, visitorKey: t.sessions.visitorKey, landingPath: t.sessions.landingPath })
     .from(t.sessions)
-    .where(and(eq(t.sessions.tenantId, input.tenantId), gte(t.sessions.lastSeenAt, since), inArray(t.sessions.visitorKey, keys.candidates)))
+    .where(
+      and(
+        eq(t.sessions.tenantId, input.tenantId),
+        input.siteId === undefined ? undefined : input.siteId === null ? isNull(t.sessions.siteId) : eq(t.sessions.siteId, input.siteId),
+        gte(t.sessions.lastSeenAt, since),
+        inArray(t.sessions.visitorKey, keys.candidates),
+      ),
+    )
     .orderBy(desc(t.sessions.lastSeenAt))
     .limit(1);
   if (!session) return null;
@@ -847,7 +941,27 @@ export async function recordConversionIn(ctx: AnalyticsContext, input: Conversio
     label: scrubLabel(input.label ?? input.name, ctx.limits.maxLabelLength),
     occurredAt: at,
   });
-  return { sessionId: session.id, visitorId: session.visitorKey };
+  const recorded = { sessionId: session.id, visitorId: session.visitorKey };
+  // THE 0.2 GAP, CLOSED (0.3): a server-side conversion never reached the
+  // audience unless the app remembered to call classifyActor itself, so a
+  // staff member booking a test call counted as a customer. The audience is
+  // asked here, about the person and the visit, before this returns.
+  const audience = ctx.audienceFor(input.tenantId);
+  if (audience?.classifyActor) {
+    try {
+      await audience.classifyActor({
+        visitorId: recorded.visitorId,
+        sessionId: recorded.sessionId,
+        userId: input.userId ?? null,
+        headers: input.headers ?? null,
+        ...(input.headers ? {} : { privacyOptOut: input.privacyOptOut ?? null }),
+      });
+    } catch (error) {
+      // The conversion stands; only the audience's verdict is lost.
+      ctx.onError(error, "recordConversion:audience");
+    }
+  }
+  return recorded;
 }
 
 // ---------------------------------------------------------------------------

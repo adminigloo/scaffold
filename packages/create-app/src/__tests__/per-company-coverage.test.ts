@@ -34,7 +34,7 @@ type Status = "per-company" | `chunk:${string}` | `shared:${string}`;
 
 /** Every directory under packages/, and where it stands. */
 export const PER_COMPANY_COVERAGE: Readonly<Record<string, Status>> = {
-  // Per company today (Tenancy 1, 2a, 2b-1, 2b-2a and 2b-3).
+  // Per company today (Tenancy 1, 2a, 2b-1, 2b-2a, 2b-3 and 2b-4a).
   tenancy: "per-company",
   "tenancy-widget": "per-company",
   permissions: "per-company",
@@ -61,14 +61,16 @@ export const PER_COMPANY_COVERAGE: Readonly<Record<string, Status>> = {
   ai: "per-company",
   // Billing 0.3: each company's plan and limits, checked at every checkpoint.
   billing: "per-company",
+  // Tenancy 2b-4a: each company's website visits, who it leaves out of them,
+  // and its public pages in search.
+  analytics: "per-company",
+  audience: "per-company",
+  seo: "per-company",
   // Not yet: the chunk that makes each per company.
-  analytics: "chunk:2b-4 website",
-  audience: "chunk:2b-4 website",
-  seo: "chunk:2b-4 website",
-  "seo-reports": "chunk:2b-4 website",
-  aeo: "chunk:2b-4 website",
-  booking: "chunk:2b-4 website",
-  "booking-widget": "chunk:2b-4 website",
+  "seo-reports": "chunk:2b-4b website reports",
+  aeo: "chunk:2b-4b website reports",
+  booking: "chunk:2b-4c book-a-call",
+  "booking-widget": "chunk:2b-4c book-a-call",
   commerce: "chunk:getting-paid",
   // Not about any one business, by design.
   catalog: "shared:the site's own plans and products, sold to every company",
@@ -129,6 +131,9 @@ const COMPANY_EVERYTHING: Answers = {
   includeFeedback: true,
   // Tenancy 2b-3: and the assistant, whose route table is per company.
   includeAssistant: true,
+  // Tenancy 2b-4a: and website visits and search basics, whose route tables are per company.
+  includeAnalytics: true,
+  includeSeo: true,
 };
 
 let planned: Promise<EmitPlan> | null = null;

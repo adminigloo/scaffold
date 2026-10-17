@@ -1,7 +1,7 @@
 import { verifyLicense, type LicenseMode } from "@adminigloo/license";
-import { z } from "zod";
 import { createAudienceCore, type CreateAudienceOptions } from "./core/audience.js";
-import { RULE_KINDS, type RuleKind, type SubjectKind } from "./core/labels.js";
+import { createAudienceRegistry } from "./core/registry.js";
+import type { SubjectKind } from "./core/labels.js";
 import type { AudienceUser } from "./core/types.js";
 import {
   countedSubjectSql,
@@ -80,54 +80,57 @@ export function createAudience<TUser extends AudienceUser = AudienceUser>(option
 
 export type Audience<TUser extends AudienceUser = AudienceUser> = ReturnType<typeof createAudience<TUser>>;
 
+export { ruleDraftSchema } from "./draft.js";
+
+// 0.2: one audience per company, its handlers, route table and permission.
+export { createAudienceRegistry } from "./core/registry.js";
+export type { AudienceRegistry, AudienceRegistryOptions } from "./core/registry.js";
+export { AUDIENCE_ADMIN_ROUTES, AUDIENCE_ROUTE_PERMISSIONS } from "./routes.js";
+export type { AudienceRoute, AudienceRouteKind } from "./routes.js";
+export { audiencePermissions } from "./permissions.js";
+export type { AudiencePermission, AudiencePermissionDefinition } from "./permissions.js";
+export { COMPANY_DEFAULTS_SUMMARY, COMPANY_RULE_KINDS, createAudienceAdminHandlers } from "./admin-handlers.js";
+export type {
+  AudienceAdminHandlers,
+  AudienceAuthorizeResult,
+  AudienceSettingsWire,
+  CompanyAudience,
+  CreateAudienceAdminHandlersOptions,
+} from "./admin-handlers.js";
+export type { AudienceErrorCodeWire } from "./http.js";
+
+/** What differs per company: who is internal there, its people, its sessions, its notes. */
+export type AudienceTenantOptions<TUser extends AudienceUser = AudienceUser> = Pick<
+  CreateDrizzleAudienceOptions<TUser>,
+  "isInternal" | "codeRule" | "listUsers" | "getUser" | "sessions" | "annotate" | "productionHosts"
+>;
+
+export interface CreateAudiencesOptions<TUser extends AudienceUser = AudienceUser>
+  extends Omit<CreateDrizzleAudienceOptions<TUser>, keyof AudienceTenantOptions<TUser> | "tenantId"> {
+  /**
+   * The company's own facts, asked once when its instance is first built:
+   * `isInternal` (its team), `getUser` / `listUsers` (its people), `sessions`
+   * (its rows in the analytics table: `audienceSessionsSource({ tenantId })`).
+   */
+  forTenant: (tenantId: string) => AudienceTenantOptions<TUser>;
+  /** Instances kept at once (least recently used first out). Default 500. */
+  max?: number;
+}
+
 /**
- * The add-rule form's input, for a server action or a tRPC procedure — shape
- * only. `addRule` and `preview` normalise and validate the VALUE per kind
- * (an email must be one, a CIDR must parse) and throw `AudienceError`
- * ("invalid_rule") with a sentence for the form.
+ * ONE AUDIENCE PER COMPANY (0.2), over one store and one secret: each
+ * company's rules, marks, links and run history are its own, and
+ * `audiences.for(companyId)` is the same instance every time (its rule and
+ * user caches are worth keeping).
+ *
+ *   export const audiences = createAudiences({ store, secret, visitorIds: "rotating", forTenant: (id) => ({ … }) });
+ *   createAnalytics({ db, audience: (tenantId) => audiences.for(tenantId) });
  */
-const draftSchema = z.object({
-  kind: z.enum(RULE_KINDS),
-  value: z.string().trim().min(1).max(320),
-  reasonLabel: z.string().trim().max(120).nullable().optional(),
-  note: z.string().trim().max(500).nullable().optional(),
-  appliesFrom: z
-    .string()
-    .trim()
-    .regex(/^\d{4}-\d{2}-\d{2}(T.*)?$/, "Use a date like 2026-07-01.")
-    .nullable()
-    .optional()
-    .or(z.literal("")),
-});
-
-/** What the add-rule form sends, after `ruleDraftSchema` has checked it. */
-export interface RuleDraftInput {
-  kind: RuleKind;
-  value: string;
-  reasonLabel?: string | null | undefined;
-  note?: string | null | undefined;
-  appliesFrom?: string | null | undefined;
+export function createAudiences<TUser extends AudienceUser = AudienceUser>(options: CreateAudiencesOptions<TUser>) {
+  const { forTenant, max, ...shared } = options;
+  if (typeof forTenant !== "function") throw new TypeError("createAudiences needs `forTenant`.");
+  return createAudienceRegistry((tenantId) => createAudience<TUser>({ ...shared, ...forTenant(tenantId), tenantId }), max === undefined ? {} : { max });
 }
 
-export interface RuleDraftIssue {
-  path: ReadonlyArray<PropertyKey>;
-  message: string;
-}
-
-export type RuleDraftParseResult =
-  | { success: true; data: RuleDraftInput }
-  | { success: false; error: { message: string; issues: ReadonlyArray<RuleDraftIssue> } };
-
-/**
- * The schema's PUBLIC type names no zod type on purpose. The package builds
- * against zod 4, whose types (`z.ZodEnum<{…}>`, `z.core`) do not exist in
- * zod 3; an app on zod 3 (Riddler Go is on ^3.25) would get type errors from
- * the published .d.ts, or — with skipLibCheck — a `kind` typed as anything.
- * The runtime works on both.
- */
-export interface RuleDraftSchema {
-  parse(input: unknown): RuleDraftInput;
-  safeParse(input: unknown): RuleDraftParseResult;
-}
-
-export const ruleDraftSchema: RuleDraftSchema = draftSchema;
+export type Audiences<TUser extends AudienceUser = AudienceUser> = ReturnType<typeof createAudiences<TUser>>;
+export type { RuleDraftInput, RuleDraftIssue, RuleDraftParseResult, RuleDraftSchema } from "./draft.js";

@@ -86,6 +86,11 @@ export async function estimateQuota(
 export async function assistantMessageLimit(_tenantId: string): Promise<number | null | undefined> {
   return undefined;
 }
+
+/** How many websites of its own a company may count: no limit here (undefined). */
+export async function websiteQuota(_tenantId: string): Promise<number | null | undefined> {
+  return undefined;
+}
 `;
   }
 
@@ -268,6 +273,16 @@ export async function storageAllowanceBytes(tenantId: string, fallback: number |
  */
 export async function assistantMessageLimit(tenantId: string): Promise<number | null | undefined> {
   return planLimit(tenantId, "assistant_messages");
+}
+
+/**
+ * How many websites of its own a ${noun} may count, from its plan
+ * (src/plans.ts, "websites of your own counted"; Tenancy 2b-4a). Checked when
+ * one is added (src/server/website.ts); its pages here are always counted.
+ * A number: the limit; null: unlimited; undefined: the plan doesn't say.
+ */
+export async function websiteQuota(tenantId: string): Promise<number | null | undefined> {
+  return planLimit(tenantId, "websites");
 }
 
 /**

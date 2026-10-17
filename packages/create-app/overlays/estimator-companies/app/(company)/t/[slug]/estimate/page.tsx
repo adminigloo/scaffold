@@ -4,15 +4,13 @@ import { PublicCompanyGate, publicCompanyMetadata } from "@/components/PublicCom
 import { estimateBookHref } from "@/server/estimator-features";
 
 /**
- * Not indexed (D17): a company's public pages stay out of search engines in
- * this release.
- *
  * The tab title and link preview are the __TENANT_LABEL_LOWER__'s: "Instant estimate · {name}" (review
- * T2A-BO-01), never this site's name. Not indexed (D17).
+ * T2A-BO-01), never this site's name. In search, `publicCompanyMetadata` decides: kept out unless the project
+ * was made with --seo, and then only while the __TENANT_LABEL_LOWER__ is taking requests.
  */
 export async function generateMetadata({ params }: { readonly params: Promise<{ readonly slug: string }> }): Promise<Metadata> {
   const { slug } = await params;
-  return publicCompanyMetadata(slug, "Instant estimate");
+  return publicCompanyMetadata(slug, "Instant estimate", { path: "/estimate" });
 }
 
 export const dynamic = "force-dynamic";

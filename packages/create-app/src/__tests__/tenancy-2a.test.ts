@@ -362,7 +362,7 @@ describe("routes ↔ pages (11.3–11.4)", () => {
       // Its title and link preview are the company's, never this site's; not
       // indexed; a token page sends no Referer (review T2A-BO-01).
       expect(code(source), path).toContain("export async function generateMetadata(");
-      expect(code(source), path).toMatch(token ? /publicCompanyMetadata\(slug, "[^"]+", \{ noReferrer: true \}\)/ : /publicCompanyMetadata\(slug, "[^"]+"\)/);
+      expect(code(source), path).toMatch(token ? /publicCompanyMetadata\(slug, "[^"]+", \{ noReferrer: true \}\)/ : /publicCompanyMetadata\(slug, "[^"]+"(, \{ path: "\/[a-z-]+" \})?\)/);
       expect(code(source), path).not.toContain("export const metadata");
     }
     // The estimate and quote pages offer the company's OWN booking page.
@@ -531,7 +531,9 @@ describe("the company modules (11.5)", () => {
     expect(gate).toContain("await findPublicCompany(props.slug)");
     expect(gate).toContain("if (!found) notFound();");
     expect(gate).toContain("permanentRedirect(");
-    expect(gate).toContain('company.status === "suspended" ? <CompanyUnavailable company={company} /> : props.children(company)');
+    expect(gate).toContain("open ? props.children(company) : <CompanyUnavailable company={company} />");
+    // Shut when suspended (the status) — the plan's standing joins it where plans are sold (website-2b4a.test.ts).
+    expect(gate).toContain('if (!found || found.status !== "active") return false;');
     expect(gate).toContain("<CompanyBrandBar company={company} />");
     // The company's home lists the public pages this project has, and nothing else.
     const home = code(file(await plan(COMPANY_FULL), "app", "(company)", "t", "[slug]", "page.tsx"));

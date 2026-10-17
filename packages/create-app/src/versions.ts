@@ -300,6 +300,17 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // alert email — pinned for the same lockfile reason.
   "comms-widget": "0.1.1",
   aeo: "0.1.1",
+  // Tenancy 2b-4a: each company's website numbers. 0.3.0 has the site
+  // register, the company handlers and route tables, the drop-in screens
+  // (./dashboard: WebsiteTraffic, WebsitesSettings) and the snippet's script,
+  // none of which exist in 0.2.x.
+  analytics: "0.3.0",
+  // 0.2.0: one audience per company (createAudiences), its company handlers
+  // and route table, and the drop-in "leave these people out" panel.
+  audience: "0.2.0",
+  // 0.2.0: a whole-segment * in the path list (a company's token pages,
+  // /t/{web address}/quote/…) and a LocalBusiness without an address.
+  seo: "0.2.0",
 };
 
 export class UnknownPackageVersionError extends Error {

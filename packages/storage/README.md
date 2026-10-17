@@ -483,8 +483,9 @@ check fails, and says what to pass.
   these notifications. Until then, feedback screenshots stay on the public
   Blob store as in 2a.
 - **The assistant answering customers on a public page.** Each company's assistant is its team's, behind sign-in (Tenancy 2b-3).
-- **Website analytics, SEO/AEO and book-a-call (booking) per company** —
-  Tenancy 2b-4.
+- **SEO reports, AI-citation tracking and book-a-call (booking) per company** —
+  Tenancy 2b-4b and 2b-4c. Website visits and search basics are per company
+  since Tenancy 2b-4a (`--analytics`, `--seo`).
 - **Text (SMS) and push alerts.** Alerts come in the app and by email — S9.
 - **Plans, limits and billing enforcement** — the billing chunk. The
   package asks `allowanceBytes(tenantId)` for each company; in a create-app

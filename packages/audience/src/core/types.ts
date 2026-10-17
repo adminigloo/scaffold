@@ -163,9 +163,10 @@ export interface RowsSource {
   /**
    * Equality filters on the app's rows — e.g. `{ tenant_id: "site" }` when the
    * sessions table is shared by environments. Column names are validated;
-   * values are bound parameters.
+   * values are bound parameters. 0.2: `null` is `IS NULL` (analytics 0.3's
+   * `site_id` for a tenant's own pages).
    */
-  where?: Readonly<Record<string, string | number | boolean>>;
+  where?: Readonly<Record<string, string | number | boolean | null>>;
 }
 
 export interface ExcludedBreakdown {

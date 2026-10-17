@@ -19,13 +19,16 @@ import { formatWebVital, WEB_VITAL_LABELS, WEB_VITAL_THRESHOLDS, type WebVitalSu
 // both got whichever mounted first and an unstyled other.
 const STYLE_ID = "aim-styles";
 
+// 0.3: the faint ink is #5a6671 (light) and #8a99a5 (dark), 4.5:1 or better on
+// every surface it sits on — the panel, the second surface and the soft bar
+// fills — so table headings, hints and tags read at AA (axe, in a real browser).
 const CSS_TEXT = `
 .aia {
   --aim-surface: #ffffff;
   --aim-surface-2: #f5f7f9;
   --aim-ink: #0e161c;
   --aim-ink-muted: #55636f;
-  --aim-ink-faint: #8494a1;
+  --aim-ink-faint: #5a6671;
   --aim-line: #e1e7ec;
   --aim-line-strong: #c3ced7;
   --aim-accent: #0f766e;
@@ -44,14 +47,14 @@ const CSS_TEXT = `
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]):not(.light) .aia {
-    --aim-surface: #161d23; --aim-surface-2: #0f1418; --aim-ink: #e8edf1; --aim-ink-muted: #93a2ae; --aim-ink-faint: #61707c;
+    --aim-surface: #161d23; --aim-surface-2: #0f1418; --aim-ink: #e8edf1; --aim-ink-muted: #93a2ae; --aim-ink-faint: #8a99a5;
     --aim-line: #29343d; --aim-line-strong: #3c4a55; --aim-accent: #45c4ad; --aim-accent-soft: #113029; --aim-ai: #a993f5; --aim-ai-soft: #251d45;
     --aim-good: #5fd08f; --aim-good-soft: #12301f; --aim-warn: #e2b553; --aim-warn-soft: #332608; --aim-bad: #f08a80; --aim-bad-soft: #3a1512;
     --aim-shadow: 0 1px 2px rgba(0,0,0,.4);
   }
 }
 :root[data-theme="dark"] .aia, .dark .aia {
-  --aim-surface: #161d23; --aim-surface-2: #0f1418; --aim-ink: #e8edf1; --aim-ink-muted: #93a2ae; --aim-ink-faint: #61707c;
+  --aim-surface: #161d23; --aim-surface-2: #0f1418; --aim-ink: #e8edf1; --aim-ink-muted: #93a2ae; --aim-ink-faint: #8a99a5;
   --aim-line: #29343d; --aim-line-strong: #3c4a55; --aim-accent: #45c4ad; --aim-accent-soft: #113029; --aim-ai: #a993f5; --aim-ai-soft: #251d45;
   --aim-good: #5fd08f; --aim-good-soft: #12301f; --aim-warn: #e2b553; --aim-warn-soft: #332608; --aim-bad: #f08a80; --aim-bad-soft: #3a1512;
   --aim-shadow: 0 1px 2px rgba(0,0,0,.4);
@@ -175,9 +178,9 @@ export function formatValue(value: number | null | undefined, format: ValueForma
   return formatNumber(value);
 }
 
-/** "3 min ago", "2 h ago", "4 d ago" — or "never". */
+/** "3 min ago", "2 h ago", "4 d ago" — or "not yet". */
 export function formatAgo(iso: string | null | undefined, now: Date = new Date()): string {
-  if (!iso) return "never";
+  if (!iso) return "not yet";
   const seconds = Math.max(0, Math.round((now.getTime() - new Date(iso).getTime()) / 1000));
   if (seconds < 60) return "just now";
   if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
@@ -260,7 +263,7 @@ export function RangeTabs<T extends string | number>({ value, options, onChange,
 // ---------------------------------------------------------------------------
 
 export function DeltaBadge({ metric, periodLabel }: { metric: Metric; periodLabel?: string }): ReactElement {
-  if (metric.priorPartial) return <span className="aim-tag">first period</span>;
+  if (metric.priorPartial) return <span className="aim-tag" title="Counting started during the period before this one, so there is nothing fair to compare with yet">nothing to compare yet</span>;
   if (metric.deltaPct === null) return <span className="aim-tag">{metric.current > 0 ? "new" : "no change"}</span>;
   const rounded = Math.round(metric.deltaPct);
   const tone = rounded > 0 ? "up" : rounded < 0 ? "down" : "flat";
@@ -281,7 +284,7 @@ export function KpiCard({ label, metric, value, format = "number", hint, periodL
       <div className="aim-kpi-value">{formatValue(shown, format)}</div>
       <div className="aim-kpi-foot">
         {metric ? <DeltaBadge metric={metric} periodLabel={periodLabel} /> : null}
-        {metric?.smallSample && metric.current > 0 ? <span className="aim-tag aim-tag-warn" title="Fewer than 30 — a few visits swing this a lot">small sample</span> : null}
+        {metric?.smallSample && metric.current > 0 ? <span className="aim-tag aim-tag-warn" title="Fewer than 30 so far: a few visits move this a lot">only a few so far</span> : null}
         {hint ? <span>{hint}</span> : null}
       </div>
     </div>
@@ -527,7 +530,7 @@ export function SourceBars({ rows, empty }: { rows: ReadonlyArray<{ source: Sour
         label: SOURCE_LABELS[row.source] ?? row.source,
         value: row.visits,
         tone: row.source === "aiAssistant" ? "ai" : "accent",
-        hint: row.engagedRate === null || row.engagedRate === undefined ? undefined : `${Math.round(row.engagedRate)}% eng.`,
+        hint: row.engagedRate === null || row.engagedRate === undefined ? undefined : `${Math.round(row.engagedRate)}% stayed`,
       }))}
     />
   );
@@ -661,16 +664,16 @@ export function CrawlerPanel({ report, now, limit = 12 }: { report: CrawlerRepor
           { key: "hits", label: "Fetches", value: (row) => row.hits, format: "number", numeric: true },
           {
             key: "verified",
-            label: "Verified",
+            label: "Confirmed",
             numeric: true,
             value: (row) => (row.hits ? row.verifiedHits / row.hits : 0),
             render: (row) =>
               row.verifiedHits === row.hits ? (
-                <span className="aim-tag aim-tag-good" title="Every fetch came from the operator's published IP ranges">verified</span>
+                <span className="aim-tag aim-tag-good" title="Every read came from the addresses its company publishes">confirmed</span>
               ) : row.verifiedHits > 0 ? (
                 <span className="aim-tag aim-tag-warn">{Math.round((row.verifiedHits / row.hits) * 100)}%</span>
               ) : (
-                <span className="aim-tag" title="Claims this name; not from a published range (or the operator publishes none)">claimed</span>
+                <span className="aim-tag" title="It used this name, but didn't come from the addresses its company publishes (or that company publishes none)">not confirmed</span>
               ),
           },
           { key: "pages", label: "Pages", value: (row) => row.pages, format: "number", numeric: true },
@@ -758,7 +761,30 @@ export function ActivityHeatmap({ activity }: { activity: ActivityReport }): Rea
 // the beacon broke. This strip says which.
 // ---------------------------------------------------------------------------
 
-export function HealthStrip({ health, now = new Date(), staleHours = 48 }: { health: PipelineHealth; now?: Date; staleHours?: number }): ReactElement {
+/** The lines the health strip can show. */
+export type HealthItem = "pageView" | "event" | "webVital" | "conversion" | "crawler" | "aiCrawler";
+
+const HEALTH_ITEMS: ReadonlyArray<{ key: HealthItem; label: string; field: keyof PipelineHealth }> = [
+  { key: "pageView", label: "Last page view", field: "lastPageView" },
+  { key: "event", label: "Last click", field: "lastEvent" },
+  { key: "webVital", label: "Last page-speed reading", field: "lastWebVital" },
+  { key: "conversion", label: "Last action taken", field: "lastConversion" },
+  { key: "crawler", label: "Last search-engine read", field: "lastCrawlerHit" },
+  { key: "aiCrawler", label: "Last AI crawler read", field: "lastAiCrawlerHit" },
+];
+
+export function HealthStrip({
+  health,
+  now = new Date(),
+  staleHours = 48,
+  items,
+}: {
+  health: PipelineHealth;
+  now?: Date;
+  staleHours?: number;
+  /** Which lines to show. Default: all of them. */
+  items?: readonly HealthItem[];
+}): ReactElement {
   useStyles();
   const item = (label: string, iso: string | null) => {
     const age = iso ? (now.getTime() - new Date(iso).getTime()) / 3_600_000 : null;
@@ -772,15 +798,13 @@ export function HealthStrip({ health, now = new Date(), staleHours = 48 }: { hea
   };
   return (
     <div className="aim-health">
-      {item("Page view", health.lastPageView)}
-      {item("Click", health.lastEvent)}
-      {item("Web vital", health.lastWebVital)}
-      {item("Conversion", health.lastConversion)}
-      {item("Crawler", health.lastCrawlerHit)}
-      {item("AI crawler", health.lastAiCrawlerHit)}
+      {HEALTH_ITEMS.filter((line) => !items || items.includes(line.key)).map((line) => item(line.label, health[line.field] as string | null))}
       <span>
-        Tracking since <b style={{ color: "var(--aim-ink)", fontWeight: 600 }}>{health.trackingSince ? new Date(health.trackingSince).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—"}</b>
+        Counting since <b style={{ color: "var(--aim-ink)", fontWeight: 600 }}>{health.trackingSince ? new Date(health.trackingSince).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—"}</b>
       </span>
     </div>
   );
 }
+
+// 0.3: the drop-in website screens and their transport.
+export * from "./website-ui.js";

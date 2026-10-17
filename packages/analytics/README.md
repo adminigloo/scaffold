@@ -9,6 +9,8 @@ First-party, cookieless traffic analytics for an app's own site, kept in the app
 
 With [`@adminigloo/audience`](../audience/README.md), staff, testers, automation and named people are left out of every report. Numbers they already polluted are cleaned without rewriting a row.
 
+**0.3: every company's websites, one deployment.** A platform with many businesses counts each one's visits apart: its pages on the platform, and its own website through a site key and a one-line snippet. Each company reads its own numbers through company-scoped handlers and a drop-in screen, with its own team left out. See [Every company's websites](#every-companys-websites-03).
+
 It ships five entry points:
 
 | Entry | What it is | Runs |
@@ -17,7 +19,7 @@ It ships five entry points:
 | `@adminigloo/analytics/schema` | `defineAnalyticsTables({ prefix })` and the default tables (`analyticsSessions`, …) to add to your Drizzle schema | Server |
 | `@adminigloo/analytics/crawlers` | `classifyCrawler(userAgent)`, dependency-free, so a request proxy can test a user agent without loading the database layer; `KNOWN_CRAWLERS` and `ROBOTS_CONTROL_TOKENS`, the same list with each bot's robots.txt tokens (what @adminigloo/seo builds robots.txt from) | Server or edge |
 | `@adminigloo/analytics/client` | `<AnalyticsBeacon>`, the opt-out switch, `useAnalyticsVisit`, `describeThisVisit` | Browser (`"use client"`) |
-| `@adminigloo/analytics/dashboard` | Display-only report components (KPI cards, trend chart, tables with CSV export, crawler panel, vitals, heatmap, health strip) | Browser (`"use client"`) |
+| `@adminigloo/analytics/dashboard` | Report components (KPI cards, trend chart, tables with CSV export, crawler panel, vitals, heatmap, health strip), and 0.3's drop-in screens: `<WebsiteTraffic>`, `<WebsitesSettings>` and their transport (`createAnalyticsTransport`) | Browser (`"use client"`) |
 
 ## What each install gets you
 
@@ -28,6 +30,8 @@ It ships five entry points:
 | `+ ./dashboard` | The report components | The page, and its data from the reports |
 | The crawler half only (Riddler Go) | Which AI and search crawlers read which pages, verified where the operator publishes its ranges. Reports: `getCrawlers`, `getRecentAiReads`, `getAiCoverage`, `getTrackingSince` (every other report reads the session tables and throws) | Two tables (`crawlerHits` and `sites`), exported by name under a prefix such as `aig_analytics_`, never `export *`. `recordCrawlerHit` with the request's IP and `crawlerVerifier: true`, from your proxy or from `after()`. `runMaintenance({ crawlersOnly: true })`. See [The crawler half alone](#the-crawler-half-alone-riddler-gos-install). |
 | `./crawlers` only | `classifyCrawler` in a proxy | Nothing |
+| 0.3: `createAnalyticsAdminHandlers` + `createAnalyticsPublicHandlers` | Every company's own numbers and websites: the site register (`addWebsite`, `listWebsites`, `updateWebsite`, `removeWebsite`), a public site key per website and the snippet that carries it, the beacon that counts a website only from its own addresses (`siteResolver`), one report per company (`buildWebsiteReport`), "these are my visits", route tables (`ANALYTICS_ADMIN_ROUTES`, `ANALYTICS_PUBLIC_ROUTES`) and a permission fragment (`analytics.view`, `analytics.manage`) | The routes that mount the handlers, your `resolveTenant`, `authorize` and (optionally) `websiteLimit`, `timeZone`, `ownPages` seams, and the migration (`sql/upgrade-0.2-to-0.3.sql`) |
+| `+ ./dashboard`'s `<WebsiteTraffic>` and `<WebsitesSettings>` | The whole website screen, drop-in: range, website filter, the left-out line and "count everyone", visits, sources (search and AI assistants by name), pages, other sites, AI crawlers; the websites with the line to paste; "these are my visits" | A page that renders them with `createAnalyticsTransport({ baseUrl })` — or your own transport over server actions or tRPC, fed by `buildWebsiteReport` |
 
 ### Not included
 
@@ -43,12 +47,14 @@ Say these out loud before anyone assumes otherwise:
   - the beacon sends no `internal` flag.
 - **Crawler verification only where the operator publishes its ranges:** OpenAI (GPTBot, OAI-SearchBot, ChatGPT-User), Perplexity (PerplexityBot, Perplexity-User), Google (Googlebot, GoogleOther), Microsoft (Bingbot) and Apple (Applebot). Every other bot is always recorded unverified: ClaudeBot, Claude-User, Claude-SearchBot, Meta-ExternalFetcher, MistralAI-User, DuckAssistBot and the rest. Their counts are User-Agent claims.
 - **No import of an existing crawler log.** An app that already logs crawlers in its own table keeps those rows where they are; a backfill into `crawlerHits` is a one-off script of your own. The package's kinds (`ai-assistant`, `ai-search`, `ai-training`, `search`, `social`, `seo-tool`, `other`) are its own, so map your tiers onto them, and your existing crawler queries and tests are yours to move.
-- **No include-internal toggle or excluded line in `./dashboard`.** Use `@adminigloo/audience/ui`'s `IncludeInternalToggle` and `ExcludedNote` beside the panels.
-- **No dashboard panel for AI engines.** `getAiAssistantTraffic` returns the data; draw it with `DataTable` or `BarList`.
+- **The primitives carry no include-internal toggle or excluded line.** `<WebsiteTraffic>` (0.3) has both; beside the primitives, use `@adminigloo/audience/ui`'s `IncludeInternalToggle` and `ExcludedNote`.
+- **No crawler counts for a company's own website.** Crawlers don't run the snippet, so they are counted only where this deployment serves the page (a company's pages here, through `recordCrawlerHit`). The screen says so when a website of its own is picked.
+- **No Core Web Vitals from the snippet.** The measuring library is not loaded on someone else's website; the React beacon still measures this deployment's own pages.
+- **No SEO reports or AI-citation tracking per company.** Auditing a company's pages and asking AI assistants whether they cite it are the next chunk (`@adminigloo/seo-reports`, `@adminigloo/aeo`). Book-a-call per company comes after.
 - **No first- or last-touch attribution, funnels across sign-up, or sign-up sources.** The source is the visit's first touch. Analytics 0.3 adds the rest.
-- **No Google Search Console, AEO citation tracking or SEO audit.** Those are separate packages. The audit's own crawler is recorded, and left out of the crawler reports by default.
+- **No Google Search Console, AEO citation tracking or SEO audit.** Those are separate packages (Search Console is not built yet). The audit's own crawler is recorded, and left out of the crawler reports by default.
 - **No Google AI Overviews or AI Mode attribution.** Those visits arrive as `google.com` and count as Search; a referrer cannot tell them apart.
-- **No routes, no cron, no migration files.** You call the functions from your own route, proxy and job, and generate the migration with drizzle-kit.
+- **No routes and no cron.** You mount the handlers in your own routes and call `runMaintenance` from your own job. Migrations: generate them with drizzle-kit, or run the plain SQL this package ships (`sql/analytics-0.3.0.sql`, `sql/upgrade-0.2-to-0.3.sql`).
 - **No rollups.** Every report reads raw rows (13 months by default). That is why a newly excluded person disappears from history at once.
 - **No crawler history kept forever by default.** Crawler rows are deleted after `limits.retentionDays` (395) like every other row. Raise it to keep them longer.
 - **No MySQL.** Postgres only (Neon, any Postgres; the tests run on PGlite).
@@ -68,12 +74,37 @@ Your token goes in your **user-level** `~/.npmrc`, never in the repo:
 ```
 
 ```bash
-npm install @adminigloo/analytics@0.2.0   # pin exactly
+npm install @adminigloo/analytics@0.3.0   # pin exactly
 ```
 
-A vendored tarball works the same way (`"@adminigloo/analytics": "file:vendor/adminigloo-analytics-0.2.0.tgz"`). Build it with `pnpm pack` in `packages/analytics`; `pnpm` rewrites the workspace dependencies to real versions. Its dependencies are `@adminigloo/db`, `@adminigloo/license` and `web-vitals`, so the registry token is still needed for those two `@adminigloo` packages.
+A vendored tarball works the same way (`"@adminigloo/analytics": "file:vendor/adminigloo-analytics-0.3.0.tgz"`). Build it with `pnpm pack` in `packages/analytics`; `pnpm` rewrites the workspace dependencies to real versions. Its dependencies are `@adminigloo/db`, `@adminigloo/license` and `web-vitals`, so the registry token is still needed for those two `@adminigloo` packages.
 
-Peer dependencies are `drizzle-orm ^0.45` and `zod ^3.25 || ^4`; `./client` and `./dashboard` also need `react ^18 || ^19`. `@adminigloo/audience` is an **optional** peer (`^0.1`), never a dependency: pass its instance in, and analytics uses it by shape. That shape is checked strictly, so an audience release whose API no longer fits fails to compile instead of failing at runtime. CommonJS consumers get the `.d.cts` types, and ESM consumers the `.d.ts`.
+Peer dependencies are `drizzle-orm ^0.45` and `zod ^3.25 || ^4`; `./client` and `./dashboard` also need `react ^18 || ^19`. `@adminigloo/audience` is an **optional** peer (`^0.2` since analytics 0.3: a website filter on the excluded line needs its `IS NULL` row filter), never a dependency: pass its instance in, and analytics uses it by shape. That shape is checked strictly, so an audience release whose API no longer fits fails to compile instead of failing at runtime. CommonJS consumers get the `.d.cts` types, and ESM consumers the `.d.ts`.
+
+## Upgrading from 0.2
+
+**Code: nothing has to change.** A handler built with `tenantId` and `allowedHosts` works as before; every report takes the same query, and a query without `siteId` reads every website of the tenant.
+
+**Migration: one column, one table, run it yourself.** `sql/upgrade-0.2-to-0.3.sql` (or `drizzle-kit generate`, which produces the same):
+
+```sql
+ALTER TABLE "analytics_sessions" ADD COLUMN IF NOT EXISTS "site_id" text;
+CREATE INDEX IF NOT EXISTS "analytics_sessions_tenant_site_idx" ON "analytics_sessions" ("tenant_id", "site_id", "started_at");
+CREATE TABLE IF NOT EXISTS "analytics_websites" ( … );   -- the site register, see the file
+```
+
+Existing sessions keep `site_id` null, meaning "the tenant's own pages here" — exactly what 0.2 recorded — so every number is the same after the upgrade. Under another prefix, replace `analytics_` in the file. A fresh install without drizzle-kit runs `sql/analytics-0.3.0.sql`.
+
+**What behaves differently:**
+
+| Change | Why |
+| --- | --- |
+| A beacon with neither an `Origin` nor a `Referer` is dropped before anything is read | It has no page behind it; 0.2 dropped it a step later |
+| A visit is matched to a live session within its website: the same person on a company's own site and on its pages here is two visits | Each website's numbers are its own |
+| `recordConversion` asks the tenant's audience about the visit (`classifyActor`), with the new `userId` | A conversion by your own staff used to count as a customer's unless the app remembered to ask |
+| The audience peer is `^0.2` | The website filter on the excluded line (`siteId: null`) needs audience 0.2's `IS NULL` row filter |
+| The dashboard's words are plainer: "never" is "not yet", "first period" is "nothing to compare yet", "small sample" is "only a few so far", "claimed"/"verified" are "not confirmed"/"confirmed", and the health strip's lines say "Last page view", "Counting since" | An owner reads these screens, not an analyst |
+| `addWebsite` runs in a transaction (count, duplicate check and insert under one lock) | Adds sent at once could all slip under a plan's limit |
 
 ## Upgrading from 0.1
 
@@ -321,6 +352,94 @@ const [overview, trend, ai, excluded] = await Promise.all([
   analytics.getExcludedBreakdown(query),   // null without an audience
 ]);
 ```
+
+## Every company's websites (0.3)
+
+One deployment, many businesses: each company's visits are counted under its own tenant id, from two places, and read through company-scoped handlers.
+
+| Where the visit happens | How it is counted |
+| --- | --- |
+| The company's pages on your platform (`/t/{web address}`) | `<AnalyticsBeacon endpoint="/api/t/{web address}/website/v1/collect">`; the public handler's `resolveSite` names the company from the path and allows only your own host |
+| The company's own website (greenacres.com, on Wix or WordPress) | The one line it pastes: `<script async src="https://app.example.com/api/w/v1/beacon.js" data-site="aws_…">`. The script posts to `collect?site=aws_…` beside itself; `analytics.siteResolver()` finds the website by its key and counts the visit only when the page is on one of the website's addresses |
+
+### The site register
+
+```ts
+const website = await analytics.addWebsite({ tenantId: company.id, name: "Our website", domains: "greenacres.com, shop.greenacres.com", by: userId, limit: planWebsites });
+// → { id, tenantId, name, domains: ["greenacres.com", "shop.greenacres.com"], siteKey: "aws_…", … }
+websiteSnippet("https://app.example.com/api/w/v1/beacon.js", website.siteKey);
+// → <script async src="…/api/w/v1/beacon.js" data-site="aws_…"></script>
+await analytics.updateWebsite({ tenantId, id, name: "Green Acres" });   // the key never changes
+await analytics.removeWebsite({ tenantId, id });                       // stops counting at once; history stays
+```
+
+- **Addresses** are normalised from what an owner types (`https://www.GreenAcres.com/contact` → `greenacres.com`); `www.` and the bare name both count. Up to 10 per website.
+- **The key is public**: it is in the website's page source. It says *which* website, never *who may read*. A copied snippet on another site counts nothing, because that page is not on the website's addresses.
+- **Every function is scoped to the tenant**: another tenant's website id is `null` (not found) for `findWebsite`, `updateWebsite` and `removeWebsite`. Only `websiteByKey` reads across tenants, because a key names its tenant; it is cached a minute per instance, misses included.
+- **`limit`** (the company's plan's websites) refuses with `AnalyticsError("limit_reached")` and a sentence for the form (`websiteLimitSentence(limit)`). The count and the insert run in one transaction under a per-tenant advisory lock, so adds sent at the same moment can't all pass a limit of one.
+- **No duplicates**: an address another of the tenant's active websites has is refused in words ("greenacres.com is already one of your websites (Main)."). Another tenant may register the same address; the beacon's address check keeps their counts apart.
+- **`refuse`** (`{ hosts, local }`, on `addWebsite` and `updateWebsite`): addresses a website may not have — your app's own (its pages here are counted already) and, with `local: true`, a laptop's (`localhost`, `127.0.0.1`, `*.local`; `isLocalHost`). The handlers take it as `addressRules`; pass `local: true` on a deployed app.
+- **`lastVisits(tenantId)`**: when each website last had a visit (its own pages under `null`), for a "Counting — last visit …" line.
+
+### The company handlers
+
+```ts
+// app/api/app/[tenantId]/website/[...path]/route.ts
+const { handle } = createAnalyticsAdminHandlers({
+  analytics,
+  resolveTenant: (req) => companyIdFromPath(req),                         // the id in the PATH, never the session's
+  authorize: (req, permission, tenantId) => mayDo(req, permission, tenantId), // Response | false | { userId }
+  timeZone: (tenantId) => companyZone(tenantId),                          // the company's days
+  scriptUrl: "https://app.example.com/api/w/v1/beacon.js",
+  websiteLimit: (tenantId) => planWebsites(tenantId),                     // optional
+  ownPages: (tenantId) => ({ label: "Your pages on Lawnco", url: companyHomeUrl(tenantId) }),
+  addressRules: { hosts: ["app.example.com"], local: true },              // optional: refused addresses
+  clientIp: (req) => req.headers.get("x-real-ip"),                        // the same IP the beacon reads
+});
+export { handle as GET, handle as POST };
+
+// app/api/t/[slug]/website/[...path]/route.ts and app/api/w/[...path]/route.ts
+const { handle } = createAnalyticsPublicHandlers({
+  analytics,
+  resolveSite: analytics.siteResolver({ admit: (tenantId, req) => isTakingRequests(tenantId) }), // or by the path
+  clientIp: (req) => req.headers.get("x-real-ip"),
+  onSession: (visit) => audiences.for(visit.tenantId).observe({ … }),
+});
+```
+
+| Route (`ANALYTICS_ADMIN_ROUTES`) | Permission | What |
+| --- | --- | --- |
+| `GET v1/report?days=7\|30\|90&site=all\|pages&includeInternal=1` | `analytics.view` | The report (`WebsiteReportWire`) |
+| `GET v1/websites/{website}/report` | `analytics.view` | One website's report; another company's website is 404 |
+| `GET v1/websites` | `analytics.view` | The websites with their snippets and last visit, whether this person may change them, and the plan's sentence once they are all used (`limitMessage`) |
+| `POST v1/websites` | `analytics.manage` | Add one (`{ name, domains }`) |
+| `POST v1/websites/{website}` | `analytics.manage` | Rename or change its addresses |
+| `POST v1/websites/{website}/remove` | `analytics.manage` | Stop counting it |
+| `POST v1/visits/mine`, `POST v1/visits/mine/undo` | `analytics.manage` | "These are my visits" for the device asking, and "count them again" |
+
+`ANALYTICS_PUBLIC_ROUTES`: `POST v1/collect` (always 204) and `GET v1/beacon.js` (the snippet's script). A `resolveSite` answer may carry `pathPrefix` (`/t/green-acres`): then only pages at or under it count — for a site that is one part of your app's pages, so another company's page posting there counts nothing. With no `scriptUrl`, the websites list shows no line to paste and `onError` hears it once (a setup step, never a sentence on an owner's screen). `analyticsPermissions` is the fragment to spread into your company catalog: `analytics.view` (owner, admin, member, viewer) and `analytics.manage` (owner, admin). `analytics.view` ends in `.view`, so a closed plan keeps the numbers readable.
+
+Errors are `{ error: { code, message } }` with a plain sentence: `forbidden` 403, `not_found` 404, `invalid` 400, `limit_reached` 409, `cross_site` 403 (a POST from another site), `unlicensed` 402.
+
+### The report and the screens
+
+`buildWebsiteReport(analytics, { tenantId, days, site, includeInternal, timeZone })` is everything the screen draws, as JSON: the headline numbers with their deltas, the trend, the eight sources, the search engines and the AI assistants by name, the pages read, other sites, the AI crawlers, the left-out line in words ("Left out: 12 visits (your team 10, automation 2).") and whether anything is arriving. A host with its own routes calls it directly.
+
+```tsx
+"use client";
+import { createAnalyticsTransport, WebsitesSettings, WebsiteTraffic } from "@adminigloo/analytics/dashboard";
+const transport = createAnalyticsTransport({ baseUrl: `/api/app/${company.id}/website` });
+<WebsiteTraffic transport={transport} />      // a phone's width to a laptop's, light and dark
+<WebsitesSettings transport={transport} />    // the websites, the line to paste, "leave this device out"
+```
+
+What the owner sees, in their words: each website says "No visits yet. Paste the line, then open your site once" until its first visit, then "Counting — last visit 5 min ago"; how to paste the line on WordPress, Wix, Squarespace or anything else ("or send it to whoever looks after your website"); "Stop counting" asks first and says that adding the site back means pasting a new line; a list that can't load says why with "Try again". "Leave out your own visits" gives a link per website that opens it with `?analytics=off`, so that phone or computer is left out from then on (the beacon's own first-party switch, kept on that device; `?analytics=on` undoes it), points an office to the internet-connection rule, and keeps "leave out today's visits from this device" for a device that already browsed. The numbers use plain labels: "Visits that stayed" (10 seconds or more, or 2 pages), "Took action" (shown once any conversion is recorded; `conversionsLabel` / `conversionsHint` rename it), "nothing to compare yet", "only a few so far", crawlers "confirmed" or "not confirmed"; a new company's trend starts the day it started counting.
+
+Any object with a `report(request)` method is a transport, so the screen works over server actions or tRPC too.
+
+### Per-company reports and the audience
+
+Every report's query takes `siteId`: a website's id, `null` for the company's own pages here, or omitted for all of them. So does `recordConversion`: with `siteId` the conversion lands on the visit to that website, never on the same person's visit to another of the company's websites. Give `createAnalytics` one audience per company (`audience: (tenantId) => audiences.for(tenantId)`, `createAudiences` from `@adminigloo/audience` 0.2): each company's own team is left out of its own numbers only.
 
 ## Leaving your own people out
 

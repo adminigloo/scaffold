@@ -1373,14 +1373,19 @@ export interface OpeningHoursInput {
   closes: string;
 }
 
-export interface LocalBusinessInput {
+export interface LocalBusinessInput extends RichResultOption {
   type?: LocalBusinessType;
   /** Default: the site name. */
   name?: string;
-  /** Default: the site URL. */
+  /** Default: the site URL. A business with its own page on this site (a company's /t/{web address}) passes that page. */
   url?: string;
-  /** Required by Google. */
-  address: PostalAddressInput;
+  /**
+   * Required by Google for a local-business rich result. 0.2: with
+   * `richResult: false` it may be left out — the node still names the
+   * business, its phone, email and logo for answer engines (a business that
+   * hasn't entered its address yet, or one that works only at its customers').
+   */
+  address?: PostalAddressInput;
   geo?: GeoInput;
   telephone?: string;
   email?: string;
@@ -1403,7 +1408,7 @@ export interface LocalBusinessInput {
 export function localBusiness(site: Site, input: LocalBusinessInput): JsonLdNode {
   const issues = new Issues("localBusiness");
   const type = oneOf(issues, input.type ?? "LocalBusiness", LOCAL_BUSINESS_TYPES, "type");
-  issues.check(input.address !== undefined, "address is required");
+  if (input.richResult !== false) issues.check(input.address !== undefined, "address is required");
   const selfRated = input as LocalBusinessInput & { aggregateRating?: unknown; reviews?: unknown };
   if (selfRated.aggregateRating !== undefined || selfRated.reviews !== undefined) {
     issues.add(
@@ -1422,7 +1427,7 @@ export function localBusiness(site: Site, input: LocalBusinessInput): JsonLdNode
     name: text(issues, input.name ?? site.name, "name", true),
     url: url(site, issues, input.url, "url") ?? pageUrl(site, "/"),
     description: text(issues, input.description, "description", false),
-    address: address(issues, input.address, "address"),
+    address: input.address === undefined ? undefined : address(issues, input.address, "address"),
     geo: geo(issues, input.geo, "geo"),
     telephone: input.telephone,
     email: input.email,
