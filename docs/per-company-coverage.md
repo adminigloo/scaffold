@@ -43,9 +43,10 @@ project's isolation test.
 | `storage-widget` | Per company | Photos and files on a record, the Files screen and the storage meter. |
 | `feedback` | Per company | Each company's feedback board: its tickets, columns, categories, website keys and its customers' feedback page (Tenancy 2b-2a). The site's own board stays the site's. |
 | `feedback-widget` | Per company | The feedback form on a company's feedback page and its own website, and the site's own feedback button. |
-| `assistant` | Not yet: 2b-3 assistant | The AI assistant is the site's own until then. |
-| `assistant-widget` | Not yet: 2b-3 assistant | The assistant's chat and its settings screen, with the assistant. |
-| `ai` | Not yet: 2b-3 assistant | AI usage is counted for the whole site until then. |
+| `assistant` | Per company | Each company's AI assistant: what it knows about the business (its profile, answers to common questions, house rules, words), each person's conversations with it, the changes it offers and the month's AI it may use (Tenancy 2b-3). The site's own assistant stays the site's. |
+| `assistant-widget` | Per company | The assistant's button and chat on a company's pages, and its settings screen. |
+| `ai` | Per company | Each company's AI use is counted and capped by the month, with a ceiling on the whole site's day. |
+| `billing` | Per company | Each company's plan and limits — its free trial, seats, storage, online estimates and assistant messages — checked at every checkpoint (billing 0.3). |
 | `analytics` | Not yet: 2b-4 website | Visit counts are for the whole site until then. |
 | `audience` | Not yet: 2b-4 website | Who counts as staff in the visit counts, with analytics. |
 | `seo` | Not yet: 2b-4 website | Search-engine settings are the site's own until then. |
@@ -53,10 +54,9 @@ project's isolation test.
 | `aeo` | Not yet: 2b-4 website | How AI answer engines read the site; the site's own until then. |
 | `booking` | Not yet: 2b-4 website | Book-a-call is the site owner's own until then. |
 | `booking-widget` | Not yet: 2b-4 website | The book-a-call page, with booking. |
-| `billing` | Not yet: billing | Plans and limits per company come with the billing work. |
-| `catalog` | Not yet: billing | What the site sells, and its plans, with billing. |
-| `stripe` | Not yet: billing | The site's own Stripe account, with billing. |
 | `commerce` | Not yet: getting-paid | A company taking card payments from its own customers comes with the getting-paid work. |
+| `catalog` | Shared | the site's own plans and products, sold to every company |
+| `stripe` | Shared | the site's own Stripe account; a company taking card payments from its own customers comes with the getting-paid work |
 | `db` | Shared | the database connection and migration tools every package uses; it keeps no business's records |
 | `env` | Shared | reads the site's own settings when it starts; nothing in it belongs to a business |
 | `license` | Shared | checks the site's own licence key with the seller; one per site, not per business |

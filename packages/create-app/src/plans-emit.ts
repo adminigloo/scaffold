@@ -81,6 +81,11 @@ export async function estimateQuota(
 ): Promise<{ readonly open: true } | { readonly open: false; readonly message: string }> {
   return { open: true };
 }
+
+/** The assistant's questions a month from a plan: none here (undefined), so the project's own allowance applies. */
+export async function assistantMessageLimit(_tenantId: string): Promise<number | null | undefined> {
+  return undefined;
+}
 `;
   }
 
@@ -252,6 +257,17 @@ export async function storageAllowanceBytes(tenantId: string, fallback: number |
   const gb = await planLimit(tenantId, "storage_gb");
   if (gb === undefined) return fallback;
   return gb === null ? null : gb * 1024 * 1024 * 1024;
+}
+
+/**
+ * The AI assistant's questions a month, from the ${noun}'s plan (src/plans.ts,
+ * "AI assistant messages a month"). A number: the limit; null: unlimited;
+ * undefined: the plan doesn't say, so src/server/assistant.ts's own
+ * allowance applies. Counted by the assistant from ai_usage before every
+ * question it answers with AI (Tenancy 2b-3).
+ */
+export async function assistantMessageLimit(tenantId: string): Promise<number | null | undefined> {
+  return planLimit(tenantId, "assistant_messages");
 }
 
 /**

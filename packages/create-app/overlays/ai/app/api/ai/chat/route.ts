@@ -24,6 +24,7 @@ import {
   AI_MAX_TOKENS,
   AI_MODEL,
   anthropic,
+  chatAllowance,
   newSpend,
   recordAiUsage,
 } from "@/server/ai";
@@ -158,6 +159,21 @@ async function chat(ctx: StreamRouteContext): Promise<Response> {
       "ai chat refused: over budget, or the rate limit store is unreachable",
     );
     return refusal;
+  }
+
+  /**
+   * Step 4b (ai 0.2.0). THE COMPANY'S MONTH AND THE SITE'S DAY, failing closed.
+   * The per-person limits above bound one account; this bounds what the
+   * company's people spend together, and what every company spends of this
+   * site's key today. Counted from ai_usage itself, in plain words.
+   */
+  const allowance = await chatAllowance(ctx.scope.tenantId);
+  if (!allowance.ok) {
+    log.warn({ tenantId: ctx.scope.tenantId, reason: allowance.reason }, "ai chat refused: the allowance is spent or can't be checked");
+    return NextResponse.json(
+      { error: allowance.reason === "unavailable" ? "allowance_unavailable" : "allowance_used_up", message: allowance.message },
+      { status: allowance.reason === "unavailable" ? 503 : 429 },
+    );
   }
 
   /**

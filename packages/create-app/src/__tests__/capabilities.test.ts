@@ -385,8 +385,10 @@ describe("the ai overlay is what makes ai.streaming true", () => {
     // and nothing read it. Both halves, or the table is the empty error viewer
     // over again.
     const plan = await planEmit(TEMPLATE_DIR, "/out", answers({ includeAi: true }));
+    // ai 0.2.0: the write is the package's (`recordAiUsage` in ./server),
+    // called from the project's ai.ts with its own rate table.
     expect(plan.files.get(join("src", "server", "ai.ts"))).toContain(
-      "db.insert(aiUsage)",
+      "await recordAiCall(",
     );
     expect(plan.files.get(join("src", "server", "routers", "ai.ts"))).toContain(
       "tenantSpendSince",

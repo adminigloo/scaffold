@@ -19,6 +19,16 @@
 export const ASSISTANT_PROTOCOL_VERSION = 1;
 
 export type AssistantStreamEvent =
+  | {
+      /**
+       * The first event of a turn (0.9.0): which conversation it belongs to,
+       * so a widget whose person presses Stop mid-answer still continues the
+       * same conversation next time. A widget that doesn't know it ignores it.
+       */
+      v: 1;
+      type: "start";
+      conversationId: string;
+    }
   | { v: 1; type: "text"; delta: string }
   | {
       /** The step ended in tool use: clear provisional text, show activity. */
@@ -33,6 +43,8 @@ export type AssistantStreamEvent =
       type: "action";
       actionId: string;
       summary: string;
+      /** Exactly what it will save, for the card to show in full and let the person edit (0.9.0). */
+      fields?: Array<{ key: string; label: string; value: string; multiline: boolean }>;
     }
   | {
       v: 1;
@@ -57,6 +69,12 @@ export type AssistantStreamEvent =
         status: "complete" | "truncated" | "errored";
         steps: number;
         usage: LoopUsage;
+        /**
+         * "faq" (0.9.0): answered from one of the company's own FAQs, word
+         * for word, without calling the model — free, and outside the
+         * monthly allowance. Absent: the model answered.
+         */
+        answeredFrom?: "faq";
       };
     };
 
@@ -67,8 +85,14 @@ export interface LoopUsage {
   cacheReadTokens: number;
   /** Cache WRITES bill at a premium; a ledger that can't see them lies. */
   cacheWriteTokens: number;
-  /** False until the provider reported usage for every step that ran. */
+  /**
+   * True when every step that ran has counts — reported by the provider or,
+   * for a step cut short, estimated (0.9.0). Every turn can then be priced:
+   * a stopped question is never free.
+   */
   complete: boolean;
+  /** Some counts are estimates (a step cut short). */
+  estimated?: boolean;
 }
 
 export function encodeSse(event: AssistantStreamEvent): string {

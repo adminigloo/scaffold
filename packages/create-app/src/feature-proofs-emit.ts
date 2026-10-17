@@ -169,6 +169,24 @@ function suitesFor(answers: Answers): readonly FeatureSuite[] {
       permissions: "feedbackPermissions",
     });
   }
+  // TENANCY 2b-3: a company's assistant — its chat, history, offered changes
+  // and settings. Built with the proof's scripted model, so the chat route
+  // reaches its own checks (and streams) without a key or a real call.
+  if (answers.includeAssistant) {
+    suites.push({
+      feature: "assistant",
+      glue: "@/server/assistant",
+      adminBuilder: "buildAssistantHandlers",
+      adminRoutes: "ASSISTANT_ADMIN_ROUTES",
+      adminSegment: "assistant",
+      publicBuilder: null,
+      publicRoutes: null,
+      publicSegment: null,
+      pkg: "assistant",
+      permissions: "assistantPermissions",
+      adminExpr: "(overrides) => buildAssistantHandlers({ ...overrides, provider: proofAssistantModel })",
+    });
+  }
   return suites;
 }
 
@@ -190,6 +208,8 @@ export const FEATURE_ENTITIES: Readonly<Record<string, readonly string[]>> = {
   // ticket and the ticket editor take: a column's and a category's short name,
   // and the person a ticket is assigned to; 0.12 adds an epic.
   feedback: ["ticket", "column", "category", "feedback-key", "ticket-number", "ticket-token", "column-key", "category-key", "assignee", "epic"],
+  // Tenancy 2b-3: a conversation, a change it offered, a house rule, a word and an answer.
+  assistant: ["conversation", "action", "house-rule", "glossary-term", "faq"],
 };
 
 // ---------------------------------------------------------------------------
@@ -206,9 +226,11 @@ export function renderCompanyRows(answers: Answers): string {
   const alerts = answers.includeNotifications;
   const storage = answers.includeStorage;
   const feedback = answers.includeFeedback;
+  const assistant = answers.includeAssistant;
   // Tenancy 2b-1: alerts and files are planted FOR people (the owner, a
-  // member), and files through the proof's own memory stores.
-  const withPeople = alerts || storage;
+  // member), and files through the proof's own memory stores. Tenancy 2b-3:
+  // and the assistant's conversation and offered change are the owner's.
+  const withPeople = alerts || storage || assistant;
   const routed = scheduling || estimator || invoicing;
   const drizzle = [
     ...(scheduling || estimator || invoicing || alerts ? ["and", "eq"] : []),
@@ -217,6 +239,19 @@ export function renderCompanyRows(answers: Answers): string {
   const imports = [
     ...(drizzle.length > 0 ? [`import { ${drizzle.join(", ")} } from "drizzle-orm";`] : []),
     ...(alerts ? [`import { notificationTables } from "${scope}/notifications/schema";`] : []),
+    ...(assistant
+      ? [
+          `import {
+  appendMessage,
+  createConversation,
+  createGlossaryTerm,
+  createPendingAction,
+  createTenantRule,
+  saveBusinessProfile,
+  saveFaq,
+} from "${scope}/assistant";`,
+        ]
+      : []),
     ...(storage ? [`import type { Storage } from "${scope}/storage";`] : []),
     ...(comms ? [`import { enqueueMessage, sendNow, upsertTemplate } from "${scope}/comms";`] : []),
     ...(estimator
@@ -580,6 +615,53 @@ export function renderCompanyRows(answers: Answers): string {
   rows["feedback-website-key"] = websiteKey.key;
 `);
   }
+  if (assistant) {
+    blocks.push(`
+  // THE ASSISTANT (Tenancy 2b-3): the business profile (written, then edited,
+  // so it has a version), a conversation of the owner's with a question and
+  // an answer, a change the assistant offered (still waiting for "Yes, do
+  // it"), a house rule, a word and an answer to a common question — each
+  // naming this ${noun}, so an assistant route that forgot the ${noun} hands
+  // B something of A's to catch.
+  await saveBusinessProfile(database, tenantId, { content: \`\${Label} profile: we mow lawns.\` }, people.owner);
+  await saveBusinessProfile(database, tenantId, { content: \`\${Label} profile: we mow and edge lawns.\` }, people.owner);
+  const conversation = await createConversation(database, { tenantId, userId: people.owner, title: \`\${Label} assistant question\` });
+  await appendMessage(database, { tenantId, conversationId: conversation.id, role: "user", blocks: [{ kind: "text", text: \`\${Label} asks about the yard\` }] });
+  await appendMessage(database, { tenantId, conversationId: conversation.id, role: "assistant", blocks: [{ kind: "text", text: \`\${Label} assistant answer\` }] });
+  rows.conversation = conversation.id;
+  const offered = await createPendingAction(database, {
+    tenantId,
+    conversationId: conversation.id,
+    toolName: "remember_answer",
+    params: { question: \`\${Label} question?\`, answer: \`\${Label} answer.\` },
+    summary: \`Save an answer to “\${Label} question?”\`,
+    idempotencyKey: \`proof-\${label}-offer\`,
+    expiresAt: new Date(Date.now() + 86_400_000),
+    createdBy: people.owner,
+  });
+  rows.action = offered.id;
+  const rule = await createTenantRule(database, { tenantId, label: \`\${Label} rule\`, instruction: \`\${Label} house rule.\` }, people.owner);
+  if (!("id" in rule)) throw new Error(\`no house rule was planted for \${label}\`);
+  rows["house-rule"] = rule.id;
+  const term = await createGlossaryTerm(database, tenantId, { termKey: \`\${label}_yard\`, preferred: \`\${Label} yard\`, definition: \`\${Label} depot\` }, people.owner);
+  rows["glossary-term"] = term.id;
+  const answer = await saveFaq(database, tenantId, { question: \`\${Label} opening hours?\`, answer: \`\${Label} opens at nine.\` }, people.owner);
+  if (!answer.saved) throw new Error(\`no answer was planted for \${label}\`);
+  rows.faq = answer.faq.id;
+  strings.push(
+    \`\${Label} profile: we mow and edge lawns.\`,
+    \`\${Label} assistant question\`,
+    \`\${Label} asks about the yard\`,
+    \`\${Label} assistant answer\`,
+    \`\${Label} question?\`,
+    \`\${Label} house rule.\`,
+    \`\${Label} yard\`,
+    \`\${Label} depot\`,
+    \`\${Label} opening hours?\`,
+    \`\${Label} opens at nine.\`,
+  );
+`);
+  }
   if (alerts) {
     blocks.push(`
   // ALERTS (Tenancy 2b-1, 14.1): one alert for the ${noun}'s owner through
@@ -795,6 +877,57 @@ ${identifying}
  * So the proof keeps photos in memory, and the photo routes reach the row
  * check in every project, with storage or without.
  */
+/**
+ * The proof's model (Tenancy 2b-3): a scripted one, so the assistant's chat
+ * routes reach their own checks and stream without a key — and the proof
+ * never calls a real model.
+ */
+const PROOF_ASSISTANT_MODEL = `
+/** A scripted model: one short answer, the provider's usage reported. Never a real call. */
+const proofAssistantModel: ProviderAdapter = {
+  modelId: "claude-haiku-4-5",
+  async *stream() {
+    yield { type: "text-delta", delta: "Here is what I found." };
+    yield { type: "step-end", stopReason: "end_turn", usage: { inputTokens: 12, outputTokens: 6, cacheReadTokens: 0, cacheWriteTokens: 0, reported: true } };
+  },
+};
+`;
+
+/**
+ * B'S ASSISTANT TOOLS NEVER RETURN A'S ROWS (Tenancy 2b-3): every read tool,
+ * run as B in B's company, says nothing of A; and run as A in A's company,
+ * at least one of them does return A's rows (so the check can fail).
+ */
+function assistantToolsSuite(answers: Answers): string {
+  const readsPlanted = answers.includeScheduling || answers.includeEstimator;
+  return `
+describe("feature isolation: the assistant's tools", () => {
+  it("run in the person's own company only: B's never return A's rows${readsPlanted ? ", and A's do" : ""}", async () => {
+    const as = (tenantId: string, userId: string) => ({ tenantId, userId, conversationId: "proof", can: () => true });
+    // Inputs that reach the planted rows: the day of A's and B's planted visit, every product.
+    const inputs: Record<string, unknown> = { schedule_for_day: { day: "2031-03-04" }, overdue_invoices: {}, price_book_lookup: { search: "" } };
+    let readsOfA = 0;
+    const tools = companyAssistantTools.providerTools(() => true);
+    expect(tools.length, "the assistant has no tools to check").toBeGreaterThan(0);
+    for (const tool of tools) {
+      const input = inputs[tool.name] ?? {};
+      const asB = companyAssistantTools.resolve({ toolCallId: "b", name: tool.name, input }, as(fx.bId, fx.B.id));
+      if (!asB) throw new Error(\`the \${tool.name} tool wasn't resolved for B\`);
+      const out = await asB.execute();
+      // A write is only ever offered (never run here), and says nothing of A either.
+      expect(mentionsA(JSON.stringify(out)), \`\${tool.name} as B answered with A's data\`).toEqual([]);
+      if (out.propose) continue;
+      const asA = companyAssistantTools.resolve({ toolCallId: "a", name: tool.name, input }, as(fx.aId, fx.A.id));
+      const forA = await asA!.execute();
+      if (mentionsA(JSON.stringify(forA.result)).length > 0) readsOfA += 1;
+    }
+    ${readsPlanted ? `expect(readsOfA, "no tool read anything of A's for A, so the check proved nothing").toBeGreaterThan(0);` : `// No feature with planted rows to read here; only the offered change exists.
+    void readsOfA;`}
+  });
+});
+`;
+}
+
 const ESTIMATOR_PHOTO_STORE_MOCK = `
 /**
  * Photos kept in memory, so the photo routes reach their row checks whether or
@@ -1117,7 +1250,8 @@ export function renderFeatureIsolationTest(answers: Answers): string {
   // Tenancy 2b-1 (14.1).
   const alerts = answers.includeNotifications;
   const storage = answers.includeStorage;
-  const withPeople = alerts || storage;
+  const assistant = answers.includeAssistant;
+  const withPeople = alerts || storage || assistant;
   const records = answers.includeScheduling || answers.includeEstimator || answers.includeInvoicing;
   const routed = records;
   const firstRecordType = answers.includeScheduling
@@ -1177,6 +1311,10 @@ export function renderFeatureIsolationTest(answers: Answers): string {
     (s) =>
       `import { ${[s.adminBuilder, ...(s.publicBuilder ? [s.publicBuilder] : []), ...(embed && s.feature === "estimator" ? ["buildEstimatorEmbedHandlers"] : []), ...(s.feature === "feedback" ? ["buildFeedbackIntakeHandlers"] : [])].join(", ")} } from "${s.glue}";`,
   );
+  if (assistant) {
+    routeImports.push(`import type { ProviderAdapter } from "${scope}/assistant";`);
+    glueImports.push(`import { companyAssistantTools } from "@/server/assistant-tools";`);
+  }
   if (storage) {
     routeImports.push(`import { createMemoryBlobStore, type MemoryBlobStore } from "${scope}/storage/testing";`);
     routeImports.push(`import type { Storage } from "${scope}/storage";`);
@@ -1255,6 +1393,22 @@ export function renderFeatureIsolationTest(answers: Answers): string {
   if (storage) {
     snapshot.push(`    stored_files: await all(sql\`select * from stored_files where tenant_id = \${a} order by id\`),`);
   }
+  // Tenancy 2b-3: A's assistant — its personality (and a version of it), house
+  // rules, words, change log, conversations and their messages, offered
+  // changes, and its answers to common questions.
+  if (assistant) {
+    snapshot.push(
+      `    assistant_sections: await all(sql\`select * from assistant_sections where tenant_id = \${a} order by id\`),`,
+      `    assistant_section_versions: await all(sql\`select * from assistant_section_versions where section_id in (select id from assistant_sections where tenant_id = \${a}) order by id\`),`,
+      `    assistant_tenant_rules: await all(sql\`select * from assistant_tenant_rules where tenant_id = \${a} order by id\`),`,
+      `    assistant_glossary: await all(sql\`select * from assistant_glossary where tenant_id = \${a} order by id\`),`,
+      `    assistant_change_log: await all(sql\`select * from assistant_change_log where tenant_id = \${a} order by id\`),`,
+      `    assistant_conversations: await all(sql\`select * from assistant_conversations where tenant_id = \${a} order by id\`),`,
+      `    assistant_messages: await all(sql\`select * from assistant_messages where tenant_id = \${a} order by id\`),`,
+      `    assistant_pending_actions: await all(sql\`select * from assistant_pending_actions where tenant_id = \${a} order by id\`),`,
+      `    assistant_page_docs: await all(sql\`select * from assistant_page_docs where tenant_id = \${a} order by id\`),`,
+    );
+  }
   // Tenancy 2b-2a: A's feedback board — its tickets, columns, categories,
   // website keys, and the messages on its tickets (by their ticket).
   if (intake) {
@@ -1318,7 +1472,7 @@ vi.mock("@/db", async () => {
   const { createAppPglite } = await import("@/test/pglite");
   return { db: (await createAppPglite()).db };
 });
-${answers.includeEstimator ? ESTIMATOR_PHOTO_STORE_MOCK : ""}${intake ? FEEDBACK_SCREENSHOT_STORE : ""}${filesParts.helpers}
+${answers.includeEstimator ? ESTIMATOR_PHOTO_STORE_MOCK : ""}${intake ? FEEDBACK_SCREENSHOT_STORE : ""}${assistant ? PROOF_ASSISTANT_MODEL : ""}${filesParts.helpers}
 interface FeatureRoute {
   readonly kind: string;
   readonly method: "GET" | "POST";
@@ -1799,10 +1953,14 @@ ${
       }
     }
     ${
-      answers.includeScheduling || answers.includeEstimator || answers.includeInvoicing || answers.includeComms
+      // Only scheduling's, the estimator's and feedback's tables have a route
+      // naming two rows; invoicing's, messages', alerts', files' and the
+      // assistant's name one each. A project with none of the three has no
+      // mixed pass to count (an invoicing-only project used to fail here).
+      answers.includeScheduling || answers.includeEstimator || answers.includeFeedback
         ? `expect(mixed, "no route mixes two rows, so the mixed pass checked nothing").toBeGreaterThan(0);`
-        : `// Alerts' and files' routes each name one row (none mixes two), so this
-    // project has no mixed pass to count.
+        : `// No installed feature's routes name two rows (scheduling, the estimator
+    // and feedback are the ones that do), so this project has no mixed pass to count.
     void mixed;`
     }${embed ? `
 
@@ -1859,7 +2017,7 @@ describe("feature isolation: each role is refused what it doesn't hold", () => {
     expect(refused, "no role was refused anything, so the pass checked nothing").toBeGreaterThan(0);
   });
 });
-${filesParts.suites}
+${filesParts.suites}${assistant ? assistantToolsSuite(answers) : ""}
 describe("feature isolation: the check bites (negative control)", () => {
   it("rejects a handler that answers with company A's row, for a row route and for a reference route", async () => {
     const routes = SUITES.flatMap((suite) => [...suite.adminRoutes, ...suite.publicRoutes]);

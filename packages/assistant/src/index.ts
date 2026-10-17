@@ -16,6 +16,7 @@ export type {
 } from "./provider.js";
 export {
   runAssistantLoop,
+  estimateStepUsage,
   type LoopResult,
   type ProposedWrite,
   type RunLoopOptions,
@@ -25,6 +26,9 @@ export {
 export { estimateTokens, withinBudget } from "./tokens.js";
 
 export {
+  BUSINESS_PROFILE_KEY,
+  BUSINESS_PROFILE_MAX_TOKENS,
+  businessProfileSchema,
   createGlossaryTerm,
   createGlossaryTermSchema,
   createSection,
@@ -34,24 +38,37 @@ export {
   deactivateGlossaryTerm,
   deactivateSection,
   deactivateTenantRule,
+  getBusinessProfile,
+  getSectionByKey,
+  listChangeLog,
+  listGlossary,
   listSectionVersions,
   listSections,
   listSectionsForEditor,
+  listTenantRules,
+  profileText,
   publishSection,
   publishSectionSchema,
+  recordBrainChange,
   rollbackSection,
+  saveBusinessProfile,
   sectionKeySchema,
   SectionBudgetError,
+  termKeyFor,
   type AssistantDb,
+  type ChangeLogRow,
   type CreateSectionInput,
   type DeactivateResult,
   type EditorSectionRow,
+  type GlossaryRow,
   type PublishResult,
+  type SaveProfileResult,
   type SectionRow,
+  type TenantRuleRow,
   type VersionRow,
 } from "./brain.js";
 
-export { assemblePrompt, type AssembledPrompt, type PromptMeta } from "./assemble.js";
+export { assemblePrompt, NO_MATH_FLOOR, type AssembledPrompt, type AssembleOptions, type PromptMeta } from "./assemble.js";
 
 export { DEFAULT_SECTIONS, seedDefaultSections } from "./seed.js";
 
@@ -63,12 +80,23 @@ export {
   upsertPageDoc,
   getPageDoc,
   listPageDocs,
+  deactivatePageDoc,
   retrievePageDocs,
-  reindexPageDoc,
   rrfFuse,
+  listFaqs,
+  saveFaq,
+  removeFaq,
+  matchFaq,
+  normalizeQuestion,
+  faqKeyOf,
+  MAX_FAQS,
   type Embedder,
+  type FaqRow,
+  type SaveFaqResult,
   createPendingAction,
   getPendingAction,
+  listPendingActions,
+  decidePendingAction,
   confirmPendingAction,
   declinePendingAction,
   sweepConversations,
@@ -80,17 +108,23 @@ export {
   type ConfirmResult,
   type ConversationDetail,
   type ConversationRow,
+  type DecideResult,
   type MessageRow,
   type PageDocRow,
   type PendingActionRow,
   type RetrievedDoc,
 } from "./engine.js";
 export {
+  ASSISTANT_PLATFORM,
+  assistantChangeLog,
   assistantConversations,
+  assistantGlossary,
   assistantMessages,
   assistantPageDocs,
   assistantPageDocVersions,
   assistantPendingActions,
+  assistantSections,
+  assistantTenantRules,
   assistantGoldens,
   assistantEvalRuns,
   assistantEvalResults,
@@ -113,7 +147,9 @@ export {
 
 export {
   createToolRegistry,
+  TOOL_RESULT_NOTE,
   type AssistantTool,
+  type ToolField,
   type ProviderToolSpec,
   type ToolContext,
   type ToolRegistry,
@@ -126,6 +162,45 @@ export {
   type BudgetVerdict,
   type ChatPrincipal,
 } from "./handler.js";
+export {
+  allowanceToWire,
+  createAssistantHandlers,
+  type AssistantAllowanceVerdict,
+  type AssistantAuthorizeResult,
+  type AssistantHandlers,
+  type AssistantReserveInput,
+  type AssistantTurnUsage,
+  type AssistantUsage,
+  type CreateAssistantHandlersOptions,
+} from "./company-handlers.js";
+export {
+  ASSISTANT_ADMIN_ROUTES,
+  ASSISTANT_ROUTE_PERMISSIONS,
+  ASSISTANT_ROUTES,
+  type AssistantRoute,
+  type AssistantRouteKind,
+} from "./routes.js";
+export { assistantPermissions, type AssistantPermission, type AssistantPermissionDefinition } from "./permissions.js";
+export type {
+  ActionFieldWire,
+  ActionStatusWire,
+  ActionWire,
+  AssistantAllowanceWire,
+  AssistantChangeWire,
+  AssistantChangesWire,
+  AssistantErrorCodeWire,
+  AssistantErrorWire,
+  AssistantSettingsWire,
+  AssistantStatusWire,
+  ChatMessageWire,
+  ConversationListWire,
+  ConversationSummaryWire,
+  ConversationWire,
+  DecideWire,
+  FaqWire,
+  GlossaryTermWire,
+  HouseRuleWire,
+} from "./wire.js";
 export {
   budgetHistory,
   estimateTurnTokens,

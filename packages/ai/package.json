@@ -1,7 +1,7 @@
 {
   "name": "@adminigloo/ai",
   "version": "0.1.5",
-  "description": "Conventions for streaming route handlers: authorize before the stream opens, meter it through cancellation, and record what it cost in integer micros.",
+  "description": "Conventions for AI calls: authorize before the stream opens, meter it through cancellation, record what it cost in integer micros, and refuse \u2014 in plain words, failing closed \u2014 once a company's monthly allowance or the site's daily ceiling is spent.",
   "license": "UNLICENSED",
   "type": "module",
   "repository": {
@@ -22,10 +22,16 @@
       "types": "./dist/schema.d.ts",
       "import": "./dist/schema.js",
       "require": "./dist/schema.cjs"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "import": "./dist/server.js",
+      "require": "./dist/server.cjs"
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
@@ -43,10 +49,11 @@
   },
   "devDependencies": {
     "drizzle-orm": "catalog:",
-    "zod": "catalog:"
+    "zod": "catalog:",
+    "@electric-sql/pglite": "^0.5.8"
   },
   "scripts": {
-    "build": "tsup src/index.ts src/schema.ts --format esm,cjs --dts --clean",
+    "build": "tsup src/index.ts src/schema.ts src/server.ts --format esm,cjs --dts --clean",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   }

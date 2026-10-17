@@ -1,16 +1,17 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { and, eq, gte, sql } from "drizzle-orm";
+import { DEFAULT_AI_MODEL, isAiConfigured, type StreamUsage, type TokenRate } from "__SCOPE__/ai";
 import {
-  costMinorUnits,
-  estimateCostMicros,
-  isAiConfigured,
-  type StreamUsage,
-  type TokenRate,
-} from "__SCOPE__/ai";
-import { aiUsage } from "__SCOPE__/ai/schema";
+  aiSpendSince,
+  checkAiAllowance,
+  describeAiError,
+  recordAiUsage as recordAiCall,
+  type AiAllowanceVerdict,
+  type AiSpend,
+} from "__SCOPE__/ai/server";
 import { isDbConfigured } from "__SCOPE__/db";
 import { db } from "@/db";
 import { env } from "@/env";
+import { reportError } from "./error-reporter";
 import { log } from "./logger";
 
 /**
@@ -33,8 +34,12 @@ import { log } from "./logger";
  * Change this and `MODEL_RATES` in the same commit. Changing one alone produces
  * rows with a null cost, and a spend dashboard that is quietly missing a model
  * looks exactly like a quiet month.
+ *
+ * Claude Haiku 4.5 by default (ai 0.2.0): the founder's rule for every AI
+ * feature is the cheapest model that does the job. Name a bigger one only
+ * where it earns its price.
  */
-export const AI_MODEL = "claude-opus-5";
+export const AI_MODEL: string = DEFAULT_AI_MODEL;
 
 /**
  * What each model costs, in micros per MILLION tokens.
@@ -60,6 +65,8 @@ export const MODEL_RATES: Readonly<Record<string, TokenRate>> = {
     inputMicrosPerMTok: 5_000_000,
     outputMicrosPerMTok: 25_000_000,
     cachedInputMicrosPerMTok: 500_000,
+    // A five-minute cache write bills at 1.25x fresh input.
+    cachedWriteMicrosPerMTok: 6_250_000,
   },
   // $1.00 in, $5.00 out, per million tokens. The model the estimator's photo
   // reading calls by default (src/server/estimator-services.ts, when this
@@ -70,23 +77,76 @@ export const MODEL_RATES: Readonly<Record<string, TokenRate>> = {
     inputMicrosPerMTok: 1_000_000,
     outputMicrosPerMTok: 5_000_000,
     cachedInputMicrosPerMTok: 100_000,
+    cachedWriteMicrosPerMTok: 1_250_000,
   },
 };
 
 /**
  * The per-request output ceiling.
  *
- * THIS NUMBER TIMES THE DAILY REQUEST LIMIT IS THE WORST-CASE BILL, and that
- * multiplication is the only honest way to describe an AI budget. At $25 per
- * million output tokens 16,000 tokens is forty cents; `RATE_LIMIT_POLICIES.aiDaily`
- * allows 200 requests per person per day; so one determined account can spend
- * about eighty dollars a day and not more. A limiter without a ceiling bounds
- * the number of requests and nothing about their size.
- *
- * It bounds thinking AND response text together, so a ceiling sized to the
- * answer alone truncates the reply on a model that thinks before it writes.
+ * THIS NUMBER TIMES THE REQUESTS ALLOWED IS THE WORST-CASE BILL. At Haiku
+ * 4.5's $5 per million output tokens, 2,000 tokens is a cent; a few short
+ * paragraphs is all a chat answer needs, and a smaller ceiling is a smaller
+ * bill on every request that runs long.
  */
-export const AI_MAX_TOKENS = 16_000;
+export const AI_MAX_TOKENS = 2_000;
+
+/**
+ * THE SITE'S DAILY CEILING (ai 0.2.0), in cents, across every company and
+ * every AI feature: every company spends this site's key, so this bounds the
+ * site owner's bill on the worst day. Checked before every call, and failing
+ * closed. Raise it as the site grows.
+ */
+export const AI_SITE_DAILY_CENTS = 500;
+
+/**
+ * TELL THE SITE OWNER when the site's daily ceiling closes AI for everyone:
+ * one entry in /admin/errors (and the server log) per UTC day per server —
+ * the day's spend, the ceiling, and that it opens again at midnight UTC.
+ * Every AI feature's check passes it (`onSiteCeiling`).
+ */
+let ceilingAlertedOn: string | null = null;
+export function alertSiteCeiling(info: { readonly tenantId: string; readonly spentMicros: string; readonly ceilingCents: number; readonly resetsAt: Date }): void {
+  const day = info.resetsAt.toISOString().slice(0, 10);
+  if (ceilingAlertedOn === day) return;
+  ceilingAlertedOn = day;
+  const spentCents = Number(BigInt(info.spentMicros) / 10_000n);
+  log.error({ ...info, spentCents }, "AI is paused for the whole site until midnight UTC: today's spend reached AI_SITE_DAILY_CENTS");
+  void reportError({
+    error: new Error(
+      `AI is paused for the whole site until midnight UTC: today's AI spend (${spentCents} cents) reached AI_SITE_DAILY_CENTS (${info.ceilingCents}). Raise it in src/server/ai.ts if this is expected.`,
+    ),
+    source: "route",
+    tenantId: info.tenantId,
+    context: { feature: "ai", ceilingCents: info.ceilingCents, spentCents },
+  });
+}
+
+/**
+ * Is the SITE's day still open? For an AI feature that has no allowance of
+ * its own to check (the estimator's photo reading, which adds to the same
+ * ledger): the same ceiling, failing closed.
+ */
+export async function siteCeilingOpen(): Promise<boolean> {
+  if (!isDbConfigured(db)) return true;
+  const verdict = await checkAiAllowance(db, {
+    // No company's month is checked here (no limits of its own): the site's day only.
+    tenantId: "*",
+    operations: [],
+    allowance: { monthlyMessages: null, monthlyCents: null },
+    siteDailyCents: AI_SITE_DAILY_CENTS,
+    onSiteCeiling: alertSiteCeiling,
+  });
+  return verdict.ok;
+}
+
+/**
+ * What one company's people may spend on /api/ai/chat in a month, in cents
+ * (ai 0.2.0) — per COMPANY, not only per person, so a company of fifty can't
+ * spend fifty people's worth. The assistant has its own allowance
+ * (src/server/assistant.ts, when installed).
+ */
+export const AI_CHAT_MONTHLY_CENTS = 500;
 
 /**
  * The provider client, or null when this deployment has no key.
@@ -141,76 +201,67 @@ export interface RecordAiUsageInput {
 }
 
 /**
- * One row per authorized request, whatever became of it.
- *
- * NEVER THROWS, and for the reason `createErrorReporter` never throws: this
- * runs from the stream's settle path, after the last byte has already reached
- * the customer. A metrics write that can reject there converts a full
- * connection pool or a slow insert into a truncated answer, and the person
- * reading it pays for an outage in the machinery that was only watching.
- *
- * COST IS NULL WHEN IT IS UNKNOWN. A cancelled request never gets a usage
- * report from the provider, and a model missing from `MODEL_RATES` cannot be
- * priced. Writing zero in either case would claim the call was free, and a
- * spend total that silently omits every abandoned request under-reports
- * precisely the traffic that spikes when the model is slow — which is when
- * spend is highest and the dashboard is being looked at hardest.
+ * One row per authorized request, whatever became of it — through
+ * __SCOPE__/ai/server's `recordAiUsage` (ai 0.2.0), priced in code from
+ * MODEL_RATES with the provider's counts. NEVER THROWS: it runs after the
+ * answer reached the customer. COST IS NULL WHEN IT IS UNKNOWN (no usage
+ * reported, or a model missing from MODEL_RATES), never zero.
  */
 export async function recordAiUsage(input: RecordAiUsageInput): Promise<void> {
-  const { spend, usage } = input;
-
-  // No DATABASE_URL yet. The request itself worked; there is simply nowhere to
-  // write it down, and the stand-in handle would throw on the first insert.
+  // No DATABASE_URL yet: the request worked, there is nowhere to write it down.
   if (!isDbConfigured(db)) return;
-
-  const rate = MODEL_RATES[spend.model];
-  const costMicros =
-    spend.reported && rate !== undefined
-      ? estimateCostMicros({
-          inputTokens: spend.inputTokens,
-          outputTokens: spend.outputTokens,
-          cachedInputTokens: spend.cachedInputTokens,
-          rate,
-        })
-      : null;
-
-  try {
-    await db.insert(aiUsage).values({
+  const { spend, usage } = input;
+  await recordAiCall(
+    db,
+    MODEL_RATES,
+    {
       tenantId: input.tenantId,
       userId: input.userId,
-      model: spend.model,
       operation: input.operation,
-      inputTokens: spend.inputTokens,
-      outputTokens: spend.outputTokens,
-      cachedInputTokens: spend.cachedInputTokens,
-      costMicros,
+      usage: {
+        model: spend.model,
+        inputTokens: spend.inputTokens,
+        outputTokens: spend.outputTokens,
+        cachedInputTokens: spend.cachedInputTokens,
+        reported: spend.reported,
+      },
       latencyMs: usage.durationMs,
       status: usage.outcome,
-      error: describeStreamError(usage.error),
-    });
-  } catch (cause) {
-    log.error(
-      {
-        err: cause instanceof Error ? cause.message : String(cause),
-        tenantId: input.tenantId,
-        operation: input.operation,
-        outcome: usage.outcome,
-      },
-      "could not write the ai_usage row; this request's spend is unrecorded",
-    );
-  }
+      error: usage.error,
+    },
+    {
+      onError: (cause, context) =>
+        log.error(
+          { err: cause instanceof Error ? cause.message : String(cause), ...context, outcome: usage.outcome },
+          "could not write the ai_usage row; this request's spend is unrecorded",
+        ),
+    },
+  );
+}
+
+/** The failure, as a bounded string, or null on every other row. */
+export function describeStreamError(error: unknown): string | null {
+  return describeAiError(error);
 }
 
 /**
- * The failure, as a bounded string, or null on every other row.
- *
- * Truncated because a provider error can carry an entire HTML page, and this
- * column sits in the table with the highest row count in the schema.
+ * May this company make one more /api/ai/chat call this month? Its people
+ * together, against AI_CHAT_MONTHLY_CENTS, and the whole site against
+ * AI_SITE_DAILY_CENTS — counted from ai_usage, failing closed.
  */
-export function describeStreamError(error: unknown): string | null {
-  if (error === undefined) return null;
-  const text = error instanceof Error ? error.message : String(error);
-  return text.slice(0, 2_000);
+export async function chatAllowance(tenantId: string): Promise<AiAllowanceVerdict> {
+  return checkAiAllowance(db, {
+    tenantId,
+    operations: ["chat"],
+    allowance: { monthlyMessages: null, monthlyCents: AI_CHAT_MONTHLY_CENTS },
+    siteDailyCents: AI_SITE_DAILY_CENTS,
+    onSiteCeiling: alertSiteCeiling,
+    words: {
+      company_spend: "This month's AI allowance for your account is used up. It starts again on the 1st.",
+      site_ceiling: "This site's AI has reached its limit for today — that's the whole site, not just your account. It starts again at midnight UTC.",
+      unavailable: "AI can't check its allowance right now, so it isn't answering. Try again in a minute.",
+    },
+  });
 }
 
 export interface TenantSpend {
@@ -223,45 +274,12 @@ export interface TenantSpend {
 }
 
 /**
- * What one tenant has spent since a moment.
- *
- * Summed in Postgres rather than in this process. `ai_usage` is the highest
- * volume table in the schema and a month of it is not something to pull across
- * the wire and add up; the `(tenant_id, created_at)` index exists for this
- * query and no other.
- *
- * Micros become minor units ONCE, at the very end, on the total. Rounding each
- * row to cents first is how a thousand sub-cent calls sum to the wrong number,
- * which is the entire reason the column is micros.
+ * What one tenant has spent since a moment, summed in Postgres over the
+ * (tenant_id, created_at) index — __SCOPE__/ai/server's `aiSpendSince`, with
+ * micros becoming minor units once, on the total.
  */
-export async function tenantSpendSince(
-  tenantId: string,
-  since: Date,
-): Promise<TenantSpend> {
-  const empty: TenantSpend = {
-    micros: "0",
-    minorUnits: "0",
-    requests: 0,
-    since,
-  };
-  if (!isDbConfigured(db)) return empty;
-
-  const [row] = await db
-    .select({
-      // `coalesce`, because SUM over no rows is NULL rather than 0 — which is
-      // the state every tenant is in on their first day, and the one nobody
-      // writes a test for.
-      micros: sql<string>`coalesce(sum(${aiUsage.costMicros}), 0)::text`,
-      requests: sql<number>`count(*)::int`,
-    })
-    .from(aiUsage)
-    .where(and(eq(aiUsage.tenantId, tenantId), gte(aiUsage.createdAt, since)));
-
-  if (!row) return empty;
-  return {
-    micros: row.micros,
-    minorUnits: costMinorUnits(BigInt(row.micros)).toString(),
-    requests: row.requests,
-    since,
-  };
+export async function tenantSpendSince(tenantId: string, since: Date): Promise<TenantSpend> {
+  if (!isDbConfigured(db)) return { micros: "0", minorUnits: "0", requests: 0, since };
+  const spend: AiSpend = await aiSpendSince(db, { tenantId, since });
+  return spend;
 }

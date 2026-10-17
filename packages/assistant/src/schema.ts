@@ -8,7 +8,6 @@ import {
   text,
   timestamp,
   uniqueIndex,
-  vector,
 } from "drizzle-orm/pg-core";
 import { createdAt, idColumn, logIdColumn, updatedAt } from "@adminigloo/db";
 import type { ContentBlock } from "./provider.js";
@@ -27,7 +26,19 @@ import type { ContentBlock } from "./provider.js";
  * `tenantId`/`createdBy` are plain text with no FK — the cross-package rule
  * every schema here follows: naming @adminigloo/tenancy or /auth would force
  * them on every consumer of this one.
+ *
+ * 0.9.0 — EVERYTHING BELONGS TO ONE COMPANY. Each company has its own
+ * personality, glossary, change log, conversations, pending actions and
+ * knowledge, under its own `tenant_id`; the site's own assistant (the one its
+ * staff use at /admin/assistant) is `ASSISTANT_PLATFORM` ("*"), which no
+ * company id ever is. The company columns have NO DEFAULT, so an insert that
+ * forgets the company fails instead of landing on the site's own assistant.
+ * (The upgrade from 0.8 fills them with '*' — there was one assistant then —
+ * and drops the default it used to do so: sql/upgrade-0.8-to-0.9.sql.)
  */
+
+/** The site's own assistant (its staff's), never a company's. */
+export const ASSISTANT_PLATFORM = "*";
 
 /**
  * The personality, as rows. Concatenated in `sortOrder` to form the prompt's
@@ -39,6 +50,8 @@ export const assistantSections = pgTable(
   "assistant_sections",
   {
     id: idColumn(),
+    /** Whose personality this section is part of (0.9.0). */
+    tenantId: text("tenant_id").notNull(),
     /**
      * Stable machine name overlays and drafts reference: "core_personality",
      * "no_math". IMMUTABLE after creation — a rename strands every reference,
@@ -72,7 +85,8 @@ export const assistantSections = pgTable(
     isActive: boolean("is_active").notNull().default(true),
     createdAt: createdAt(),
   },
-  (table) => [uniqueIndex("assistant_sections_key_idx").on(table.key)],
+  // Unique PER COMPANY (0.9.0): every company has its own "no_math".
+  (table) => [uniqueIndex("assistant_sections_tenant_key_idx").on(table.tenantId, table.key)],
 );
 
 /**
@@ -115,6 +129,7 @@ export const assistantDrafts = pgTable(
   "assistant_drafts",
   {
     id: idColumn(),
+    tenantId: text("tenant_id").notNull(),
     /** "section" | "tenant_rule" — what this draft edits. */
     targetType: text("target_type").notNull(),
     targetId: text("target_id").notNull(),
@@ -170,6 +185,8 @@ export const assistantGlossary = pgTable(
   "assistant_glossary",
   {
     id: idColumn(),
+    /** Whose term (0.9.0): one company's "the yard" is another's "the lot". */
+    tenantId: text("tenant_id").notNull(),
     termKey: text("term_key").notNull(),
     preferred: text("preferred").notNull(),
     aliases: jsonb("aliases").$type<string[]>().notNull().default([]),
@@ -178,7 +195,7 @@ export const assistantGlossary = pgTable(
     isActive: boolean("is_active").notNull().default(true),
     createdAt: createdAt(),
   },
-  (table) => [uniqueIndex("assistant_glossary_term_idx").on(table.termKey)],
+  (table) => [uniqueIndex("assistant_glossary_tenant_term_idx").on(table.tenantId, table.termKey)],
 );
 
 /**
@@ -190,6 +207,8 @@ export const assistantChangeLog = pgTable(
   "assistant_change_log",
   {
     id: logIdColumn(),
+    /** Whose assistant changed (0.9.0). A company's log shows its own changes only. */
+    tenantId: text("tenant_id").notNull(),
     entityType: text("entity_type").notNull(),
     entityId: text("entity_id").notNull(),
     entityKey: text("entity_key"),
@@ -203,6 +222,7 @@ export const assistantChangeLog = pgTable(
   },
   (table) => [
     index("assistant_change_log_entity_idx").on(table.entityType, table.entityId),
+    index("assistant_change_log_tenant_idx").on(table.tenantId, table.id),
   ],
 );
 
@@ -215,7 +235,8 @@ export const assistantChangeLog = pgTable(
  * and this exists for the day measurement says otherwise.
  */
 export const assistantConfigVersion = pgTable("assistant_config_version", {
-  id: text("id").primaryKey().default("singleton"),
+  /** The company the counter is for (0.9.0): one row per company, '*' for the site's own. */
+  id: text("id").primaryKey(),
   version: integer("version").notNull().default(1),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -247,6 +268,8 @@ export const assistantConversations = pgTable(
   (t) => [
     index("assistant_conversations_tenant_idx").on(t.tenantId, t.lastMessageAt),
     index("assistant_conversations_user_idx").on(t.userId),
+    // "My conversations" (0.9.0): one person's threads in one company, newest first.
+    index("assistant_conversations_tenant_user_idx").on(t.tenantId, t.userId, t.lastMessageAt),
   ],
 );
 
@@ -255,6 +278,12 @@ export const assistantMessages = pgTable(
   "assistant_messages",
   {
     id: idColumn(),
+    /**
+     * The company (0.9.0), on the message itself and not only on its
+     * conversation, so a message read is filtered by the company in its own
+     * WHERE rather than trusted to a join someone may later drop.
+     */
+    tenantId: text("tenant_id").notNull(),
     conversationId: text("conversation_id").notNull(),
     seq: integer("seq").notNull(),
     /** user | assistant */
@@ -283,20 +312,28 @@ export const assistantPageDocs = pgTable(
     pageKey: text("page_key").notNull(),
     title: text("title").notNull(),
     body: text("body").notNull(),
+    /**
+     * "page" — what the assistant knows about a screen — or "faq" (0.9.0): a
+     * question the owner answered in plain words in the assistant's settings.
+     * Both are found the same way (keyword search, below).
+     */
+    kind: text("kind").$type<"page" | "faq">().notNull().default("page"),
     /** A machine draft (from ingestion) a human hasn't approved yet. */
     isApproved: boolean("is_approved").notNull().default(true),
     isActive: boolean("is_active").notNull().default(true),
-    /**
-     * 0.3: the doc's embedding (OpenAI text-embedding-3-small, 1536 dims), or
-     * NULL when no embedder is configured — then retrieval stays keyword-only.
-     * Doc-level, not chunked: the docs are short and it keeps retrieval a single
-     * ranked list to fuse with keyword search.
+    /*
+     * 0.9.0: NO EMBEDDING COLUMN HERE. Knowledge is found by keyword (Postgres
+     * full-text search, Ask Lou's own approach), which needs no database
+     * extension. A project that wants vector search as well installs the
+     * optional table in `@adminigloo/assistant/vector` (pgvector) beside this.
      */
-    embedding: vector("embedding", { dimensions: 1536 }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [uniqueIndex("assistant_page_docs_key_idx").on(t.tenantId, t.pageKey)],
+  (t) => [
+    uniqueIndex("assistant_page_docs_key_idx").on(t.tenantId, t.pageKey),
+    index("assistant_page_docs_tenant_kind_idx").on(t.tenantId, t.kind),
+  ],
 );
 
 export const assistantPageDocVersions = pgTable(
@@ -330,10 +367,16 @@ export const assistantPendingActions = pgTable(
     idempotencyKey: text("idempotency_key").notNull(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     createdBy: text("created_by"),
+    /**
+     * When "Yes, do it" or "No" was answered (0.9.0). Set by the SAME update
+     * that moves the status off "pending", so a double-click acts once.
+     */
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [
     uniqueIndex("assistant_pending_actions_idem_idx").on(t.idempotencyKey),
+    index("assistant_pending_actions_tenant_idx").on(t.tenantId, t.status),
     index("assistant_pending_actions_conversation_idx").on(t.conversationId),
   ],
 );

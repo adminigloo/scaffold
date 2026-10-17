@@ -1,7 +1,7 @@
 {
   "name": "@adminigloo/assistant-widget",
   "version": "0.2.0",
-  "description": "The assistant's chat surface: a controlled React component that speaks the versioned SSE protocol, streams answers with step-restart, shows tool activity, and renders pending-action cards — self-contained styles, both themes.",
+  "description": "The assistant's screens: a launcher (a floating button and a slide-over chat, full screen on a phone) with streamed answers, Stop, starter questions, history, safely rendered Markdown and an \"ask before acting\" card; the owner's settings screen under ./admin (business profile, answers to common questions, house rules, words, the month's AI use). Follows the host's light or dark theme; React is its only peer.",
   "license": "UNLICENSED",
   "type": "module",
   "repository": {
@@ -17,10 +17,16 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
+    },
+    "./admin": {
+      "types": "./dist/admin.d.ts",
+      "import": "./dist/admin.js",
+      "require": "./dist/admin.cjs"
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
@@ -28,14 +34,25 @@
   },
   "peerDependencies": {
     "react": "^18.0.0 || ^19.0.0",
-    "react-dom": "^18.0.0 || ^19.0.0"
+    "react-dom": "^18.0.0 || ^19.0.0",
+    "@adminigloo/assistant": "^0.9.0"
   },
   "devDependencies": {
+    "@adminigloo/assistant": "workspace:^",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.4",
+    "happy-dom": "^20.0.0",
     "react": "^19.2.4",
-    "@types/react": "^19.2.7"
+    "react-dom": "^19.2.4"
   },
   "scripts": {
     "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsup",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "peerDependenciesMeta": {
+    "@adminigloo/assistant": {
+      "optional": true
+    }
   }
 }

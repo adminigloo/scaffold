@@ -31,6 +31,31 @@ export function upgradeNotesFor(answers: Answers, fromVersion: string): string[]
   const companies = answers.tenantNoun !== "none";
   const noun = tenantLabel(answers).toLowerCase();
   const crossed = (version: string) => (compareVersions(fromVersion, version) ?? -1) < 0;
+  // 0.29.0 — Tenancy 2b-3: an assistant per company. The tables gain a
+  // company column; 0.8's one assistant becomes the site's own ("*").
+  if (crossed("0.29.0") && answers.includeAssistant) {
+    notes.push(
+      "The assistant's tables gain a company on every row (assistant 0.9). After `pnpm db:generate`, replace the " +
+        "assistant statements in the migration it wrote with node_modules/@adminigloo/assistant/sql/upgrade-0.8-to-0.9.sql " +
+        "(safe twice): your one assistant becomes this site's own, at /admin/assistant. If your own chat route used " +
+        "another assistant id, run `select set_config('assistant.upgrade_tenant', '<that id>', false);` first, in the same session.",
+      ...(companies
+        ? [
+            `Each ${noun} now has its own assistant: the button on its pages, and what it knows at /app/assistant. Its ` +
+              "monthly allowance is ASSISTANT_MONTHLY_MESSAGES and ASSISTANT_MONTHLY_CENTS in src/server/assistant.ts" +
+              (answers.businessModel === "subscription" || answers.businessModel === "both"
+                ? ', or "AI assistant messages a month" on its plan (src/plans.ts).'
+                : "."),
+          ]
+        : []),
+      ...(answers.includeAi
+        ? [
+            "AI now calls Claude Haiku 4.5 by default (src/server/ai.ts, AI_MODEL; the assistant's is ASSISTANT_MODEL), and " +
+              "the whole site's AI stops for the day at AI_SITE_DAILY_CENTS. Raise it as you grow.",
+          ]
+        : []),
+    );
+  }
   // 0.26.0 — Tenancy 2b-2a: a feedback board per company (review H1: the
   // upgrade must keep the site's own board, its tickets and its key).
   if (crossed("0.26.0") && answers.includeFeedback) {

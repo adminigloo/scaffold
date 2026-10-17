@@ -90,23 +90,33 @@ export const DEFAULT_SECTIONS = [
   },
 ] as const;
 
-export async function seedDefaultSections(db: AssistantDb): Promise<number> {
-  const existing = await db
-    .select({ id: assistantSections.id })
+/**
+ * Seed ONE company's guardrails (0.9.0): every company starts with its own
+ * copy, and an edit to one company's never reaches another's.
+ *
+ * INSERT-IF-ABSENT, PER KEY. A company can have rows before its guardrails
+ * (the owner wrote the business profile before anyone asked a question), so
+ * "the company has rows" is not "the company is seeded": each default whose
+ * key the company doesn't have yet is added. A section the owner turned off
+ * is still a row, so it is never brought back. Race-safe: an insert that
+ * meets the (company, key) unique index is skipped, not an error.
+ */
+export async function seedDefaultSections(db: AssistantDb, tenantId: string): Promise<number> {
+  if (!tenantId) throw new Error("seedDefaultSections needs the company");
+  const existing = (await db
+    .select({ key: assistantSections.key })
     .from(assistantSections)
-    .limit(1);
-  if (existing.length > 0) return 0;
-
+    .where(eq(assistantSections.tenantId, tenantId))) as Array<{ key: string }>;
+  const have = new Set(existing.map((row) => row.key));
   let inserted = 0;
   for (const section of DEFAULT_SECTIONS) {
-    try {
-      await db.insert(assistantSections).values({ ...section, requiredPhrases: [...section.requiredPhrases] });
-      inserted += 1;
-    } catch (error) {
-      // A concurrent first read raced us; the unique key made the loser a
-      // no-op, not a duplicate. Anything else is real.
-      if ((error as { code?: string }).code !== "23505") throw error;
-    }
+    if (have.has(section.key)) continue;
+    const rows = await db
+      .insert(assistantSections)
+      .values({ ...section, tenantId, requiredPhrases: [...section.requiredPhrases] })
+      .onConflictDoNothing({ target: [assistantSections.tenantId, assistantSections.key] })
+      .returning({ id: assistantSections.id });
+    inserted += rows.length;
   }
   return inserted;
 }

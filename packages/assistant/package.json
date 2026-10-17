@@ -1,7 +1,7 @@
 {
   "name": "@adminigloo/assistant",
   "version": "0.8.1",
-  "description": "The trustworthy AI assistant platform: a DB-editable personality, a whitelisted permission-checked tool loop the model cannot misuse, retrieval it cannot leak across tenants, and every token metered — installed into your own app.",
+  "description": "An AI assistant for each company, installed into your own app: a personality, business profile, FAQs, house rules and glossary the owner writes in plain words; a whitelisted tool loop that runs as the signed-in person and asks before it changes anything; keyword knowledge search (no database extension); a monthly allowance it checks before every model call; and every token metered from the provider's counts.",
   "license": "UNLICENSED",
   "type": "module",
   "repository": {
@@ -22,10 +22,24 @@
       "types": "./dist/schema.d.ts",
       "import": "./dist/schema.js",
       "require": "./dist/schema.cjs"
-    }
+    },
+    "./anthropic": {
+      "types": "./dist/anthropic.d.ts",
+      "import": "./dist/anthropic.js",
+      "require": "./dist/anthropic.cjs"
+    },
+    "./vector": {
+      "types": "./dist/vector.d.ts",
+      "import": "./dist/vector.js",
+      "require": "./dist/vector.cjs"
+    },
+    "./sql/*": "./sql/*",
+    "./package.json": "./package.json"
   },
   "files": [
-    "dist"
+    "dist",
+    "sql",
+    "README.md"
   ],
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
@@ -37,15 +51,23 @@
   },
   "peerDependencies": {
     "drizzle-orm": "catalog:peers",
-    "zod": "catalog:peers"
+    "zod": "catalog:peers",
+    "@anthropic-ai/sdk": ">=0.122.0"
   },
   "devDependencies": {
     "drizzle-orm": "catalog:",
-    "zod": "catalog:"
+    "zod": "catalog:",
+    "@anthropic-ai/sdk": "^0.122.0",
+    "@electric-sql/pglite": "^0.5.8"
   },
   "scripts": {
     "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsup",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
+  },
+  "peerDependenciesMeta": {
+    "@anthropic-ai/sdk": {
+      "optional": true
+    }
   }
 }

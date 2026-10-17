@@ -207,6 +207,38 @@ db:migrate` (additions only).
 
 Not included: sprints, swimlanes by epic, saved views per person.
 
+### An AI assistant per company (Tenancy 2b-3, create-app 0.29)
+
+With `--assistant` in a companies project, every page of a company's area
+(`/app/…`) has an "Ask the assistant" button (`app/(site)/app/layout.tsx` over
+the generated `src/components/AssistantLauncherSlot.tsx`), over
+`/api/app/{id}/assistant`. Its owners and admins write what it knows at
+`/app/assistant` — the business in their own words, answers to common
+questions (asked word for word, answered with those words and no AI), house
+rules and words — and see the month's AI use. It looks things up through the
+installed features' own reads with the asker's own permissions
+(`src/server/assistant-tools.ts`: the schedule, overdue invoices, the price
+book) and asks before it changes anything (the one change it offers: saving an
+answer). With `--ai` it answers on Claude Haiku 4.5 (`ASSISTANT_MODEL`), each
+company has a month of questions (`ASSISTANT_MONTHLY_MESSAGES` /
+`ASSISTANT_MONTHLY_CENTS`, or "AI assistant messages a month" on its plan when
+you sell plans), the whole site stops for the day at `AI_SITE_DAILY_CENTS`, and
+every question is recorded in `ai_usage`; without `--ai` the settings work and
+the chat says it isn't switched on. This site's own assistant stays at
+`/admin/assistant` (its chat at `/admin/assistant/chat`), on `staff.assistant.*`.
+A single business keeps one assistant, with the feature tools on its staff keys.
+`upgrade`: then run `pnpm db:generate` and replace the assistant statements with
+`@adminigloo/assistant/sql/upgrade-0.8-to-0.9.sql`, and `pnpm db:seed` for the
+new keys.
+
+`--ai` also changed: Claude Haiku 4.5 by default, answers capped at 2,000
+tokens, usage recorded through `@adminigloo/ai/server`, and `/api/ai/chat`
+checks the company's month (`AI_CHAT_MONTHLY_CENTS`) and the site's day too.
+
+Not included: the assistant answering customers on a public page, changing
+records beyond saving an answer, vector search (keyword only unless you add
+the optional table).
+
 ### Not included (Tenancy 2b-1)
 
 What a generated project does NOT do yet, so nobody sells it as doing so. The
@@ -214,7 +246,7 @@ generated `README.md` carries the same lists (single-business projects leave
 out the items that are only about companies).
 
 - **Sprints and swimlanes by epic on the feedback board.** Its epics, filters, search, New ticket, editing and settings screens are here (feedback 0.12), and so are the board per company, its alerts and its private screenshots (Tenancy 2b-2a).
-- **The AI assistant per company** — Tenancy 2b-3.
+- **The assistant answering customers on a public page.** Each company's assistant is its team's, behind sign-in (Tenancy 2b-3).
 - **Website analytics, SEO/AEO and book-a-call (booking) per company** —
   Tenancy 2b-4.
 - **Text (SMS) and push alerts.** Alerts come in the app and by email — S9.

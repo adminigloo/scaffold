@@ -65,6 +65,7 @@ import {
   renderTenantRoles,
 } from "./features-emit.js";
 import { renderDeploymentFeedback, renderFeedbackCron, renderFeedbackGlue } from "./feedback-emit.js";
+import { assistantChats, renderAssistantGlue, renderAssistantLauncherSlot, renderAssistantTools } from "./assistant-emit.js";
 import {
   renderCompanyAlertsTest,
   renderCompanyCronsTest,
@@ -407,7 +408,9 @@ export async function planEmit(
   if (
     (!isCompanies(answers) &&
       (answers.includeInvoicing || answers.includeComms || answers.includeNotifications || answers.includeStorage)) ||
-    answers.includeFeedback
+    answers.includeFeedback ||
+    // Tenancy 2b-3: this site's OWN assistant (/admin/assistant) is its staff's, in both modes.
+    answers.includeAssistant
   ) {
     files.set(join("src", "server", "staff-access.ts"), renderStaffAccess(answers));
   }
@@ -416,6 +419,19 @@ export async function planEmit(
   // hears about a new ticket (alerts, with --notifications) and whether the
   // reporter is emailed (comms, which sends as the company) are questions
   // about OTHER answers. See feedback-emit.ts.
+  // THE ASSISTANT'S GLUE (Tenancy 2b-3), both modes, generated: whose
+  // assistant a route is (a company's, by the path; this site's own, fixed),
+  // whether it has a model and an allowance (--ai), and which feature reads
+  // its tools may use are questions about OTHER answers. See assistant-emit.ts.
+  if (answers.includeAssistant) {
+    files.set(join("src", "server", "assistant.ts"), renderAssistantGlue(answers));
+    files.set(join("src", "server", "assistant-tools.ts"), renderAssistantTools(answers));
+  }
+  // The assistant's button on a company's pages, mounted by /app's layout
+  // (the assistant-companies overlay): the launcher with --ai, nothing without.
+  if (answers.includeAssistant && isCompanies(answers)) {
+    files.set(join("src", "components", "AssistantLauncherSlot.tsx"), renderAssistantLauncherSlot(answers));
+  }
   if (answers.includeFeedback) {
     files.set(join("src", "server", "feedback.ts"), renderFeedbackGlue(answers));
     // The sweep of screenshots no report used (review M2).
@@ -516,9 +532,15 @@ export async function planEmit(
   // field-service feature.
   // Tenancy 2b-2a: and the feedback board's routes, so a companies project
   // with feedback has it even with nothing else.
+  // Tenancy 2b-3: and the assistant's routes and tools, so a companies project
+  // with the assistant has it even with nothing else.
   if (
     isCompanies(answers) &&
-    (hasFieldService(answers) || answers.includeNotifications || answers.includeStorage || answers.includeFeedback)
+    (hasFieldService(answers) ||
+      answers.includeNotifications ||
+      answers.includeStorage ||
+      answers.includeFeedback ||
+      answers.includeAssistant)
   ) {
     files.set(join("src", "test", "company-rows.ts"), renderCompanyRows(answers));
     files.set(
@@ -1389,6 +1411,16 @@ export function renderEnvLocal(answers: Answers): string {
       "# SCHEDULING_TIME_ZONE=America/Denver",
     );
   }
+  if (assistantChats(answers)) {
+    lines.push(
+      "",
+      "# --- Assistant ----------------------------------------------------------------",
+      "# The model the assistant answers with. Unset is Claude Haiku 4.5",
+      "# (claude-haiku-4-5), the cheapest capable one; another model needs its",
+      "# price in MODEL_RATES (src/server/ai.ts) or the chat stays off.",
+      "# ASSISTANT_MODEL=claude-haiku-4-5",
+    );
+  }
   if (answers.includeEstimator) {
     lines.push(
       "",
@@ -1475,6 +1507,11 @@ const OPTIONAL_ENV_NOTES: Readonly<Record<string, readonly string[]>> = {
   BILLING_TRIAL_DAYS: [
     "How many days a new company can use everything before choosing a plan",
     "(14 when unset; 0 for no free trial).",
+  ],
+  ASSISTANT_MODEL: [
+    "The model the assistant answers with. Unset is Claude Haiku 4.5",
+    "(claude-haiku-4-5), the cheapest capable one; another model needs its price",
+    "in MODEL_RATES (src/server/ai.ts) or the chat stays off.",
   ],
   PLANS_ENFORCED_FROM: [
     "Only on a project that ran BEFORE plans were enforced: the day you deployed",
@@ -1968,6 +2005,15 @@ export function renderEnvModule(answers: Answers): string {
     }
   }
 
+  // Tenancy 2b-3: which model the assistant answers with (Haiku 4.5 unless set).
+  if (assistantChats(answers)) {
+    serverSpreads.push("ASSISTANT_MODEL: z.string().min(1).max(120).optional()");
+    runtime.push("ASSISTANT_MODEL: process.env.ASSISTANT_MODEL");
+    features.push(
+      `{ name: "Assistant model", vars: ["ASSISTANT_MODEL"], disables: "Nothing. Unset is Claude Haiku 4.5, the cheapest capable model. Another model needs its price in MODEL_RATES (src/server/ai.ts), or the assistant's chat stays off and the server log says why. The chat needs ANTHROPIC_API_KEY either way." }`,
+    );
+  }
+
   // Last on /setup, and last here so it stays that way. Everything above
   // switches a product feature off; these two change only how well the running
   // app can be operated, and a reader working down the page should meet the
@@ -2226,6 +2272,20 @@ export const PACKAGE_PERMISSION_FRAGMENTS: readonly PackagePermissionFragment[] 
   // works its own customers' feedback, so the keys belong to the company's
   // roles. This site's OWN board (the in-app button's) stays on the staff
   // ladder in both modes (staff.feedback.*), mapped in src/server/feedback.ts.
+  // THE ASSISTANT, IN A COMPANIES PROJECT (Tenancy 2b-3). Each company has its
+  // own assistant, so the keys belong to the company's roles. This site's OWN
+  // assistant stays on the staff ladder in both modes (staff.assistant.*),
+  // mapped in src/server/assistant.ts.
+  {
+    package: "assistant",
+    binding: "assistantPermissions",
+    scope: "tenant",
+    installedBy: (answers) => answers.tenantNoun !== "none" && answers.includeAssistant,
+    why:
+      "Each company has its own assistant, so these are company keys: owners, " +
+      "admins and members ask it (each question spends the company's monthly " +
+      "allowance), owners and admins write what it knows and see its AI use.",
+  },
   {
     package: "feedback",
     binding: "feedbackPermissions",
@@ -2494,6 +2554,26 @@ export function renderPermissionsCatalog(answers: Answers): string {
     defaultFor: ["admin", "cs_lead"],
   },`
     : "";
+  // THIS SITE'S OWN assistant's staff keys (Tenancy 2b-3), in BOTH modes: the
+  // assistant at /admin/assistant is the site's, used by its staff, whether or
+  // not companies have assistants of their own. One key per job, replacing the
+  // shell's staff.dashboard.view. src/server/assistant.ts maps the package's
+  // two permissions onto these.
+  const assistantStaffKeys = answers.includeAssistant
+    ? `
+  "staff.assistant.use": {
+    label: "Use this site's assistant",
+    description: "Ask the site's own assistant questions, see your own conversations with it, and confirm the changes it offers to make. Each question uses part of the site's AI allowance.",
+    category: "Assistant",
+    defaultFor: ["admin", "cs_lead", "cs_agent"],
+  },
+  "staff.assistant.manage": {
+    label: "Change this site's assistant",
+    description: "Its personality, house rules, words and answers to common questions, and its change log.",
+    category: "Assistant",
+    defaultFor: ["admin"],
+  },`
+    : "";
   const staffSpread = [...staffFragments, "appStaffPermissions"];
   const tenantSpread = [...tenantFragments, "appTenantPermissions"];
 
@@ -2600,7 +2680,7 @@ const appStaffPermissions = {
     category: "${plural}",
     // Sealed: an override must not hand this to one person quietly.
     sealed: true,
-  },${schedulingStaffKeys}${estimatorStaffKeys}${invoicingStaffKeys}${commsStaffKeys}${alertsStaffKeys}${filesStaffKeys}${feedbackStaffKeys}
+  },${schedulingStaffKeys}${estimatorStaffKeys}${invoicingStaffKeys}${commsStaffKeys}${alertsStaffKeys}${filesStaffKeys}${feedbackStaffKeys}${assistantStaffKeys}
 } as const;
 
 export const staffCatalog = definePermissions(
@@ -3977,7 +4057,7 @@ export function renderEstimatorServices(answers: Answers): string {
     ...(scheduling ? [`import { getSchedulingSettings, schedulingBookings } from "${scope}/scheduling";`] : []),
     ...(scheduling || invoicing ? [`import { db } from "@/db";`] : []),
     `import { env } from "@/env";`,
-    ...(ai ? [`import { anthropic, MODEL_RATES, recordAiUsage } from "@/server/ai";`] : []),
+    ...(ai ? [`import { anthropic, MODEL_RATES, recordAiUsage, siteCeilingOpen } from "@/server/ai";`] : []),
 
     ...(companies && scheduling ? [`import { companyLinks } from "@/server/company-links";`] : []),
     ...(companies && invoicing ? [`import { companyAuthorizer, type FeatureHandlerOverrides } from "@/server/company-routes";`] : []),
@@ -4069,13 +4149,24 @@ function buildTakeoff(): { takeoff: CreateEstimatorHandlersOptions["takeoff"]; o
     log.error({ model }, "estimator: photo reading is off — MODEL_RATES in src/server/ai.ts has no price for this model");
     return { takeoff: undefined, off: "model_unpriced" };
   }
+  const runner = createAnthropicTakeoffRunner({
+    client: anthropic,
+    model,
+    rates: { inputMicrosPerMTok: rate.inputMicrosPerMTok, outputMicrosPerMTok: rate.outputMicrosPerMTok },
+  });
   return {
     takeoff: {
-      model: createAnthropicTakeoffRunner({
-        client: anthropic,
-        model,
-        rates: { inputMicrosPerMTok: rate.inputMicrosPerMTok, outputMicrosPerMTok: rate.outputMicrosPerMTok },
-      }),
+      // THE SITE'S DAY, the same ceiling every AI feature adds to (Tenancy
+      // 2b-3 review M4): once it is spent, a reading isn't made — the customer
+      // is asked to count instead (a refused reading is the package's
+      // "unavailable"), and the site owner is told once (alertSiteCeiling).
+      model: {
+        ...runner,
+        read: async (request) => {
+          if (!(await siteCeilingOpen())) throw new Error("the site's AI limit for today is reached");
+          return runner.read(request);
+        },
+      },
       // The customer is nobody signed in: the row is the business's spend.
       recordUsage: (usage) =>
         recordAiUsage({
@@ -5098,6 +5189,19 @@ export function renderSiteNav(answers: Answers): string {
         "under, each with its progress, who leads it and when it's due.",
     });
   }
+  // Tenancy 2b-3: the company's assistant settings (its chat is the button on
+  // every /app page), for whoever may change what it knows.
+  if (!single && answers.includeAssistant) {
+    companyFeatureLinks.push({
+      href: "/app/assistant",
+      label: "Assistant",
+      permission: "assistant.settings.manage",
+      why:
+        `What the ${label}'s assistant knows — its profile, answers to common ` +
+        "questions, house rules and words — and this month's AI use. Everyone " +
+        "else asks it from the button on every page.",
+    });
+  }
   if (!single && answers.includeStorage) {
     companyFeatureLinks.push({
       href: "/app/files",
@@ -5612,12 +5716,24 @@ export function renderAdminNav(answers: Answers): string {
     operations.push({
       href: "/admin/assistant",
       label: "Assistant",
-      permission: "staff.dashboard.view",
+      permission: "staff.assistant.manage",
       why:
-        "The AI assistant's editable personality from the assistant package: " +
-        "versioned sections, tenant overlays, glossary and change log. From " +
+        "This site's own AI assistant's editable personality from the assistant " +
+        "package: versioned sections, house rules, glossary and change log. From " +
         "the assistant-admin overlay, so a project without the answer has " +
         "neither the editor nor this entry.",
+    });
+  }
+  // Tenancy 2b-3: talking to it, with --ai (the chat needs a model).
+  if (assistantChats(answers)) {
+    operations.push({
+      href: "/admin/assistant/chat",
+      label: "Assistant chat",
+      permission: "staff.assistant.use",
+      why:
+        "Ask this site's own assistant: it looks things up through its tools, " +
+        "asks before it changes anything, and counts against the site's AI " +
+        "allowance. From the assistant-chat-admin overlay.",
     });
   }
   if (operations.length > 0) {
@@ -6792,6 +6908,9 @@ function article(word: string): "a" | "an" {
 }
 
 export function renderPlanCatalog(answers: Answers): string {
+  // Tenancy 2b-3: the assistant's questions a month, sold only where the gate
+  // enforces it — a companies project that sells plans, with the chat (--ai).
+  const assistantQuota = assistantChats(answers) && plansEnforced(answers);
   const scope = answers.scope;
   const label = tenantLabel(answers).toLowerCase();
 
@@ -6867,7 +6986,11 @@ export const plans = definePlans({
     storage_gb: { kind: "quota", label: "GB of photos and files", labelOne: "GB of photos and files" },` : ""}${answers.includeEstimator ? `
     // Checked when a customer asks for an estimate online (the estimate page
     // and the website widget); estimates staff make by hand never count.
-    estimates: { kind: "quota", label: "online estimate requests a month", labelOne: "online estimate request a month" },` : ""}
+    estimates: { kind: "quota", label: "online estimate requests a month", labelOne: "online estimate request a month" },` : ""}${assistantQuota ? `
+    // Checked before every question the assistant answers with AI
+    // (src/server/assistant.ts asks src/server/plan-gate.ts); an answer the
+    // company wrote itself is free and never counts.
+    assistant_messages: { kind: "quota", label: "AI assistant messages a month", labelOne: "AI assistant message a month" },` : ""}
   },
 
   /**
@@ -6892,7 +7015,8 @@ export const plans = definePlans({
       features: {
         seats: 3,${answers.includeStorage ? `
         storage_gb: 5,` : ""}${answers.includeEstimator ? `
-        estimates: 100,` : ""}
+        estimates: 100,` : ""}${assistantQuota ? `
+        assistant_messages: 100,` : ""}
       },
     },
     {
@@ -6909,7 +7033,8 @@ export const plans = definePlans({
       features: {
         seats: 10,${answers.includeStorage ? `
         storage_gb: 25,` : ""}${answers.includeEstimator ? `
-        estimates: 500,` : ""}
+        estimates: 500,` : ""}${assistantQuota ? `
+        assistant_messages: 500,` : ""}
       },
     },
     {
@@ -6928,7 +7053,8 @@ export const plans = definePlans({
         // would be capped by anything summing beside it.
         seats: null,${answers.includeStorage ? `
         storage_gb: null,` : ""}${answers.includeEstimator ? `
-        estimates: null,` : ""}
+        estimates: null,` : ""}${assistantQuota ? `
+        assistant_messages: null,` : ""}
       },
     },
     {
@@ -6947,7 +7073,8 @@ export const plans = definePlans({
       features: {
         seats: 3,${answers.includeStorage ? `
         storage_gb: 5,` : ""}${answers.includeEstimator ? `
-        estimates: 50,` : ""}
+        estimates: 50,` : ""}${assistantQuota ? `
+        assistant_messages: 100,` : ""}
       },
     },
   ],

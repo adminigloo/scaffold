@@ -330,7 +330,12 @@ export function packagesFor(answers: Answers): readonly string[] {
   // reaches every project by `npm update`.
   if (answers.includeNotifications) optional.push("notifications", "notifications-widget");
   if (answers.includeStorage) optional.push("storage", "storage-widget");
-  if (answers.includeAssistant) optional.push("assistant");
+  // Two packages since Tenancy 2b-3, the feedback split: `assistant` is the
+  // server half (the brain, the tool loop, the company handlers, the Anthropic
+  // adapter) and `assistant-widget` the screens (the launcher and chat, and
+  // the owner's settings under ./admin). The chat's model and its usage
+  // ledger come with --ai.
+  if (answers.includeAssistant) optional.push("assistant", "assistant-widget");
 
   // Field service. Each installs only its own package; the cross-feature glue
   // (booking acknowledgements and confirmations through comms, a citation
@@ -531,6 +536,9 @@ export function optionalEnvFor(answers: Answers): readonly string[] {
     vars.push("ESTIMATOR_TIME_ZONE");
     if (answers.includeAi) vars.push("ESTIMATOR_TAKEOFF_MODEL");
   }
+  // Tenancy 2b-3: which model the assistant answers with — Claude Haiku 4.5
+  // unless this names another, the founder's cheapest-capable rule.
+  if (answers.includeAssistant && answers.includeAi) vars.push("ASSISTANT_MODEL");
   // PLANS (billing 0.3), in a companies project that sells subscriptions (the
   // same test as plans-emit.ts's `plansEnforced`, inlined to keep this module
   // free of the emitters): the free trial's length, and the day plans were
@@ -736,9 +744,24 @@ export function overlayNamesFor(answers: Answers): readonly string[] {
       }
     }
   }
+  // THE ASSISTANT (Tenancy 2b-3), cut by its conditions:
+  //   assistant             both modes: the site's own brain router and its
+  //                         handler route (/api/admin/assistant)
+  //   assistant-admin       the site's own editor under the shell
+  //   assistant-chat-admin  the site's own chat under the shell, with --ai
+  //                         (the chat needs a model)
+  //   assistant-companies   each company's settings (/app/assistant), its
+  //                         route (/api/app/{id}/assistant) and the /app
+  //                         layout that mounts the chat's button
   if (answers.includeAssistant) names.push("assistant");
   if (answers.includeAssistant && answers.adminShell !== "none") {
     names.push("assistant-admin");
+  }
+  if (answers.includeAssistant && answers.includeAi && answers.adminShell !== "none") {
+    names.push("assistant-chat-admin");
+  }
+  if (answers.includeAssistant && answers.tenantNoun !== "none") {
+    names.push("assistant-companies");
   }
 
   // FIELD SERVICE (Tenancy 2a): each feature cut into up to four overlays,
@@ -961,6 +984,9 @@ export function capabilitiesFor(answers: Answers): readonly string[] {
     }
   }
   if (answers.includeAssistant) keys.push("assistant.brain");
+  // Tenancy 2b-3: the chat (with a model), and each company's own assistant.
+  if (answers.includeAssistant && answers.includeAi) keys.push("assistant.chat");
+  if (answers.includeAssistant && answers.tenantNoun !== "none") keys.push("assistant.companies");
   if (answers.includeAssistant && answers.adminShell !== "none") {
     keys.push("assistant.editor");
   }

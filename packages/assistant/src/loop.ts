@@ -1,4 +1,5 @@
 import type { AssistantStreamEvent, LoopUsage } from "./events.js";
+import { estimateTokens } from "./tokens.js";
 import type {
   ContentBlock,
   NeutralMessage,
@@ -30,6 +31,8 @@ export interface ProposedWrite {
   toolName: string;
   params: Record<string, unknown>;
   summary: string;
+  /** What it will save, shown in full on the card (0.9.0). */
+  fields?: Array<{ key: string; label: string; value: string; multiline: boolean }>;
 }
 
 export interface ToolRun {
@@ -89,6 +92,7 @@ const zeroUsage = (): LoopUsage => ({
   cacheReadTokens: 0,
   cacheWriteTokens: 0,
   complete: true,
+  estimated: false,
 });
 
 function addUsage(into: LoopUsage, step: StepUsage): void {
@@ -96,9 +100,37 @@ function addUsage(into: LoopUsage, step: StepUsage): void {
   into.outputTokens += step.outputTokens;
   into.cacheReadTokens += step.cacheReadTokens;
   into.cacheWriteTokens += step.cacheWriteTokens;
-  // One unreported step makes the whole turn's usage a lower bound, and the
-  // ledger must say so rather than quietly under-billing.
+  if (step.estimated) into.estimated = true;
+  // A step with no counts at all (and no estimate) makes the turn's usage a
+  // lower bound; the loop estimates before it gets here, so this is rare.
   if (!step.reported) into.complete = false;
+}
+
+/**
+ * A STEP CUT SHORT IS NEVER FREE (0.9.0). When a step ends without the
+ * provider's final counts — Stop, a dropped connection, an adapter that
+ * reports nothing on abort — charge what was really sent and streamed: the
+ * input the provider reported (else the request's estimated size) plus the
+ * output streamed so far (else, when nothing at all came back from a call
+ * that was cut off, the step's whole `maxTokens`, the worst case). A provider
+ * that REFUSED the call (an error before anything streamed) charged nothing,
+ * and nothing is charged. Before this, a stopped question wrote a null cost
+ * that SUM() skipped: free against every cap.
+ */
+export function estimateStepUsage(
+  step: StepUsage,
+  input: { requestTokens: number; streamedTokens: number; maxTokens: number; refused: boolean; aborted: boolean },
+): StepUsage {
+  if (step.reported) return step;
+  if (input.refused && input.streamedTokens === 0 && step.inputTokens === 0) return { ...step, reported: true, estimated: true };
+  const inputTokens = step.inputTokens > 0 || step.cacheReadTokens > 0 ? step.inputTokens : input.requestTokens;
+  const outputTokens =
+    input.streamedTokens > 0
+      ? Math.max(step.outputTokens, input.streamedTokens)
+      : input.aborted && step.outputTokens === 0
+        ? input.maxTokens
+        : step.outputTokens;
+  return { ...step, inputTokens, outputTokens, reported: true, estimated: true };
 }
 
 export async function runAssistantLoop(options: RunLoopOptions): Promise<LoopResult> {
@@ -124,6 +156,7 @@ export async function runAssistantLoop(options: RunLoopOptions): Promise<LoopRes
     });
 
     let textInStep = "";
+    let stepUsage: StepUsage | null = null;
     let errorInfo: { errorClass: ProviderErrorClass; message: string } | null = null;
     for await (const event of stream) {
       if (event.type === "text-delta") {
@@ -141,9 +174,20 @@ export async function runAssistantLoop(options: RunLoopOptions): Promise<LoopRes
         errorInfo = { errorClass: event.errorClass, message: event.message };
       } else {
         stopReason = event.stopReason;
-        addUsage(usage, event.usage);
+        stepUsage = event.usage;
       }
     }
+    // Every step is priced, cut short or not.
+    addUsage(
+      usage,
+      estimateStepUsage(stepUsage ?? { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reported: false }, {
+        requestTokens: estimateTokens(JSON.stringify({ s: options.system, m: messages, t: options.tools })),
+        streamedTokens: estimateTokens(textInStep + toolCalls.map((c) => c.name + JSON.stringify(c.input ?? {})).join("")),
+        maxTokens: options.maxTokens,
+        refused: errorInfo !== null,
+        aborted: stopReason === "aborted" || options.signal?.aborted === true,
+      }),
+    );
 
     if (textInStep.length > 0) stepBlocks.push({ kind: "text", text: textInStep });
     for (const call of toolCalls) {
@@ -228,7 +272,7 @@ export async function runAssistantLoop(options: RunLoopOptions): Promise<LoopRes
               };
             }
             const actionId = await options.onPropose(r.propose);
-            emit({ v: 1, type: "action", actionId, summary: r.propose.summary });
+            emit({ v: 1, type: "action", actionId, summary: r.propose.summary, ...(r.propose.fields ? { fields: r.propose.fields } : {}) });
             return {
               kind: "tool-result",
               toolCallId: call.toolCallId,

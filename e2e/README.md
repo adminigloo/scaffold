@@ -551,6 +551,29 @@ It needs every package the 2a scenario needs plus `notifications`,
   by the browser as on a phone.
 - **Real time.** One scenario clock, moved by the test.
 
+## What `assistant-scenario.spec.ts` proves
+
+A company's AI assistant (Tenancy 2b-3), end to end: the real launcher, chat
+and settings bundled from `@adminigloo/assistant-widget`'s source, against
+`@adminigloo/assistant`'s real company handler on PGlite, with the allowance
+and ledger from `@adminigloo/ai/server` — and a SCRIPTED model, never a real
+call (`fixtures/assistant-scenario-server.ts`, on a free port the system picks). At 1280 and 390:
+
+- The "Ask the assistant" button opens a labelled dialog with focus in the
+  question box; Tab stays inside; Escape closes it and focus returns to the
+  button. On a phone it is full screen and nothing scrolls sideways.
+- A starter question is answered from a tool, as rendered Markdown (bold, a
+  list, a link to the site), with the figures the tool worked out.
+- "Remember…" shows the "ask before acting" card; nothing is saved until
+  "Yes, do it" — double-clicked, it saves one answer — and asking that
+  question again is answered with the owner's words and no model call.
+- Stop ends an answer where it is.
+- The settings show the month's use, take a profile and a house rule; a spent
+  month says so in plain words without calling the model; history reopens a
+  conversation; on a dark host the widget is dark.
+
+Needs `packages/assistant`, `packages/assistant-widget` and `packages/ai` built.
+
 ## What `estimator-widget.spec.ts` proves
 
 `@adminigloo/estimator-widget` on its own, against a fake server answered with

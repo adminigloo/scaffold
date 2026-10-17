@@ -33,7 +33,7 @@ export const TENANCY_1_NOT_INCLUDED: readonly string[] = [
  * list every README that 2a touched carries.
  */
 export const TENANCY_2A_NOT_INCLUDED: readonly string[] = [
-  "**Per-company boards and widgets for feedback, notifications, files, the assistant, analytics, SEO/AEO and book-a-call (booking)** — Tenancy 2b.",
+  "**Per-company analytics, SEO/AEO and book-a-call (booking)** — Tenancy 2b-4. (Feedback, alerts, files and the assistant are per company already.)",
   "**Payments to companies** (Stripe Connect: a customer paying a company's invoice by card). Invoices are paid however the payment instructions say; staff record the payment.",
   "**Plans, limits and billing enforcement** per company.",
   "**Custom domains and subdomains.** Public pages live at `/t/{web-address}`.",
@@ -58,7 +58,7 @@ export const TENANCY_2A_NOT_INCLUDED: readonly string[] = [
  */
 export const TENANCY_2B1_NOT_INCLUDED: readonly string[] = [
   "**Sprints and swimlanes by epic on the feedback board.** Its epics, filters, search, New ticket, editing and settings screens are here (feedback 0.12), and so are the board per company, its alerts and its private screenshots (Tenancy 2b-2a).",
-  "**The AI assistant per company** — Tenancy 2b-3.",
+  "**The assistant answering customers on a public page.** Each company's assistant is its team's, behind sign-in (Tenancy 2b-3).",
   "**Website analytics, SEO/AEO and book-a-call (booking) per company** — Tenancy 2b-4.",
   "**Text (SMS) and push alerts.** Alerts come in the app and by email — S9.",
   "**Plans, limits and billing enforcement** — the billing chunk. Each company's storage allowance is one setting for everyone (`FILES_ALLOWANCE_MB`) until then; the seam the billing chunk fills is there.",
@@ -146,6 +146,49 @@ export function notIncludedFor(companies: boolean): readonly string[] {
   return companies
     ? all.filter((item) => !SINGLE_ONLY_ITEMS.has(item))
     : all.filter((item) => !COMPANIES_ONLY_ITEMS.has(item));
+}
+
+/** What the assistant doesn't do (assistant 0.9), said plainly. */
+export const ASSISTANT_2B3_NOT_INCLUDED: readonly string[] = [
+  "**Answering customers on a public page.** The assistant is the team's, behind sign-in.",
+  "**Changing records for you.** It reads the schedule, invoices and price book; the one change it can offer is saving an answer to a common question, and only when you say \"Yes, do it\".",
+  "**Vector search.** It finds what it knows by keyword, which needs nothing extra; the optional vector table needs pgvector and an embeddings key.",
+];
+
+/**
+ * The "Assistant" section (Tenancy 2b-3): who asks it, what it knows, what it
+ * costs, and what it doesn't do. Empty without the assistant.
+ */
+export function assistantSection(answers: ProjectManifest["answers"]): string[] {
+  if (!answers.includeAssistant) return [];
+  const companies = answers.tenantNoun !== "none";
+  const noun = companies ? tenantLabel(answers).toLowerCase() : "business";
+  const chats = answers.includeAi;
+  const lines: string[] = ["### Assistant", ""];
+  if (companies) {
+    lines.push(
+      chats
+        ? `- **Each ${noun}'s own assistant**: an "Ask the assistant" button on every page of its area (/app). It answers from what the ${noun} wrote and looks things up — ${[
+            ...(answers.includeScheduling ? ["the schedule"] : []),
+            ...(answers.includeInvoicing ? ["overdue invoices"] : []),
+            ...(answers.includeEstimator ? ["the price book"] : []),
+          ].join(", ") || "its answers"} — with the asker's own permissions, and asks before it changes anything.`
+        : `- **Each ${noun}'s own assistant** settings at /app/assistant. Its chat needs a model: add --ai (\`add ai\`).`,
+      `- **What it knows** (/app/assistant, owners and admins): the business in the owner's words, answers to common questions (asked word for word, answered with those words and no AI), house rules and the words the business uses${chats ? ", and this month's AI use against its allowance" : ""}.`,
+    );
+  }
+  lines.push(
+    answers.adminShell !== "none"
+      ? `- **This site's own assistant** (/admin/assistant${chats ? ", its chat at /admin/assistant/chat" : ""}), for your staff: its personality, house rules, words and change log.`
+      : `- **This site's own assistant**, for your staff, over /api/admin/assistant.`,
+  );
+  if (chats) {
+    lines.push(
+      `- **What it costs**: Claude Haiku 4.5 (ASSISTANT_MODEL to change it), well under a cent a question. Each ${noun} has a month of questions (src/server/assistant.ts${companies && (answers.businessModel === "subscription" || answers.businessModel === "both") ? ', or its plan\'s "AI assistant messages a month"' : ""}) and the whole site stops for the day at AI_SITE_DAILY_CENTS (src/server/ai.ts) — checked before every question, refusing in plain words when spent, and when it can't check. Every question is recorded in ai_usage.`,
+    );
+  }
+  lines.push("", "Not included:", "", ...ASSISTANT_2B3_NOT_INCLUDED.map((line) => `- ${line}`), "");
+  return lines;
 }
 
 /** What the feedback boards don't do (feedback 0.12), said plainly. */
@@ -425,6 +468,7 @@ export function renderProjectReadme(manifest: ProjectManifest): string {
   }
 
   lines.push(...feedbackSection(answers));
+  lines.push(...assistantSection(answers));
   lines.push(...alertsAndFilesSection(answers));
   lines.push("### Not included", "", ...notIncludedFor(companies).map((item) => `- ${item}`), "");
 

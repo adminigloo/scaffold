@@ -1,283 +1,224 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  createGlossaryTerm,
   createSection,
+  createTenantRule,
+  deactivateGlossaryTerm,
   deactivateSection,
+  deactivateTenantRule,
+  getBusinessProfile,
+  listChangeLog,
+  listGlossary,
+  listSectionVersions,
+  listSections,
+  listSectionsForEditor,
+  listTenantRules,
   publishSection,
   rollbackSection,
+  saveBusinessProfile,
   SectionBudgetError,
+  termKeyFor,
+  type AssistantDb,
 } from "../brain.js";
+import { DEFAULT_SECTIONS, seedDefaultSections } from "../seed.js";
+import { ASSISTANT_PLATFORM } from "../schema.js";
+import { createTestDb, tenant, type TestDb } from "./pglite.js";
 
 /**
- * The narrowest fake for the drizzle chains brain.ts runs — house pattern.
- * State is a script per query shape; the fake honors it rather than parsing
- * SQL, so a new query surfaces here as a test change.
+ * THE BRAIN, PER COMPANY (0.9.0), on a real Postgres: each company's
+ * sections, house rules, glossary, profile and change log are its own, and an
+ * id from another company is "unknown" — it neither reads nor changes a thing.
+ * The 0.1 guards (budget, required phrases, optimistic concurrency, rollback
+ * as a checked publish, core and referenced sections) hold per company.
  */
-function fakeDb(state: {
-  section?: Record<string, unknown> | null;
-  headVersion?: number | null;
-  targetVersionContent?: string | null;
-  referencingRules?: number;
-  maxOrder?: number;
-  conflictOnVersionInsert?: boolean;
-}) {
-  const inserts: Record<string, Array<Record<string, unknown>>> = {};
-  const updates: Array<Record<string, unknown>> = [];
-  let lastTable = "";
 
-  const db = {
-    select: (fields: Record<string, unknown>) => ({
-      from: (table: { [k: symbol]: unknown }) => {
-        const name = tableName(table);
-        return {
-          // createSection's next-sortOrder query goes straight to orderBy().
-          orderBy: () => ({
-            limit: async () => [{ sortOrder: state.maxOrder ?? 0 }],
-          }),
-          where: () => ({
-            limit: async () => {
-              if (name === "assistant_sections") return state.section ? [state.section] : [];
-              if (name === "assistant_section_versions") {
-                if ("content" in fields) {
-                  return state.targetVersionContent == null
-                    ? []
-                    : [{ content: state.targetVersionContent }];
-                }
-                return state.headVersion == null ? [] : [{ versionNumber: state.headVersion }];
-              }
-              return [];
-            },
-            orderBy: () => ({
-              limit: async () => {
-                if (name === "assistant_sections") {
-                  return [{ sortOrder: state.maxOrder ?? 0 }];
-                }
-                return state.headVersion == null ? [] : [{ versionNumber: state.headVersion }];
-              },
-            }),
-            // deactivate's referencing-rules scan awaits the where directly.
-            then: (resolve: (v: unknown) => void) =>
-              resolve(Array.from({ length: state.referencingRules ?? 0 }, (_, i) => ({ id: `r${i}` }))),
-          }),
-        };
-      },
-    }),
-    insert: (table: { [k: symbol]: unknown }) => {
-      lastTable = tableName(table);
-      return {
-        values: (row: Record<string, unknown>) => {
-          (inserts[lastTable] ??= []).push(row);
-          return {
-            returning: async () => [{ id: "sec_1", ...row }],
-            onConflictDoUpdate: async () => undefined,
-            then: (resolve: (v: unknown) => void) => resolve(undefined),
-          };
-        },
-      };
-    },
-    update: () => ({
-      set: (patch: Record<string, unknown>) => ({
-        where: async () => {
-          updates.push(patch);
-        },
-      }),
-    }),
-    // publishSection wraps its writes in a transaction; the fake runs the
-    // callback against the same accumulating handle so inserts/updates still
-    // land where the assertions look. A configured conflict makes the version
-    // insert throw 23505, exactly as the real unique index would.
-    transaction: async (fn: (tx: unknown) => Promise<unknown>) => {
-      if (state.conflictOnVersionInsert) {
-        const err = new Error("duplicate key") as Error & { code: string };
-        err.code = "23505";
-        throw err;
-      }
-      return fn(db);
-    },
-  };
-  return { db: db as never, inserts, updates };
+let t: TestDb;
+let db: AssistantDb;
+
+beforeAll(async () => {
+  t = await createTestDb();
+  db = t.db;
+});
+afterAll(async () => {
+  await t.close();
+});
+
+async function seeded(): Promise<string> {
+  const id = tenant();
+  await seedDefaultSections(db, id);
+  return id;
 }
 
-// drizzle tables expose their name via a well-known symbol; read it so the
-// fake can branch without the test caring about the exact symbol.
-function tableName(table: { [k: symbol]: unknown }): string {
-  for (const sym of Object.getOwnPropertySymbols(table)) {
-    const v = table[sym];
-    if (typeof v === "string" && v.startsWith("assistant_")) return v;
-  }
-  return "";
-}
-
-describe("createSection", () => {
-  it("refuses content over the token budget before inserting", async () => {
-    const { db, inserts } = fakeDb({});
-    await expect(
-      createSection(db, { key: "k", label: "K", content: "x".repeat(9000), maxTokens: 100 }),
-    ).rejects.toBeInstanceOf(SectionBudgetError);
-    expect(inserts["assistant_sections"]).toBeUndefined();
+describe("the guardrails each company starts with", () => {
+  it("ships them as core, the no-math and boundaries rules among them", () => {
+    const keys = DEFAULT_SECTIONS.map((s) => s.key);
+    expect(keys).toContain("no_math");
+    expect(keys).toContain("boundaries");
+    expect(DEFAULT_SECTIONS.every((s) => s.isCore)).toBe(true);
+    const core = DEFAULT_SECTIONS.find((s) => s.key === "core_personality");
+    for (const phrase of core?.requiredPhrases ?? []) expect(core?.content).toContain(phrase);
+    const noMath = DEFAULT_SECTIONS.find((s) => s.key === "no_math");
+    expect(noMath?.content).toMatch(/Never compute a number/);
   });
 
-  it("rejects an invalid key at the schema", async () => {
-    const { db } = fakeDb({});
-    await expect(createSection(db, { key: "Bad Key", label: "K", content: "hi" })).rejects.toThrow();
+  it("seeds each company its own copy, once, and the site's own too", async () => {
+    const a = tenant();
+    const b = tenant();
+    expect(await seedDefaultSections(db, a)).toBe(DEFAULT_SECTIONS.length);
+    expect(await seedDefaultSections(db, a)).toBe(0);
+    expect(await seedDefaultSections(db, b)).toBe(DEFAULT_SECTIONS.length);
+    expect(await seedDefaultSections(db, ASSISTANT_PLATFORM)).toBe(DEFAULT_SECTIONS.length);
+    expect((await listSections(db, a)).map((s) => s.key)).toEqual(DEFAULT_SECTIONS.map((s) => s.key));
+    // Two seeds racing for one company: the unique (company, key) index makes the loser a no-op.
+    const c = tenant();
+    const [x, y] = await Promise.all([seedDefaultSections(db, c), seedDefaultSections(db, c)]);
+    expect(x + y).toBe(DEFAULT_SECTIONS.length);
+    expect(await listSections(db, c)).toHaveLength(DEFAULT_SECTIONS.length);
   });
 
-  it("inserts, logs, and bumps config on a valid section", async () => {
-    const { db, inserts } = fakeDb({ maxOrder: 40 });
-    const row = await createSection(db, { key: "greeting", label: "Greeting", content: "Hello." }, "dallin");
-    expect(row.key).toBe("greeting");
-    expect(inserts["assistant_sections"]?.[0]?.sortOrder).toBe(50);
-    expect(inserts["assistant_change_log"]?.[0]).toMatchObject({ action: "created", performedBy: "dallin" });
-    expect(inserts["assistant_config_version"]).toHaveLength(1);
+  it("needs the company", async () => {
+    await expect(seedDefaultSections(db, "")).rejects.toThrow(/company/);
+    await expect(listSections(db, "")).rejects.toThrow();
   });
 });
 
-const section = {
-  id: "sec_1",
-  key: "core_personality",
-  label: "Core",
-  description: null,
-  content: "old",
-  sortOrder: 10,
-  isCore: false,
-  requiredPhrases: ["You are"],
-  maxTokens: 500,
-  isActive: true,
-};
-
-describe("publishSection", () => {
-  it("rejects when the head moved past the editor's base version", async () => {
-    const { db } = fakeDb({ section, headVersion: 5 });
-    const result = await publishSection(db, {
-      sectionId: "sec_1",
-      baseVersion: 3,
-      content: "You are the assistant, revised.",
-    });
-    expect(result).toEqual({ published: false, reason: "conflict", headVersion: 5 });
-  });
-
-  it("refuses content that drops a required phrase", async () => {
-    const { db } = fakeDb({ section, headVersion: 1 });
-    const result = await publishSection(db, {
-      sectionId: "sec_1",
-      baseVersion: 1,
-      content: "brand new text with no identity",
-    });
-    expect(result).toEqual({ published: false, reason: "missing_phrase", phrase: "You are" });
-  });
-
-  it("refuses content over budget", async () => {
-    const { db } = fakeDb({ section: { ...section, maxTokens: 50 }, headVersion: 1 });
-    const result = await publishSection(db, {
-      sectionId: "sec_1",
-      baseVersion: 1,
-      content: "You are " + "x".repeat(5000),
-    });
-    expect(result).toEqual({ published: false, reason: "budget", maxTokens: 50 });
-  });
-
-  it("publishes as the next version, snapshots content, and logs", async () => {
-    const { db, inserts, updates } = fakeDb({ section, headVersion: 2 });
-    const result = await publishSection(
-      db,
-      { sectionId: "sec_1", baseVersion: 2, content: "You are the assistant. Newer.", changeSummary: "tone" },
-      "dallin",
+describe("sections: publish, rollback, deactivate — inside one company", () => {
+  it("creates with its budget enforced, after the company's last section", async () => {
+    const a = await seeded();
+    await expect(createSection(db, a, { key: "k", label: "K", content: "x".repeat(9000), maxTokens: 100 })).rejects.toBeInstanceOf(
+      SectionBudgetError,
     );
-    expect(result).toEqual({ published: true, versionNumber: 3 });
-    expect(inserts["assistant_section_versions"]?.[0]).toMatchObject({ versionNumber: 3, content: "You are the assistant. Newer." });
-    expect(updates[0]?.content).toBe("You are the assistant. Newer.");
-    expect(inserts["assistant_change_log"]?.[0]).toMatchObject({ action: "published", versionNumber: 3 });
+    await expect(createSection(db, a, { key: "Bad Key", label: "K", content: "hi" })).rejects.toThrow();
+    const row = await createSection(db, a, { key: "greeting", label: "Greeting", content: "Hello." }, "dallin");
+    expect(row.sortOrder).toBe(60);
+    const log = await listChangeLog(db, a);
+    expect(log[0]).toMatchObject({ entityType: "section", entityKey: "greeting", action: "created", performedBy: "dallin" });
   });
 
-  it("reports unknown for a missing section", async () => {
-    const { db } = fakeDb({ section: null });
-    expect(await publishSection(db, { sectionId: "nope", baseVersion: 0, content: "You are x" })).toEqual({
+  it("publishes as the next version, refuses a stale base, a lost phrase and an overlong edit", async () => {
+    const a = await seeded();
+    const core = (await listSectionsForEditor(db, a)).find((s) => s.key === "core_personality");
+    if (!core) throw new Error("no core section");
+    expect(core.headVersion).toBe(0);
+    expect(await publishSection(db, a, { sectionId: core.id, baseVersion: 0, content: "No identity here." })).toEqual({
+      published: false,
+      reason: "missing_phrase",
+      phrase: "assistant",
+    });
+    expect(
+      await publishSection(db, a, { sectionId: core.id, baseVersion: 0, content: `You are the assistant. ${"x".repeat(5000)}` }),
+    ).toEqual({ published: false, reason: "budget", maxTokens: 500 });
+    expect(await publishSection(db, a, { sectionId: core.id, baseVersion: 0, content: "You are the assistant, v1." }, "dallin")).toEqual({
+      published: true,
+      versionNumber: 1,
+    });
+    expect(await publishSection(db, a, { sectionId: core.id, baseVersion: 0, content: "You are the assistant, stale." })).toEqual({
+      published: false,
+      reason: "conflict",
+      headVersion: 1,
+    });
+    expect((await listSections(db, a)).find((s) => s.id === core.id)?.content).toBe("You are the assistant, v1.");
+  });
+
+  it("two publishes at the same base: one wins, the other is a conflict — never a 500", async () => {
+    const a = await seeded();
+    const core = (await listSections(db, a)).find((s) => s.key === "core_personality")!;
+    const results = await Promise.all([
+      publishSection(db, a, { sectionId: core.id, baseVersion: 0, content: "You are the assistant, first." }),
+      publishSection(db, a, { sectionId: core.id, baseVersion: 0, content: "You are the assistant, second." }),
+    ]);
+    expect(results.filter((r) => r.published)).toHaveLength(1);
+    expect(results.filter((r) => !r.published && r.reason === "conflict")).toHaveLength(1);
+  });
+
+  it("rolls back as a checked publish at the head", async () => {
+    const a = await seeded();
+    const core = (await listSections(db, a)).find((s) => s.key === "core_personality")!;
+    await publishSection(db, a, { sectionId: core.id, baseVersion: 0, content: "You are the assistant, one." });
+    await publishSection(db, a, { sectionId: core.id, baseVersion: 1, content: "You are the assistant, two." });
+    expect(await rollbackSection(db, a, { sectionId: core.id, toVersion: 1 }, "dallin")).toEqual({ published: true, versionNumber: 3 });
+    expect((await listSectionVersions(db, a, core.id)).map((v) => v.versionNumber)).toEqual([3, 2, 1]);
+    expect(await rollbackSection(db, a, { sectionId: core.id, toVersion: 99 })).toEqual({ published: false, reason: "unknown" });
+  });
+
+  it("refuses to turn off a core section, or one a house rule still extends", async () => {
+    const a = await seeded();
+    const core = (await listSections(db, a)).find((s) => s.isCore)!;
+    expect(await deactivateSection(db, a, core.id)).toEqual({ deactivated: false, reason: "core" });
+    const extra = await createSection(db, a, { key: "tone", label: "Tone", content: "Be warm." });
+    await createTenantRule(db, { tenantId: a, sectionKey: "tone", label: "Warmer", instruction: "Even warmer." });
+    expect(await deactivateSection(db, a, extra.id)).toEqual({ deactivated: false, reason: "referenced", referenceCount: 1 });
+  });
+
+  it("CROSS-COMPANY: B naming A's section changes nothing and learns nothing", async () => {
+    const a = await seeded();
+    const b = await seeded();
+    const aCore = (await listSections(db, a)).find((s) => s.key === "core_personality")!;
+    const before = JSON.stringify(await listSections(db, a));
+    expect(await publishSection(db, b, { sectionId: aCore.id, baseVersion: 0, content: "You are the assistant, hijacked." })).toEqual({
       published: false,
       reason: "unknown",
     });
-  });
-
-  it("maps a unique-violation from a raced version insert to conflict, not a throw", async () => {
-    // Two publishers at the same base both pass the compare, both compute the
-    // same next version; the unique index rejects the loser with 23505. That
-    // must surface as the `conflict` the return type promises, never a 500.
-    const { db } = fakeDb({ section, headVersion: 2, conflictOnVersionInsert: true });
-    const result = await publishSection(db, {
-      sectionId: "sec_1",
-      baseVersion: 2,
-      content: "You are the assistant, racing.",
-    });
-    expect(result).toEqual({ published: false, reason: "conflict", headVersion: 2 });
+    expect(await rollbackSection(db, b, { sectionId: aCore.id, toVersion: 1 })).toEqual({ published: false, reason: "unknown" });
+    expect(await deactivateSection(db, b, aCore.id)).toEqual({ deactivated: false, reason: "unknown" });
+    await publishSection(db, a, { sectionId: aCore.id, baseVersion: 0, content: "You are the assistant, A's own." });
+    expect(await listSectionVersions(db, b, aCore.id)).toEqual([]);
+    expect(JSON.stringify(await listSections(db, a))).not.toBe(before); // A's own publish landed…
+    expect((await listSections(db, b)).every((s) => !s.content.includes("A's own"))).toBe(true); // …and B never sees it.
   });
 });
 
-describe("rollbackSection", () => {
-  it("republishes an old version's content at the head, running publish checks", async () => {
-    const { db, inserts } = fakeDb({
-      section,
-      headVersion: 4,
-      targetVersionContent: "You are the original.",
-    });
-    const result = await rollbackSection(db, { sectionId: "sec_1", toVersion: 2 }, "dallin");
-    expect(result).toEqual({ published: true, versionNumber: 5 });
-    expect(inserts["assistant_section_versions"]?.[0]).toMatchObject({
-      versionNumber: 5,
-      content: "You are the original.",
-      changeSummary: "rolled back to v2",
-    });
-  });
-
-  it("runs publish checks: a rollback to content that now violates budget is refused", async () => {
-    // The invariant the title claimed but the happy-path test never proved —
-    // a rollback is a publish of old content, so a lowered budget refuses it
-    // rather than resurrecting oversized content past the guard.
-    const { db, inserts } = fakeDb({
-      section: { ...section, maxTokens: 20 },
-      headVersion: 3,
-      targetVersionContent: "You are " + "x".repeat(4000),
-    });
-    const result = await rollbackSection(db, { sectionId: "sec_1", toVersion: 1 });
-    expect(result).toEqual({ published: false, reason: "budget", maxTokens: 20 });
-    expect(inserts["assistant_section_versions"]).toBeUndefined();
-  });
-
-  it("runs publish checks: a rollback that drops a required phrase is refused", async () => {
-    const { db } = fakeDb({
-      section,
-      headVersion: 3,
-      targetVersionContent: "an old version with no identity phrase",
-    });
-    const result = await rollbackSection(db, { sectionId: "sec_1", toVersion: 1 });
-    expect(result).toEqual({ published: false, reason: "missing_phrase", phrase: "You are" });
-  });
-
-  it("reports unknown for a version that never existed", async () => {
-    const { db } = fakeDb({ section, targetVersionContent: null });
-    expect(await rollbackSection(db, { sectionId: "sec_1", toVersion: 99 })).toEqual({
-      published: false,
-      reason: "unknown",
-    });
+describe("the business profile", () => {
+  it("is written, versioned, cleared, and the company's own", async () => {
+    const a = tenant();
+    const b = tenant();
+    expect(await getBusinessProfile(db, a)).toBe("");
+    expect(await saveBusinessProfile(db, a, { content: "Green Acres mows lawns in Boise, Monday to Saturday." }, "owner")).toEqual({ saved: true });
+    expect(await getBusinessProfile(db, a)).toBe("Green Acres mows lawns in Boise, Monday to Saturday.");
+    expect(await getBusinessProfile(db, b)).toBe("");
+    expect(await saveBusinessProfile(db, a, { content: "Green Acres mows and edges lawns in Boise." })).toEqual({ saved: true });
+    const profile = (await listSections(db, a)).find((s) => s.key === "business_profile");
+    expect(profile?.content).toContain("Green Acres mows and edges lawns in Boise.");
+    expect(await saveBusinessProfile(db, a, { content: "x ".repeat(1_190) })).toEqual({ saved: false, reason: "budget", maxTokens: 700 });
+    expect(await saveBusinessProfile(db, a, { content: "" })).toEqual({ saved: true });
+    expect(await getBusinessProfile(db, a)).toBe("");
+    const words = (await listChangeLog(db, a)).map((row) => row.action);
+    expect(words).toEqual(expect.arrayContaining(["created", "published", "deactivated"]));
   });
 });
 
-describe("deactivateSection", () => {
-  it("refuses a core section", async () => {
-    const { db } = fakeDb({ section: { ...section, isCore: true } });
-    expect(await deactivateSection(db, "sec_1")).toEqual({ deactivated: false, reason: "core" });
-  });
+describe("house rules, the glossary and the change log, per company", () => {
+  it("keeps each company's rules and terms to itself; B can't remove A's", async () => {
+    const a = tenant();
+    const b = tenant();
+    const rule = await createTenantRule(db, { tenantId: a, label: "Weekends", instruction: "We don't work Sundays." }, "owner");
+    if (!("id" in rule)) throw new Error("rule refused");
+    expect(await createTenantRule(db, { tenantId: a, label: "Long", instruction: "x".repeat(1900) })).toEqual({ error: "budget", maxTokens: 200 });
+    const term = await createGlossaryTerm(db, a, { termKey: termKeyFor("The Yard!"), preferred: "the yard", definition: "Our depot." });
+    expect(termKeyFor("The Yard!")).toBe("the_yard");
+    expect(termKeyFor("4x4 truck")).toBe("t_4x4_truck");
+    await createGlossaryTerm(db, b, { termKey: "the_yard", preferred: "the lot", definition: "Bravo's depot." });
 
-  it("refuses while a tenant rule still references the key, with a count", async () => {
-    const { db } = fakeDb({ section: { ...section, isCore: false }, referencingRules: 2 });
-    expect(await deactivateSection(db, "sec_1")).toEqual({
-      deactivated: false,
-      reason: "referenced",
-      referenceCount: 2,
-    });
-  });
+    expect((await listTenantRules(db, a)).map((r) => r.instruction)).toEqual(["We don't work Sundays."]);
+    expect(await listTenantRules(db, b)).toEqual([]);
+    expect((await listGlossary(db, a)).map((g) => g.preferred)).toEqual(["the yard"]);
+    expect((await listGlossary(db, b)).map((g) => g.preferred)).toEqual(["the lot"]);
 
-  it("deactivates a free, non-core section and logs it", async () => {
-    const { db, updates, inserts } = fakeDb({ section: { ...section, isCore: false }, referencingRules: 0 });
-    expect(await deactivateSection(db, "sec_1", "dallin")).toEqual({ deactivated: true });
-    expect(updates[0]).toEqual({ isActive: false });
-    expect(inserts["assistant_change_log"]?.[0]).toMatchObject({ action: "deactivated" });
+    expect(await deactivateTenantRule(db, b, rule.id)).toBe(false);
+    expect(await deactivateGlossaryTerm(db, b, term.id)).toBe(false);
+    expect(await listTenantRules(db, a)).toHaveLength(1);
+    expect(await listGlossary(db, a)).toHaveLength(1);
+
+    expect(await deactivateTenantRule(db, a, rule.id)).toBe(true);
+    expect(await deactivateTenantRule(db, a, rule.id)).toBe(false);
+    // Re-adding a removed term brings it back rather than colliding.
+    expect(await deactivateGlossaryTerm(db, a, term.id)).toBe(true);
+    const again = await createGlossaryTerm(db, a, { termKey: "the_yard", preferred: "the yard" });
+    expect(again.id).toBe(term.id);
+
+    const aLog = await listChangeLog(db, a);
+    const bLog = await listChangeLog(db, b);
+    expect(aLog.map((row) => row.changeSummary)).toEqual(expect.arrayContaining(["Weekends", "the yard"]));
+    expect(bLog.map((row) => row.changeSummary)).toEqual(["the lot"]);
   });
 });

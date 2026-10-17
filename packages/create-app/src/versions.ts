@@ -101,7 +101,10 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // `planGrantDiff` to take a `PlanTier`, and a caret over 0.1.x would resolve
   // to the signatures nothing here calls.
   billing: "0.3.0",
-  ai: "0.1.5",
+  // 0.2.0 (Tenancy 2b-3): the ledger moved into the package — the emitted
+  // src/server/ai.ts and src/server/assistant.ts import recordAiUsage,
+  // aiSpendSince and checkAiAllowance from ./server, which 0.1.x doesn't have.
+  ai: "0.2.0",
   // 0.3.0 (Tenancy 2a, D8): a per-message From name and Reply-To, so a
   // company's email carries its name on the platform's verified address.
   email: "0.3.0",
@@ -138,7 +141,14 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.8.0 adds the optional AdminIgloo license gate (deps @adminigloo/license);
   // it is a no-op unless the app passes license config with mode "enforce", so
   // the emitted route needs no change to keep working.
-  assistant: "0.8.1",
+  // 0.9.0 (Tenancy 2b-3): an assistant per company. Every brain function takes
+  // the company, the emitted glue builds createAssistantHandlers and
+  // createAnthropicProvider (./anthropic), and the tools import saveFaq — none
+  // of which exist in 0.8.x.
+  assistant: "0.9.0",
+  // 0.3.0: the launcher, history, Stop, starters and the "ask before acting"
+  // card, and the settings screen (./admin) the company pages mount.
+  "assistant-widget": "0.3.0",
   // 0.6.0 for the onEvent producer hook (optional, so the emitted route
   // needs no change); 0.5.0 was the column editor and unread marks. The emitted router imports
   // `createStatus`, `deleteStatus`, `markTicketRead` and friends; none exist

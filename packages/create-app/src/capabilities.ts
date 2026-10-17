@@ -476,6 +476,26 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
     provenBy: (plan) => exists(plan, "app", "admin", "assistant", "page.tsx"),
   },
   {
+    capability: "assistant.chat",
+    why:
+      "The assistant answers with a model (Tenancy 2b-3): the glue builds the " +
+      "Anthropic provider with prompt caching, checks the monthly allowance and " +
+      "records each question's AI use. Needs --ai.",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "server", "assistant.ts"], "createAnthropicProvider(", "checkAiAllowance(", "recordAiUsage("),
+  },
+  {
+    capability: "assistant.companies",
+    why:
+      "Each company has its own assistant (Tenancy 2b-3): its route under " +
+      "/api/app/{id}/assistant, its settings at /app/assistant, and the button " +
+      "on its pages.",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "server", "assistant.ts"], "buildAssistantHandlers", "companyAuthorizer(") &&
+      exists(plan, "app", "api", "app", "[tenantId]", "assistant", "[...path]", "route.ts") &&
+      mentions(plan, ["app", "(site)", "app", "assistant", "page.tsx"], "<AssistantSettings"),
+  },
+  {
     capability: "ai.streaming",
     why:
       "A route that opens a stream through `createStreamRoute`. THE CLAIM " +

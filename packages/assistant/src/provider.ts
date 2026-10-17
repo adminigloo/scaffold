@@ -109,6 +109,13 @@ export interface StepUsage {
   cacheWriteTokens: number;
   /** False when the stream died before the provider reported final usage. */
   reported: boolean;
+  /**
+   * True when some of these counts are an ESTIMATE (0.9.0): a step cut short
+   * (Stop, a dropped connection) is charged the input the provider reported —
+   * or the request's estimated size — plus the output streamed so far, never
+   * nothing. The loop fills this in for an adapter that reports nothing.
+   */
+  estimated?: boolean;
 }
 
 /**

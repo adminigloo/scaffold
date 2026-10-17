@@ -30,3 +30,10 @@ export type { AiProvider, AiProviderKeys } from "./env.js";
  * one physical table and Drizzle's reference equality would fail. These erase.
  */
 export type { AiUsageRow, AiUsageStatus, NewAiUsageRow } from "./schema.js";
+
+/**
+ * The default model (0.2.0), client-safe. The ledger helpers that read and
+ * write `ai_usage` — recordAiUsage, aiSpendSince, checkAiAllowance — are in
+ * `@adminigloo/ai/server`, for the reason the table is in `./schema`.
+ */
+export { DEFAULT_AI_MODEL } from "./model.js";

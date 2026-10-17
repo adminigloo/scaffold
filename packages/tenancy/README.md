@@ -546,7 +546,7 @@ package takes the tenant from you instead: pass your own tenant id to their
   It will keep screenshots as these private files and send its alerts through
   these notifications. Until then, feedback screenshots stay on the public
   Blob store as in 2a.
-- **The AI assistant per company** — Tenancy 2b-3.
+- **The assistant answering customers on a public page.** Each company's assistant is its team's, behind sign-in (Tenancy 2b-3).
 - **Website analytics, SEO/AEO and book-a-call (booking) per company** —
   Tenancy 2b-4.
 - **Text (SMS) and push alerts.** Alerts come in the app and by email — S9.

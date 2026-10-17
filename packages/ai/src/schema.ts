@@ -2,13 +2,16 @@ import { bigint, index, integer, pgTable, text } from "drizzle-orm/pg-core";
 import { createdAt, logIdColumn } from "@adminigloo/db";
 
 /**
- * How a request ended, mirroring `StreamOutcome`.
+ * How a request ended, mirroring `StreamOutcome` — or "reserved" (0.2.0): a
+ * call allowed but not finished yet, holding its worst-case cost so calls in
+ * flight count against an allowance (`reserveAiAllowance`), until
+ * `settleAiReservation` writes what it really cost.
  *
  * text, not pgEnum: a value added to a Postgres enum can never be removed, and
  * the day a provider gives us a fourth ending — a refusal, a content filter, a
  * mid-stream model switch — that must be a deploy, not a one-way migration.
  */
-export type AiUsageStatus = "completed" | "errored" | "cancelled";
+export type AiUsageStatus = "completed" | "errored" | "cancelled" | "reserved";
 
 /**
  * One row per authorized AI request, whatever became of it.

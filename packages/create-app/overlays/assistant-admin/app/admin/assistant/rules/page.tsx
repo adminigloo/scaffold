@@ -6,19 +6,14 @@ import { api } from "@/trpc/client";
 import { Badge, Button, Card, CardBody, EmptyState, Input, PageHeader } from "@/components/ui";
 
 /**
- * Per-tenant personality overlays — the layer that lets one customer bend the
- * assistant without forking the shared personality. A rule tied to a section
- * key appends to that global section for this tenant; an untied rule is a
- * standalone instruction. This deployment is a single tenant, so the page
- * edits that tenant's rules directly.
+ * House rules for THIS SITE'S OWN assistant — the layer that bends it without
+ * forking its personality. A rule tied to a section key extends that section;
+ * an untied rule is a standalone instruction. In a companies project each
+ * company writes its own assistant's rules at /app/assistant; this page is
+ * the site's, for its staff.
  */
-// The tenant whose overlays this page edits. A generated project is
-// often multi-tenant — wire this to the signed-in workspace instead of a
-// constant once you have more than one. "default" is a safe starting id.
-const TENANT_ID = "default";
-
 export default function AssistantTenantRulesPage() {
-  const rules = api.assistant.tenantRules.useQuery({ tenantId: TENANT_ID });
+  const rules = api.assistant.tenantRules.useQuery();
   const sections = api.assistant.sections.useQuery();
   const create = api.assistant.createTenantRule.useMutation();
   const remove = api.assistant.deactivateTenantRule.useMutation();
@@ -32,8 +27,8 @@ export default function AssistantTenantRulesPage() {
   return (
     <>
       <PageHeader
-        title="Tenant rules"
-        description="Overlays for this workspace. Tie a rule to a personality section to extend it, or leave it standalone for a one-off instruction."
+        title="House rules"
+        description="What this site's own assistant must always or never do. Tie a rule to a personality section to extend it, or leave it standalone."
         actions={
           <Link href="/admin/assistant" className="text-sm text-accent underline underline-offset-2">
             Back to personality
@@ -42,12 +37,12 @@ export default function AssistantTenantRulesPage() {
       />
 
       {rules.isLoading ? (
-        <EmptyState title="Loading rules…">Reading this workspace's overlays.</EmptyState>
+        <EmptyState title="Loading rules…">Reading the house rules.</EmptyState>
       ) : (
         <Card>
           <CardBody className="flex flex-col gap-2">
             {(rules.data ?? []).filter((r) => r.isActive).length === 0 ? (
-              <p className="text-sm text-ink-muted">No overlays yet — the assistant runs on the shared personality alone.</p>
+              <p className="text-sm text-ink-muted">No house rules yet — the assistant runs on its personality alone.</p>
             ) : null}
             {(rules.data ?? [])
               .filter((r) => r.isActive)
@@ -72,7 +67,6 @@ export default function AssistantTenantRulesPage() {
                 event.preventDefault();
                 void create
                   .mutateAsync({
-                    tenantId: TENANT_ID,
                     sectionKey: sectionKey || null,
                     label: label.trim(),
                     instruction: instruction.trim(),

@@ -34,7 +34,7 @@ type Status = "per-company" | `chunk:${string}` | `shared:${string}`;
 
 /** Every directory under packages/, and where it stands. */
 export const PER_COMPANY_COVERAGE: Readonly<Record<string, Status>> = {
-  // Per company today (Tenancy 1, 2a, 2b-1 and 2b-2a).
+  // Per company today (Tenancy 1, 2a, 2b-1, 2b-2a and 2b-3).
   tenancy: "per-company",
   "tenancy-widget": "per-company",
   permissions: "per-company",
@@ -56,10 +56,12 @@ export const PER_COMPANY_COVERAGE: Readonly<Record<string, Status>> = {
   "storage-widget": "per-company",
   feedback: "per-company",
   "feedback-widget": "per-company",
+  assistant: "per-company",
+  "assistant-widget": "per-company",
+  ai: "per-company",
+  // Billing 0.3: each company's plan and limits, checked at every checkpoint.
+  billing: "per-company",
   // Not yet: the chunk that makes each per company.
-  assistant: "chunk:2b-3 assistant",
-  "assistant-widget": "chunk:2b-3 assistant",
-  ai: "chunk:2b-3 assistant",
   analytics: "chunk:2b-4 website",
   audience: "chunk:2b-4 website",
   seo: "chunk:2b-4 website",
@@ -67,11 +69,10 @@ export const PER_COMPANY_COVERAGE: Readonly<Record<string, Status>> = {
   aeo: "chunk:2b-4 website",
   booking: "chunk:2b-4 website",
   "booking-widget": "chunk:2b-4 website",
-  billing: "chunk:billing",
-  catalog: "chunk:billing",
-  stripe: "chunk:billing",
   commerce: "chunk:getting-paid",
   // Not about any one business, by design.
+  catalog: "shared:the site's own plans and products, sold to every company",
+  stripe: "shared:the site's own Stripe account; a company taking card payments from its own customers comes with the getting-paid work",
   db: "shared:the database connection and migration tools every package uses; it keeps no business's records",
   env: "shared:reads the site's own settings when it starts; nothing in it belongs to a business",
   license: "shared:checks the site's own licence key with the seller; one per site, not per business",
@@ -126,6 +127,8 @@ const COMPANY_EVERYTHING: Answers = {
   ...TENANCY_2B1_CONFIGURATIONS.companyAll,
   // Tenancy 2b-2a: and the feedback board, whose route tables are per company.
   includeFeedback: true,
+  // Tenancy 2b-3: and the assistant, whose route table is per company.
+  includeAssistant: true,
 };
 
 let planned: Promise<EmitPlan> | null = null;

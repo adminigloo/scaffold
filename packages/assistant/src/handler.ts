@@ -24,6 +24,12 @@ import type { ContentBlock, NeutralMessage, ProviderAdapter } from "./provider.j
 import type { ToolContext, ToolRegistry } from "./registry.js";
 
 /**
+ * THE 0.2–0.8 SHAPE: one chat route and one confirm route over a principal
+ * the app resolves. Kept, and company-scoped like everything else in 0.9 (the
+ * principal's `tenantId` scopes every read and write). A new install uses
+ * `createAssistantHandlers` (./company-handlers.ts): the company from the
+ * path, settings, history and an allowance, on one handler with a route table.
+ *
  * The chat route, owned by the package so the most correctness-dense code never
  * lives in the app's copy-drift zone; the app's route file is ~15 lines of
  * wiring. The order is the design and it's enforced here: resolve the caller →
@@ -136,7 +142,7 @@ export function createAssistantChatHandler(
     let conversationId: string;
     let history: NeutralMessage[] = [];
     if (conversationIdIn) {
-      const conv = await getConversation(deps.db, conversationIdIn);
+      const conv = await getConversation(deps.db, principal.tenantId, conversationIdIn);
       // Scope to BOTH tenant and the caller: one staff user must not be able to
       // read or continue another's thread by guessing its id. A 404 (not 403)
       // so an outsider can't probe which ids exist.
@@ -182,6 +188,7 @@ export function createAssistantChatHandler(
     const userMessage: NeutralMessage = { role: "user", blocks: userBlocks };
 
     await appendMessage(deps.db, {
+      tenantId: principal.tenantId,
       conversationId,
       role: "user",
       blocks: userBlocks,
@@ -203,7 +210,8 @@ export function createAssistantChatHandler(
           controller.enqueue(encoder.encode(encodeSse(event)));
         };
         const abort = new AbortController();
-        request.signal.addEventListener("abort", () => abort.abort());
+        if (request.signal.aborted) abort.abort();
+        else request.signal.addEventListener("abort", () => abort.abort(), { once: true });
 
         try {
           const result = await runAssistantLoop({
@@ -238,6 +246,7 @@ export function createAssistantChatHandler(
 
           // The assistant turn persists as ONE awaited write, with its status.
           const saved = await appendMessage(deps.db, {
+            tenantId: principal.tenantId,
             conversationId,
             role: "assistant",
             blocks: result.blocks,
@@ -290,6 +299,7 @@ export function createAssistantChatHandler(
           // ledger aren't silently blind to it.
           try {
             await appendMessage(deps.db, {
+              tenantId: principal.tenantId,
               conversationId,
               role: "assistant",
               blocks: [],
@@ -354,7 +364,7 @@ export function createAssistantConfirmHandler(
     const principal = await deps.resolvePrincipal(request);
     if (!principal) return json({ error: "unauthorized" }, 401);
 
-    const action = await getPendingAction(deps.db, actionId);
+    const action = await getPendingAction(deps.db, principal.tenantId, actionId);
     // Scope to the tenant AND the proposer: one staff user must not confirm a
     // write another proposed by guessing its id. 404 (not 403) so the id can't
     // be probed for existence.
@@ -363,13 +373,13 @@ export function createAssistantConfirmHandler(
     }
 
     if (decision === "decline") {
-      await declinePendingAction(deps.db, actionId);
+      await declinePendingAction(deps.db, principal.tenantId, actionId);
       return json({ declined: true }, 200);
     }
 
     // Flip pending → confirmed atomically FIRST (this also enforces expiry), so a
     // second confirm returns not_pending instead of running the write again.
-    const confirmed = await confirmPendingAction(deps.db, actionId);
+    const confirmed = await confirmPendingAction(deps.db, principal.tenantId, actionId);
     if (!confirmed.confirmed) return json({ ok: false, reason: confirmed.reason }, 409);
 
     const ctx: ToolContext = {

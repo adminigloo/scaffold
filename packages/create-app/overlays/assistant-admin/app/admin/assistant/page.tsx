@@ -23,12 +23,12 @@ export default function AssistantSectionsPage() {
   return (
     <>
       <PageHeader
-        title="Assistant personality"
-        description="Each section is part of the assistant's system prompt. Edits are versioned and reversible; the guardrails are seeded and marked core."
+        title="This site's assistant"
+        description="The personality of the assistant this site's staff use. Each section is part of its instructions; edits are versioned and reversible, and the guardrails are marked core."
         actions={
           <div className="flex gap-3">
             <Link href="/admin/assistant/rules" className="text-sm text-accent underline underline-offset-2">
-              Tenant rules
+              House rules
             </Link>
             <Link href="/admin/assistant/glossary" className="text-sm text-accent underline underline-offset-2">
               Glossary

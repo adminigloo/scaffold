@@ -64,11 +64,12 @@ export async function listGoldens(db: AssistantDb, tenantId: string, activeOnly 
   return (await db.select().from(assistantGoldens).where(where).orderBy(desc(assistantGoldens.createdAt))) as GoldenRow[];
 }
 
-export async function deactivateGolden(db: AssistantDb, id: string): Promise<boolean> {
+/** Retire one of the company's goldens; false for one that isn't the company's. */
+export async function deactivateGolden(db: AssistantDb, tenantId: string, id: string): Promise<boolean> {
   const [row] = await db
     .update(assistantGoldens)
     .set({ isActive: false, updatedAt: new Date() })
-    .where(eq(assistantGoldens.id, id))
+    .where(and(eq(assistantGoldens.tenantId, tenantId), eq(assistantGoldens.id, id)))
     .returning({ id: assistantGoldens.id });
   return row !== undefined;
 }
@@ -122,7 +123,14 @@ export async function listEvalRuns(db: AssistantDb, tenantId: string, limit = 20
     .limit(limit)) as EvalRunRow[];
 }
 
-export async function getEvalRunResults(db: AssistantDb, runId: string): Promise<EvalResultRow[]> {
+/** One of the company's runs' results — empty for a run that isn't the company's. */
+export async function getEvalRunResults(db: AssistantDb, tenantId: string, runId: string): Promise<EvalResultRow[]> {
+  const [run] = await db
+    .select({ id: assistantEvalRuns.id })
+    .from(assistantEvalRuns)
+    .where(and(eq(assistantEvalRuns.tenantId, tenantId), eq(assistantEvalRuns.id, runId)))
+    .limit(1);
+  if (!run) return [];
   return (await db
     .select()
     .from(assistantEvalResults)

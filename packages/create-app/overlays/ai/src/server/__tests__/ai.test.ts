@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { estimateCostMicros, costMinorUnits } from "__SCOPE__/ai";
-import { AI_MAX_TOKENS, AI_MODEL, MODEL_RATES, describeStreamError } from "../ai";
+import { AI_MAX_TOKENS, AI_MODEL, AI_SITE_DAILY_CENTS, MODEL_RATES, describeStreamError } from "../ai";
 
 /**
  * The arithmetic and the table, not the provider.
@@ -67,8 +67,25 @@ describe("the model rate table", () => {
       outputTokens: AI_MAX_TOKENS,
       rate,
     });
-    // Forty cents at $25 per million output tokens.
-    expect(costMinorUnits(micros)).toBe(40n);
+    // A cent at Haiku 4.5's $5 per million output tokens.
+    expect(costMinorUnits(micros)).toBe(1n);
+  });
+});
+
+describe("the cheapest capable model, and a ceiling on the site's day", () => {
+  it("calls Claude Haiku 4.5 by default", () => {
+    expect(AI_MODEL).toBe("claude-haiku-4-5");
+  });
+
+  it("caps the whole site's AI per day", () => {
+    expect(Number.isSafeInteger(AI_SITE_DAILY_CENTS)).toBe(true);
+    expect(AI_SITE_DAILY_CENTS).toBeGreaterThan(0);
+  });
+
+  it("prices cache writes above fresh input (a write the ledger can't see under-reports the bill)", () => {
+    for (const rate of Object.values(MODEL_RATES)) {
+      expect(rate.cachedWriteMicrosPerMTok ?? 0).toBeGreaterThan(rate.inputMicrosPerMTok);
+    }
   });
 });
 

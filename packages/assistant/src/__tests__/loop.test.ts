@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { runAssistantLoop, type ToolRun } from "../loop.js";
+import { estimateStepUsage, runAssistantLoop, type ToolRun } from "../loop.js";
 import type { AssistantStreamEvent } from "../events.js";
 import type { NeutralMessage, ProviderAdapter, ProviderEvent, StepUsage } from "../provider.js";
 
@@ -168,8 +168,49 @@ describe("runAssistantLoop", () => {
     const result = await runAssistantLoop({ ...base, provider, emit });
     expect(result.status).toBe("truncated");
     expect(result.blocks).toEqual([{ kind: "text", text: "partial" }]);
-    // An unreported step makes the whole turn's usage a declared lower bound.
-    expect(result.usage.complete).toBe(false);
+    // A STOP IS NEVER FREE (0.9.0): the step the provider never reported is
+    // priced at what was sent and streamed, and marked an estimate.
+    expect(result.usage.complete).toBe(true);
+    expect(result.usage.estimated).toBe(true);
+    expect(result.usage.inputTokens).toBeGreaterThan(0);
+    expect(result.usage.outputTokens).toBeGreaterThan(0);
+  });
+
+  it("keeps a finished, priced tool step when a later step is stopped, and prices the stopped one too", async () => {
+    const { emit } = collect();
+    const provider = fakeProvider([
+      [
+        { type: "tool-call", toolCallId: "t1", name: "lookup", input: {} },
+        { type: "step-end", stopReason: "tool_use", usage: usage({ inputTokens: 9_000, outputTokens: 40 }) },
+      ],
+      [
+        { type: "text-delta", delta: "word ".repeat(40) },
+        { type: "step-end", stopReason: "aborted", usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reported: false } },
+      ],
+    ]);
+    const tool = { toolCallId: "t1", name: "lookup", input: {}, label: "Looking", execute: async () => ({ result: { figure: "$1.00" } }) };
+    const result = await runAssistantLoop({ ...base, provider, emit, resolveTool: () => tool });
+    expect(result.status).toBe("truncated");
+    expect(result.usage.complete).toBe(true);
+    expect(result.usage.inputTokens).toBeGreaterThan(9_000);
+    expect(result.usage.outputTokens).toBeGreaterThanOrEqual(40 + 50);
+  });
+
+  it("charges the worst case for a step stopped before anything came back, and nothing for a refused call", () => {
+    const none = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reported: false };
+    expect(estimateStepUsage(none, { requestTokens: 800, streamedTokens: 0, maxTokens: 1024, refused: false, aborted: true })).toMatchObject({
+      inputTokens: 800,
+      outputTokens: 1024,
+      reported: true,
+      estimated: true,
+    });
+    expect(estimateStepUsage(none, { requestTokens: 800, streamedTokens: 0, maxTokens: 1024, refused: true, aborted: false })).toMatchObject({
+      inputTokens: 0,
+      outputTokens: 0,
+    });
+    // Reported counts are taken as they are.
+    const real = { ...none, inputTokens: 12, outputTokens: 3, reported: true };
+    expect(estimateStepUsage(real, { requestTokens: 800, streamedTokens: 9, maxTokens: 1024, refused: false, aborted: true })).toBe(real);
   });
 
   it("stops at maxSteps when the model keeps asking for tools, and says truncated", async () => {
