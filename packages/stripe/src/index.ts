@@ -61,10 +61,37 @@ export type { StripeSubscriptionSnapshot } from "./subscription.js";
 export { ensurePlanPrice, PlanPriceMismatchError } from "./plan-price.js";
 export type { EnsurePlanPriceInput, EnsuredPlanPrice } from "./plan-price.js";
 
-export { stripeServer, stripeClient, STRIPE_MODE_BOUND_KEYS } from "./env.js";
+export { stripeServer, stripeClient, stripeConnectServer, stripeInvoicePaymentsServer, STRIPE_MODE_BOUND_KEYS } from "./env.js";
 
 export { stripePermissions } from "./permissions.js";
 
 // stripe 0.3: change a company's plan on its existing subscription (never a second one).
 export { previewPlanChange, changePlan, PlanChangeError, prepareCompanyCheckout, PRORATION_DATE_MAX_AGE_SECONDS } from "./plan-change.js";
 export type { PlanChangeInput, PlanChangePreview, ChangePlanInput, ChangePlanResult, CompanyCheckout, CompanyCheckoutInput } from "./plan-change.js";
+
+// stripe 0.4: companies take card payments from their own customers (Connect).
+export {
+  MAX_PLATFORM_FEE_BPS,
+  accountDisplayName,
+  accountTakesCharges,
+  applyAccountUpdate,
+  companyAccountParams,
+  companyForConnectEvent,
+  connectLedgerKey,
+  connectedAccountFor,
+  createDirectCheckoutSession,
+  describePlatformFee,
+  disconnectConnectedAccount,
+  expireDirectCheckoutSession,
+  markAccountDeauthorized,
+  platformFeeMinor,
+  startConnectOnboarding,
+} from "./connect.js";
+export type { ConnectEventCompany, ConnectedAccountRow, DirectCheckoutInput, StartOnboardingInput, StripeDb } from "./connect.js";
+export { runLedgeredEvent, ledgerRunStatus } from "./ledger-run.js";
+export type { LedgeredEvent, LedgerRunResult } from "./ledger-run.js";
+export { createConnectAdminHandlers } from "./connect-handlers.js";
+export type { ConnectAuthorizeResult, CreateConnectAdminHandlersOptions, PaymentsStatusWire } from "./connect-handlers.js";
+export { CONNECT_COUNTRIES } from "./connect-handlers.js";
+export { STRIPE_CONNECT_ADMIN_ROUTES, STRIPE_CONNECT_ADMIN_ROUTE_PERMISSIONS, stripeConnectPermissions } from "./connect-routes.js";
+export type { StripeConnectAdminRouteKind, StripeConnectRoute } from "./connect-routes.js";

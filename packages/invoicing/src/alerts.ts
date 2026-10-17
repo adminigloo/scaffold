@@ -102,6 +102,14 @@ export const INVOICING_INVOICE_PAID_KIND = "invoicing.invoice.paid";
 export const INVOICING_INVOICE_OVERDUE_KIND = "invoicing.invoice.overdue";
 /** The routing group's permanent key: "Invoices opened, paid or overdue". */
 export const INVOICING_ROUTING = "invoices";
+/**
+ * invoicing 0.5: money Stripe took that didn't land cleanly on an invoice (a
+ * mismatch, an unknown checkout, a cancelled invoice, an overpayment), a
+ * refund, a dispute opened or lost, a bank payment that failed. To the people
+ * who answer for the books (`invoices.payments.reverse`: owners and admins),
+ * in the app AND by email, never routed elsewhere.
+ */
+export const INVOICING_CARD_PAYMENT_KIND = "invoicing.card-payment";
 
 const audience = Object.freeze({ permission: "invoices.view", routing: INVOICING_ROUTING });
 
@@ -147,6 +155,15 @@ export const invoicingAlertKinds: InvoicingAlertKinds = Object.freeze({
       audience,
       defaultChannel: "email",
       order: 30,
+    }) as InvoicingAlertKind,
+    Object.freeze({
+      key: INVOICING_CARD_PAYMENT_KIND,
+      label: "A card payment needs you",
+      description: "Money Stripe took that couldn't be recorded as it was, an overpayment, a refund, a dispute, or a bank payment that failed — with a link to it in Stripe.",
+      category: "Invoices",
+      audience: Object.freeze({ permission: "invoices.payments.reverse" }),
+      defaultChannel: "email",
+      order: 40,
     }) as InvoicingAlertKind,
   ]),
   routings: Object.freeze([
@@ -443,4 +460,56 @@ export async function listOverdueInvoices(
       balanceDue: Math.max(0, Number(r.total) - Number(r.amountPaid)),
       dueDate: r.dueDate,
     }));
+}
+
+// --- Card payments (0.5) ------------------------------------------------------------
+
+/** The title each card-payment alert leads with, in plain words. */
+const CARD_TITLES: Readonly<Record<string, (amount: string, invoice: string) => string>> = {
+  unknown_checkout: (a) => `Stripe took ${a} that isn't on any invoice`,
+  metadata_mismatch: (a, i) => `A card payment of ${a}${i} couldn't be recorded`,
+  amount_mismatch: (a, i) => `A card payment of ${a}${i} didn't match what was asked`,
+  currency_mismatch: (a, i) => `A card payment of ${a}${i} came in the wrong currency`,
+  paid_on_void: (a, i) => `A customer paid ${a} on a cancelled invoice${i}`,
+  overpaid: (a, i) => `An invoice${i} is overpaid by ${a}`,
+  refunded: (a, i) => `${a} was refunded${i}`,
+  dispute_opened: (a, i) => `A card payment of ${a}${i} is disputed`,
+  dispute_lost: (a, i) => `A dispute was lost: ${a} came off${i ? i.replace(" on ", " ") : " an invoice"}`,
+  bank_payment_failed: (a, i) => `A bank payment of ${a}${i} failed`,
+};
+
+/**
+ * One card-payment problem (`CardAlert` from the webhook) as an alert for the
+ * company's owners: what happened, the amount, and — in the body, since an
+ * alert's link stays on this site — the payment in the company's Stripe
+ * dashboard, to refund it or answer a dispute.
+ */
+export function invoicingCardAlert(
+  alert: {
+    readonly tenantId: string;
+    readonly kind: string;
+    readonly message: string;
+    readonly amount: number | null;
+    readonly currency: string | null;
+    readonly invoiceId: string | null;
+    readonly invoiceNumber: string | null;
+    readonly stripeUrl: string | null;
+    readonly dedupeKey: string;
+  },
+  options: { readonly hrefs: { readonly invoice: string }; readonly locale?: string },
+): InvoicingAlertDraft {
+  const amount = alert.amount === null ? "an amount" : formatAlertMoney(alert.amount, { currency: (alert.currency ?? "usd").toUpperCase(), locale: options.locale ?? "en-US" });
+  const number = alert.invoiceNumber ? oneLine(alert.invoiceNumber, 40) : null;
+  const title = (CARD_TITLES[alert.kind] ?? ((a: string) => `A card payment of ${a} needs you`))(amount, number ? ` on invoice ${number}` : "");
+  const body = oneLine(`${alert.message}${alert.stripeUrl ? ` Open it in Stripe: ${alert.stripeUrl}` : ""}`, 1000);
+  return {
+    tenantId: alert.tenantId,
+    kind: INVOICING_CARD_PAYMENT_KIND,
+    title: oneLine(title, 200),
+    body,
+    href: alert.invoiceId ? hrefFor(options.hrefs.invoice, alert.invoiceId) : null,
+    dedupeKey: `${INVOICING_CARD_PAYMENT_KIND}:${alert.dedupeKey}`,
+    subject: alert.invoiceId ? { type: "invoicing.invoice", id: alert.invoiceId } : null,
+    actorUserId: null,
+  };
 }

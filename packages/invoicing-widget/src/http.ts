@@ -55,6 +55,7 @@ export const WIRE_ERROR_CODES: ReadonlySet<InvoicingErrorCodeWire> = new Set<Inv
   "payment_refused",
   "reversal_refused",
   "invoice_number_conflict",
+  "payment_unavailable",
 ]);
 
 export function isObject(value: unknown): value is Record<string, unknown> {

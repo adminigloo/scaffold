@@ -34,3 +34,24 @@ export const stripePermissions = {
     sealed: true,
   },
 } as const satisfies PermissionMap;
+
+/**
+ * Who may see and change how a company takes card payments. Company keys
+ * (each company connects its own Stripe account): owners and admins see the
+ * status; only an owner connects or disconnects, because it decides where the
+ * company's money goes.
+ */
+export const stripeConnectPermissions = {
+  "payments.view": {
+    label: "See how customers pay by card",
+    description: "Whether card payments are on, the Stripe account they go to, and this site's fee.",
+    category: "Payments",
+    defaultFor: ["owner", "admin"],
+  },
+  "payments.manage": {
+    label: "Connect or disconnect Stripe",
+    description: "Connect the company's own Stripe account so customers can pay invoices by card, or stop taking card payments.",
+    category: "Payments",
+    defaultFor: ["owner"],
+  },
+} as const satisfies PermissionMap;

@@ -192,7 +192,7 @@ function alertsShared(answers: Answers): {
     ...(sched && comms ? [`import { SCHEDULING_EMAIL_TEMPLATES } from "${scope}/scheduling/comms";`] : []),
     ...(est ? [`import { estimatorAlertKinds, estimatorAlertsFor, type EstimatorEvent } from "${scope}/estimator";`] : []),
     ...(est && comms ? [`import { ESTIMATOR_EMAIL_TEMPLATES } from "${scope}/estimator/comms";`] : []),
-    ...(inv ? [`import { invoicingAlertKinds, invoicingAlertsFor, type InvoicingEvent } from "${scope}/invoicing";`] : []),
+    ...(inv ? [`import { invoicingAlertKinds, invoicingAlertsFor, invoicingCardAlert, type CardAlert, type InvoicingEvent } from "${scope}/invoicing";`] : []),
     ...(inv && comms ? [`import { INVOICE_EMAIL_TEMPLATES } from "${scope}/invoicing/comms";`] : []),
     ...(comms
       ? [`import { commsAlertKinds, commsFailureAlert, commsTemplates, deliverNow, templateLabel, type CommsFailure } from "${scope}/comms";`]
@@ -281,6 +281,21 @@ export async function alertOnInvoicingEvent(event: InvoicingEvent): Promise<void
     await alerts.notify(invoicingAlertsFor(event, { hrefs: { invoice: ALERT_HREFS.invoice } }));
   } catch (error) {
     reportAlertsError(error, { tenantId: event.tenantId, step: "invoicing-event" });
+  }
+}
+
+/**
+ * Getting paid, part 1: money Stripe took that didn't land cleanly on an
+ * invoice — a mismatch, an unknown payment, a cancelled invoice, an
+ * overpayment — or a refund, a dispute opened or lost, a bank payment that
+ * failed. To the people who answer for the books, in the bell AND by email,
+ * with the amount and the payment's page in Stripe (src/server/payments-webhook.ts).
+ */
+export async function alertOnCardPayment(alert: CardAlert): Promise<void> {
+  try {
+    await alerts.notify([invoicingCardAlert(alert, { hrefs: { invoice: ALERT_HREFS.invoice } })]);
+  } catch (error) {
+    reportAlertsError(error, { tenantId: alert.tenantId, step: "card-payment" });
   }
 }`);
   }
@@ -2175,7 +2190,7 @@ export function alertProducers(answers: Answers): readonly string[] {
     ...(companiesMode(answers) ? ["alertOnTenancyEvent"] : []),
     ...(answers.includeScheduling ? ["alertOnSchedulingEvent"] : []),
     ...(answers.includeEstimator ? ["alertOnEstimatorEvent"] : []),
-    ...(answers.includeInvoicing ? ["alertOnInvoicingEvent"] : []),
+    ...(answers.includeInvoicing ? ["alertOnInvoicingEvent", "alertOnCardPayment"] : []),
     ...(answers.includeComms ? ["alertOnCommsFailure"] : []),
     ...(answers.includeStorage ? ["alertOnStorageUsage"] : []),
     ...(companiesMode(answers) && answers.includeFeedback ? ["alertOnFeedbackEvent"] : []),

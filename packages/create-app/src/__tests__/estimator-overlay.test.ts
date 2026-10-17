@@ -206,7 +206,7 @@ describe("the pages", () => {
     expect(estimate).toContain('from "@adminigloo/estimator-widget"');
 
     const quote = file(p, "app", "(site)", "quote", "[token]", "page.tsx");
-    expect(quote).toContain('<QuoteView baseUrl="/api/estimator" token={token} bookHref={ESTIMATE_BOOK_VISIT_HREF} />');
+    expect(quote).toContain('<QuoteView baseUrl="/api/estimator" token={token} bookHref={ESTIMATE_BOOK_VISIT_HREF} payment={await quotePayment(token)} />');
     expect(code(quote)).toContain("robots: { index: false, follow: false }");
     expect(code(quote)).toContain('referrer: "no-referrer"');
 
@@ -369,12 +369,12 @@ describe("answers, packages and the CLI", () => {
     ).rejects.toThrow(IncompatibleAnswersError);
   });
 
-  it("installs the server package and the widget, at the 0.5 / 0.4 lines (Tenancy 2b-1)", () => {
+  it("installs the server package and the widget, at the 0.5 lines (getting paid, part 1: the deposit on an accepted quote)", () => {
     const installed = packagesFor(answers());
     expect(installed).toContain("@adminigloo/estimator");
     expect(installed).toContain("@adminigloo/estimator-widget");
     expect(versionRangeFor("@adminigloo/estimator")).toBe("^0.5.0");
-    expect(versionRangeFor("@adminigloo/estimator-widget")).toBe("^0.4.0");
+    expect(versionRangeFor("@adminigloo/estimator-widget")).toBe("^0.5.0");
   });
 
   it("brings comms, storage and email with the estimator unless each is declined", async () => {

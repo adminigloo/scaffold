@@ -87,6 +87,21 @@ registry.on("payment_intent.succeeded", async (event) => {
   const rawQuantity = metadata["quantity"];
 
   /**
+   * AN INVOICE PAID BY CARD ("Pay now", getting paid part 1) is not an order:
+   * the invoice webhook records it (src/server/payments-webhook.ts) against
+   * the invoice, in its own ledger key space. It carries a tenantId and no
+   * variant, so without this it would fail the strict check below and be
+   * retried for days.
+   */
+  if (metadata["invoiceId"]) {
+    logger.info(
+      { paymentIntentId: intent.id, eventId: event.id },
+      "payment_intent.succeeded is an invoice payment — the invoice webhook records it; no order is booked.",
+    );
+    return;
+  }
+
+  /**
    * A PaymentIntent with NO METADATA AT ALL was not created by this
    * application, and the only thing that creates one here is Stripe itself:
    * every renewal of a subscription opens an invoice and collects it through a
@@ -447,6 +462,21 @@ export async function POST(req: Request): Promise<Response> {
       status: 429,
       headers: rateLimitHeaders(verdict, RATE_LIMIT_POLICIES.webhook),
     });
+  }
+
+  /**
+   * AN EVENT FROM A CONNECTED ACCOUNT (a company's own Stripe account) is not
+   * this site's: it belongs at the Connect endpoint, with its own secret. An
+   * endpoint misconfigured to listen to connected accounts would otherwise
+   * mirror a company's payments as this site's. Logged, then 200, so Stripe
+   * stops sending it here.
+   */
+  if (event.account) {
+    logger.warn(
+      { eventId: event.id, eventType: event.type, account: event.account },
+      "the platform webhook received a connected account's event — ignored (it belongs at the Connect endpoint)",
+    );
+    return NextResponse.json({ received: true, ignored: true });
   }
 
   const tenantId = tenantIdFromEvent(event);

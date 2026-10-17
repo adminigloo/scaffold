@@ -69,6 +69,7 @@ import { assistantChats, renderAssistantGlue, renderAssistantLauncherSlot, rende
 import { renderAnalyticsCron, renderSiteAnalyticsSlot, renderWebsiteGlue, websitesQuota } from "./website-emit.js";
 import { renderSeoPackageModule, renderSeoRobots, renderSeoSitemap } from "./seo-emit.js";
 import { bookingFiles, bookingHostsQuota } from "./booking-emit.js";
+import { cardPaymentsSetup, paymentsFiles, renderNavBadges } from "./payments-emit.js";
 import {
   aiMentionChecksQuota,
   hasCompanyWebsitePage,
@@ -343,7 +344,7 @@ export async function planEmit(
       // Tenancy 2b-1: the alerts cron, the two Blob stores, the allowance,
       // the link key and what files cost — generated, empty without them.
       .split(ALERTS_FILES_MARKER)
-      .join(renderDeploymentAlertsFiles(answers) + renderDeploymentFeedback(answers))
+      .join(renderDeploymentAlertsFiles(answers) + renderDeploymentFeedback(answers) + cardPaymentsSetup(answers, "##"))
       // What a project made by an earlier create-app has to do by hand when
       // it runs `upgrade` (review BUY-01), for THIS project's features.
       .split(UPGRADE_NOTES_MARKER)
@@ -481,6 +482,12 @@ export async function planEmit(
   if (answers.includeBooking) {
     for (const [path, body] of bookingFiles(answers)) files.set(join(...path.split("/")), body);
   }
+  // Getting paid, part 1: Pay now on invoices — each company's own Stripe
+  // account (Connect) or the one business's own keys, the webhook, the
+  // payments screen and the accepted quote's deposit. See payments-emit.ts.
+  for (const [path, body] of paymentsFiles(answers)) files.set(join(...path.split("/")), body);
+  // The header's link badges (every project: src/components/AuthHeader.tsx imports it).
+  files.set(join("src", "server", "nav-badges.ts"), renderNavBadges(answers));
   // A company's Website screen, written with the sections this project has.
   if (hasCompanyWebsitePage(answers)) {
     files.set(join("app", "(site)", "app", "website", "page.tsx"), renderCompanyWebsitePage(answers));
@@ -952,6 +959,9 @@ export function renderPackageJson(answers: Answers): string {
     deps["@stripe/stripe-js"] = "^9.13.0";
     deps["@stripe/react-stripe-js"] = "^6.8.0";
   }
+  // Getting paid, part 1: "Pay now" on invoices calls Stripe from the server
+  // only (Checkout is Stripe's own page), so the server SDK and nothing else.
+  if (answers.includeInvoicing) deps["stripe"] = "^22.6.0";
   for (const pkg of packagesFor(answers)) deps[pkg] = versionRangeFor(pkg);
 
   const devDeps: Record<string, string> = {
@@ -1801,10 +1811,17 @@ export function renderEnvModule(answers: Answers): string {
     `import { observabilityServer, OBSERVABILITY_ENV_GROUPS } from "${scope}/observability";`,
     `import { z } from "zod";`,
   ];
-  if (takesMoney) {
-    imports.push(
-      `import { stripeClient, stripeServer, STRIPE_MODE_BOUND_KEYS } from "${scope}/stripe";`,
-    );
+  // Getting paid, part 1: "Pay now" on invoices. Companies connect their own
+  // Stripe accounts (the Connect endpoint's secret and this site's fee); one
+  // business uses its own keys and an endpoint of its own.
+  const cardPayments = answers.includeInvoicing;
+  const connect = cardPayments && answers.tenantNoun !== "none";
+  const stripeNames = [
+    ...(takesMoney ? ["stripeClient", "stripeServer", "STRIPE_MODE_BOUND_KEYS"] : cardPayments ? ["stripeServer"] : []),
+    ...(connect ? ["stripeConnectServer"] : cardPayments ? ["stripeInvoicePaymentsServer"] : []),
+  ].sort();
+  if (stripeNames.length > 0) {
+    imports.push(`import { ${stripeNames.join(", ")} } from "${scope}/stripe";`);
   }
   if (answers.includeAi) imports.push(`import { aiServer } from "${scope}/ai";`);
   if (answers.includeEmail) imports.push(`import { emailServer } from "${scope}/email";`);
@@ -1901,6 +1918,33 @@ export function renderEnvModule(answers: Answers): string {
       `{ name: "Payments", vars: ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY"], disables: "Checkout, subscriptions and the webhook ledger." }`,
       `{ name: "Simulated checkout", vars: ["ALLOW_SIMULATED_CHECKOUT"], disables: "Nothing. Set it to true on a staging deployment that has no Stripe key, to record orders without taking a payment. Locally it is not needed, and on production the simulated checkout is never available." }`,
     );
+  }
+
+  if (cardPayments) {
+    if (!takesMoney) {
+      // Only the secret key: this project sells nothing of its own, so it has
+      // no store webhook and no browser key. The key's test/live marker is
+      // still bound to the deployment.
+      serverSpreads.push("STRIPE_SECRET_KEY: stripeServer().STRIPE_SECRET_KEY");
+      modeBound.push('"STRIPE_SECRET_KEY"');
+      runtime.push("STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY");
+    }
+    if (connect) {
+      serverSpreads.push("...stripeConnectServer()");
+      runtime.push(
+        "STRIPE_CONNECT_WEBHOOK_SECRET: process.env.STRIPE_CONNECT_WEBHOOK_SECRET",
+        "PLATFORM_FEE_BPS: process.env.PLATFORM_FEE_BPS",
+      );
+      features.push(
+        `{ name: "Card payments on invoices", vars: [${takesMoney ? "" : '"STRIPE_SECRET_KEY", '}"STRIPE_CONNECT_WEBHOOK_SECRET", "PLATFORM_FEE_BPS"], disables: "Pay now on invoices. Each company connects its own Stripe account at /app/payments; without the key or the Connect webhook's secret, nobody can connect and invoices show How to pay only. PLATFORM_FEE_BPS is this site's cut of each payment (default 0, none)." }`,
+      );
+    } else {
+      serverSpreads.push("...stripeInvoicePaymentsServer()");
+      runtime.push("STRIPE_INVOICE_WEBHOOK_SECRET: process.env.STRIPE_INVOICE_WEBHOOK_SECRET");
+      features.push(
+        `{ name: "Card payments on invoices", vars: [${takesMoney ? "" : '"STRIPE_SECRET_KEY", '}"STRIPE_INVOICE_WEBHOOK_SECRET"], disables: "Pay now on invoices, on your own Stripe account. Without both, invoices show How to pay only." }`,
+      );
+    }
   }
 
   if (answers.includeAi) {
@@ -2504,6 +2548,20 @@ export const PACKAGE_PERMISSION_FRAGMENTS: readonly PackagePermissionFragment[] 
       "One business takes calls, worked by its staff at /admin/calls: every " +
       "staff role sees them, cs_lead and admin change them, admin alone pastes " +
       "a calendar's secret address and sets the call types.",
+  },
+  // GETTING PAID, PART 1: each company connects its own Stripe account so its
+  // customers can pay invoices by card. Company keys: owners and admins see
+  // the status, only an owner connects or disconnects (it decides where the
+  // company's money goes).
+  {
+    package: "stripe",
+    binding: "stripeConnectPermissions",
+    scope: "tenant",
+    installedBy: (answers) => answers.tenantNoun !== "none" && answers.includeInvoicing,
+    why:
+      "Each company takes card payments into its own Stripe account, so these " +
+      "are company keys: owners and admins see whether card payments are on, " +
+      "an owner alone connects or disconnects Stripe.",
   },
 ];
 
@@ -5088,6 +5146,10 @@ export function renderSchemaModule(answers: Answers): string {
   if (answers.includeEstimator) owners.push("estimator");
   if (answers.includeScheduling) owners.push("scheduling");
   if (answers.includeInvoicing) owners.push("invoicing");
+  // Getting paid, part 1: Pay now's ledger rows and each company's Stripe
+  // account (stripe_events, stripe_connected_accounts) — already here in a
+  // project that sells.
+  if (answers.includeInvoicing && answers.businessModel === "none") owners.push("stripe");
   if (answers.includeComms) owners.push("comms");
   if (answers.includeAeo) owners.push("aeo");
   // Tenancy 2b-4c: the calls (booking_*); the widget package owns none.
@@ -5410,6 +5472,13 @@ export function renderSiteNav(answers: Answers): string {
       label: "Invoices",
       permission: "invoices.view",
       why: `The ${label}'s ledger: raise and send invoices, record payments.`,
+    });
+    // Getting paid, part 1: connect the company's own Stripe account.
+    companyFeatureLinks.push({
+      href: "/app/payments",
+      label: "Card payments",
+      permission: "payments.view",
+      why: `Connect the ${label}'s own Stripe account so customers can pay invoices and deposits by card.`,
     });
   }
   if (!single && answers.includeComms) {

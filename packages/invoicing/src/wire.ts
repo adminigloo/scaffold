@@ -19,7 +19,8 @@ export type DateString = string;   // "YYYY-MM-DD"
 export type InvoicingErrorCodeWire =
   | "invalid" | "not_found" | "forbidden" | "cross_site" | "rate_limited" | "unavailable" | "transition_not_allowed" | "internal"
   | "estimate_already_invoiced" | "estimate_not_convertible" | "discount_exceeds_subtotal" | "invoice_not_editable"
-  | "invoice_has_no_lines" | "invalid_status_transition" | "payment_refused" | "reversal_refused" | "invoice_number_conflict";
+  | "invoice_has_no_lines" | "invalid_status_transition" | "payment_refused" | "reversal_refused" | "invoice_number_conflict"
+  | "payment_unavailable";
 export interface WireIssue { path: (string | number)[]; message: string }
 export interface WireErrorBody { error: { code: InvoicingErrorCodeWire; message: string; issues?: WireIssue[] } }
 
@@ -44,7 +45,39 @@ export interface InvoicePaymentWire {
   id: string; amount: number; method: PaymentMethodWire; reference: string | null; paidAt: Instant;
   /** A reversal row names the payment it undoes; `reversed` marks a payment that has been undone. */
   reversesPaymentId: string | null; reversed: boolean; reason: string | null;
+  /** A card payment the customer's bank disputed: still open, or lost (then a reversal took it off). */
+  flag: PaymentFlagWire | null;
+  /** Cents reversed of this payment so far: a part refund shows "Partly refunded $X"; `reversed` is all of it (or a lost dispute). */
+  reversedAmount: number;
 }
+/** A card payment that needs the owner ("Needs your attention" on the payments screen). */
+export interface CardAlertWire {
+  id: string;
+  kind: string;
+  /** The sentence the owner reads: what happened, the amount, what to do. */
+  message: string;
+  amount: number | null; currency: string | null;
+  invoiceId: string | null;
+  /** The payment in the company's Stripe dashboard. */
+  stripeUrl: string | null;
+  createdAt: Instant; resolvedAt: Instant | null;
+}
+export interface CardAlertsWire { open: CardAlertWire[]; handled: CardAlertWire[] }
+export type PaymentFlagWire = "disputed" | "dispute_lost";
+/** The deposit asked first: the company's default, none, a percent (basis points) or a fixed amount (cents). */
+export type DepositRuleWire = "default" | "none" | "percent" | "amount";
+export interface DepositWire {
+  rule: DepositRuleWire; percentBp: number | null; fixedAmount: number | null;
+  /** Cents: what the deposit comes to on this invoice now (0 = no deposit). */
+  amount: number;
+  /** The company's own default, 0–100 percent. */
+  defaultPercent: number;
+  editable: boolean;
+}
+export type DepositBody =
+  | { rule: "default" } | { rule: "none" }
+  | { rule: "percent"; percentBp: number }     // 1..10000
+  | { rule: "amount"; amount: number };        // cents, at least 1
 export interface InvoiceDetailWire {
   id: string; number: string; status: InvoiceStatusWire; storedStatus: StoredInvoiceStatusWire;
   customerName: string | null; customerEmail: string | null; customerPhone: string | null; billingAddress: string | null;
@@ -55,6 +88,7 @@ export interface InvoiceDetailWire {
   lines: InvoiceLineWire[]; payments: InvoicePaymentWire[];
   editable: boolean; nextStatuses: SettableInvoiceStatusWire[];
   can: { manage: boolean; record: boolean; reverse: boolean };
+  deposit: DepositWire;
 }
 export interface InvoiceResponse { invoice: InvoiceDetailWire; format: MoneyFormatWire }
 
@@ -92,6 +126,24 @@ export interface PublicInvoiceWire {
   dueDate: Instant | null; issuedAt: Instant;
   lines: { description: string; quantity: number; unitPrice: number; total: number }[];
   payments: { amount: number; method: PaymentMethodWire; paidAt: Instant }[];
+  /** "Pay now", when this business takes card payments and something is owed; null otherwise. */
+  pay: PayOptionWire | null;
+  /** A bank payment on its way (not yet cleared): its amount and when it started. */
+  pending: { amount: number; startedAt: Instant } | null;
 }
+export interface PayOptionWire {
+  /** "deposit": the deposit (or what is left of it) comes first; "balance": the rest. */
+  stage: "deposit" | "balance";
+  /** Cents the button pays: decided by the server, never by the page. */
+  amount: number;
+  /** Cents: the whole deposit (0 when there is none). */
+  depositAmount: number;
+  /** The business lets customers choose how much to pay, between minimum and maximum (cents). */
+  allowPartial: boolean; minimum: number; maximum: number;
+  /** What is due is below the card minimum: "Please contact {business} to pay this small amount." */
+  belowMinimum: boolean;
+}
+export interface PayBody { amount?: number }    // cents; only read when allowPartial
+export interface PayResponse { url: string }
 export interface PublicInvoiceResponse { invoice: PublicInvoiceWire; business: BusinessWire; format: MoneyFormatWire }
 // WIRE:END

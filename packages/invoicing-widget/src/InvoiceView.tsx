@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createInvoicePublicClient, type InvoicePublicTransport } from "./client.js";
 import type { ClientError, Result } from "./http.js";
-import { formatDate, formatMoney, METHOD_WORDS, percentText, STATUS_TONE } from "./money.js";
+import { dollarsInput, formatDate, formatMoney, METHOD_WORDS, parseDollars, percentText, STATUS_TONE } from "./money.js";
 import { normalizeHex } from "./styles.js";
-import type { MoneyFormatWire, PublicInvoiceResponse } from "./types.js";
+import type { MoneyFormatWire, PayOptionWire, PublicInvoiceResponse } from "./types.js";
 import { Loading, Root, type ChromeProps } from "./ui.js";
 
 /**
@@ -29,6 +29,10 @@ export interface InvoiceViewProps extends ChromeProps {
   preview?: boolean;
   /** The business's colour for the accent (as estimator-widget's accentColor): a `#rrggbb`, null for none; default the business's own. */
   accentColor?: string | null;
+  /** 0.2: the customer just came back from paying (?paid=1): say thank you while the payment is recorded. */
+  returned?: boolean;
+  /** 0.2: where "Pay now" sends the browser. Default: `window.location.assign`. */
+  navigate?: (url: string) => void;
 }
 
 export const NOT_AVAILABLE = "This invoice isn't available. It may have been replaced; contact the business.";
@@ -58,7 +62,7 @@ export function statusLine(invoice: PublicInvoiceResponse["invoice"], format: Mo
 }
 
 export function InvoiceView(props: InvoiceViewProps) {
-  const { baseUrl, transport: given, token, preview = false, accentColor, locale, ...chrome } = props;
+  const { baseUrl, transport: given, token, preview = false, accentColor, locale, returned = false, navigate, ...chrome } = props;
   const transport = useMemo<InvoicePublicTransport>(
     () =>
       given ??
@@ -125,13 +129,104 @@ export function InvoiceView(props: InvoiceViewProps) {
           ) : null}
         </div>
       ) : (
-        <InvoiceBody data={state.data} locale={locale} />
+        <InvoiceBody
+          data={state.data}
+          locale={locale}
+          returned={returned}
+          pay={
+            transport.pay && !preview
+              ? async (amount) => {
+                  try {
+                    return await transport.pay!(token, amount === undefined ? {} : { amount });
+                  } catch {
+                    return { ok: false, error: { code: "network", message: "Something went wrong. Please try again.", status: 0 } };
+                  }
+                }
+              : null
+          }
+          navigate={navigate ?? ((url) => window.location.assign(url))}
+        />
       )}
     </Root>
   );
 }
 
-function InvoiceBody({ data, locale }: { data: PublicInvoiceResponse; locale: string | undefined }) {
+type PayFn = (amount: number | undefined) => Promise<Result<{ url: string }>>;
+
+/**
+ * "Pay now" (0.2): the amount is the SERVER's — the deposit first, then the
+ * balance. Only when the business lets customers choose is there a box, and
+ * the server checks what it says again.
+ */
+function PayNow({ option, money, pay, navigate }: { option: PayOptionWire; money: (cents: number) => string; pay: PayFn; navigate: (url: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [text, setText] = useState(dollarsInput(option.amount));
+  const submit = async () => {
+    setError(null);
+    let amount: number | undefined;
+    if (option.allowPartial) {
+      const parsed = parseDollars(text, { allowZero: false });
+      if (!parsed.ok) return setError(parsed.message);
+      if (parsed.value < option.minimum || parsed.value > option.maximum) {
+        return setError(`Enter an amount from ${money(option.minimum)} to ${money(option.maximum)}.`);
+      }
+      amount = parsed.value;
+    }
+    setBusy(true);
+    const res = await pay(amount);
+    if (res.ok) {
+      navigate(res.data.url);
+      return;
+    }
+    setBusy(false);
+    setError(res.error.message || "Something went wrong. Please try again.");
+  };
+  const deposit = option.stage === "deposit";
+  return (
+    <section className="aiiw-stack-sm aiiw-no-print" aria-labelledby="aiiw-paynow" data-aiiw-paynow={option.stage}>
+      <h2 className="aiiw-h3" id="aiiw-paynow">
+        {deposit ? "Pay the deposit" : "Pay by card"}
+      </h2>
+      {deposit ? (
+        <p className="aiiw-small">
+          A deposit of {money(option.depositAmount)} is due first. You'll pay the rest later, from this page.
+        </p>
+      ) : null}
+      {option.allowPartial ? (
+        <label className="aiiw-field">
+          <span>Amount to pay</span>
+          <input className="aiiw-input" inputMode="decimal" value={text} onChange={(e) => setText(e.target.value)} aria-invalid={error ? true : undefined} />
+        </label>
+      ) : null}
+      {error ? (
+        <p className="aiiw-notice aiiw-notice-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      <div className="aiiw-actions">
+        <button type="button" className="aiiw-btn aiiw-btn-primary" disabled={busy} onClick={() => void submit()} data-aiiw-paynow-button="">
+          {busy ? "Opening the secure payment page…" : option.allowPartial ? "Pay now" : `Pay ${money(option.amount)} now`}
+        </button>
+      </div>
+      <p className="aiiw-small">You'll pay on Stripe's secure page, then come back here.</p>
+    </section>
+  );
+}
+
+function InvoiceBody({
+  data,
+  locale,
+  returned,
+  pay,
+  navigate,
+}: {
+  data: PublicInvoiceResponse;
+  locale: string | undefined;
+  returned: boolean;
+  pay: PayFn | null;
+  navigate: (url: string) => void;
+}) {
   const { invoice, business, format } = data;
   const money = (cents: number) => formatMoney(cents, format, locale);
   const status = statusLine(invoice, format, locale);
@@ -243,10 +338,33 @@ function InvoiceBody({ data, locale }: { data: PublicInvoiceResponse; locale: st
         </section>
       ) : null}
 
+      {returned ? (
+        <p className="aiiw-notice aiiw-notice-ok" role="status" data-aiiw-returned="">
+          Thank you! Your payment is on its way to {business.name || "the business"}. It shows here once it's recorded, usually within a minute.
+        </p>
+      ) : null}
+
+      {invoice.pending ? (
+        <p className="aiiw-notice aiiw-notice-info" role="status" data-aiiw-pending="">
+          A bank payment of {money(invoice.pending.amount)} is on its way
+          {formatDate(invoice.pending.startedAt, format, locale) ? ` (started ${formatDate(invoice.pending.startedAt, format, locale)})` : ""}.
+        </p>
+      ) : null}
+
+      {invoice.pay && pay ? (
+        invoice.pay.belowMinimum ? (
+          <p className="aiiw-notice aiiw-notice-info" data-aiiw-small="">
+            Please contact {business.name || "the business"} to pay this small amount.
+          </p>
+        ) : (
+          <PayNow option={invoice.pay} money={money} pay={pay} navigate={navigate} />
+        )
+      ) : null}
+
       {business.paymentInstructions || business.footer ? (
         <section className="aiiw-stack-sm" aria-labelledby="aiiw-pay" data-aiiw-pay="">
           <h2 className="aiiw-h3" id="aiiw-pay">
-            How to pay
+            {invoice.pay && pay && !invoice.pay.belowMinimum ? "Other ways to pay" : "How to pay"}
           </h2>
           {business.paymentInstructions ? <p className="aiiw-pre">{business.paymentInstructions}</p> : null}
           {business.footer ? <p className="aiiw-small aiiw-pre">{business.footer}</p> : null}

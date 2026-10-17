@@ -715,7 +715,7 @@ describe("single-business mode (11.6, 11.9)", () => {
       /<InvoicesLedger\s+baseUrl="\/api\/admin\/invoices"\s+invoiceHref="\/admin\/invoices\/\{id\}"\s+canManage=\{can\?\.can\("staff\.invoices\.manage"\) \?\? false\}\s*\/>/,
     );
     expect(code(file(p, "app", "admin", "invoices", "[id]", "page.tsx"))).toContain('<InvoiceEditor baseUrl="/api/admin/invoices" invoiceId={id} backHref="/admin/invoices" />');
-    expect(code(file(p, "app", "(site)", "invoice", "[token]", "page.tsx"))).toContain('<InvoiceView baseUrl="/api/invoices" token={token} preview={preview === "1"} />');
+    expect(code(file(p, "app", "(site)", "invoice", "[token]", "page.tsx"))).toContain('<InvoiceView baseUrl="/api/invoices" token={token} preview={preview === "1"} returned={paid === "1"} />');
     expect(code(file(p, "app", "admin", "comms", "page.tsx"))).toContain('<MessagesConsole baseUrl="/api/admin/comms" canManage={can?.can("staff.comms.manage") ?? false} />');
     expect(code(file(p, "app", "api", "admin", "invoices", "[...path]", "route.ts"))).toContain("buildInvoicingAdminHandlers()");
     expect(code(file(p, "app", "api", "invoices", "[...path]", "route.ts"))).toContain("buildInvoicingPublicHandlers()");
@@ -898,7 +898,13 @@ describe("the header and the company links (11.11)", () => {
           ]
         : []),
       ...(a.includeEstimator ? ['{ href: "/app/estimates", label: "Estimates", permission: "estimator.view" }'] : []),
-      ...(a.includeInvoicing ? ['{ href: "/app/invoices", label: "Invoices", permission: "invoices.view" }'] : []),
+      ...(a.includeInvoicing
+        ? [
+            '{ href: "/app/invoices", label: "Invoices", permission: "invoices.view" }',
+            // Getting paid, part 1: the company's own Stripe account.
+            '{ href: "/app/payments", label: "Card payments", permission: "payments.view" }',
+          ]
+        : []),
       ...(a.includeComms ? ['{ href: "/app/messages", label: "Messages", permission: "comms.view" }'] : []),
       // Tenancy 2b-1: each company's files, with storage.
       ...(a.includeStorage ? ['{ href: "/app/files", label: "Files", permission: "files.view" }'] : []),
@@ -921,6 +927,8 @@ describe("the header and the company links (11.11)", () => {
       ...(await packagePermissionKeys("scheduling")),
       ...(await packagePermissionKeys("estimator")),
       ...(await packagePermissionKeys("invoicing")),
+      // Getting paid, part 1: the payments screen's keys.
+      ...(await packagePermissionKeys("stripe")),
       ...(await packagePermissionKeys("comms")),
       // Tenancy 2b-1: files (and alerts) are company keys too.
       ...(await packagePermissionKeys("storage")),
@@ -1119,9 +1127,9 @@ describe("what the project claims and documents (11.13)", () => {
       ["scheduling", "^0.6.0"],
       ["scheduling-widget", "^0.3.0"],
       ["estimator", "^0.5.0"],
-      ["estimator-widget", "^0.4.0"],
-      ["invoicing", "^0.4.0"],
-      ["invoicing-widget", "^0.1.1"],
+      ["estimator-widget", "^0.5.0"],
+      ["invoicing", "^0.5.0"],
+      ["invoicing-widget", "^0.2.0"],
       ["comms", "^0.4.0"],
       ["comms-widget", "^0.1.1"],
       ["email", "^0.3.0"],

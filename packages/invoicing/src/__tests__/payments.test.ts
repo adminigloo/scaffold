@@ -181,12 +181,14 @@ describe("reversePayment", () => {
     expect(row().amountPaid).toBe(0);
   });
 
-  it("backs single reversal with a unique index", async () => {
-    const fake = createFakeDb();
-    await fake.db.insert(invoicePayments).values({ invoiceId: "i", amount: -1, reversesPaymentId: "p1" });
-    await expect(
-      fake.db.insert(invoicePayments).values({ invoiceId: "i", amount: -1, reversesPaymentId: "p1" }),
-    ).rejects.toMatchObject({ cause: { constraint: "invoice_payments_reverses_uidx" } });
+  it("0.5: reverses part of a payment, then the rest, and never more than it", async () => {
+    const { fake, row } = sentInvoice({ status: "paid", amountPaid: 100_000 });
+    fake.seed(invoicePayments, [{ id: "pay-1", invoiceId: "inv-1", amount: 100_000, method: "card" }]);
+    expect(await reversePayment(fake.db, "t1", "pay-1", "Part refunded", undefined, { amount: 30_000 })).toMatchObject({ amountPaid: 70_000, status: "partial" });
+    expect(await reversePayment(fake.db, "t1", "pay-1", "The rest", undefined, { amount: 90_000 })).toMatchObject({ amountPaid: 0 });
+    await expect(reversePayment(fake.db, "t1", "pay-1", "Again")).rejects.toMatchObject({ reason: "already_reversed" });
+    expect(fake.rows(invoicePayments).map((p) => p.amount)).toEqual([100_000, -30_000, -70_000]);
+    expect(row().amountPaid).toBe(0);
   });
 
   it("is tenant-scoped, and keeps a (legacy) void invoice void", async () => {

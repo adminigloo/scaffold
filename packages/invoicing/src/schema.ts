@@ -44,6 +44,14 @@ export const invoices = pgTable(
     /** Optional link to the estimate this invoice was converted from. */
     estimateId: text("estimate_id"),
     notes: text("notes"),
+    /**
+     * invoicing 0.5: the deposit the customer pays online first. Both null →
+     * the company's default (its invoice settings). `deposit_bp` 0 → no
+     * deposit on this invoice. A percent is basis points (3000 = 30%); a fixed
+     * deposit is cents in `deposit_amount`. Never both.
+     */
+    depositBp: integer("deposit_bp"),
+    depositAmount: bigint("deposit_amount", { mode: "number" }),
     createdBy: text("created_by"),
     /** First move to "sent" — stamped once, never moved. */
     sentAt: timestamp("sent_at", { withTimezone: true }),
@@ -112,6 +120,13 @@ export const invoicePayments = pgTable(
     reversesPaymentId: text("reverses_payment_id"),
     /** Why a reversal happened (bounced check, chargeback, keyed in error). */
     reason: text("reason"),
+    /**
+     * invoicing 0.5: a card payment Stripe later reported on — "disputed" (the
+     * customer's bank opened a chargeback) or "partly_refunded" (some of it was
+     * refunded in Stripe). A full refund is a reversal row, not a flag.
+     */
+    flag: text("flag"),
+    flaggedAt: timestamp("flagged_at", { withTimezone: true }),
     paidAt: timestamp("paid_at", { withTimezone: true }).notNull().defaultNow(),
     recordedBy: text("recorded_by"),
     createdAt: createdAt(),
@@ -121,10 +136,83 @@ export const invoicePayments = pgTable(
     uniqueIndex("invoice_payments_external_ref_uidx")
       .on(t.invoiceId, t.externalRef)
       .where(sql`${t.externalRef} is not null`),
-    // A payment can be reversed once. Two reversals of one $500 payment would
-    // take $1,000 off the ledger.
-    uniqueIndex("invoice_payments_reverses_uidx")
+    // A payment's reversals, found under the invoice lock. 0.5: no longer
+    // unique — a part refund reverses part of a payment, and reversePayment
+    // keeps the reversals of one payment to at most its amount.
+    index("invoice_payments_reverses_idx")
       .on(t.reversesPaymentId)
       .where(sql`${t.reversesPaymentId} is not null`),
+  ],
+);
+
+/**
+ * invoicing 0.5: each time a customer pressed "Pay now" — the amount and
+ * currency the SERVER decided, the Stripe Checkout Session it opened, and how
+ * it ended. The webhook records a payment only when the event's amount and
+ * currency equal this row's, for this row's invoice, in this row's company.
+ *
+ *   status: creating → open → processing (a bank payment on its way) → paid | expired | failed
+ *   purpose: "deposit" (the deposit, or what is left of it), "balance" (the
+ *            rest), "part" (an amount the customer chose, when the company
+ *            allows part payments)
+ */
+export const invoiceCheckouts = pgTable(
+  "invoice_checkouts",
+  {
+    id: idColumn(),
+    tenantId: text("tenant_id").notNull(),
+    invoiceId: text("invoice_id").notNull(),
+    /** The company's connected Stripe account; null for a single business on its own keys. */
+    accountId: text("account_id"),
+    sessionId: text("session_id"),
+    purpose: text("purpose").notNull(),
+    amount: money("amount"),
+    /** ISO 4217, lower case, as Stripe reports it. */
+    currency: text("currency").notNull(),
+    status: text("status").notNull().default("creating"),
+    paymentIntentId: text("payment_intent_id"),
+    /** Stripe's page for the Session: handed out again to a second tab while the Session is open. */
+    sessionUrl: text("session_url"),
+    /** When Stripe closes the Session (an hour after it opened). */
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    /** A bank payment the customer started: on its way, not yet cleared (status "processing"). */
+    processingAt: timestamp("processing_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("invoice_checkouts_invoice_idx").on(t.tenantId, t.invoiceId, t.status),
+    uniqueIndex("invoice_checkouts_session_uidx").on(t.sessionId).where(sql`${t.sessionId} is not null`),
+  ],
+);
+
+/**
+ * invoicing 0.5: every card payment that needs the company's owner — money
+ * Stripe took that didn't land cleanly, a refund, a dispute, a bank payment
+ * that failed. Kept per company whether or not the app has alerts, so the
+ * owner's payments screen always lists what is open ("Needs your attention")
+ * until someone marks it handled. One row per thing that happened
+ * (`dedupe_key`), however often Stripe repeats it.
+ */
+export const invoiceCardAlerts = pgTable(
+  "invoice_card_alerts",
+  {
+    id: idColumn(),
+    tenantId: text("tenant_id").notNull(),
+    kind: text("kind").notNull(),
+    /** The plain-words sentence the owner reads. */
+    message: text("message").notNull(),
+    amount: bigint("amount", { mode: "number" }),
+    currency: text("currency"),
+    invoiceId: text("invoice_id"),
+    paymentIntentId: text("payment_intent_id"),
+    dedupeKey: text("dedupe_key").notNull(),
+    createdAt: createdAt(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolvedBy: text("resolved_by"),
+  },
+  (t) => [
+    uniqueIndex("invoice_card_alerts_dedupe_uidx").on(t.tenantId, t.dedupeKey),
+    index("invoice_card_alerts_open_idx").on(t.tenantId, t.resolvedAt, t.createdAt),
   ],
 );

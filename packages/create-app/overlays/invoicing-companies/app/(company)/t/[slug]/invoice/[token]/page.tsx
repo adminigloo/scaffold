@@ -45,6 +45,7 @@ export default async function CompanyInvoicePage({
           baseUrl={`/api/t/${company.slug}/invoices`}
           token={token}
           preview={query.preview === "1"}
+          returned={query.paid === "1"}
           accentColor={company.brandColor}
         />
       )}

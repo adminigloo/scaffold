@@ -44,6 +44,14 @@ export interface QuoteViewProps extends ChromeProps {
   transport?: EstimatorPublicTransport;
   /** Accepted: "Pick a time for the work" → bookHref + (? or &) + "estimate=" + estimateId. */
   bookHref?: string;
+  /**
+   * Accepted: what the customer can pay now, decided by the app from where the
+   * money is — `{ href, label }` is a button ("Pay the deposit", "Pay the
+   * balance", "Pay now") that POSTs to `href` once (a second press does
+   * nothing); `{ note }` is a sentence instead ("Your invoice is on its way.").
+   * Undefined: nothing (the business takes no card payments, or nothing is due).
+   */
+  payment?: QuotePayment;
   /** Undefined: the business's colour; null: the stylesheet's; a `#rrggbb`: that. */
   accentColor?: string | null;
   /** Called after the customer accepts or declines. */
@@ -178,6 +186,7 @@ export function QuoteView(props: QuoteViewProps) {
         quote={state.quote}
         locale={locale}
         bookHref={props.bookHref}
+        payment={props.payment}
         answering={answering}
         setAnswering={(next) => {
           setNotice(null);
@@ -209,6 +218,7 @@ function QuoteBody({
   quote,
   locale,
   bookHref,
+  payment,
   answering,
   setAnswering,
   onAccept,
@@ -219,6 +229,7 @@ function QuoteBody({
   quote: PublicQuote;
   locale: string;
   bookHref?: string;
+  payment?: QuotePayment;
   answering: Answering;
   setAnswering: (next: Answering) => void;
   onAccept: (body: { name: string; note: string; website: string }) => Promise<void>;
@@ -256,7 +267,7 @@ function QuoteBody({
             {notice.text}
           </Notice>
         ) : null}
-        <StatusBanner quote={quote} locale={locale} bookHref={bookHref} />
+        <StatusBanner quote={quote} locale={locale} bookHref={bookHref} payment={payment} />
       </div>
 
       {quote.message ? <p className="aiew-message">{quote.message}</p> : null}
@@ -350,7 +361,31 @@ function QuoteBody({
 }
 
 /** How the quote stands, in one plain sentence (contract 9.6). */
-export function StatusBanner({ quote, locale, bookHref }: { quote: PublicQuote; locale: string; bookHref?: string }) {
+/** What an accepted quote offers to pay: a button (POST to `href`) or a sentence. */
+export type QuotePayment = { readonly href: string; readonly label: string } | { readonly note: string };
+
+/** The pay button: a plain POST form, pressed once — a double click never sends two. */
+function PayForm({ href, label }: { href: string; label: string }) {
+  const [sent, setSent] = useState(false);
+  return (
+    <form
+      className="aiew-no-print"
+      method="post"
+      action={href}
+      data-aiew-pay=""
+      onSubmit={(event) => {
+        if (sent) event.preventDefault();
+        else setSent(true);
+      }}
+    >
+      <button type="submit" className="aiew-btn aiew-btn-primary" disabled={sent} aria-busy={sent || undefined}>
+        {sent ? "Opening the secure payment page…" : label}
+      </button>
+    </form>
+  );
+}
+
+export function StatusBanner({ quote, locale, bookHref, payment }: { quote: PublicQuote; locale: string; bookHref?: string; payment?: QuotePayment }) {
   const date = (instant: string | null) => formatDate(instant, locale, quote.timeZone);
   const phone = quote.contactPhone;
   const email = quote.contactEmail;
@@ -368,6 +403,12 @@ export function StatusBanner({ quote, locale, bookHref }: { quote: PublicQuote; 
             <CheckIcon className="aiew-chip-check" />
             You accepted this quote{quote.respondedAt ? ` on ${date(quote.respondedAt)}` : ""}. Thank you!
           </p>
+          {payment && "href" in payment ? <PayForm href={payment.href} label={payment.label} /> : null}
+          {payment && "note" in payment ? (
+            <p className="aiew-row" data-aiew-pay-note="">
+              {payment.note}
+            </p>
+          ) : null}
           {bookHref && quote.estimateId ? (
             <p className="aiew-no-print">
               <a className="aiew-btn aiew-btn-primary" href={withParam(bookHref, "estimate", quote.estimateId)} referrerPolicy="no-referrer" data-aiew-book="">

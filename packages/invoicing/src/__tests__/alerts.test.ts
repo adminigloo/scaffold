@@ -109,8 +109,12 @@ describe("invoicingAlertKinds (11.3)", () => {
       ["invoicing.invoice.viewed", "A customer opens an invoice", "in_app"],
       ["invoicing.invoice.paid", "An invoice is paid in full", "in_app"],
       ["invoicing.invoice.overdue", "An invoice goes overdue", "email"],
+      // invoicing 0.5: card payments that need the owner — in the app and by email.
+      ["invoicing.card-payment", "A card payment needs you", "email"],
     ]);
-    for (const kind of invoicingAlertKinds.kinds) {
+    // The card-payment kind goes to the people who answer for the books, never routed elsewhere.
+    expect(invoicingAlertKinds.kinds[3]!.audience).toEqual({ permission: "invoices.payments.reverse" });
+    for (const kind of invoicingAlertKinds.kinds.slice(0, 3)) {
       expect(kind.category).toBe("Invoices");
       expect(kind.audience).toEqual({ permission: "invoices.view", routing: "invoices" });
       expect(kind.email ?? true).toBe(true);
@@ -126,7 +130,7 @@ describe("invoicingAlertKinds (11.3)", () => {
       },
     ]);
     expect([INVOICING_INVOICE_VIEWED_KIND, INVOICING_INVOICE_PAID_KIND, INVOICING_INVOICE_OVERDUE_KIND]).toEqual(
-      invoicingAlertKinds.kinds.map((k) => k.key),
+      invoicingAlertKinds.kinds.slice(0, 3).map((k) => k.key),
     );
     expect(Object.isFrozen(invoicingAlertKinds.kinds)).toBe(true);
   });

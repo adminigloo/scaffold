@@ -1,4 +1,5 @@
 import { tenantLabel, type Answers } from "./answers.js";
+import { cardPaymentsSetup } from "./payments-emit.js";
 
 /** "1.2.3" → [1, 2, 3]; anything else → null. */
 export function parseVersion(text: string): readonly [number, number, number] | null {
@@ -31,6 +32,17 @@ export function upgradeNotesFor(answers: Answers, fromVersion: string): string[]
   const companies = answers.tenantNoun !== "none";
   const noun = tenantLabel(answers).toLowerCase();
   const crossed = (version: string) => (compareVersions(fromVersion, version) ?? -1) < 0;
+  // 0.33.0 — getting paid, part 1: customers pay invoices and deposits online.
+  if (crossed("0.33.0") && answers.includeInvoicing) {
+    notes.push(
+      "Invoices can be paid by card now (@adminigloo/invoicing 0.5, @adminigloo/stripe 0.4). **Before you deploy, run " +
+        "node_modules/@adminigloo/invoicing/sql/upgrade-0.4-to-0.5.sql and node_modules/@adminigloo/stripe/sql/upgrade-0.3-to-0.4.sql** " +
+        "(or the statements `pnpm db:generate` writes; both safe twice): they add the deposit columns, the payment flag, invoice_checkouts " +
+        "and stripe_connected_accounts, and keep every row. Existing invoices ask no deposit until you set one.",
+      // The whole setup, the same words as README and DEPLOYMENT ("Taking card payments").
+      cardPaymentsSetup(answers, "####").trim(),
+    );
+  }
   // 0.32.0 — Tenancy 2b-4c: book a call, a new answer (`create-app add booking`).
   // Nothing to move for a project that didn't have it; one that wired
   // @adminigloo/booking 0.1 by hand gets the steps.

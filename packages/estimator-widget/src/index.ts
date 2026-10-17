@@ -18,7 +18,7 @@
 export { ESTIMATOR_WIRE_VERSION } from "./version.js";
 
 export { EstimateTool, EstimateFlow, useEstimatorConfig, DEFAULT_INTRO, DEFAULT_TITLE, type EstimateToolProps, type ConfigState } from "./EstimateTool.js";
-export { QuoteView, StatusBanner, type QuoteViewProps } from "./QuoteView.js";
+export { QuoteView, StatusBanner, type QuotePayment, type QuoteViewProps } from "./QuoteView.js";
 export { CustomerFields, RadioChips, Stepper, cleanInputs, hasAnyInput, inRange, rangeMessage, type ChipChoice, type CustomerFieldsProps } from "./fields.js";
 export { PriceCard, priceText, type PriceState } from "./price.js";
 export { EstimatorProvider, EstimatorButton, EstimatorModal, useEstimator } from "./widget.js";

@@ -136,12 +136,13 @@ describe("wire parity with @adminigloo/invoicing", () => {
   it("the clients speak every route of the server's tables", () => {
     const admin = readFileSync(resolve(here, "../admin/client.ts"), "utf8");
     for (const route of INVOICING_ADMIN_ROUTES) {
-      const path = `/${route.path}`.replace("{invoice}", "${seg(id)}").replace("{item}", "${seg(itemId)}").replace("{payment}", "${seg(paymentId)}");
+      const path = `/${route.path}`.replace("{invoice}", "${seg(id)}").replace("{item}", "${seg(itemId)}").replace("{payment}", "${seg(paymentId)}").replace("{card-alert}", "${seg(alertId)}");
       expect(admin.includes(path), `${route.kind}: ${path}`).toBe(true);
     }
     const pub = readFileSync(resolve(here, "../client.ts"), "utf8");
     expect(pub).toContain("/v1/invoice/${encodeURIComponent(token)}");
     expect(pub).toContain("${at(token)}/viewed");
-    expect(INVOICING_PUBLIC_ROUTES.map((r) => r.path)).toEqual(["v1/invoice/{invoice-token}", "v1/invoice/{invoice-token}/viewed"]);
+    expect(pub).toContain("${at(token)}/pay");
+    expect(INVOICING_PUBLIC_ROUTES.map((r) => r.path)).toEqual(["v1/invoice/{invoice-token}", "v1/invoice/{invoice-token}/viewed", "v1/invoice/{invoice-token}/pay"]);
   });
 });

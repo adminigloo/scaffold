@@ -4,7 +4,7 @@ import { is, SQL } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
 import { getTableConfig, PgDialect, type PgTable } from "drizzle-orm/pg-core";
 import type { InvoicingDb } from "../index.js";
-import { invoiceItems, invoicePayments, invoices } from "../schema.js";
+import { invoiceCardAlerts, invoiceCheckouts, invoiceItems, invoicePayments, invoices } from "../schema.js";
 
 /**
  * A REAL Postgres for the handler, company and email suites (Tenancy 2a):
@@ -18,7 +18,7 @@ import { invoiceItems, invoicePayments, invoices } from "../schema.js";
  * devDependency, built to dist) are created too, for the invoice email.
  */
 
-const TABLES: PgTable[] = [invoices, invoiceItems, invoicePayments];
+const TABLES: PgTable[] = [invoices, invoiceItems, invoicePayments, invoiceCheckouts, invoiceCardAlerts];
 const COMMS_TABLES: PgTable[] = [commsTemplates, commsMessages, commsScheduled];
 
 const dialect = new PgDialect();

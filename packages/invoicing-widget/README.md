@@ -158,8 +158,8 @@ before anything is sent. The totals on screen are always the server's.
 
 ## Not included
 
-- **Payments to companies** (paying an invoice by card). The page shows the
-  business's own payment instructions; staff record the payment.
+- **Choosing how to pay on Stripe's page.** "Pay now" sends the customer to
+  Stripe's own secure page (0.2) and back; nothing card-related is drawn here.
 - **A customer account** or a list of a customer's invoices.
 - **PDF download.** The page prints as a plain invoice.
 - **Logo and colour inside the invoice email.** The page carries them.

@@ -243,7 +243,7 @@ describe("BUY-04 and BUY-05: an older version's public files", () => {
     const companies = upgradeNotesFor(answers(C.companyAll), "0.23.0").join("\n");
     expect(companies).toContain("update stored_files set tenant_id = '<company id>' where tenant_id = '*';");
     // A project already past 2b-1 isn't told again.
-    expect(upgradeNotesFor(answers(C.companyAll), "0.24.0")).toEqual([]);
+    expect(upgradeNotesFor(answers(C.companyAll), "0.24.0").join("\n")).not.toContain("stored_files");
   });
 });
 

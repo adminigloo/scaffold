@@ -128,6 +128,18 @@ describe("the pieces", () => {
     expect(say(quote({ status: "updating" }))).toBe("We're updating this quote. You'll get the new version by email.");
   });
 
+  it("an accepted quote offers what the app says — a POST button with its label, or a sentence — and nowhere else", () => {
+    const accepted = quote({ status: "accepted", respondedAt: "2026-11-03T16:00:00.000Z" });
+    const out = html(<StatusBanner quote={accepted} locale="en-US" payment={{ href: "/api/t/summit/quote-deposit/tok", label: "Pay the balance" }} />);
+    expect(out).toContain('action="/api/t/summit/quote-deposit/tok"');
+    expect(out).toContain('method="post"');
+    expect(strip(out)).toContain("Pay the balance");
+    expect(strip(html(<StatusBanner quote={accepted} locale="en-US" payment={{ note: "Your invoice is on its way." }} />))).toContain("Your invoice is on its way.");
+    expect(html(<StatusBanner quote={accepted} locale="en-US" payment={{ note: "Your invoice is on its way." }} />)).not.toContain("<form");
+    expect(html(<StatusBanner quote={accepted} locale="en-US" />)).not.toContain("<form");
+    expect(html(<StatusBanner quote={quote()} locale="en-US" payment={{ href: "/x", label: "Pay now" }} />)).not.toContain("Pay now");
+  });
+
   it("the honeypot is off-screen, out of the tab order, hidden from assistive tech, never autofilled — and not display:none", () => {
     const out = html(<Honeypot id="hp" value="" onChange={() => {}} />);
     expect(out).toContain('class="aiew-hp" aria-hidden="true"');

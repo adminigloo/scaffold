@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { QuoteView } from "__SCOPE__/estimator-widget";
 import { ESTIMATE_BOOK_VISIT_HREF } from "@/server/estimator-features";
+import { quotePayment } from "@/server/quote-deposit";
 
 /**
  * Never indexed, and never handing its address to the next site. The token in
@@ -42,7 +43,7 @@ export default async function QuotePage({
   const { token } = await params;
   return (
     <main className="mx-auto max-w-2xl px-4 py-10 sm:px-6 sm:py-16">
-      <QuoteView baseUrl="/api/estimator" token={token} bookHref={ESTIMATE_BOOK_VISIT_HREF} />
+      <QuoteView baseUrl="/api/estimator" token={token} bookHref={ESTIMATE_BOOK_VISIT_HREF} payment={await quotePayment(token)} />
     </main>
   );
 }

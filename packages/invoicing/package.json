@@ -30,7 +30,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "sql"
   ],
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",

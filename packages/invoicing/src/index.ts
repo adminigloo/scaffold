@@ -36,7 +36,9 @@ export * from "./money.js";
 export * from "./status.js";
 export * from "./errors.js";
 export * from "./estimate.js";
-export { invoiceItems, invoicePayments, invoices } from "./schema.js";
+export { invoiceCardAlerts, invoiceCheckouts, invoiceItems, invoicePayments, invoices } from "./schema.js";
+// invoicing 0.5: Pay now — deposits, the checkout, and the webhook's rules.
+export * from "./online.js";
 // Tenancy 2a: the HTTP surface, its permissions, the settings fragment and
 // the setup checklist item. All structural: nothing here imports tenancy.
 export { invoicingPermissions } from "./permissions.js";
@@ -79,6 +81,7 @@ export type {
   InvoicingEventType,
 } from "./events.js";
 export {
+  INVOICING_CARD_PAYMENT_KIND,
   INVOICING_INVOICE_OVERDUE_KIND,
   INVOICING_INVOICE_PAID_KIND,
   INVOICING_INVOICE_VIEWED_KIND,
@@ -86,6 +89,7 @@ export {
   OVERDUE_SINCE_DAYS,
   invoicingAlertKinds,
   invoicingAlertsFor,
+  invoicingCardAlert,
   invoicingOverdueAlert,
   listOverdueInvoices,
 } from "./alerts.js";
@@ -931,6 +935,14 @@ export interface RecordPaymentOptions {
    * issued.
    */
   allowDraft?: boolean;
+  /**
+   * invoicing 0.5: record money on an invoice that is already paid. Only for
+   * money that has ALREADY MOVED (a card payment Stripe took on a checkout
+   * opened before the invoice was settled another way): refusing it would
+   * leave real money on no invoice at all. The result's `overpayment` says how
+   * much to give back.
+   */
+  allowOverpayment?: boolean;
 }
 
 export interface PaymentOutcome {
@@ -995,7 +1007,7 @@ export async function recordPayment(
     // resurrect a cancelled bill. A paid one is settled: more money is an
     // accidental double charge, not a payment.
     if (inv.status === "void") throw new PaymentRefusedError("void");
-    if (inv.status === "paid") throw new PaymentRefusedError("paid");
+    if (inv.status === "paid" && !options.allowOverpayment) throw new PaymentRefusedError("paid");
     if (inv.status === "draft" && !options.allowDraft) throw new PaymentRefusedError("draft");
     // Every line removed (allowed, to replace one) leaves a $0 bill for
     // nothing; money taken against it is an overpayment for no work.
@@ -1059,12 +1071,22 @@ export interface ReversedPayment extends PaymentOutcome {
  * Null when the payment isn't on an invoice in this tenant. Throws
  * PaymentReversalError for a reversal row or an already-reversed payment.
  */
+export interface ReversePaymentOptions {
+  /**
+   * invoicing 0.5: reverse only this much (cents) — a part refund. Default:
+   * everything not already reversed. Never more than what is left of the
+   * payment: several reversals of one payment add up to at most its amount.
+   */
+  amount?: number;
+}
+
 export async function reversePayment(
   db: InvoicingDb,
   tenantId: string,
   paymentId: string,
   reason: string,
   recordedBy?: string,
+  options: ReversePaymentOptions = {},
 ): Promise<ReversedPayment | null> {
   const parsed = reversePaymentSchema.parse({ tenantId, paymentId, reason });
   return db.transaction(async (tx) => {
@@ -1081,20 +1103,25 @@ export async function reversePayment(
     if (!inv) return null;
     if (payment.reversesPaymentId) throw new PaymentReversalError("is_reversal");
     // Under the invoice lock, so two concurrent reversals serialize and the
-    // second sees the first (the partial unique index is the backstop).
-    const [already] = await tx
-      .select({ id: invoicePayments.id })
+    // second sees the first. What is left to reverse is the payment less
+    // every reversal of it so far (0.5: a part refund is a reversal of part).
+    const prior = (await tx
+      .select({ amount: invoicePayments.amount })
       .from(invoicePayments)
-      .where(eq(invoicePayments.reversesPaymentId, payment.id))
-      .limit(1);
-    if (already) throw new PaymentReversalError("already_reversed");
+      .where(eq(invoicePayments.reversesPaymentId, payment.id))) as Array<{ amount: number }>;
+    let reversedSoFar = 0;
+    for (const r of prior) reversedSoFar -= Number(r.amount);
+    const remaining = payment.amount - reversedSoFar;
+    if (remaining <= 0) throw new PaymentReversalError("already_reversed");
+    const take = options.amount === undefined ? remaining : Math.min(Math.max(0, Math.trunc(options.amount)), remaining);
+    if (take <= 0) throw new PaymentReversalError("already_reversed");
 
     const now = new Date();
     const [reversal] = (await tx
       .insert(invoicePayments)
       .values({
         invoiceId: inv.id,
-        amount: -payment.amount,
+        amount: -take,
         method: payment.method,
         reference: payment.reference,
         reversesPaymentId: payment.id,

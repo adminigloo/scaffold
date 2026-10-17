@@ -324,7 +324,7 @@ out the items that are only about companies).
   company's storage allowance is one setting for everyone
   (`FILES_ALLOWANCE_MB`) until then; the seam the billing chunk fills is
   there.
-- **Stripe Connect** (customers paying a company by card).
+- **Card payouts to anyone but the company itself**, and **SMS** payment links. (Customers pay invoices and deposits by card into the company's own Stripe account.)
 - **Custom domains.**
 - **Virus scanning of uploads.** Files are checked for their type and size
   only.

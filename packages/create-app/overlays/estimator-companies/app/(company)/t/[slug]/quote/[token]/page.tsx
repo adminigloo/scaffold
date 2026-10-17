@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { QuoteView } from "__SCOPE__/estimator-widget";
 import { PublicCompanyGate, publicCompanyMetadata } from "@/components/PublicCompanyGate";
 import { estimateBookHref } from "@/server/estimator-features";
+import { quotePayment } from "@/server/quote-deposit";
 
 /**
  * Never indexed, and never handing its address to the next site: the token is
@@ -37,14 +38,29 @@ export default async function CompanyQuotePage({
   const { slug, token } = await params;
   return (
     <PublicCompanyGate slug={slug} path={`/quote/${encodeURIComponent(token)}`}>
-      {(company) => (
-        <QuoteView
-          baseUrl={`/api/t/${company.slug}/estimator`}
-          token={token}
-          bookHref={estimateBookHref(company.publicPath)}
-          accentColor={company.brandColor}
-        />
-      )}
+      {(company) => <CompanyQuote company={company} token={token} />}
     </PublicCompanyGate>
+  );
+}
+
+/**
+ * The quote, with what the customer can pay once it's accepted — the deposit,
+ * the balance, or nothing yet (src/server/quote-deposit.ts decides).
+ */
+async function CompanyQuote({
+  company,
+  token,
+}: {
+  readonly company: { readonly slug: string; readonly publicPath: string; readonly brandColor: string | null };
+  readonly token: string;
+}) {
+  return (
+    <QuoteView
+      baseUrl={`/api/t/${company.slug}/estimator`}
+      token={token}
+      bookHref={estimateBookHref(company.publicPath)}
+      payment={await quotePayment(company.slug, token)}
+      accentColor={company.brandColor}
+    />
   );
 }

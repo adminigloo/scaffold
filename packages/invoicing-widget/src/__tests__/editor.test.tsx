@@ -148,7 +148,7 @@ describe("<InvoiceEditor>", () => {
               amountPaid: 30_000,
               balanceDue: 0,
               overpaid: 2_937,
-              payments: [{ id: "p1", amount: 30_000, method: "check", reference: "1043", paidAt: "2026-10-20T17:00:00.000Z", reversesPaymentId: null, reversed: false, reason: null }],
+              payments: [{ id: "p1", amount: 30_000, method: "check", reference: "1043", paidAt: "2026-10-20T17:00:00.000Z", reversesPaymentId: null, reversed: false, reason: null, flag: null, reversedAmount: 0 }],
             }),
           ),
       },
@@ -182,7 +182,7 @@ describe("<InvoiceEditor>", () => {
       storedStatus: "paid",
       editable: false,
       nextStatuses: [],
-      payments: [{ id: "p1", amount: 27_063, method: "card", reference: null, paidAt: "2026-10-20T17:00:00.000Z", reversesPaymentId: null, reversed: false, reason: null }],
+      payments: [{ id: "p1", amount: 27_063, method: "card", reference: null, paidAt: "2026-10-20T17:00:00.000Z", reversesPaymentId: null, reversed: false, reason: null, flag: null, reversedAmount: 0 }],
     });
     const fake = editor({ reversePayment: () => ok(response({ status: "sent", storedStatus: "sent" })) }, paid);
     const { container, unmount } = await mount(<InvoiceEditor transport={fake.transport} invoiceId="inv-1" />);
@@ -222,5 +222,24 @@ describe("<InvoiceEditor>", () => {
     expect(html).toContain("Loading the invoice…");
     void detail;
     void FORMAT;
+  });
+});
+
+describe("<InvoiceEditor> payments after a card refund (0.2)", () => {
+  it("shows a part refund as 'Partly refunded $X', and only all of it as 'Reversed'", async () => {
+    const pay = (reversedAmount: number, reversed: boolean) =>
+      response({
+        payments: [{ id: "p1", amount: 30_000, method: "card", reference: "Paid online", paidAt: "2026-10-20T17:00:00.000Z", reversesPaymentId: null, reversed, reason: null, flag: null, reversedAmount }],
+      });
+    const part = fakeTransport<InvoicingTransport>({ get: () => ok(pay(10_000, false)), status: () => ok({ emails: true, emailsOffReason: null, detailsComplete: true, detailsHref: null, format: FORMAT }) });
+    const a = await mount(<InvoiceEditor transport={part.transport} invoiceId="inv-1" />);
+    expect(text(a.container)).toContain("Partly refunded $100.00");
+    expect(text(a.container.querySelector("[data-aiiw-payment]"))).not.toContain("Reversed");
+    await a.unmount();
+    const whole = fakeTransport<InvoicingTransport>({ get: () => ok(pay(30_000, true)), status: () => ok({ emails: true, emailsOffReason: null, detailsComplete: true, detailsHref: null, format: FORMAT }) });
+    const b = await mount(<InvoiceEditor transport={whole.transport} invoiceId="inv-1" />);
+    expect(text(b.container.querySelector("[data-aiiw-payment]"))).toContain("Reversed");
+    expect(text(b.container)).not.toContain("Partly refunded");
+    await b.unmount();
   });
 });

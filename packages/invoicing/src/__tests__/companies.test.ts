@@ -155,7 +155,7 @@ describe("route tables", () => {
       const res = await h.handle(request("https://app.test/api/t/a/invoices/", route, { "invoice-token": `inv_${"b".repeat(36)}` }));
       expect(res.status, route.kind).toBe(429);
     }
-    expect(kinds).toEqual(["read", "viewed"]);
+    expect(kinds).toEqual(["read", "viewed", "pay"]);
   });
 });
 
@@ -201,23 +201,25 @@ describe("two companies, every route", () => {
 
 describe("the settings fragment, the checklist item and the keys", () => {
   it("the fragment passes tenancy's rules: defaults from {}, every field in the shape, a flat key", () => {
-    expect(invoicingSettingsFragment.schema.parse({})).toEqual({ paymentInstructions: null, dueDays: 14, footer: null });
+    expect(invoicingSettingsFragment.schema.parse({})).toEqual({ paymentInstructions: null, dueDays: 14, footer: null, depositPercent: 0, allowPartialPayments: false });
     const shape = invoicingSettingsFragment.schema.shape as Record<string, z.ZodType>;
     for (const field of invoicingSettingsFragment.fields) expect(Object.keys(shape)).toContain(field.key);
     expect(invoicingSettingsFragment.key).toMatch(/^[a-z][a-z0-9-]{1,31}$/);
-    expect(invoicingSettingsFragment.schema.parse({ paymentInstructions: "   ", footer: "" })).toEqual({ paymentInstructions: null, dueDays: 14, footer: null });
+    expect(invoicingSettingsFragment.schema.parse({ paymentInstructions: "   ", footer: "" })).toEqual({ paymentInstructions: null, dueDays: 14, footer: null, depositPercent: 0, allowPartialPayments: false });
     expect(invoicingSettingsFragment.schema.safeParse({ dueDays: 400 }).success).toBe(false);
   });
 
   it("readInvoicingDetails: junk reads as the defaults, one bad field keeps the rest", () => {
-    expect(readInvoicingDetails(null)).toEqual({ paymentInstructions: null, dueDays: 14, footer: null });
-    expect(readInvoicingDetails("junk")).toEqual({ paymentInstructions: null, dueDays: 14, footer: null });
+    expect(readInvoicingDetails(null)).toEqual({ paymentInstructions: null, dueDays: 14, footer: null, depositPercent: 0, allowPartialPayments: false });
+    expect(readInvoicingDetails("junk")).toEqual({ paymentInstructions: null, dueDays: 14, footer: null, depositPercent: 0, allowPartialPayments: false });
     expect(readInvoicingDetails({ paymentInstructions: "Check please", dueDays: "ten", footer: "x".repeat(600) })).toEqual({
       paymentInstructions: "Check please",
       dueDays: 14,
       footer: null,
+      depositPercent: 0,
+      allowPartialPayments: false,
     });
-    expect(readInvoicingDetails({ paymentInstructions: "Cash", dueDays: 0, footer: "Thanks" })).toEqual({ paymentInstructions: "Cash", dueDays: 0, footer: "Thanks" });
+    expect(readInvoicingDetails({ paymentInstructions: "Cash", dueDays: 0, footer: "Thanks" })).toEqual({ paymentInstructions: "Cash", dueDays: 0, footer: "Thanks", depositPercent: 0, allowPartialPayments: false });
   });
 
   it("the checklist item is done once payment instructions are written", async () => {

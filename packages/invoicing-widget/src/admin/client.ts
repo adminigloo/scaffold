@@ -1,7 +1,9 @@
 import { createRequester, isObject, str, type Result, type TransportOptions } from "../http.js";
 import { parseInvoiceResponse, parseList, parseSendResponse, parseStatus } from "../parse.js";
 import type {
+  CardAlertsWire,
   CreateInvoiceBody,
+  DepositBody,
   InvoiceLinkWire,
   InvoiceListWire,
   InvoiceResponse,
@@ -34,6 +36,11 @@ export interface InvoicingTransport {
   link(id: string): Promise<Result<InvoiceLinkWire>>;
   recordPayment(id: string, body: PaymentBody): Promise<Result<InvoiceResponse>>;
   reversePayment(paymentId: string, body: ReverseBody): Promise<Result<InvoiceResponse>>;
+  /** 0.2: the deposit the customer pays online first. Optional, so a 0.1 transport still fits. */
+  setDeposit?(id: string, body: DepositBody): Promise<Result<InvoiceResponse>>;
+  /** 0.2: the card payments that need the owner, and "Mark as handled". Optional, so a 0.1 transport still fits. */
+  attention?(): Promise<Result<CardAlertsWire>>;
+  resolveAttention?(alertId: string): Promise<Result<{ ok: true }>>;
 }
 
 const seg = (value: string) => encodeURIComponent(value);
@@ -62,6 +69,12 @@ export function createInvoicingClient(options: TransportOptions): InvoicingTrans
     send: (id) => http.post(`/v1/admin/invoices/${seg(id)}/send`, {}, parseSendResponse),
     link: (id) => http.get(`/v1/admin/invoices/${seg(id)}/link`, parseLink),
     recordPayment: (id, body) => http.post(`/v1/admin/invoices/${seg(id)}/payments`, body, parseInvoiceResponse),
+    attention: () =>
+      http.get("/v1/admin/attention", (raw) =>
+        isObject(raw) && Array.isArray(raw.open) && Array.isArray(raw.handled) ? (raw as unknown as CardAlertsWire) : null,
+      ),
+    resolveAttention: (alertId) => http.post(`/v1/admin/attention/${seg(alertId)}/resolve`, {}, (raw) => (isObject(raw) ? { ok: true as const } : null)),
+    setDeposit: (id, body) => http.post(`/v1/admin/invoices/${seg(id)}/deposit`, body, parseInvoiceResponse),
     reversePayment: (paymentId, body) => http.post(`/v1/admin/payments/${seg(paymentId)}/reverse`, body, parseInvoiceResponse),
   };
 }

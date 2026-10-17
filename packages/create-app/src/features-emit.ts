@@ -807,6 +807,7 @@ const INVOICING_RATE_LIMITS_SOURCE = `/**
  *
  *   read     120 a minute   opening an invoice
  *   viewed    30 an hour    "the customer opened it" (one per real visit)
+ *   pay       20 an hour    "Pay now" (each one opens a Stripe page)
  *
  * The token is a 43-character random key, so these bound how fast a script
  * can try, not whether it can guess; they count in Upstash when configured.
@@ -814,6 +815,7 @@ const INVOICING_RATE_LIMITS_SOURCE = `/**
 export const INVOICING_RATE_LIMITS = {
   read: { limit: 120, windowMs: 60 * 1000 },
   viewed: { limit: 30, windowMs: 60 * 60 * 1000 },
+  pay: { limit: 20, windowMs: 60 * 60 * 1000 },
 } as const;
 
 /**
@@ -863,6 +865,7 @@ function renderInvoicingCompanies(answers: Answers): string {
     ...(alerts ? [`import { alertOnInvoicingEvent } from "@/server/alerts";`] : []),
     ...(comms ? [`import { commsEmailConfigured, commsSenders } from "@/server/comms-senders";`] : []),
     `import { companyLinks } from "@/server/company-links";`,
+    `import { invoiceCardPayments } from "@/server/payments";`,
     `import {`,
     `  admitPublic,`,
     `  companyAuthorizer,`,
@@ -1094,7 +1097,9 @@ export function buildInvoicingAdminHandlers(overrides: FeatureHandlerOverrides =
     business: invoicingBusiness,
     invoiceUrl: async (token, tenantId) => (await companyLinks(tenantId)).invoice(token),${comms ? "\n    sendInvoiceEmail: (input) => invoicingComms.sendInvoice(input)," : ""}
     delivery: (tenantId) => invoicingDelivery(tenantId),
-    detailsHref: "/settings/company#invoicing",${alerts ? `
+    detailsHref: "/settings/company#invoicing",
+    // Getting paid, part 1: voiding an invoice closes its open Stripe pages.
+    payments: invoiceCardPayments,${alerts ? `
     // A customer opened an invoice, or a payment settled it: the alerts
     // (Tenancy 2b-1). Inside an arrow on purpose: alerts.ts and this module
     // import each other, and nothing here reads it at load (13.10 rule 3).
@@ -1110,7 +1115,11 @@ export function buildInvoicingPublicHandlers() {
     resolveTenant: resolvePublicTenant,
     admit: admitPublic,
     business: invoicingBusiness,
-    rateLimit: invoicingRateLimit,${alerts ? `
+    rateLimit: invoicingRateLimit,
+    // Getting paid, part 1: "Pay now", on the ${noun}'s own Stripe account
+    // (src/server/payments.ts), back to the ${noun}'s own invoice page.
+    payments: invoiceCardPayments,
+    invoicePageUrl: async (token, tenantId) => (await companyLinks(tenantId)).invoice(token),${alerts ? `
     // A customer opened an invoice, or a payment settled it: the alerts
     // (Tenancy 2b-1). Inside an arrow on purpose: alerts.ts and this module
     // import each other, and nothing here reads it at load (13.10 rule 3).
@@ -1161,6 +1170,7 @@ function renderInvoicingSingle(answers: Answers): string {
     `import { reportError } from "@/server/error-reporter";`,
     ...(detailsFrom === "estimator" ? [`import { ESTIMATOR_TENANT } from "@/server/estimator-staff";`] : []),
     ...(comms || detailsFrom ? [`import { log } from "@/server/logger";`] : []),
+    `import { invoiceCardPayments } from "@/server/payments";`,
     `import { limiter } from "@/server/rate-limit";`,
     ...(detailsFrom === "scheduling" ? [`import { SCHEDULING_TENANT } from "@/server/scheduling-staff";`] : []),
     `import { authorizeStaffFor } from "@/server/staff-access";`,
@@ -1345,7 +1355,9 @@ export function buildInvoicingAdminHandlers() {
     authorize: authorizeStaffFor(INVOICING_STAFF_KEYS, "Sign in to see invoices."),
     business: () => invoicingBusiness(),
     invoiceUrl: (token) => invoiceLink(token),${comms ? "\n    sendInvoiceEmail: (input) => invoicingComms.sendInvoice(input)," : ""}
-    delivery: () => invoicingDelivery(),${alerts ? `
+    delivery: () => invoicingDelivery(),
+    // Getting paid, part 1: voiding an invoice closes its open Stripe pages.
+    payments: invoiceCardPayments,${alerts ? `
     // A customer opened an invoice, or a payment settled it: the alerts
     // (Tenancy 2b-1). Inside an arrow on purpose: alerts.ts and this module
     // import each other, and nothing here reads it at load (13.10 rule 3).
@@ -1360,7 +1372,11 @@ export function buildInvoicingPublicHandlers() {
     db,
     tenantId: INVOICING_TENANT,
     business: () => invoicingBusiness(),
-    rateLimit: invoicingRateLimit,${alerts ? `
+    rateLimit: invoicingRateLimit,
+    // Getting paid, part 1: "Pay now", on the business's own Stripe account
+    // (src/server/payments.ts), back to the customer's invoice page.
+    payments: invoiceCardPayments,
+    invoicePageUrl: (token) => invoiceLink(token),${alerts ? `
     // A customer opened an invoice, or a payment settled it: the alerts
     // (Tenancy 2b-1). Inside an arrow on purpose: alerts.ts and this module
     // import each other, and nothing here reads it at load (13.10 rule 3).

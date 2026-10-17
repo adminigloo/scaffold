@@ -86,7 +86,11 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // caret somehow admitted them: the period moved onto the subscription ITEM
   // two API versions ago, and code reading the old field mirrors every
   // subscription with no period at all.
-  stripe: "0.3.0",
+  // 0.4.0 (getting paid, part 1): Connect for companies — the emitted
+  // payments glue and the Connect webhook call startConnectOnboarding,
+  // companyForConnectEvent, runLedgeredEvent and createDirectCheckoutSession,
+  // and the schema has stripe_connected_accounts. None exist in 0.3.x.
+  stripe: "0.4.0",
   // 0.2.0 for the variant- and product-name rules. The product builder refuses
   // to start a save that `validateProduct` cannot clear, so a project resolving
   // 0.1.x gets a validator with no opinion about a blank variant name — which
@@ -228,7 +232,8 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // closed-by-the-business message, the logo, the ceiling hint, #embed.
   // 0.4.0 (Tenancy 2b-1): who hears about new leads is handed to Alert
   // settings, so the old list isn't offered beside the new one.
-  "estimator-widget": "0.4.0",
+  // 0.5.0 (getting paid, part 1): `depositHref`, the accepted quote's "Pay the deposit".
+  "estimator-widget": "0.5.0",
   // 0.3.0: the emitted public procedures call findPublicSlots (PublicSlots only —
   // 0.2's slots route returned the previous customer's street address) and
   // requestPublicBooking with a requesterKey (server-derived times and crew,
@@ -284,11 +289,15 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.4.0 (Tenancy 2b-1): `onEvent` (an invoice opened, an invoice paid),
   // the overdue sweep, the alert kinds and mappers, and the invoice as a file
   // record. The alerts and files glue imports all of them.
-  invoicing: "0.4.0",
+  // 0.5.0 (getting paid, part 1): Pay now — the `payments` seam, the pay route,
+  // deposits, handleInvoiceCardEvent and invoice_checkouts. None exist in 0.4.x.
+  invoicing: "0.5.0",
   // First release (Tenancy 2a): the ledger, one invoice's editor and the
   // customer's invoice page, over invoicing 0.3's wire. 0.1.1 (Tenancy 2b-1):
   // its invoicing peer is ^0.4.0 — pinned for the same lockfile reason.
-  "invoicing-widget": "0.1.1",
+  // 0.2.0 (getting paid, part 1): Pay now on the customer's page, the deposit
+  // and a payment's dispute/refund mark in the ledger, over invoicing 0.5's wire.
+  "invoicing-widget": "0.2.0",
   // 0.2.0 (sweep): SMS compliance is required with an SMS sender, the queue is
   // bounded and cancellable, and the emitted router calls setTemplateActive and
   // requireEmailSubject — none exist in 0.1.x.

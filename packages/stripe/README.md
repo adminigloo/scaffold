@@ -55,10 +55,31 @@ Before starting a checkout for a plan, check the company doesn't already have
 a live subscription (`liveStripeSubscription` in `@adminigloo/billing/server`)
 and reuse its Stripe customer (`companyStripeCustomer`) if it paid before.
 
+## Companies taking card payments (Connect, 0.4)
+
+Each company connects ITS OWN Stripe account (Standard-style through the
+Accounts API controller settings: full Stripe dashboard, its own Stripe fees,
+Stripe carries losses). `startConnectOnboarding` makes or reuses its one
+account and returns an onboarding link; `stripe_connected_accounts` keeps the
+account and Stripe's charges/payouts flags per company (`applyAccountUpdate`
+from `account.updated`). `createDirectCheckoutSession` charges on the
+company's account with this site's optional cut as `application_fee_amount`
+(`platformFeeMinor`: PLATFORM_FEE_BPS, rounded DOWN to the cent; 0 = none).
+
+The Connect webhook (its own secret, STRIPE_CONNECT_WEBHOOK_SECRET) resolves
+the company only from `event.account` (`companyForConnectEvent`: an unknown
+account is ignored) and runs `runLedgeredEvent` keyed by account + event
+(`connectLedgerKey`). `createConnectAdminHandlers` with
+`STRIPE_CONNECT_ADMIN_ROUTES` serves the company's payments screen (status,
+connect, disconnect) on `payments.view` / `payments.manage`. Run
+`sql/upgrade-0.3-to-0.4.sql` before deploying.
+
 ## Not included
 
-- **Businesses taking payments from their own customers** (Stripe Connect):
-  every payment here is to you, the app's owner.
+- **Payouts to anyone but the company.** A company's card payments pay out to
+  its own bank from its own Stripe account; this site only takes its fee.
+- **Selling products per company** (a company's own shop): getting paid, part 2.
+- **SMS** payment links or receipts.
 - **Tax and coupons screens.** Turn on Stripe Tax and promotion codes in
   Stripe's hosted checkout.
 - **Changing a subscription with more than one priced item.** Plan

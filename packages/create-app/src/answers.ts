@@ -414,6 +414,10 @@ export function packagesFor(answers: Answers): readonly string[] {
   // fix to the ledger had to be hand-applied to every project; now it reaches
   // them by `npm update`, in both modes.
   if (answers.includeInvoicing) optional.push("invoicing", "invoicing-widget");
+  // Getting paid, part 1: "Pay now" on an invoice runs on @adminigloo/stripe
+  // (Connect in a companies project, the business's own keys for one), so a
+  // project that sells nothing itself still installs it with invoicing.
+  if (answers.includeInvoicing && answers.businessModel === "none") optional.push("stripe");
   if (answers.includeComms) optional.push("comms", "comms-widget");
   if (answers.includeAeo) optional.push("aeo");
   // Two packages for one answer (Tenancy 2b-4c), the feedback split: `booking`
@@ -612,6 +616,15 @@ export function optionalEnvFor(answers: Answers): readonly string[] {
   // marks are made with. Optional: without it one is made from
   // CLERK_SECRET_KEY, which a deployment already requires.
   if (answers.includeAnalytics) vars.push("AUDIENCE_SECRET");
+  // Getting paid, part 1: "Pay now" on invoices. Optional — without them the
+  // invoice page shows "How to pay" only. A companies project uses Connect
+  // (each company's own Stripe account) and may take a fee; one business uses
+  // its own Stripe keys and an endpoint of its own.
+  if (answers.includeInvoicing) {
+    if (answers.businessModel === "none") vars.push("STRIPE_SECRET_KEY");
+    if (answers.tenantNoun !== "none") vars.push("STRIPE_CONNECT_WEBHOOK_SECRET", "PLATFORM_FEE_BPS");
+    else vars.push("STRIPE_INVOICE_WEBHOOK_SECRET");
+  }
   // PLANS (billing 0.3), in a companies project that sells subscriptions (the
   // same test as plans-emit.ts's `plansEnforced`, inlined to keep this module
   // free of the emitters): the free trial's length, and the day plans were

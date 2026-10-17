@@ -39,6 +39,7 @@ export function detail(extra: Partial<InvoiceDetailWire> = {}): InvoiceDetailWir
     editable: true,
     nextStatuses: ["sent", "void"],
     can: { manage: true, record: true, reverse: true },
+    deposit: { rule: "default", percentBp: null, fixedAmount: null, amount: 0, defaultPercent: 0, editable: true },
     ...extra,
   };
 }
@@ -81,6 +82,8 @@ export function publicInvoice(extra: Partial<PublicInvoiceResponse["invoice"]> =
       issuedAt: "2026-10-13T18:00:00.000Z",
       lines: [{ description: "Spring cleanup", quantity: 2, unitPrice: 12_500, total: 25_000 }],
       payments: [],
+      pay: null,
+      pending: null,
       ...extra,
     },
     business: {

@@ -1,6 +1,7 @@
 import { isObject, listOf, num, str, strOrNull } from "./http.js";
 import type {
   BusinessWire,
+  DepositWire,
   InvoiceDetailWire,
   InvoiceLineWire,
   InvoiceListWire,
@@ -10,7 +11,9 @@ import type {
   InvoiceSummaryWire,
   InvoicingStatusWire,
   MoneyFormatWire,
+  PaymentFlagWire,
   PaymentMethodWire,
+  PayOptionWire,
   PublicInvoiceResponse,
   SendResponse,
   SettableInvoiceStatusWire,
@@ -72,6 +75,34 @@ function parsePayment(raw: unknown): InvoicePaymentWire | null {
     reversesPaymentId: strOrNull(raw.reversesPaymentId),
     reversed: raw.reversed === true,
     reason: strOrNull(raw.reason),
+    flag: raw.flag === "disputed" || raw.flag === "dispute_lost" ? (raw.flag as PaymentFlagWire) : null,
+    reversedAmount: num(raw.reversedAmount),
+  };
+}
+
+function parseDeposit(raw: unknown): DepositWire {
+  const d = isObject(raw) ? raw : {};
+  return {
+    rule: pick(d.rule, ["default", "none", "percent", "amount"] as const, "default"),
+    percentBp: typeof d.percentBp === "number" ? d.percentBp : null,
+    fixedAmount: typeof d.fixedAmount === "number" ? d.fixedAmount : null,
+    amount: num(d.amount),
+    defaultPercent: num(d.defaultPercent),
+    editable: d.editable === true,
+  };
+}
+
+/** "Pay now": null unless the server offered it, with every figure the server's. */
+export function parsePayOption(raw: unknown): PayOptionWire | null {
+  if (!isObject(raw) || typeof raw.amount !== "number" || raw.amount < 1) return null;
+  return {
+    stage: raw.stage === "deposit" ? "deposit" : "balance",
+    amount: raw.amount,
+    depositAmount: num(raw.depositAmount),
+    allowPartial: raw.allowPartial === true,
+    minimum: num(raw.minimum),
+    maximum: num(raw.maximum),
+    belowMinimum: raw.belowMinimum === true,
   };
 }
 
@@ -107,6 +138,7 @@ function parseDetail(raw: unknown): InvoiceDetailWire | null {
     editable: raw.editable === true,
     nextStatuses: listOf(raw.nextStatuses, (s) => (SETTABLE.includes(s as SettableInvoiceStatusWire) ? (s as SettableInvoiceStatusWire) : null)),
     can: { manage: can.manage === true, record: can.record === true, reverse: can.reverse === true },
+    deposit: parseDeposit(raw.deposit),
   };
 }
 
@@ -166,6 +198,11 @@ export function parsePublicInvoice(raw: unknown): PublicInvoiceResponse | null {
         isObject(l) ? { description: str(l.description), quantity: num(l.quantity), unitPrice: num(l.unitPrice), total: num(l.total) } : null,
       ),
       payments: listOf(inv.payments, (p) => (isObject(p) ? { amount: num(p.amount), method: pick(p.method, METHODS, "other"), paidAt: str(p.paidAt) } : null)),
+      pay: parsePayOption(inv.pay),
+      pending:
+        isObject(inv.pending) && typeof inv.pending.amount === "number" && inv.pending.amount > 0
+          ? { amount: inv.pending.amount, startedAt: str(inv.pending.startedAt) }
+          : null,
     },
     business: parseBusiness(raw.business),
     format: parseFormat(raw.format),

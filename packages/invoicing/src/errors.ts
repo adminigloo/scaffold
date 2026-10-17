@@ -14,7 +14,8 @@ export type InvoicingErrorCode =
   | "invalid_status_transition"
   | "payment_refused"
   | "reversal_refused"
-  | "invoice_number_conflict";
+  | "invoice_number_conflict"
+  | "payment_unavailable";
 
 export class InvoicingError extends Error {
   constructor(
@@ -67,6 +68,17 @@ export class InvoiceDiscountError extends InvoicingError {
 }
 
 /** Lines are frozen once money is against the invoice (partial/paid) or it is void. */
+/**
+ * invoicing 0.5: "Pay now" can't start — the business isn't taking card
+ * payments right now, or nothing on this invoice is left to pay online. The
+ * message is the customer's: plain, and never about configuration.
+ */
+export class CardPaymentUnavailableError extends InvoicingError {
+  constructor(message: string) {
+    super("payment_unavailable", message);
+  }
+}
+
 export class InvoiceNotEditableError extends InvoicingError {
   constructor(readonly status: string) {
     super(

@@ -22,7 +22,7 @@ export interface InvoicingBusiness extends InvoicingDetails {
 }
 
 /** The business with every gap filled: what the handlers and the email actually use. */
-export interface ResolvedInvoicingBusiness extends InvoicingDetails {
+export interface ResolvedInvoicingBusiness extends Required<InvoicingDetails> {
   readonly name: string;
   readonly timeZone: string;
   readonly contactEmail: string | null;
@@ -86,6 +86,11 @@ export function resolveInvoicingBusiness(business: InvoicingBusiness | null | un
     paymentInstructions: b?.paymentInstructions ?? null,
     dueDays,
     footer: b?.footer ?? null,
+    depositPercent:
+      typeof b?.depositPercent === "number" && Number.isInteger(b.depositPercent) && b.depositPercent >= 0 && b.depositPercent <= 100
+        ? b.depositPercent
+        : 0,
+    allowPartialPayments: b?.allowPartialPayments === true,
   };
 }
 

@@ -27,6 +27,9 @@ export const invoicingSettingsFragment = {
     paymentInstructions: z.preprocess(blankToNull, z.string().trim().max(1000).nullable()).default(null),
     dueDays: z.number().int().min(0).max(365).default(14),
     footer: z.preprocess(blankToNull, z.string().trim().max(500).nullable()).default(null),
+    // invoicing 0.5: paying online.
+    depositPercent: z.number().int().min(0).max(100).default(0),
+    allowPartialPayments: z.boolean().default(false),
   }),
   fields: [
     {
@@ -47,6 +50,23 @@ export const invoicingSettingsFragment = {
       width: "half",
     },
     { key: "footer", kind: "textarea", label: "A note at the bottom of every invoice (optional)", width: "full" },
+    {
+      key: "depositPercent",
+      kind: "number",
+      label: "Deposit customers pay first, as a percent of the invoice",
+      help: "0 means no deposit. When customers pay online, they pay this part first and the rest after. You can change it on any one invoice.",
+      min: 0,
+      max: 100,
+      step: 1,
+      width: "half",
+    },
+    {
+      key: "allowPartialPayments",
+      kind: "toggle",
+      label: "Let customers pay part of an invoice online",
+      help: "Off: they pay the deposit, then the whole balance. On: they can choose how much to pay each time.",
+      width: "half",
+    },
   ],
 } as const;
 
@@ -54,9 +74,19 @@ export interface InvoicingDetails {
   readonly paymentInstructions: string | null;
   readonly dueDays: number;
   readonly footer: string | null;
+  /** invoicing 0.5: the deposit every new invoice asks first, 0–100 percent (0 = none). */
+  readonly depositPercent?: number;
+  /** invoicing 0.5: may a customer choose how much to pay online? Default no. */
+  readonly allowPartialPayments?: boolean;
 }
 
-export const DEFAULT_INVOICING_DETAILS: InvoicingDetails = Object.freeze({ paymentInstructions: null, dueDays: 14, footer: null });
+export const DEFAULT_INVOICING_DETAILS: Required<InvoicingDetails> = Object.freeze({
+  paymentInstructions: null,
+  dueDays: 14,
+  footer: null,
+  depositPercent: 0,
+  allowPartialPayments: false,
+});
 
 /**
  * The fragment's values from a stored blob (`companyProfile(id).settings.invoicing`).
@@ -65,12 +95,18 @@ export const DEFAULT_INVOICING_DETAILS: InvoicingDetails = Object.freeze({ payme
  * wipes the payment instructions off every invoice. Anything that isn't an
  * object reads as the defaults.
  */
-export function readInvoicingDetails(stored: unknown): InvoicingDetails {
+export function readInvoicingDetails(stored: unknown): Required<InvoicingDetails> {
   const raw = typeof stored === "object" && stored !== null && !Array.isArray(stored) ? (stored as Record<string, unknown>) : {};
   const shape = invoicingSettingsFragment.schema.shape;
-  const pick = <K extends keyof InvoicingDetails>(key: K): InvoicingDetails[K] => {
+  const pick = <K extends keyof InvoicingDetails>(key: K): Required<InvoicingDetails>[K] => {
     const parsed = shape[key].safeParse(raw[key]);
-    return (parsed.success ? parsed.data : DEFAULT_INVOICING_DETAILS[key]) as InvoicingDetails[K];
+    return (parsed.success ? parsed.data : DEFAULT_INVOICING_DETAILS[key]) as Required<InvoicingDetails>[K];
   };
-  return { paymentInstructions: pick("paymentInstructions"), dueDays: pick("dueDays"), footer: pick("footer") };
+  return {
+    paymentInstructions: pick("paymentInstructions"),
+    dueDays: pick("dueDays"),
+    footer: pick("footer"),
+    depositPercent: pick("depositPercent"),
+    allowPartialPayments: pick("allowPartialPayments"),
+  };
 }

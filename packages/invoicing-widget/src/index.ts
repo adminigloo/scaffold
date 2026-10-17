@@ -13,6 +13,8 @@ export { formatMoney, formatDate } from "./money.js";
 export { invoicingWidgetCss, injectInvoicingStyles } from "./styles.js";
 export type {
   BusinessWire,
+  CardAlertsWire,
+  CardAlertWire,
   Instant,
   InvoiceStatusWire,
   InvoicingErrorCodeWire,

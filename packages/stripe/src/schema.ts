@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
-import { index, integer, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
-import { createdAt } from "@adminigloo/db";
+import { boolean, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { createdAt, idColumn, updatedAt } from "@adminigloo/db";
 
 /**
  * Every webhook Stripe has delivered to us, keyed on Stripe's own event id.
@@ -106,4 +106,52 @@ export const stripeEvents = pgTable(
   ],
 );
 
-export const stripeSchema = { stripeEvents };
+/**
+ * stripe 0.4 (getting paid, part 1): each company's OWN Stripe account, for
+ * taking card payments from its own customers (Stripe Connect, Standard-style:
+ * the company has the full Stripe dashboard, Stripe handles losses, and the
+ * company pays its own Stripe fees).
+ *
+ * ONE ACTIVE ACCOUNT PER COMPANY, and every account it ever connected kept: a
+ * company that removed this site from its Stripe dashboard (deauthorized)
+ * connects a NEW account next time, while refunds and disputes on the old
+ * one still map back to it. The account id is unique, so one Stripe account
+ * can never belong to two companies: the Connect webhook maps
+ * `event.account` back to exactly one company through that index.
+ *
+ * The three flags are Stripe's, copied from `account.updated` (and from a
+ * fresh read when the owner comes back from onboarding). "Pay now" is offered
+ * only while `charges_enabled` is true and the company has not disconnected.
+ *
+ * Disconnecting keeps the row with `disconnected_at` set: refunds and disputes
+ * on payments taken before still arrive for this account and must still find
+ * their company. Connecting again reuses the same account.
+ */
+export const stripeConnectedAccounts = pgTable(
+  "stripe_connected_accounts",
+  {
+    id: idColumn(),
+    tenantId: text("tenant_id").notNull(),
+    accountId: text("account_id").notNull(),
+    /** The business name (or email) on the Stripe account, so the owner sees which account is connected. */
+    displayName: text("display_name"),
+    chargesEnabled: boolean("charges_enabled").notNull().default(false),
+    payoutsEnabled: boolean("payouts_enabled").notNull().default(false),
+    detailsSubmitted: boolean("details_submitted").notNull().default(false),
+    /** When the newest `account.updated` applied was made: an older one arriving late changes nothing. */
+    accountUpdatedAt: timestamp("account_updated_at", { withTimezone: true }),
+    /** The owner pressed Disconnect here: no new card payments; Connect again reuses this account. */
+    disconnectedAt: timestamp("disconnected_at", { withTimezone: true }),
+    /** The company removed this site from its Stripe dashboard: this account is history; Connect makes a new one. */
+    deauthorizedAt: timestamp("deauthorized_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("stripe_connected_accounts_account_uidx").on(t.accountId),
+    uniqueIndex("stripe_connected_accounts_active_uidx").on(t.tenantId).where(sql`${t.deauthorizedAt} is null`),
+    index("stripe_connected_accounts_tenant_idx").on(t.tenantId),
+  ],
+);
+
+export const stripeSchema = { stripeEvents, stripeConnectedAccounts };

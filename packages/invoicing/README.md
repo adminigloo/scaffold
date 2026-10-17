@@ -257,6 +257,40 @@ createInvoicingAdminHandlers({
 });
 ```
 
+## Pay now and deposits (0.5)
+
+Customers pay an invoice — or its deposit first — by card from their link.
+Pass a `payments` seam (`InvoiceCardPayments`: is this company ready, open a
+Checkout Session, close one) and `invoicePageUrl` to `createInvoicingHandlers`,
+and `payments` to `createInvoicingAdminHandlers` (voiding an invoice closes its
+open Sessions). create-app wires it to @adminigloo/stripe; anything else can
+implement the three methods.
+
+- **The amount is the server's.** The deposit (or what's left of it) first,
+  then the balance due (`onlinePaymentOption`). The customer picks another
+  amount only when the company turned on "let customers pay part", and never
+  more than the balance or under 50¢.
+- **Deposits**: per invoice (`POST v1/admin/invoices/{invoice}/deposit`: the
+  company's usual, none, a percent in basis points, or a fixed amount in cents)
+  or the company's usual percent (Invoices settings). A percent is of the
+  total, rounded to the nearest cent; deposit then balance comes to the total
+  exactly.
+- **The webhook** calls `handleInvoiceCardEvent(db, tenantId, event)` with the
+  company YOU resolved from the Stripe account (never from metadata). It
+  records a payment only for a checkout of that company, for that checkout's
+  invoice, in exactly its amount and currency, keyed on the PaymentIntent
+  (`checkout.session.completed` and `payment_intent.succeeded` for one payment
+  are recorded once). Anything else is refused and given to `onAlert`. A full
+  refund is a reversal; a part refund or a dispute flags the payment.
+  `INVOICE_CARD_EVENT_TYPES` is the event list to enable.
+
+## Upgrading from 0.4
+
+Run `sql/upgrade-0.4-to-0.5.sql` before deploying (safe twice): the deposit
+columns, the payment flag and `invoice_checkouts`. Every 0.4 row stays as it
+was; existing invoices ask no deposit until the company sets one. Without the
+`payments` seam 0.5 answers as 0.4 did, with `pay: null`.
+
 ## Upgrading from 0.3
 
 No database change. `onEvent` is optional; without it 0.4 answers exactly as
@@ -264,9 +298,12 @@ No database change. `onEvent` is optional; without it 0.4 answers exactly as
 
 ## Not included
 
-- **Payments to companies** (Stripe Connect: a customer paying a company's
-  invoice by card). Invoices are paid however the payment instructions say;
-  staff record the payment.
+- **Selling products per company** (a company's own shop and its orders):
+  getting paid, part 2. **SMS** receipts or payment links.
+- **A partial refund on the ledger.** It flags the payment; the owner adjusts
+  the invoice. A dispute that is lost is reversed by the owner.
+- **A fixed-amount default deposit.** The company's default is a percent; a
+  fixed deposit is set on the invoice.
 - **Logo and colour inside the email.** The email carries the company's name
   and reply-to; its body is plain text. The invoice PAGE carries the colour.
 - **Editable invoice details and per-feature identity in single-business

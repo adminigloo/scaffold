@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useId, useState, type FormEvent, type ReactElement } from "react";
 import type { ClientError, Result } from "../http.js";
-import { dollarsInput, formatDate, formatMoney, METHOD_WORDS, MOVE_WORDS, parseDollars, parseQuantity, percentText, STATUS_TONE, STATUS_WORDS } from "../money.js";
+import { dollarsInput, formatDate, formatMoney, METHOD_WORDS, MOVE_WORDS, parseDollars, parsePercent, parseQuantity, percentText, STATUS_TONE, STATUS_WORDS } from "../money.js";
 import type {
+  DepositBody,
   InvoiceDetailWire,
   InvoiceLineWire,
   InvoiceLinkWire,
@@ -258,6 +259,16 @@ export function InvoiceEditor(props: InvoiceEditorProps) {
           </section>
         ) : null}
 
+        {invoice.can.manage && transport.setDeposit && (invoice.deposit.editable || invoice.deposit.amount > 0) ? (
+          <Deposit
+            invoice={invoice}
+            money={(cents) => formatMoney(cents, format, locale)}
+            busy={busy === "deposit"}
+            refused={refused}
+            onSave={(body) => write("deposit", () => transport.setDeposit!(invoice.id, body), () => "Deposit saved.")}
+          />
+        ) : null}
+
         <Payments
           invoice={invoice}
           format={format}
@@ -485,6 +496,93 @@ function LineForm({
   );
 }
 
+/**
+ * The deposit (0.2): what the customer pays online first. The company's
+ * default, none, a percent or a fixed amount; the server works out what it
+ * comes to, and refuses a change once money is against the invoice.
+ */
+function Deposit({
+  invoice,
+  money,
+  busy,
+  refused,
+  onSave,
+}: {
+  invoice: InvoiceDetailWire;
+  money: (cents: number) => string;
+  busy: boolean;
+  refused: (where: string) => ReactElement | null;
+  onSave: (body: DepositBody) => Promise<Result<InvoiceResponse>>;
+}) {
+  const id = useId();
+  const d = invoice.deposit;
+  const [rule, setRule] = useState<DepositBody["rule"]>(d.rule);
+  const [percent, setPercent] = useState(d.percentBp !== null ? String(d.percentBp / 100) : "");
+  const [amount, setAmount] = useState(d.fixedAmount !== null ? dollarsInput(d.fixedAmount) : "");
+  const [error, setError] = useState<string | null>(null);
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setError(null);
+    let body: DepositBody;
+    if (rule === "percent") {
+      const parsed = parsePercent(percent);
+      if (!parsed.ok || parsed.value < 1 || parsed.value > 10_000) return setError("Enter a percent from 1 to 100.");
+      body = { rule, percentBp: parsed.value };
+    } else if (rule === "amount") {
+      const parsed = parseDollars(amount, { allowZero: false });
+      if (!parsed.ok) return setError(parsed.message);
+      body = { rule, amount: parsed.value };
+    } else body = { rule };
+    const res = await onSave(body);
+    if (!res.ok) setError(res.error.message);
+  };
+  return (
+    <section className="aiiw-card" aria-labelledby={`${id}-title`} data-aiiw-deposit="">
+      <h3 className="aiiw-h3" id={`${id}-title`}>
+        Deposit
+      </h3>
+      <p className="aiiw-muted">
+        {d.amount > 0 ? `Customers paying online pay ${money(d.amount)} first, then the rest.` : "No deposit: customers paying online pay the whole balance."}
+      </p>
+      {d.editable ? (
+        <form className="aiiw-form" onSubmit={(event) => void submit(event)} noValidate>
+          <label className="aiiw-field">
+            <span>Deposit on this invoice</span>
+            <select className="aiiw-input" value={rule} onChange={(e) => setRule(e.target.value as DepositBody["rule"])}>
+              <option value="default">{d.defaultPercent > 0 ? `Your usual (${d.defaultPercent}%)` : "Your usual (none)"}</option>
+              <option value="none">No deposit</option>
+              <option value="percent">A percent of the invoice</option>
+              <option value="amount">A fixed amount</option>
+            </select>
+          </label>
+          {rule === "percent" ? (
+            <label className="aiiw-field">
+              <span>Percent</span>
+              <input className="aiiw-input" inputMode="decimal" value={percent} onChange={(e) => setPercent(e.target.value)} />
+            </label>
+          ) : rule === "amount" ? (
+            <label className="aiiw-field">
+              <span>Amount ($)</span>
+              <input className="aiiw-input" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
+            </label>
+          ) : null}
+          {error ? (
+            <p className="aiiw-field-error" role="alert">
+              {error}
+            </p>
+          ) : null}
+          <div className="aiiw-actions">
+            <button type="submit" className="aiiw-btn aiiw-btn-secondary" disabled={busy}>
+              Save deposit
+            </button>
+          </div>
+          {refused("deposit")}
+        </form>
+      ) : null}
+    </section>
+  );
+}
+
 function Payments({
   invoice,
   format,
@@ -543,8 +641,23 @@ function Payments({
               <span className="aiiw-small">{formatDate(payment.paidAt, format, locale)}</span>
             </div>
             {payment.reversesPaymentId ? <span className="aiiw-small">Reversal{payment.reason ? `: ${payment.reason}` : ""}</span> : null}
-            {payment.reversed ? <span className="aiiw-small">Reversed</span> : null}
-            {invoice.can.reverse && !payment.reversed && !payment.reversesPaymentId ? (
+            {payment.reversed ? (
+              <span className="aiiw-small">Reversed</span>
+            ) : payment.reversedAmount > 0 ? (
+              <span className="aiiw-small" data-aiiw-partly-refunded="">
+                Partly refunded {money(payment.reversedAmount)}
+              </span>
+            ) : null}
+            {payment.flag === "disputed" ? (
+              <span className="aiiw-small" data-aiiw-flag="disputed">
+                Disputed: the customer's bank opened a chargeback. Answer it in your Stripe dashboard.
+              </span>
+            ) : payment.flag === "dispute_lost" ? (
+              <span className="aiiw-small" data-aiiw-flag="dispute_lost">
+                The dispute was lost: the bank took this payment back (see the reversal).
+              </span>
+            ) : null}
+            {invoice.can.reverse && !payment.reversed && payment.reversedAmount === 0 && !payment.reversesPaymentId ? (
               <div className="aiiw-actions">
                 <button type="button" className="aiiw-btn aiiw-btn-secondary" onClick={() => onReverse(payment)}>
                   Reverse

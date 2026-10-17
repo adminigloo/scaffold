@@ -12,10 +12,11 @@ import {
   segmentsAfter,
 } from "./http.js";
 import { emitInvoicingEvent, type InvoicingEventOptions } from "./events.js";
-import { getInvoiceByToken, markInvoiceViewed, type InvoicingDb } from "./index.js";
+import { getInvoiceByToken, markInvoiceViewed, type InvoiceRow, type InvoicingDb } from "./index.js";
+import { onlinePaymentOption, pendingCardPayments, startInvoiceCheckout, type InvoiceCardPayments } from "./online.js";
 import type { InvoicingPublicRouteKind } from "./routes.js";
 import { invoices } from "./schema.js";
-import type { BusinessWire, InvoiceStatusWire, PaymentMethodWire, PublicInvoiceResponse } from "./wire.js";
+import type { BusinessWire, InvoiceStatusWire, PaymentMethodWire, PayOptionWire, PayResponse, PublicInvoiceResponse } from "./wire.js";
 
 /**
  * The customer's side (Tenancy 2a, 10.5): `<InvoiceView>` opens an invoice by
@@ -54,7 +55,14 @@ export interface CreateInvoicingHandlersOptions extends InvoicingEventOptions {
   admit?: (tenantId: string, req: Request) => InvoicingAdmission | Promise<InvoicingAdmission>;
   business?: (tenantId: string) => InvoicingBusiness | null | Promise<InvoicingBusiness | null>;
   /** Your rate limit: false → 429. Default: none. */
-  rateLimit?: (req: Request, bucket: "read" | "viewed") => boolean | Promise<boolean>;
+  rateLimit?: (req: Request, bucket: "read" | "viewed" | "pay") => boolean | Promise<boolean>;
+  /**
+   * invoicing 0.5: card payments ("Pay now"), wired to @adminigloo/stripe. Absent:
+   * no Pay now, the page shows "How to pay" only, and the pay route says so.
+   */
+  payments?: InvoiceCardPayments;
+  /** invoicing 0.5: the customer's invoice page for a token (absolute) — where Stripe sends them back. Required with `payments`. */
+  invoicePageUrl?: (token: string, tenantId: string) => string | Promise<string>;
   onError?: (error: unknown, context: { tenantId: string | null; route: string }) => void;
   now?: () => Date;
 }
@@ -77,6 +85,7 @@ function route(pathname: string): { kind: InvoicingPublicRouteKind; method: "GET
   const token = parts[1] ?? "";
   if (parts.length === 2) return { kind: "invoice", method: "GET", token };
   if (parts.length === 3 && parts[2] === "viewed") return { kind: "viewed", method: "POST", token };
+  if (parts.length === 3 && parts[2] === "pay") return { kind: "pay", method: "POST", token };
   return null;
 }
 
@@ -116,6 +125,32 @@ export function createInvoicingHandlers(options: CreateInvoicingHandlersOptions)
     }
   };
 
+  /** "Pay now" for this invoice, or null: no card payments here, or nothing to pay. A throwing seam is reported and read as null. */
+  async function payOptionFor(
+    tenantId: string,
+    token: string,
+    business: ResolvedInvoicingBusiness,
+  ): Promise<{ pay: PayOptionWire | null; pending: { amount: number; startedAt: string } | null }> {
+    if (!options.payments || !options.invoicePageUrl) return { pay: null, pending: null };
+    const [row] = (await options.db
+      .select()
+      .from(invoices)
+      .where(and(eq(invoices.viewToken, token), eq(invoices.tenantId, tenantId)))
+      .limit(1)) as InvoiceRow[];
+    if (!row) return { pay: null, pending: null };
+    const onItsWay = await pendingCardPayments(options.db, tenantId, row.id);
+    const pending = onItsWay ? { amount: onItsWay.amount, startedAt: onItsWay.startedAt.toISOString() } : null;
+    const option = onlinePaymentOption(row, business, onItsWay?.amount ?? 0);
+    if (!option) return { pay: null, pending };
+    try {
+      if (!(await options.payments.ready(tenantId)).ready) return { pay: null, pending };
+    } catch (error) {
+      report(error, tenantId, "invoice");
+      return { pay: null, pending };
+    }
+    return { pay: { ...option }, pending };
+  }
+
   async function handle(req: Request): Promise<Response> {
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: { "cache-control": "no-store", ...PUBLIC_HEADERS } });
     const matched = route(new URL(req.url).pathname);
@@ -137,7 +172,7 @@ export function createInvoicingHandlers(options: CreateInvoicingHandlersOptions)
         const admission = await options.admit(tenantId, req);
         if (!admission.open) return refuse(new InvoicingHttpError("unavailable", 409, admission.message));
       }
-      if (options.rateLimit && !(await options.rateLimit(req, matched.kind === "viewed" ? "viewed" : "read"))) {
+      if (options.rateLimit && !(await options.rateLimit(req, matched.kind === "invoice" ? "read" : matched.kind))) {
         return refuse(new InvoicingHttpError("rate_limited", 429, "Too many requests. Wait a minute and try again."));
       }
       if (!TOKEN_RE.test(matched.token)) return refuse(notFound());
@@ -175,10 +210,36 @@ export function createInvoicingHandlers(options: CreateInvoicingHandlersOptions)
         return answer({ viewed });
       }
 
+      if (matched.kind === "pay") {
+        const raw = await readJsonBody(req);
+        const scoped = tenantId;
+        if (!options.payments || !options.invoicePageUrl) {
+          // 404 first for a token that isn't this company's, like every route.
+          const found = await getInvoiceByToken(options.db, matched.token, { tenantId: scoped });
+          if (!found) return refuse(notFound());
+          return refuse(new InvoicingHttpError("payment_unavailable", 409, "Card payments aren't available for this invoice. See \"How to pay\" below."));
+        }
+        const page = await options.invoicePageUrl(matched.token, scoped);
+        const requested = typeof raw.amount === "number" ? raw.amount : undefined;
+        const started = await startInvoiceCheckout(options.db, options.payments, {
+          tenantId: scoped,
+          token: matched.token,
+          ...(requested !== undefined ? { requestedAmount: requested } : {}),
+          business: await businessFor(scoped, matched.kind),
+          successUrl: `${page}${page.includes("?") ? "&" : "?"}paid=1`,
+          cancelUrl: page,
+          report: (error) => report(error, scoped, matched.kind),
+        });
+        if (!started) return refuse(notFound());
+        const body: PayResponse = { url: started.url };
+        return answer(body);
+      }
+
       const found = await getInvoiceByToken(options.db, matched.token, { tenantId });
       if (!found) return refuse(notFound());
       const business = await businessFor(tenantId, matched.kind);
       const inv = found.invoice;
+      const { pay, pending } = await payOptionFor(tenantId, matched.token, business);
       const body: PublicInvoiceResponse = {
         invoice: {
           number: inv.invoiceNumber,
@@ -199,6 +260,8 @@ export function createInvoicingHandlers(options: CreateInvoicingHandlersOptions)
             method: (["card", "cash", "check", "ach", "other"].includes(p.method) ? p.method : "other") as PaymentMethodWire,
             paidAt: p.paidAt.toISOString(),
           })),
+          pay,
+          pending,
         },
         business: businessWire(business),
         format: moneyFormatOf(business),

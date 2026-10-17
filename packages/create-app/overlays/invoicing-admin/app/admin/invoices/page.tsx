@@ -1,4 +1,5 @@
 import { InvoicesLedger } from "__SCOPE__/invoicing-widget/admin";
+import { PaymentsAttention } from "@/components/PaymentsAttention";
 import { PageHeader } from "@/components/ui";
 import { currentPrincipal } from "@/server/auth";
 import { loadStaffPermissions } from "@/server/permissions";
@@ -35,6 +36,12 @@ export default async function InvoicesPage() {
         invoiceHref="/admin/invoices/{id}"
         canManage={can?.can("staff.invoices.manage") ?? false}
       />
+      {/* Card payments that need you: refunds, disputes, money that couldn't be recorded as it was. */}
+      {can?.can("staff.invoices.manage") ? (
+        <div className="mt-10">
+          <PaymentsAttention baseUrl="/api/admin/invoices" />
+        </div>
+      ) : null}
     </>
   );
 }

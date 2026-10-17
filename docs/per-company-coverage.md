@@ -54,9 +54,9 @@ project's isolation test.
 | `aeo` | Per company | Each company's AI mentions: the questions its customers ask, who it is, and whether AI assistants name it — every answer paid from its own month of AI (Tenancy 2b-4b). The site's own stay the site's. |
 | `booking` | Per company | Each company's calls: the people on its team who take them, their weekly hours, time off and time zones, its holidays and call types, its booking page and the private links it sends — new bookings close when it's suspended or its plan ends, links it sent stay open (Tenancy 2b-4c). |
 | `booking-widget` | Per company | The booking page and manage page at a company's web address, and its calls screen at /app/calls. |
-| `commerce` | Not yet: getting-paid | A company taking card payments from its own customers comes with the getting-paid work. |
+| `stripe` | Per company | Each company's own Stripe account (it connects it at /app/payments) and its customers' card payments on invoices and deposits, recorded only for the company that owns the account (getting paid, part 1). The site's own plan billing stays on the site's own account. |
+| `commerce` | Not yet: getting-paid-part-2 | A company selling products to its own customers comes with getting paid, part 2. |
 | `catalog` | Shared | the site's own plans and products, sold to every company |
-| `stripe` | Shared | the site's own Stripe account; a company taking card payments from its own customers comes with the getting-paid work |
 | `db` | Shared | the database connection and migration tools every package uses; it keeps no business's records |
 | `env` | Shared | reads the site's own settings when it starts; nothing in it belongs to a business |
 | `license` | Shared | checks the site's own licence key with the seller; one per site, not per business |

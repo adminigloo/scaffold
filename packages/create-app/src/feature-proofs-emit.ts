@@ -99,6 +99,23 @@ function suitesFor(answers: Answers): readonly FeatureSuite[] {
       permissions: "invoicingPermissions",
     });
   }
+  // GETTING PAID, PART 1: a company's payments screen (connect its own Stripe
+  // account, see it, disconnect it). Admin routes only: the customer's "Pay
+  // now" is invoicing's public pay route, driven with the invoicing suite.
+  if (answers.includeInvoicing) {
+    suites.push({
+      feature: "stripe",
+      glue: "@/server/payments",
+      adminBuilder: "buildPaymentsAdminHandlers",
+      adminRoutes: "STRIPE_CONNECT_ADMIN_ROUTES",
+      adminSegment: "payments",
+      publicBuilder: null,
+      publicRoutes: null,
+      publicSegment: null,
+      pkg: "stripe",
+      permissions: "stripeConnectPermissions",
+    });
+  }
   if (answers.includeComms) {
     suites.push({
       feature: "comms",
@@ -277,7 +294,9 @@ export function featureSuiteNames(answers: Answers): readonly string[] {
 export const FEATURE_ENTITIES: Readonly<Record<string, readonly string[]>> = {
   scheduling: ["resource", "time-off", "visit", "visit-token"],
   estimator: ["product", "supply", "attachment", "option", "option-value", "estimate", "line", "photo", "key", "quote-token"],
-  invoicing: ["invoice", "item", "payment", "invoice-token"],
+  invoicing: ["invoice", "item", "payment", "invoice-token", "card-alert"],
+  // Getting paid, part 1: the payments screen names no row; it acts on the company in the path.
+  stripe: [],
   comms: ["template-key"],
   // Tenancy 2b-1 (3.1).
   notifications: ["alert", "person"],
@@ -385,7 +404,10 @@ export function renderCompanyRows(answers: Answers): string {
         ]
       : []),
     ...(invoicing
-      ? [`import { createInvoice, invoiceItems, recordPayment, setInvoiceStatus } from "${scope}/invoicing";`]
+      ? [
+          `import { createInvoice, invoiceCardAlerts, invoiceCheckouts, invoiceItems, recordPayment, setInvoiceStatus } from "${scope}/invoicing";`,
+          `import { stripeConnectedAccounts } from "${scope}/stripe/schema";`,
+        ]
       : []),
     ...(feedback
       ? [
@@ -618,6 +640,21 @@ export function renderCompanyRows(answers: Answers): string {
   const payment = await recordPayment(database, { tenantId, invoiceId: invoice.id, amount: 1_000, method: "cash" });
   if (!payment) throw new Error(\`no payment was planted for \${label}\`);
   rows.payment = payment.paymentId;
+  // GETTING PAID, PART 1: the ${noun}'s own Stripe account (connected, taking
+  // charges) and a "Pay now" it started, so the payments screen and the
+  // checkouts have rows of A's to leak or to move.
+  await database.insert(stripeConnectedAccounts).values({ tenantId, accountId: \`acct_\${label}_probe\`, chargesEnabled: true, payoutsEnabled: true, detailsSubmitted: true });
+  strings.push(\`acct_\${label}_probe\`);
+  await database.insert(invoiceCheckouts).values({ tenantId, invoiceId: invoice.id, accountId: \`acct_\${label}_probe\`, sessionId: \`cs_\${label}_probe\`, purpose: "balance", amount: 49_000, currency: "usd", status: "open" });
+  strings.push(\`cs_\${label}_probe\`);
+  // A card payment that needs the ${noun}'s owner ("Needs your attention").
+  const [cardAlert] = await database
+    .insert(invoiceCardAlerts)
+    .values({ tenantId, kind: "amount_mismatch", message: \`\${Label} probe card alert\`, amount: 1_234, currency: "usd", invoiceId: invoice.id, paymentIntentId: \`pi_\${label}_probe\`, dedupeKey: \`probe:\${label}\` })
+    .returning({ id: invoiceCardAlerts.id });
+  if (!cardAlert) throw new Error(\`no card alert was planted for \${label}\`);
+  rows["card-alert"] = cardAlert.id;
+  strings.push(\`\${Label} probe card alert\`, \`pi_\${label}_probe\`);
 `);
   }
   if (comms) {
@@ -1718,6 +1755,10 @@ export function renderFeatureIsolationTest(answers: Answers): string {
       `    invoices: await all(sql\`select * from invoices where tenant_id = \${a} order by id\`),`,
       `    invoice_items: await all(sql\`select * from invoice_items where invoice_id in (select id from invoices where tenant_id = \${a}) order by id\`),`,
       `    invoice_payments: await all(sql\`select * from invoice_payments where invoice_id in (select id from invoices where tenant_id = \${a}) order by id\`),`,
+      // Getting paid, part 1: A's Pay now checkouts and its own Stripe account.
+      `    invoice_checkouts: await all(sql\`select * from invoice_checkouts where tenant_id = \${a} order by id\`),`,
+      `    invoice_card_alerts: await all(sql\`select * from invoice_card_alerts where tenant_id = \${a} order by id\`),`,
+      `    stripe_connected_accounts: await all(sql\`select * from stripe_connected_accounts where tenant_id = \${a}\`),`,
     );
   }
   if (answers.includeComms) {

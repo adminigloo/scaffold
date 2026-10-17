@@ -10,6 +10,7 @@ import { buttonClass } from "@/components/ui";
 import { AlertsBellSlot } from "@/components/AlertsBellSlot";
 import { CompanySwitcherSlot } from "@/components/CompanySwitcherSlot";
 import { currentPrincipal } from "@/server/auth";
+import { navBadges } from "@/server/nav-badges";
 import { loadStaffPermissions, loadTenantPermissions } from "@/server/permissions";
 import { tenancy } from "@/server/tenancy";
 
@@ -66,7 +67,7 @@ export async function AuthHeader() {
         <div className="hidden items-center gap-4 sm:flex">
           <SiteLinks />
         </div>
-        <PhoneMenu app={[]} />
+        <PhoneMenu app={[]} badges={{}} />
         <Link href="/sign-in" className={buttonClass("secondary")}>
           Sign in
         </Link>
@@ -88,7 +89,7 @@ export async function AuthHeader() {
       <div className="hidden items-center gap-4 sm:flex">
         <AppLinks viewer={viewer} />
       </div>
-      <PhoneMenu app={visibleAppLinks(viewer)} />
+      <PhoneMenu app={visibleAppLinks(viewer)} badges={viewer.badges} />
       {/* THE ALERTS BELL (Tenancy 2b-1), OUTSIDE the phone menu so it shows on
           a phone too. Generated in three variants (src/components/
           AlertsBellSlot.tsx): the active company's bell for someone whose role
@@ -110,9 +111,11 @@ interface Viewer {
   readonly isStaff: boolean;
   /** The permission keys the person holds in their ACTIVE company ([] with none, or suspended). */
   readonly can: readonly string[];
+  /** Counts beside links, by href (src/server/nav-badges.ts): e.g. card payments that need the owner. */
+  readonly badges: Readonly<Record<string, number>>;
 }
 
-const NOBODY: Viewer = { principal: null, session: null, isStaff: false, can: [] };
+const NOBODY: Viewer = { principal: null, session: null, isStaff: false, can: [], badges: {} };
 
 /**
  * The signed-in person, their session, whether they are on the platform's
@@ -131,7 +134,8 @@ async function signedInViewer(): Promise<Viewer> {
       session.state === "ready"
         ? ((await loadTenantPermissions({ principal, tenantId: session.company.id }))?.toArray() ?? [])
         : [];
-    return { principal, session, isStaff, can };
+    const badges = await navBadges(session.state === "ready" ? session.company.id : null, can);
+    return { principal, session, isStaff, can, badges };
   } catch {
     return NOBODY;
   }
@@ -238,9 +242,20 @@ function AppLinks({ viewer }: { readonly viewer: Viewer }) {
           className="text-sm text-accent underline underline-offset-2"
         >
           {link.label}
+          <Badge count={viewer.badges[link.href]} />
         </Link>
       ))}
     </>
+  );
+}
+
+/** A count beside a link while something there needs the person; nothing at 0. */
+function Badge({ count }: { readonly count: number | undefined }) {
+  if (!count) return null;
+  return (
+    <span className="ml-1 inline-flex min-w-5 items-center justify-center rounded-full bg-red-700 px-1.5 text-xs font-semibold text-white no-underline" aria-label={`, ${count} need your attention`} data-nav-badge="">
+      {count}
+    </span>
   );
 }
 
@@ -249,7 +264,7 @@ function AppLinks({ viewer }: { readonly viewer: Viewer }) {
  * it works with no JavaScript and the keyboard and screen readers already know
  * it; each row is at least 44px tall, the size a thumb can hit.
  */
-function PhoneMenu({ app }: { readonly app: readonly SiteLink[] }) {
+function PhoneMenu({ app, badges }: { readonly app: readonly SiteLink[]; readonly badges: Readonly<Record<string, number>> }) {
   const links = [...SITE_LINKS, ...app];
   if (links.length === 0) return null;
   return (
@@ -268,6 +283,7 @@ function PhoneMenu({ app }: { readonly app: readonly SiteLink[] }) {
             className="flex min-h-11 items-center px-4 text-sm text-ink no-underline hover:bg-canvas"
           >
             {link.label}
+            <Badge count={badges[link.href]} />
           </Link>
         ))}
       </nav>

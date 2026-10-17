@@ -582,9 +582,9 @@ describe("what the project installs and says (17)", () => {
       ["scheduling", "^0.6.0"],
       ["scheduling-widget", "^0.3.0"],
       ["estimator", "^0.5.0"],
-      ["estimator-widget", "^0.4.0"],
-      ["invoicing", "^0.4.0"],
-      ["invoicing-widget", "^0.1.1"],
+      ["estimator-widget", "^0.5.0"],
+      ["invoicing", "^0.5.0"],
+      ["invoicing-widget", "^0.2.0"],
       ["comms", "^0.4.0"],
       ["comms-widget", "^0.1.1"],
     ] as const) {

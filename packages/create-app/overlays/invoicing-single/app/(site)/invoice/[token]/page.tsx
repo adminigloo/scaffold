@@ -32,10 +32,10 @@ export default async function CustomerInvoicePage({
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { token } = await params;
-  const { preview } = await searchParams;
+  const { preview, paid } = await searchParams;
   return (
     <main className="mx-auto max-w-2xl px-4 py-10 sm:px-6 sm:py-14">
-      <InvoiceView baseUrl="/api/invoices" token={token} preview={preview === "1"} />
+      <InvoiceView baseUrl="/api/invoices" token={token} preview={preview === "1"} returned={paid === "1"} />
     </main>
   );
 }

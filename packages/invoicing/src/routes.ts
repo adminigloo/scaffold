@@ -31,9 +31,12 @@ export type InvoicingAdminRouteKind =
   | "send"
   | "link"
   | "payment-record"
-  | "payment-reverse";
+  | "payment-reverse"
+  | "deposit"
+  | "attention"
+  | "attention-resolve";
 
-export type InvoicingPublicRouteKind = "invoice" | "viewed";
+export type InvoicingPublicRouteKind = "invoice" | "viewed" | "pay";
 
 /** The permission each staff route asks for: the contract's table (10.5), as data. */
 export const INVOICING_ADMIN_ROUTE_PERMISSIONS: Readonly<Record<InvoicingAdminRouteKind, InvoicingPermission>> = {
@@ -50,6 +53,12 @@ export const INVOICING_ADMIN_ROUTE_PERMISSIONS: Readonly<Record<InvoicingAdminRo
   link: "invoices.manage",
   "payment-record": "invoices.payments.record",
   "payment-reverse": "invoices.payments.reverse",
+  // invoicing 0.5: what the customer pays first is part of raising the bill.
+  deposit: "invoices.manage",
+  // invoicing 0.5: the card payments that need the owner — read and handled
+  // by the people who answer for the books.
+  attention: "invoices.payments.reverse",
+  "attention-resolve": "invoices.payments.reverse",
 };
 
 function freeze<T extends readonly InvoicingRoute[]>(routes: T): T {
@@ -58,7 +67,8 @@ function freeze<T extends readonly InvoicingRoute[]>(routes: T): T {
 }
 
 /**
- * Entities: `{invoice}`, `{item}` (a line), `{payment}`, `{invoice-token}`.
+ * Entities: `{invoice}`, `{item}` (a line), `{payment}`, `{invoice-token}`,
+ * `{card-alert}` (a card payment that needs the owner).
  * A placeholder in the PATH means the route reads that row (another company's
  * row → 404); every body below is the smallest one its schema accepts.
  */
@@ -99,9 +109,14 @@ export const INVOICING_ADMIN_ROUTES: readonly InvoicingRoute<InvoicingAdminRoute
     permission: "invoices.payments.reverse",
     body: { reason: "Isolation probe" },
   },
+  { kind: "deposit", method: "POST", path: "v1/admin/invoices/{invoice}/deposit", permission: "invoices.manage", body: { rule: "percent", percentBp: 2500 } },
+  { kind: "attention", method: "GET", path: "v1/admin/attention", permission: "invoices.payments.reverse" },
+  { kind: "attention-resolve", method: "POST", path: "v1/admin/attention/{card-alert}/resolve", permission: "invoices.payments.reverse", body: {} },
 ] as const);
 
 export const INVOICING_PUBLIC_ROUTES: readonly InvoicingRoute<InvoicingPublicRouteKind>[] = freeze([
   { kind: "invoice", method: "GET", path: "v1/invoice/{invoice-token}", permission: null },
   { kind: "viewed", method: "POST", path: "v1/invoice/{invoice-token}/viewed", permission: null, body: {} },
+  // invoicing 0.5: "Pay now". The amount is the server's; the body may only ask a part payment.
+  { kind: "pay", method: "POST", path: "v1/invoice/{invoice-token}/pay", permission: null, body: {} },
 ] as const);

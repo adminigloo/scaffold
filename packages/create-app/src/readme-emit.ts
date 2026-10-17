@@ -8,7 +8,8 @@
  * mode does and plainly does NOT do yet, and the installed packages.
  */
 
-import { tenantLabel, tenantLabelPlural } from "./answers.js";
+import { tenantLabel, tenantLabelPlural, type Answers } from "./answers.js";
+import { cardPaymentsSetup } from "./payments-emit.js";
 import type { ProjectManifest } from "./manifest.js";
 
 /**
@@ -34,7 +35,7 @@ export const TENANCY_1_NOT_INCLUDED: readonly string[] = [
  */
 export const TENANCY_2A_NOT_INCLUDED: readonly string[] = [
   "**Per-company analytics, SEO/AEO and book-a-call (booking)** — Tenancy 2b-4. (Feedback, alerts, files and the assistant are per company already.)",
-  "**Payments to companies** (Stripe Connect: a customer paying a company's invoice by card). Invoices are paid however the payment instructions say; staff record the payment.",
+  "**Selling products per company** (a company's own shop and orders) — getting paid, part 2. Customers already pay invoices and deposits by card (Taking card payments, below).",
   "**Plans, limits and billing enforcement** per company.",
   "**Custom domains and subdomains.** Public pages live at `/t/{web-address}`.",
   "**Impersonation** (\"view as this company\") from the operator console, and platform-wide feature reports (all companies' visits, estimates, invoices) in `/admin`.",
@@ -62,7 +63,7 @@ export const TENANCY_2B1_NOT_INCLUDED: readonly string[] = [
   "**SEO reports, AI-citation tracking and book-a-call (booking) per company** — Tenancy 2b-4b and 2b-4c. Website visits and search basics are per company since Tenancy 2b-4a (`--analytics`, `--seo`).",
   "**Text (SMS) and push alerts.** Alerts come in the app and by email — S9.",
   "**Plans, limits and billing enforcement** — the billing chunk. Each company's storage allowance is one setting for everyone (`FILES_ALLOWANCE_MB`) until then; the seam the billing chunk fills is there.",
-  "**Stripe Connect** (customers paying a company by card).",
+  "**Card payouts to anyone but the company itself**, and **SMS** payment links. (Customers pay invoices and deposits by card into the company's own Stripe account.)",
   "**Custom domains.**",
   "**Virus scanning of uploads.** Files are checked for their type and size only.",
   "**Uploads over 4 MB, and uploads straight from the browser to storage.** Phone photos are made smaller before they're sent; other files over 4 MB are refused with a plain sentence.",
@@ -614,6 +615,8 @@ export function renderProjectReadme(manifest: ProjectManifest): string {
   lines.push(...websiteSection(answers));
   lines.push(...websiteReportsSection(answers));
   lines.push(...bookingSection(answers));
+  // Getting paid, part 1: what to turn on in Stripe for Pay now.
+  if (answers.includeInvoicing) lines.push(...cardPaymentsSetup(answers as unknown as Answers, "###").split("\n"));
   lines.push("### Not included", "", ...notIncludedFor(companies, { seo: answers.includeSeo }).map((item) => `- ${item}`), "");
 
   const tables = primaryTables(answers);

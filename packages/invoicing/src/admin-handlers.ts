@@ -41,11 +41,24 @@ import {
   type InvoicingDb,
 } from "./index.js";
 import { INVOICE_LIST_STATUSES, PAYMENT_METHODS } from "./constants.js";
+import {
+  depositRuleOf,
+  expireOpenCheckouts,
+  invoiceDeposit,
+  listCardAlerts,
+  resolveCardAlert,
+  setInvoiceDeposit,
+  stripePaymentUrl,
+  type CardAlertRow,
+  type InvoiceCardPayments,
+} from "./online.js";
 import type { InvoiceStatus } from "./money.js";
 import type { InvoicingPermission } from "./permissions.js";
 import { INVOICING_ADMIN_ROUTE_PERMISSIONS, type InvoicingAdminRouteKind } from "./routes.js";
 import { invoiceItems, invoicePayments, invoices } from "./schema.js";
 import type {
+  CardAlertWire,
+  CardAlertsWire,
   InvoiceDetailWire,
   InvoiceLinkWire,
   InvoiceListWire,
@@ -54,6 +67,7 @@ import type {
   InvoiceStatusWire,
   InvoiceSummaryWire,
   InvoicingStatusWire,
+  PaymentFlagWire,
   PaymentMethodWire,
   SendResponse,
   SettableInvoiceStatusWire,
@@ -111,6 +125,8 @@ export interface CreateInvoicingAdminHandlersOptions extends InvoicingEventOptio
   delivery?: (tenantId: string) => InvoicingDelivery | Promise<InvoicingDelivery>;
   /** Where the owner fills in invoice details (the checklist and the status notice link here). */
   detailsHref?: string | null;
+  /** invoicing 0.5: card payments. Voiding an invoice expires its open Stripe Checkout Sessions through it. */
+  payments?: InvoiceCardPayments;
   onError?: (error: unknown, context: { tenantId: string | null; route: string }) => void;
   now?: () => Date;
 }
@@ -144,6 +160,7 @@ function route(pathname: string): Partial<Record<"GET" | "POST", Matched>> | nul
         if (action === "send") return one("POST", "send", true);
         if (action === "link") return one("GET", "link", true);
         if (action === "payments") return one("POST", "payment-record", true);
+        if (action === "deposit") return one("POST", "deposit", true);
       }
       return null;
     case "items":
@@ -152,6 +169,9 @@ function route(pathname: string): Partial<Record<"GET" | "POST", Matched>> | nul
       return null;
     case "payments":
       return parts.length === 3 && action === "reverse" ? one("POST", "payment-reverse", true) : null;
+    case "attention":
+      if (parts.length === 1) return one("GET", "attention");
+      return parts.length === 3 && action === "resolve" ? one("POST", "attention-resolve", true) : null;
     default:
       return null;
   }
@@ -199,6 +219,12 @@ const paymentBodySchema = z.object({
   method: z.enum(PAYMENT_METHODS),
   reference: optionalText(200),
 });
+const depositBodySchema = z.discriminatedUnion("rule", [
+  z.object({ rule: z.literal("default") }),
+  z.object({ rule: z.literal("none") }),
+  z.object({ rule: z.literal("percent"), percentBp: z.number().int("Use a whole number.").min(1, "At least 0.01%.").max(10_000, "At most 100%.") }),
+  z.object({ rule: z.literal("amount"), amount: z.number().int("Use whole cents.").min(1, "Enter an amount.").max(1_000_000_000_00) }),
+]);
 const reverseBodySchema = z.object({
   reason: z.string().trim().min(1, "Say why this payment is being reversed.").max(500, "Keep it under 500 characters."),
 });
@@ -235,9 +261,18 @@ function summaryWire(row: InvoiceRow, now: Date): InvoiceSummaryWire {
   };
 }
 
-function detailWire(detail: InvoiceDetail, can: InvoiceDetailWire["can"], now: Date): InvoiceDetailWire {
+const FLAGS: readonly string[] = ["disputed", "dispute_lost"];
+
+function detailWire(detail: InvoiceDetail, can: InvoiceDetailWire["can"], now: Date, business: Pick<ResolvedInvoicingBusiness, "depositPercent" | "currency">): InvoiceDetailWire {
   const inv = detail.invoice;
-  const reversed = new Set(detail.payments.map((p) => p.reversesPaymentId).filter((id): id is string => Boolean(id)));
+  const defaultDepositPercent = business.depositPercent;
+  // A payment is "reversed" once its reversals (0.5: a part refund is one) add up to all of it.
+  const reversedBy = new Map<string, number>();
+  for (const p of detail.payments) if (p.reversesPaymentId) reversedBy.set(p.reversesPaymentId, (reversedBy.get(p.reversesPaymentId) ?? 0) - p.amount);
+  // "Reversed" is all of it — a full refund, or a lost dispute; anything less is "Partly refunded $X".
+  const reversed = new Set(
+    detail.payments.filter((p) => !p.reversesPaymentId && ((reversedBy.get(p.id) ?? 0) >= p.amount || p.flag === "dispute_lost")).map((p) => p.id),
+  );
   const payments: InvoicePaymentWire[] = detail.payments.map((p) => ({
     id: p.id,
     amount: p.amount,
@@ -247,7 +282,10 @@ function detailWire(detail: InvoiceDetail, can: InvoiceDetailWire["can"], now: D
     reversesPaymentId: p.reversesPaymentId ?? null,
     reversed: reversed.has(p.id),
     reason: p.reason ?? null,
+    flag: p.flag && FLAGS.includes(p.flag) ? (p.flag as PaymentFlagWire) : null,
+    reversedAmount: p.reversesPaymentId ? 0 : (reversedBy.get(p.id) ?? 0),
   }));
+  const rule = depositRuleOf(inv);
   return {
     id: inv.id,
     number: inv.invoiceNumber,
@@ -283,6 +321,28 @@ function detailWire(detail: InvoiceDetail, can: InvoiceDetailWire["can"], now: D
     editable: isInvoiceEditable(inv.status),
     nextStatuses: [...nextInvoiceStatuses(inv.status)] as SettableInvoiceStatusWire[],
     can,
+    deposit: {
+      rule: rule.rule,
+      percentBp: rule.rule === "percent" ? rule.percentBp : null,
+      fixedAmount: rule.rule === "amount" ? rule.amount : null,
+      amount: invoiceDeposit(inv, business),
+      defaultPercent: defaultDepositPercent,
+      editable: inv.status !== "void" && inv.status !== "paid" && inv.amountPaid === 0,
+    },
+  };
+}
+
+function cardAlertWire(row: CardAlertRow): CardAlertWire {
+  return {
+    id: row.id,
+    kind: row.kind,
+    message: row.message,
+    amount: row.amount ?? null,
+    currency: row.currency ?? null,
+    invoiceId: row.invoiceId ?? null,
+    stripeUrl: stripePaymentUrl(row.paymentIntentId ?? null),
+    createdAt: row.createdAt.toISOString(),
+    resolvedAt: row.resolvedAt ? row.resolvedAt.toISOString() : null,
   };
 }
 
@@ -347,10 +407,18 @@ export function createInvoicingAdminHandlers(options: CreateInvoicingAdminHandle
         record: await may("invoices.payments.record"),
         reverse: await may("invoices.payments.reverse"),
       });
+    // invoicing 0.5 (H1): ANY change to what the invoice asks — a line, the
+    // deposit, a void — closes the Stripe pages already open for it, so a
+    // customer can't pay the old figure. Reported, never fatal.
+    const edited = async (invoiceId: string): Promise<void> => {
+      if (!options.payments) return;
+      await expireOpenCheckouts(db, options.payments, tenantId, invoiceId, { report: (error) => report(error, tenantId, matched.kind) });
+    };
     const respond = async (invoiceId: string, status = 200): Promise<Response> => {
       const detail = await getInvoice(db, tenantId, invoiceId);
       if (!detail) throw notFound();
-      const body: InvoiceResponse = { invoice: detailWire(detail, await can(), now), format: moneyFormatOf(await biz()) };
+      const b = await biz();
+      const body: InvoiceResponse = { invoice: detailWire(detail, await can(), now, b), format: moneyFormatOf(b) };
       return json(body, status);
     };
 
@@ -426,12 +494,14 @@ export function createInvoicingAdminHandlers(options: CreateInvoicingAdminHandle
         const body = lineSchema.parse(await readJsonBody(req));
         const change = await addInvoiceItem(db, { tenantId, invoiceId: id, ...body });
         if (!change) throw notFound();
+        await edited(id);
         return respond(id);
       }
       case "item-update": {
         const body = itemPatchSchema.parse(await readJsonBody(req));
         const change = await updateInvoiceItem(db, { tenantId, itemId: id, ...body });
         if (!change) throw notFound();
+        await edited(change.item.invoiceId);
         // The whole invoice the line belongs to (its new id on a sent invoice).
         return respond(change.item.invoiceId);
       }
@@ -448,12 +518,34 @@ export function createInvoicingAdminHandlers(options: CreateInvoicingAdminHandle
         if (!owner) throw notFound();
         const totals = await removeInvoiceItem(db, tenantId, id);
         if (!totals) throw notFound();
+        await edited(owner.invoiceId);
         return respond(owner.invoiceId);
       }
       case "status-set": {
         const body = statusBodySchema.parse(await readJsonBody(req));
         const moved = await setInvoiceStatus(db, { tenantId, id, status: body.status });
         if (!moved) throw notFound();
+        // invoicing 0.5: a voided invoice can't be paid from a checkout the
+        // customer already opened. Reported, never fatal: the void stands.
+        if (body.status === "void") await edited(id);
+        return respond(id);
+      }
+      case "attention": {
+        const { open, handled } = await listCardAlerts(db, tenantId);
+        const body: CardAlertsWire = { open: open.map(cardAlertWire), handled: handled.map(cardAlertWire) };
+        return json(body);
+      }
+      case "attention-resolve": {
+        await readJsonBody(req);
+        const row = await resolveCardAlert(db, tenantId, id, userId);
+        if (!row) throw new InvoicingHttpError("not_found", 404, "That item isn't here.");
+        return json({ item: cardAlertWire(row) });
+      }
+      case "deposit": {
+        const body = depositBodySchema.parse(await readJsonBody(req));
+        const changed = await setInvoiceDeposit(db, tenantId, id, body);
+        if (!changed) throw notFound();
+        await edited(id);
         return respond(id);
       }
       case "send": {
@@ -485,7 +577,7 @@ export function createInvoicingAdminHandlers(options: CreateInvoicingAdminHandle
         const after = await getInvoice(db, tenantId, id);
         if (!after) throw notFound();
         const body: SendResponse = {
-          invoice: detailWire(after, await can(), now),
+          invoice: detailWire(after, await can(), now, await biz()),
           format: moneyFormatOf(await biz()),
           delivery,
           message: message ?? SEND_MESSAGES[delivery](after.invoice.customerEmail ?? null),
