@@ -1,5 +1,13 @@
 # create-adminigloo-app
 
+## 0.34.0
+
+### Minor Changes
+
+- f73f6cf: Getting paid, part 2: `--store` (and `create-app add store`). With companies, each company's products and orders at /app/store, its store at /t/{web address}/store with the cart and the thank-you page, paid into its own connected Stripe account (direct charges, PLATFORM_FEE_BPS) and recorded by the Connect webhook for the company that owns the account; store payments that need the owner on /app/payments beside invoices'. One business: /admin/store and /store on its own Stripe keys, through its payments webhook (/api/webhooks/stripe-invoices). Order emails "{company} via {site}" reply to the owner. Plans sell "products in your store" (Starter 20, Pro 200). The isolation proof drives the store's routes; `store.view` and `store.manage` are company keys (staff keys for one business). No new Stripe webhook events. The site's own checkout now refuses any product that isn't the site's own.
+  
+  The store's settings ("How customers get it": I ship it — a flat shipping price and the countries — or pickup/digital only; prices include any sales tax) are on /app/store and /admin/store; shipped orders show the address. Product photos are the company's own files, counted in its storage allowance, 30 uploads an hour. A trial company sends at most 20 store receipts a day. The admin dashboard counts only this site's own orders and products. Every public throttle (store, booking, invoicing, estimator, scheduling) now gives a caller with no forwarded address one shared "unknown" budget instead of none.
+
 ## 0.33.0
 
 ### Minor Changes

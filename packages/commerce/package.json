@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/commerce",
-  "version": "0.1.7",
+  "version": "0.2.0",
   "description": "One-time purchases, and a store of its own for every business: cart maths in integer minor units, orders keyed on the Checkout Session, server-priced checkout with stock held under a lock, and the store's screens.",
   "license": "UNLICENSED",
   "type": "module",

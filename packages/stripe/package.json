@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/stripe",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "The Stripe primitive: session creation, signature verification, an event ledger with two-phase idempotency, a typed handler registry, and Connect for companies taking card payments from their own customers.",
   "license": "UNLICENSED",
   "type": "module",
