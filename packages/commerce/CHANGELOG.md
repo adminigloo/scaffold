@@ -1,5 +1,12 @@
 # @adminigloo/commerce
 
+## 0.1.7
+
+### Patch Changes
+
+- Updated dependencies [17ca6ea]
+  - @adminigloo/stripe@0.4.0
+
 ## 0.1.6
 
 ### Patch Changes

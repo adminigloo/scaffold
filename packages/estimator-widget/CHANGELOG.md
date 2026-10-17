@@ -1,5 +1,11 @@
 # @adminigloo/estimator-widget
 
+## 0.5.0
+
+### Minor Changes
+
+- 17ca6ea: `<QuoteView payment>`: once the customer accepts a quote, the app says what they can pay — a button ("Pay the deposit", "Pay the balance" or "Pay now") that POSTs once to the app's address (a double click sends one), or a sentence ("Your invoice is on its way."). Without `payment` nothing changes.
+
 ## 0.4.0
 
 ### Minor Changes

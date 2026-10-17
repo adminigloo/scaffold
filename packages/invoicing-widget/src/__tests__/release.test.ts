@@ -20,14 +20,18 @@ describe("released together with the server (getting paid, part 1)", () => {
     expect(manifest.peerDependenciesMeta?.["@adminigloo/invoicing"]?.optional).toBe(true);
   });
 
-  it("is versioned in the same changeset run as invoicing: both minors", () => {
-    const dir = resolve(here, "../../../../.changeset");
-    const read = (name: string) => {
-      const path = resolve(dir, name);
-      expect(existsSync(path), `.changeset/${name} is missing`).toBe(true);
-      return readFileSync(path, "utf8");
-    };
-    expect(read("getting-paid-invoicing-widget.md")).toContain('"@adminigloo/invoicing-widget": minor');
-    expect(read("getting-paid-invoicing.md")).toContain('"@adminigloo/invoicing": minor');
+  it("is versioned in the same release as invoicing: both minors (the changesets, or once versioned, the changelogs)", () => {
+    const changesets = resolve(here, "../../../../.changeset");
+    const pending = resolve(changesets, "getting-paid-invoicing-widget.md");
+    if (existsSync(pending)) {
+      expect(readFileSync(pending, "utf8")).toContain('"@adminigloo/invoicing-widget": minor');
+      expect(readFileSync(resolve(changesets, "getting-paid-invoicing.md"), "utf8")).toContain('"@adminigloo/invoicing": minor');
+      return;
+    }
+    // Versioned: the widget's 0.2.0 and the server's 0.5.0 are in their changelogs, released together.
+    expect(manifest.version).toBe("0.2.0");
+    expect(readFileSync(resolve(here, "../../CHANGELOG.md"), "utf8")).toContain("## 0.2.0");
+    expect(readFileSync(resolve(here, "../../../invoicing/CHANGELOG.md"), "utf8")).toContain("## 0.5.0");
+    expect(json("../../../invoicing/package.json").version).toBe("0.5.0");
   });
 });

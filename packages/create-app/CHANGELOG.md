@@ -1,5 +1,17 @@
 # create-adminigloo-app
 
+## 0.33.0
+
+### Minor Changes
+
+- 17ca6ea: Getting paid, part 1: customers pay invoices and deposits online. With --invoicing in a companies project, each company connects its own Stripe account at /app/payments (status, this site's fee, a link to its Stripe dashboard, disconnect; `payments.view` for owners and admins, `payments.manage` for owners), its /t invoice pages show Pay now, and /api/webhooks/stripe-connect (STRIPE_CONNECT_WEBHOOK_SECRET) records the money for the company that owns the account. PLATFORM_FEE_BPS sets this site's cut (default 0). One business (`--tenant-noun none`) uses its own Stripe keys and /api/webhooks/stripe-invoices (STRIPE_INVOICE_WEBHOOK_SECRET), no Connect. With the estimator too, an accepted quote offers "Pay the deposit": the quote becomes its invoice through the existing accepted-quote flow and the customer pays the company's usual deposit.
+  
+  The isolation proof drives the payments routes (STRIPE_CONNECT_ADMIN_ROUTES) and invoicing's new pay and deposit routes, with each company's Stripe account and checkouts planted. Upgrade notes say which SQL to run and what to set in Stripe. Pins stripe ^0.4.0, invoicing ^0.5.0, invoicing-widget ^0.2.0, estimator-widget ^0.5.0.
+  
+  Review fixes: card-payment problems go to the company's owners through alerts (`alertOnCardPayment`, with notifications) as well as /admin/errors; the accepted quote's button follows the stage ("Pay the deposit", "Pay the balance", "Pay now"), never publishes staff's draft ("Your invoice is on its way."), is pressed once, and accepts only this site's own form; disconnecting closes open pages; the platform webhook ignores connected-account events; the Connect webhook rate-limits per account and applies `account.updated` in order; README and DEPLOYMENT get "Taking card payments" (Connect, platform profile and branding, the endpoint listening to connected accounts and every event, the variables) for both modes.
+  
+  Owners are told with or without --notifications: /app/payments always shows "Needs your attention" (each card problem in plain words, its Stripe link, Mark as handled), the header shows a count on "Card payments" while any is open (src/server/nav-badges.ts, in every project), and a single business gets the same list on /admin/invoices. With notifications the bell and email come too. The isolation proof drives both new routes with each company's planted problem.
+
 ## 0.32.0
 
 ### Minor Changes

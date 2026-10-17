@@ -1,5 +1,12 @@
 # @adminigloo/testing
 
+## 0.2.4
+
+### Patch Changes
+
+- Updated dependencies [17ca6ea]
+  - @adminigloo/stripe@0.4.0
+
 ## 0.2.3
 
 ### Patch Changes
