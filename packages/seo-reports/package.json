@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/seo-reports",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "The search check, per company: how search engines and AI assistants read a company's own website and pages, as a worklist in plain words — read safely (its own addresses only, no private networks, capped), with every report kept in the app's own database.",
   "license": "UNLICENSED",
   "type": "module",
