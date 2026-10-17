@@ -80,6 +80,16 @@ describe("normalizeIcsUrl", () => {
       "https://metadata.google.internal/computeMetadata/v1/",
       "https://metadata/x.ics", // single label: completed by DNS search domains
       "https://router.home.arpa/x.ics",
+      // 0.2, the net.ts standard: only global unicast (2000::/3) is public,
+      // so a NAT64 or 6to4 address is refused whatever it carries, and no port
+      // may be named.
+      "https://[64:ff9b::808:808]/x.ics", // NAT64 of 8.8.8.8
+      "https://[2002:808:808::]/x.ics", // 6to4 of 8.8.8.8
+      "https://[2001:0:1::1]/x.ics", // Teredo, inside 2001::/23
+      "https://[3fff::1]/x.ics", // documentation (3fff::/20)
+      "https://[4000::1]/x.ics", // outside 2000::/3
+      "https://192.88.99.1/x.ics", // the old 6to4 relay
+      "https://calendar.google.com:8443/x.ics",
     ]) {
       expect(() => normalizeIcsUrl(url), url).toThrow(BusySourceError);
     }
@@ -94,7 +104,7 @@ describe("normalizeIcsUrl", () => {
       "https://100.128.0.1/x.ics",
       "https://8.8.8.8/x.ics",
       "https://[2606:4700:4700::1111]/x.ics",
-      "https://[64:ff9b::808:808]/x.ics", // NAT64 of 8.8.8.8
+      "https://calendar.google.com:443/x.ics", // the standard port, dropped by the parser
     ]) {
       expect(() => normalizeIcsUrl(url), url).not.toThrow();
     }
@@ -314,5 +324,37 @@ describe("the busy reader's SSRF fence", () => {
       timeoutMs: 20,
     });
     await expect(hung.busy({ host: HOST, ...RANGE })).rejects.toThrow(/timed out/);
+  });
+});
+
+describe("the pinned transport (0.2, the net.ts standard)", () => {
+  const calendar = ["BEGIN:VCALENDAR", "BEGIN:VEVENT", "UID:x", "DTSTART:20261005T160000Z", "DTEND:20261005T170000Z", "END:VEVENT", "END:VCALENDAR"].join("\r\n");
+
+  it("connects to the address that was checked, never a fresh lookup, and re-checks a redirect's", async () => {
+    const seen: Array<{ host: string; address: string | null }> = [];
+    let dns = 0;
+    const source = createIcsBusySource({
+      resolveHost: async (name) => {
+        dns += 1;
+        return name === "calendar.google.com" ? ["142.250.80.46"] : ["10.0.0.9"];
+      },
+      transport: async (req) => {
+        seen.push({ host: req.url.hostname, address: req.address });
+        return req.url.hostname === "calendar.google.com" && req.url.pathname.endsWith("basic.ics")
+          ? { status: 302, location: "https://rebind.example.net/x.ics", text: "" }
+          : { status: 200, location: null, text: calendar };
+      },
+    });
+    await expect(source.busy({ host: HOST, ...RANGE })).rejects.toThrow(/private network/);
+    expect(seen).toEqual([{ host: "calendar.google.com", address: "142.250.80.46" }]);
+    expect(dns).toBe(2);
+  });
+
+  it("reads a calendar through the pinned transport", async () => {
+    const source = createIcsBusySource({
+      resolveHost: async () => ["142.250.80.46"],
+      transport: async (req) => ({ status: req.address === "142.250.80.46" ? 200 : 500, location: null, text: calendar }),
+    });
+    expect(await source.busy({ host: HOST, ...RANGE })).toHaveLength(1);
   });
 });

@@ -37,6 +37,27 @@ import {
   type DateString,
 } from "./zone.js";
 
+/**
+ * THE FEED IS TOO BIG TO READ (0.2): more events than MAX_FEED_EVENTS, or
+ * more expansion work than the call's step budget. Fail closed: the host's
+ * reader offers no times from this calendar (busy-source.ts), and the owner
+ * sees this sentence on the host.
+ */
+export const FEED_TOO_LARGE_MESSAGE =
+  "Your calendar address is too large to read. Use a calendar with fewer repeating events, or remove the address.";
+
+export class IcsBudgetError extends Error {
+  readonly name = "IcsBudgetError";
+  constructor() {
+    super(FEED_TOO_LARGE_MESSAGE);
+  }
+}
+
+/** The most VEVENTs one feed may carry (0.2). */
+export const MAX_FEED_EVENTS = 5_000;
+/** The most expansion steps (rule periods walked) one busy() call may take across the whole feed (0.2): measured at about 25 ms on a laptop. */
+export const MAX_EXPANSION_STEPS = 20_000;
+
 export class IcsParseError extends Error {
   readonly name = "IcsParseError";
 }
@@ -411,31 +432,66 @@ function monthCandidates(y: number, m: number, rule: RecurrenceRule, anchorDay: 
  * after `limitDate`. Time of day is the DTSTART's; BYHOUR/BYMINUTE are not
  * supported, and a feed that uses them is read as their DTSTART time.
  */
+/** The rule period that contains `fromDate` (0 when it is before DTSTART). */
+function periodAt(dtDate: DateString, rule: RecurrenceRule, fromDate: DateString): number {
+  if (fromDate <= dtDate) return 0;
+  const start = ymd(dtDate);
+  const from = ymd(fromDate);
+  let period: number;
+  if (rule.freq === "DAILY") period = Math.floor(diffDays(dtDate, fromDate) / rule.interval);
+  else if (rule.freq === "WEEKLY")
+    period = Math.floor(diffDays(startOfWeek(dtDate, rule.weekStart), startOfWeek(fromDate, rule.weekStart)) / 7 / rule.interval);
+  else if (rule.freq === "MONTHLY") period = Math.floor((from.y * 12 + from.m - (start.y * 12 + start.m)) / rule.interval);
+  else period = Math.floor((from.y - start.y) / rule.interval);
+  return Math.max(0, period);
+}
+
+/**
+ * Is occurrence N of this rule simply period N (0.2)? True for DAILY and
+ * WEEKLY with no BY* parts: exactly one instance per period, the first at
+ * DTSTART — so a COUNT rule can jump straight to the window instead of
+ * walking every instance since DTSTART (a DTSTART in 1800 with COUNT=99999999
+ * walked 100,000 periods per event per call).
+ */
+function oneInstancePerPeriod(rule: RecurrenceRule): boolean {
+  return (
+    (rule.freq === "DAILY" || rule.freq === "WEEKLY") &&
+    rule.byDay.length === 0 &&
+    rule.byMonthDay.length === 0 &&
+    rule.byMonth.length === 0 &&
+    rule.bySetPos.length === 0
+  );
+}
+
+/** A wall-clock backstop for one expansion (0.2), for a server under load: the step budget is what normally stops a walk. */
+export const MAX_EXPANSION_MS = 100;
+
+/** The expansion work one busy() call may still do; a walk past it (or past its deadline) throws IcsBudgetError. */
+interface StepBudget {
+  steps: number;
+  deadline: number;
+}
+
+function spend(budget: StepBudget): void {
+  budget.steps -= 1;
+  if (budget.steps < 0) throw new IcsBudgetError();
+  if ((budget.steps & 511) === 0 && performance.now() > budget.deadline) throw new IcsBudgetError();
+}
+
 function* ruleDates(
   dtDate: DateString,
   rule: RecurrenceRule,
   fromDate: DateString,
   limitDate: DateString,
-  maxPeriods: number,
+  budget: StepBudget,
 ): Generator<DateString> {
   const start = ymd(dtDate);
   const months = rule.byMonth;
   const inMonths = (date: DateString) => months.length === 0 || months.includes(ymd(date).m);
-  let period = 0;
-  if (fromDate > dtDate) {
-    const from = ymd(fromDate);
-    if (rule.freq === "DAILY") period = Math.floor(diffDays(dtDate, fromDate) / rule.interval);
-    else if (rule.freq === "WEEKLY")
-      period = Math.floor(
-        diffDays(startOfWeek(dtDate, rule.weekStart), startOfWeek(fromDate, rule.weekStart)) / 7 / rule.interval,
-      );
-    else if (rule.freq === "MONTHLY")
-      period = Math.floor((from.y * 12 + from.m - (start.y * 12 + start.m)) / rule.interval);
-    else period = Math.floor((from.y - start.y) / rule.interval);
-    period = Math.max(0, period);
-  }
+  let period = periodAt(dtDate, rule, fromDate);
   const weekdays = rule.byDay.length > 0 ? [...new Set(rule.byDay.map((entry) => entry.weekday))] : [weekdayOf(dtDate)];
-  for (let steps = 0; steps < maxPeriods; steps++, period++) {
+  for (; ; period++) {
+    spend(budget);
     let periodStart: DateString;
     let candidates: DateString[];
     if (rule.freq === "DAILY") {
@@ -559,8 +615,10 @@ export interface ExpandBusyOptions {
   to: Date;
   /** The host's zone: floating times and dates are read in the feed's X-WR-TIMEZONE, else this. */
   timezone: string;
-  /** Total intervals produced before expansion stops. Default 5,000. */
+  /** Instances in the window before the feed is refused as too large (0.2: refused, no longer cut short). Default 5,000. */
   maxInstances?: number;
+  /** Rule periods walked across the whole feed before it is refused as too large (0.2). Default MAX_EXPANSION_STEPS. */
+  maxSteps?: number;
 }
 
 /** Merge overlapping or touching intervals; sorted. */
@@ -580,8 +638,6 @@ export function mergeIntervals(intervals: readonly Interval[]): Interval[] {
   return out;
 }
 
-const MAX_PERIODS_PER_RULE = 100_000;
-
 /**
  * Busy intervals in [from, to) for a parsed calendar: every opaque,
  * non-cancelled instance — master occurrences minus EXDATEs minus the
@@ -598,7 +654,9 @@ export function expandBusy(calendar: ParsedCalendar, options: ExpandBusyOptions)
   // TZIDs nobody can resolve, at parse time).
   const floating = options.timezone;
   const cap = options.maxInstances ?? 5_000;
+  const budget: StepBudget = { steps: options.maxSteps ?? MAX_EXPANSION_STEPS, deadline: performance.now() + MAX_EXPANSION_MS };
   const out: Interval[] = [];
+  if (calendar.events.length > MAX_FEED_EVENTS) throw new IcsBudgetError();
   if (toMs <= fromMs) return out;
 
   // Overrides, keyed by UID → the instants (and, for all-day series, dates) they replace.
@@ -611,13 +669,17 @@ export function expandBusy(calendar: ParsedCalendar, options: ExpandBusyOptions)
   }
 
   const push = (start: number, end: number): boolean => {
-    if (out.length >= cap) return false;
+    // More instances in the window than the cap: the feed can't be read in
+    // full, so it is refused (0.2), never silently cut short.
+    if (out.length >= cap) throw new IcsBudgetError();
     if (end > fromMs && start < toMs && end > start) out.push({ start: new Date(start), end: new Date(end) });
     return true;
   };
 
   for (const event of calendar.events) {
     if (out.length >= cap) break;
+    // Every event costs a step, so a feed of many plain events is bounded too.
+    spend(budget);
     if (event.cancelled || event.transparent) continue;
     const startMs = resolveTime(event.start, floating);
     const zone = frameZone(event.start.frame, floating);
@@ -692,8 +754,19 @@ export function expandBusy(calendar: ParsedCalendar, options: ExpandBusyOptions)
       let produced = 0;
       // DTSTART is always the first instance (RFC 5545 §3.8.5.3), whether or
       // not it matches the rule; COUNT counts it.
-      const dates = [event.start.date];
-      const fromDate = rule.count === null ? lookback : event.start.date;
+      let dates = [event.start.date];
+      let fromDate = rule.count === null ? lookback : event.start.date;
+      // A COUNT rule with one instance per period jumps to the window (0.2):
+      // instance N is period N, so the N before the window are counted, not walked.
+      if (rule.count !== null && oneInstancePerPeriod(rule) && lookback > event.start.date) {
+        const skipped = periodAt(event.start.date, rule, lookback);
+        if (skipped >= rule.count) continue;
+        if (skipped > 0) {
+          produced = skipped;
+          dates = [];
+          fromDate = lookback;
+        }
+      }
       let stopped = false;
       const consider = (date: DateString): boolean => {
         if (untilDate !== null && date > untilDate) return false;
@@ -710,7 +783,7 @@ export function expandBusy(calendar: ParsedCalendar, options: ExpandBusyOptions)
       };
       for (const date of dates) if (!consider(date)) break;
       if (!stopped && (rule.count === null || produced < rule.count)) {
-        for (const date of ruleDates(event.start.date, rule, fromDate, limitDate, MAX_PERIODS_PER_RULE)) {
+        for (const date of ruleDates(event.start.date, rule, fromDate, limitDate, budget)) {
           if (date === event.start.date) continue; // already counted as the first instance
           if (!consider(date)) break;
         }

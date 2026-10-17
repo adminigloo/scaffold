@@ -3,6 +3,7 @@ import {
   useEffect,
   useId,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
   type FormEvent,
@@ -165,6 +166,8 @@ export function BookingWidget(props: BookingWidgetProps) {
   const [holdNote, setHoldNote] = useState<string | null>(null);
   const [refreshSignal, setRefreshSignal] = useState(0);
   const [form, setForm] = useState<BookFormValues>(EMPTY_FORM);
+  // The honeypot (0.2): off screen and out of the tab order, so only a script fills it.
+  const honeypotRef = useRef<HTMLInputElement | null>(null);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -320,6 +323,7 @@ export function BookingWidget(props: BookingWidgetProps) {
         timezone: zone,
         source,
         defaultCallingCode: callingCode,
+        website: honeypotRef.current?.value ?? "",
       }),
     );
     setSubmitting(false);
@@ -386,7 +390,7 @@ export function BookingWidget(props: BookingWidgetProps) {
         {configState.status === "error" ? (
           <Notice tone="error">
             {friendlyError(configState.error, "config")}{" "}
-            {configState.error.code !== "unlicensed" ? (
+            {configState.error.code !== "unlicensed" && configState.error.code !== "closed" ? (
               <button type="button" className="aibk-btn aibk-btn-link" onClick={() => setConfigReload((n) => n + 1)}>
                 Try again
               </button>
@@ -643,6 +647,13 @@ export function BookingWidget(props: BookingWidgetProps) {
                       onChange={(event) => update("notes", event.target.value)}
                     />
                   </Field>
+
+                  <div className="aibk-hp" aria-hidden="true">
+                    <label>
+                      Website
+                      <input ref={honeypotRef} type="text" name="website" tabIndex={-1} autoComplete="off" defaultValue="" />
+                    </label>
+                  </div>
 
                   {submitError ? <Notice tone="error">{submitError}</Notice> : null}
 

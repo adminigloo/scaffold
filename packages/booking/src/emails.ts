@@ -29,7 +29,7 @@
 
 import { googleCalendarUrl, icsLocation } from "./ics.js";
 import type { BookingActor } from "./schema.js";
-import type { AdminBooking, BookingEvent, EventHost } from "./services/context.js";
+import type { AdminBooking, BookingEvent, DueReminder, EventHost } from "./services/context.js";
 
 export type BookingEmailTemplateKey =
   | "booking_confirmation"
@@ -75,7 +75,7 @@ export const bookingEmailTemplates: readonly BookingEmailTemplate[] = [
       "{{manageLine}}",
       "",
       "Talk soon,",
-      "{{hostName}}",
+      "{{signature}}",
     ),
   },
   {
@@ -92,7 +92,7 @@ export const bookingEmailTemplates: readonly BookingEmailTemplate[] = [
       "",
       "{{manageLine}}",
       "",
-      "{{hostName}}",
+      "{{signature}}",
     ),
   },
   {
@@ -111,7 +111,7 @@ export const bookingEmailTemplates: readonly BookingEmailTemplate[] = [
       "",
       "{{manageLine}}",
       "",
-      "{{hostName}}",
+      "{{signature}}",
     ),
   },
   {
@@ -131,7 +131,7 @@ export const bookingEmailTemplates: readonly BookingEmailTemplate[] = [
       "",
       "{{manageLine}}",
       "",
-      "{{hostName}}",
+      "{{signature}}",
     ),
   },
   {
@@ -145,7 +145,7 @@ export const bookingEmailTemplates: readonly BookingEmailTemplate[] = [
       "",
       "If you'd like another time, you can pick one here: {{bookUrl}}",
       "",
-      "{{hostName}}",
+      "{{signature}}",
     ),
   },
   {
@@ -160,7 +160,7 @@ export const bookingEmailTemplates: readonly BookingEmailTemplate[] = [
       "",
       "If you'd like another time, you can pick one here: {{bookUrl}}",
       "",
-      "{{hostName}}",
+      "{{signature}}",
     ),
   },
   {
@@ -177,7 +177,7 @@ export const bookingEmailTemplates: readonly BookingEmailTemplate[] = [
       "",
       "{{manageLine}}",
       "",
-      "{{hostName}}",
+      "{{signature}}",
     ),
   },
   {
@@ -232,6 +232,19 @@ export interface BookingEmailVarsOptions {
   adminUrl?: string;
   /** Intl locale for dates. Default "en-US". */
   locale?: string;
+  /**
+   * The business the call is with (0.2) — a company's name in an app where
+   * many businesses take calls. Signs the invitee's emails under the host's
+   * name and is returned as `fromName`, so the email comes from the business,
+   * never from the site that hosts it. Absent → signed by the host alone.
+   */
+  businessName?: string | null;
+  /**
+   * Where the invitee's replies go (0.2): the business's own address. Absent
+   * → the host's email. Never the platform's: a customer's "can we move it?"
+   * must reach the business.
+   */
+  replyTo?: string | null;
 }
 
 export interface BookingEmailVars {
@@ -248,6 +261,13 @@ export interface BookingEmailVars {
   templateFor: { invitee: BookingEmailTemplateKey | null; host: BookingEmailTemplateKey | null };
   /** Where each goes. `invitee` is null when the booking has no email. */
   to: { invitee: string | null; host: string };
+  /**
+   * Where a reply to each goes (0.2): the invitee's to the business (its
+   * `replyTo`, else the host), the host's notice to the invitee.
+   */
+  replyTo: { invitee: string; host: string | null };
+  /** The sender's display name (0.2): the business's name, else the host's. */
+  fromName: string;
 }
 
 const SAFE_LINK = "the private link in your booking confirmation";
@@ -319,7 +339,7 @@ function hostHowWeMeet(booking: AdminBooking, host: EventHost): string {
  * templates this event calls for. Pure: the same event and options always
  * give the same strings (the clock is never read).
  */
-export function bookingEmailVars(event: BookingEvent, options: BookingEmailVarsOptions): BookingEmailVars {
+export function bookingEmailVars(event: BookingEvent | DueReminder, options: BookingEmailVarsOptions): BookingEmailVars {
   const base = options.baseUrl.replace(/\/+$/, "");
   const locale = options.locale ?? "en-US";
   const b = event.booking;
@@ -336,6 +356,7 @@ export function bookingEmailVars(event: BookingEvent, options: BookingEmailVarsO
   const by: BookingActor = event.event === "booking.cancelled" ? event.by : event.event === "booking.rescheduled" ? (event.by ?? "invitee") : "invitee";
   const who = `${b.inviteeName ?? "Someone"}${b.inviteeCompany ? ` (${b.inviteeCompany})` : ""}`;
   const howInvitee = inviteeHowWeMeet(b, host);
+  const businessName = options.businessName?.trim() || null;
 
   const inviteeGoogle = googleCalendarUrl({
     title: `${event.type.name} with ${host.displayName}`,
@@ -391,9 +412,12 @@ export function bookingEmailVars(event: BookingEvent, options: BookingEmailVarsO
         : `Your ${event.type.name} with ${host.displayName} has moved.`,
     cancelNote: b.cancelReason && by === "host" ? `Note from ${firstNameOf(host.displayName, host.displayName)}: "${b.cancelReason}"` : "",
     bookUrl,
+    businessName: businessName ?? "",
+    signature: businessName && businessName !== host.displayName ? lines(host.displayName, businessName) : host.displayName,
   };
 
-  const headline: Record<BookingEvent["event"], string> = {
+  const headline: Record<BookingEvent["event"] | DueReminder["event"], string> = {
+    "booking.reminder": `A reminder: ${who}'s call (${event.type.name}).`,
     "booking.created":
       b.status === "requested"
         ? `${who} asked for a call (${event.type.name}). Confirm it in your admin.`
@@ -405,7 +429,8 @@ export function bookingEmailVars(event: BookingEvent, options: BookingEmailVarsO
         : "",
     "booking.cancelled": `${who} cancelled their call (${event.type.name}).`,
   };
-  const subjectTag: Record<BookingEvent["event"], string> = {
+  const subjectTag: Record<BookingEvent["event"] | DueReminder["event"], string> = {
+    "booking.reminder": "Call reminder",
     "booking.created": b.status === "requested" ? "Call request" : "New call",
     "booking.confirmed": "Call confirmed",
     "booking.rescheduled": "Call moved",
@@ -456,13 +481,21 @@ export function bookingEmailVars(event: BookingEvent, options: BookingEmailVarsO
       inviteeKey = by === "host" ? "booking_host_cancelled" : "booking_cancelled";
       hostKey = by === "host" ? null : "booking_host_notice";
       break;
+    case "booking.reminder":
+      inviteeKey = "booking_reminder";
+      hostKey = null;
+      break;
   }
+  // A host whose person left the business is written nothing (0.2).
+  if ("hostActive" in event && event.hostActive === false) hostKey = null;
 
   return {
     invitee,
     host: hostVars,
     templateFor: { invitee: inviteeKey, host: hostKey },
     to: { invitee: b.inviteeEmail ?? null, host: host.email },
+    replyTo: { invitee: options.replyTo?.trim() || host.email, host: b.inviteeEmail ?? null },
+    fromName: businessName ?? host.displayName,
   };
 }
 
@@ -482,5 +515,163 @@ export function renderBookingTemplate(
       .replace(/[ \t]+$/gm, "")
       .replace(/\n{3,}/g, "\n\n")
       .trim(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The platform's version (0.2): many businesses sending from one site
+// ---------------------------------------------------------------------------
+
+/**
+ * Meeting services whose links become a button (0.2). Any other link in a
+ * business's email is shown as plain text with its host in bold, so a
+ * look-alike address can't hide behind a friendly button.
+ */
+export const KNOWN_MEETING_HOSTS: readonly string[] = [
+  "zoom.us",
+  "meet.google.com",
+  "teams.microsoft.com",
+  "teams.live.com",
+  "whereby.com",
+  "webex.com",
+];
+
+/** Is this an https link on a known meeting service (or one of its subdomains, like us02web.zoom.us)? */
+export function isKnownMeetingLink(value: string): boolean {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.username || url.password) return false;
+    const host = url.hostname.toLowerCase();
+    return KNOWN_MEETING_HOSTS.some((known) => host === known || host.endsWith(`.${known}`));
+  } catch {
+    return false;
+  }
+}
+
+/** A display name safe in a From header or a subject: no control characters, quotes or angle brackets, one line, at most 64. */
+export function sanitizeEmailName(value: string): string {
+  return value
+    .replace(/[\u0000-\u001f\u007f<>"\\]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 64)
+    .trim();
+}
+
+export interface PlatformEmailOptions extends Omit<BookingEmailVarsOptions, "businessName" | "replyTo"> {
+  /** The business the call is with. */
+  businessName: string;
+  /** This site's name: the From reads "{business} via {app}", the footer "Sent for {business} by {app}." */
+  appName: string;
+  /**
+   * Where the customer's replies go: the business owner's VERIFIED sign-in
+   * address, or null for none. Never an address the business typed in.
+   */
+  replyTo: string | null;
+}
+
+export interface PlatformEmail {
+  to: string;
+  subject: string;
+  text: string;
+  html: string;
+  replyTo: string | null;
+}
+
+export interface PlatformEmails {
+  /** "{business} via {app}", cleaned. */
+  fromName: string;
+  invitee: PlatformEmail | null;
+  host: PlatformEmail | null;
+}
+
+const escapeHtml = (value: string) =>
+  value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+/** A link as plain text with its host in bold: what the reader sees is where it goes. */
+function plainLink(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const at = url.indexOf(parsed.host);
+    if (at < 0) return escapeHtml(url);
+    return `${escapeHtml(url.slice(0, at))}<b>${escapeHtml(parsed.host)}</b>${escapeHtml(url.slice(at + parsed.host.length))}`;
+  } catch {
+    return escapeHtml(url);
+  }
+}
+
+/** This site's own links (the manage page, the .ics) and Google's "add to calendar" are clickable; nothing else is. */
+function ownLink(url: string, origin: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return false;
+    if (parsed.origin === origin) return true;
+    return parsed.origin === "https://calendar.google.com" && parsed.pathname.startsWith("/calendar/render");
+  } catch {
+    return false;
+  }
+}
+
+function toHtml(text: string, origin: string): string {
+  const linked = (line: string) =>
+    line
+      .split(/(https?:\/\/[^\s<>"]+)/g)
+      .map((part, index) => {
+        if (index % 2 === 0) return escapeHtml(part);
+        if (isKnownMeetingLink(part)) {
+          return `${plainLink(part)}<br><a href="${escapeHtml(part)}" style="display:inline-block;margin-top:6px;padding:8px 14px;border-radius:6px;background:#111;color:#fff;text-decoration:none">Join the call</a>`;
+        }
+        if (ownLink(part, origin)) return `<a href="${escapeHtml(part)}">${plainLink(part)}</a>`;
+        return plainLink(part);
+      })
+      .join("");
+  return text
+    .split(/\n{2,}/)
+    .map((paragraph) => `<p>${paragraph.split("\n").map(linked).join("<br>")}</p>`)
+    .join("\n");
+}
+
+/**
+ * THE BOOKING EMAILS, AS A PLATFORM SENDS THEM (0.2) — many businesses, one
+ * sending domain. Every word a business typed (its name, the call type, the
+ * host's name) stays out of the subject except its sanitised name, inside a
+ * fixed sentence; the call type appears in the body only as quoted text; a
+ * meeting link is a button only on a known meeting service; the From is
+ * "{business} via {app}"; replies go to the owner's verified address; and
+ * every email ends "Sent for {business} by {app}."
+ */
+export function platformBookingEmails(event: BookingEvent | DueReminder, options: PlatformEmailOptions): PlatformEmails {
+  const business = sanitizeEmailName(options.businessName) || "the business";
+  const app = sanitizeEmailName(options.appName) || "this site";
+  const vars = bookingEmailVars(event, { ...options, businessName: business, replyTo: options.replyTo ?? "" });
+  let origin = "";
+  try {
+    origin = new URL(options.baseUrl).origin;
+  } catch {
+    origin = "";
+  }
+  const quotedType = `“${event.type.name.replace(/[\u0000-\u001f\u007f]/g, " ").trim()}”`;
+  const footer = `Sent for ${business} by ${app}.`;
+  const date = vars.invitee["shortWhen"] ?? "";
+  const subjects: Record<BookingEmailTemplateKey, string> = {
+    booking_confirmation: `Your call with ${business} is booked — ${date}`,
+    booking_requested: `Your call request with ${business} — ${date}`,
+    booking_confirmed: `Your call with ${business} is confirmed — ${date}`,
+    booking_rescheduled: `Your call with ${business} has moved — ${date}`,
+    booking_cancelled: `Your call with ${business} is cancelled — ${date}`,
+    booking_host_cancelled: `Your call with ${business} is cancelled — ${date}`,
+    booking_reminder: `Reminder: your call with ${business} — ${date}`,
+    booking_host_notice: `${vars.host["subjectTag"] ?? "Call"} — ${vars.host["shortWhen"] ?? ""}`,
+  };
+  const build = (key: BookingEmailTemplateKey | null, to: string | null, fill: Record<string, string>, replyTo: string | null): PlatformEmail | null => {
+    if (!key || !to) return null;
+    const { body } = renderBookingTemplate(bookingEmailTemplate(key), { ...fill, typeName: quotedType });
+    const text = `${body}\n\n${footer}`;
+    return { to, subject: subjects[key].replace(/\s+/g, " ").trim(), text, html: toHtml(text, origin), replyTo };
+  };
+  return {
+    fromName: sanitizeEmailName(`${business} via ${app}`),
+    invitee: build(vars.templateFor.invitee, vars.to.invitee, vars.invitee, options.replyTo ?? null),
+    host: build(vars.templateFor.host, vars.to.host, vars.host, vars.replyTo.host),
   };
 }

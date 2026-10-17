@@ -257,6 +257,30 @@ export const WEBSITE_2B4B_NOT_INCLUDED: readonly string[] = [
   "**Fixing the problems for you.** The search check lists what to change; the changes are yours to make.",
 ];
 
+/** The "Book a call" section (Tenancy 2b-4c). Empty without the answer. */
+export function bookingSection(answers: ProjectManifest["answers"]): string[] {
+  if (!answers.includeBooking) return [];
+  const companies = answers.tenantNoun !== "none";
+  const noun = companies ? tenantLabel(answers).toLowerCase() : "business";
+  const plans = plansAnswer(answers);
+  return [
+    "### Book a call",
+    "",
+    companies
+      ? `- **Each ${noun}'s own booking page** at /t/{web address}/book, linked from its public home: its customers pick a call type, a day and a time in their own time zone, and get a private link to move or cancel (/t/{web address}/book/manage/…). A suspended ${noun}, or one whose plan ended, takes no new bookings and says so by name; links it already sent keep working while its plan is closed.`
+      : "- **The booking page** at /book: customers pick a call type, a day and a time in their own time zone, and get a private link to move or cancel (/book/manage/…).",
+    companies
+      ? `- **Its calls** at /app/calls (booking.calls.view): upcoming and past calls, the hours and time off of each person taking calls, holidays and call types. Only the ${noun}'s own people can take calls${plans ? ', and its plan sets how many at once ("people taking calls", src/plans.ts)' : ""}.`
+      : "- **The calls** at /admin/calls (booking.calls.view on the staff ladder): upcoming and past calls, hours, time off, holidays and call types.",
+    `- **Abuse caps**: 2 times held per visitor, 30 held per ${noun} at once, 50 bookings per ${noun} a day, a hidden form field only scripts fill, and per-visitor rate limits.`,
+    answers.includeEmail
+      ? `- **Emails** go out as the ${noun} (its name, and replies to its own address) once RESEND_API_KEY is set: the confirmation, a move, a cancellation, the host's notice and a reminder the day before (/api/cron/booking, which needs CRON_SECRET).`
+      : "- **No emails**: this project has no email (`create-app add email`). The booking page doesn't promise one.",
+    "- **A host's real calendar** can block times: paste its secret iCal address in the calls screen. Only public addresses are read, connected to the checked address, every redirect re-checked.",
+    "",
+  ];
+}
+
 /**
  * The "Search check" and "AI mentions" sections (Tenancy 2b-4b): what each
  * reads, where it's seen, what it costs. Empty without either answer.
@@ -589,6 +613,7 @@ export function renderProjectReadme(manifest: ProjectManifest): string {
   lines.push(...alertsAndFilesSection(answers));
   lines.push(...websiteSection(answers));
   lines.push(...websiteReportsSection(answers));
+  lines.push(...bookingSection(answers));
   lines.push("### Not included", "", ...notIncludedFor(companies, { seo: answers.includeSeo }).map((item) => `- ${item}`), "");
 
   const tables = primaryTables(answers);

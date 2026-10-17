@@ -234,6 +234,22 @@ function suitesFor(answers: Answers): readonly FeatureSuite[] {
       adminExpr: "(overrides) => buildSearchCheckHandlers({ ...overrides, network: proofSearchNetwork })",
     });
   }
+  // TENANCY 2b-4c: a company's calls (its people taking them, their hours,
+  // holidays and call types) and its booking page at its web address.
+  if (answers.includeBooking) {
+    suites.push({
+      feature: "booking",
+      glue: "@/server/booking",
+      adminBuilder: "buildBookingAdminHandlers",
+      adminRoutes: "BOOKING_ADMIN_ROUTES",
+      adminSegment: "calls",
+      publicBuilder: "buildBookingPublicHandlers",
+      publicRoutes: "BOOKING_PUBLIC_ROUTES",
+      publicSegment: "calls",
+      pkg: "booking",
+      permissions: "bookingCompanyPermissions",
+    });
+  }
   if (answers.includeAeo) {
     suites.push({
       feature: "aeo",
@@ -278,6 +294,10 @@ export const FEATURE_ENTITIES: Readonly<Record<string, readonly string[]>> = {
   // Tenancy 2b-4b: one of the company's search checks, and one of its tracked questions.
   "seo-reports": ["site-check"],
   aeo: ["question"],
+  // Tenancy 2b-4c: a call, someone taking calls, a day off, a holiday, a call
+  // type — and what a visitor holds: the type's key, a hold, the private link
+  // and a host's calendar feed.
+  booking: ["booking", "host", "exception", "holiday", "type", "type-key", "hold-token", "manage-token", "feed-token"],
 };
 
 // ---------------------------------------------------------------------------
@@ -329,6 +349,21 @@ export function renderCompanyRows(answers: Answers): string {
       : []),
     ...(answers.includeSeoReports ? [`import { saveSeoReport } from "${scope}/seo-reports";`] : []),
     ...(answers.includeAeo ? [`import { addQuestion, analyzeAnswer, recordCheck, saveProfile } from "${scope}/aeo";`] : []),
+    ...(answers.includeBooking
+      ? [
+          `import {
+  addBlackout as addCallHoliday,
+  addException as addCallDayOff,
+  book as bookCall,
+  holdSlot as holdCall,
+  listBookings as listCalls,
+  rotateHostFeedToken as rotateCallFeed,
+  setWeeklyAvailability as setCallHours,
+  upsertHost as upsertCallHost,
+  upsertType as upsertCallType,
+} from "${scope}/booking";`,
+        ]
+      : []),
     ...(comms ? [`import { enqueueMessage, sendNow, upsertTemplate } from "${scope}/comms";`] : []),
     ...(estimator
       ? [
@@ -798,6 +833,37 @@ export function renderCompanyRows(answers: Answers): string {
   });
   rows["site-check"] = searchCheck;
   strings.push(\`\${label}-search.example\`, \`/\${label}-search-page\`, \`\${Label} serves no llms.txt.\`);
+`);
+  }
+  if (answers.includeBooking) {
+    blocks.push(`
+  // BOOK A CALL (Tenancy 2b-4c): someone taking the ${noun}'s calls all week, a
+  // day off, a holiday, a call type, a booked call and its private link, a held
+  // time, and the host's calendar feed — every row a leaking route would hand
+  // another ${noun}. Dates are days from today, inside the type's 60 days.
+  const callCtx = { db: database, tenantId };
+  const callDay = (offset: number) => {
+    const today = new Date();
+    return new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() + offset, 15));
+  };
+  const callHost = await upsertCallHost(callCtx, { displayName: \`\${Label} Call Host\`, email: \`calls@\${label}.test\`, timezone: "UTC" });
+  rows.host = callHost.id;
+  await setCallHours(callCtx, { hostId: callHost.id, windows: [0, 1, 2, 3, 4, 5, 6].map((dayOfWeek) => ({ dayOfWeek, startMinute: 0, endMinute: 1440 })) });
+  const callDayOff = await addCallDayOff(callCtx, { hostId: callHost.id, date: callDay(10).toISOString().slice(0, 10), kind: "off", note: \`\${Label} dentist\` });
+  rows.exception = callDayOff.id;
+  const callHoliday = await addCallHoliday(callCtx, { date: callDay(20).toISOString().slice(0, 10), label: \`\${Label} closed day\` });
+  rows.holiday = callHoliday.id;
+  const callType = await upsertCallType(callCtx, { key: \`\${label}-call\`, name: \`\${Label} intro call\`, durationMinutes: 30, media: ["video"], horizonDays: 60 });
+  rows.type = callType.id;
+  rows["type-key"] = callType.key;
+  const call = await bookCall(callCtx, { typeKey: callType.key, start: callDay(3).toISOString(), name: \`\${Label} Caller\`, email: \`caller@\${label}.test\`, medium: "video", timezone: "UTC" });
+  rows["manage-token"] = call.manageToken;
+  const [booked] = await listCalls(callCtx, {});
+  if (!booked) throw new Error(\`no call was planted for \${label}\`);
+  rows.booking = booked.id;
+  rows["hold-token"] = (await holdCall(callCtx, { typeKey: callType.key, start: callDay(4).toISOString() })).holdToken;
+  rows["feed-token"] = (await rotateCallFeed(callCtx, callHost.id)).feedToken;
+  strings.push(\`\${Label} Call Host\`, \`calls@\${label}.test\`, \`\${Label} dentist\`, \`\${Label} closed day\`, \`\${label}-call\`, \`\${Label} intro call\`, \`\${Label} Caller\`, \`caller@\${label}.test\`);
 `);
   }
   if (answers.includeAeo) {
@@ -1700,6 +1766,14 @@ export function renderFeatureIsolationTest(answers: Answers): string {
   // Tenancy 2b-4b: A's search checks, and its AI mentions (who it is, its questions, the answers).
   if (answers.includeSeoReports) {
     snapshot.push(`    seo_reports: await all(sql\`select * from seo_reports where tenant_id = \${a} order by id\`),`);
+  }
+  // Tenancy 2b-4c: A's calls, people taking them, hours, days off, holidays, call types and history.
+  if (answers.includeBooking) {
+    snapshot.push(
+      ...["booking_hosts", "booking_availability", "booking_exceptions", "booking_blackouts", "booking_types", "booking_bookings", "booking_events"].map(
+        (table) => `    ${table}: await all(sql\`select * from ${table} where tenant_id = \${a} order by id\`),`,
+      ),
+    );
   }
   if (answers.includeAeo) {
     snapshot.push(

@@ -17,6 +17,7 @@
 
 import { and, asc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { BookingError } from "../errors.js";
+import { isFeedTooLarge } from "../busy-source.js";
 import {
   generateSlots,
   pickHost,
@@ -37,19 +38,35 @@ import {
   bookingTypes,
 } from "../schema.js";
 import { addDays, dateIn, eachDate } from "../zone.js";
-import { isLive, nowOf, type BookingContext, type BookingDb, type BookingRow, type HostRow, type TypeRow } from "./context.js";
+import {
+  hostsStillOn,
+  isLive,
+  nowOf,
+  type BookingContext,
+  type BookingDb,
+  type BookingRow,
+  type HostMembers,
+  type HostRow,
+  type TypeRow,
+} from "./context.js";
 
 const DAY_MS = 86_400_000;
 
 /** The type's host pool: active hosts of this tenant, narrowed to `type.hostIds` when it names any. Sorted by id. */
-export async function poolHosts(db: BookingDb, tenantId: string, type: Pick<TypeRow, "hostIds">): Promise<HostRow[]> {
+export async function poolHosts(
+  db: BookingDb,
+  tenantId: string,
+  type: Pick<TypeRow, "hostIds">,
+  /** 0.2: a host whose person left the business is not in the pool. */
+  hostMembers?: HostMembers,
+): Promise<HostRow[]> {
   const rows: HostRow[] = await db
     .select()
     .from(bookingHosts)
     .where(and(eq(bookingHosts.tenantId, tenantId), eq(bookingHosts.isActive, true)))
     .orderBy(asc(bookingHosts.id));
   const wanted = type.hostIds ?? [];
-  return wanted.length === 0 ? rows : rows.filter((host) => wanted.includes(host.id));
+  return hostsStillOn(hostMembers, tenantId, wanted.length === 0 ? rows : rows.filter((host) => wanted.includes(host.id)));
 }
 
 /** An ACTIVE type by key, or the one not-found. */
@@ -100,6 +117,9 @@ export async function fetchExternalBusy(
         await recordSyncOk(ctx.db, host, now);
       } catch (error) {
         degraded = true;
+        // A calendar too large to read fails CLOSED (0.2): the host is busy
+        // for the whole window, so nobody books over events it couldn't read.
+        if (isFeedTooLarge(error)) byHost.set(host.id, [{ start: from, end: to }]);
         await recordSyncError(ctx.db, host, error, now);
       }
     }),

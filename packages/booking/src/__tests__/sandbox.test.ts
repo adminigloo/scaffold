@@ -43,6 +43,7 @@ function demo(extra: Partial<CreateSandboxBookingHandlersOptions> = {}) {
   const deferred: Array<() => Promise<unknown>> = [];
   const handlers = createSandboxBookingHandlers({
     db: t.db,
+    requireHold: false,
     cookieName: COOKIE,
     secureCookie: false,
     tenantPrefix: prefix,
@@ -301,6 +302,7 @@ describe("construction", () => {
   const base = (extra: Partial<CreateSandboxBookingHandlersOptions>) => () =>
     createSandboxBookingHandlers({
       db: t.db,
+      requireHold: false,
       cookieName: COOKIE,
       secureCookie: false,
       tenantPrefix: "demo:",

@@ -545,6 +545,23 @@ await purgeExpiredHolds(db, { olderThan: new Date(Date.now() - 3600_000) }); // 
 Expired holds stop blocking time the moment they lapse. This cron only keeps the
 table small, and it never turns an abandoned hold into a cancellation.
 
+## Per company (0.2)
+
+In an app where many businesses take calls, each business's calls are its own:
+
+- **Admin**: `createBookingAdminHandlers({ db, resolveTenant, authorize, member, hostLimit, feedUrl })` serves every route in `BOOKING_ADMIN_ROUTES` (bookings, people taking calls, hours, time off, holidays, call types). The business is the id in the path, asked of `authorize` on every call. Another business's id is "not found". `member` makes hosts the business's own people (their user id is kept on the host). `hostLimit` is the plan's "people taking calls".
+- **Public**: `createBookingPublicHandlers` (the same factory as `createBookingHandlers`) serves `BOOKING_PUBLIC_ROUTES`. `admit` closes new bookings for a suspended business or one whose plan ended, using the business's own sentence. `admitExisting` covers the links it already sent (manage, cancel, reschedule, .ics, the host feed). A plan that ended keeps those open, and a suspension closes them.
+- **Abuse caps**: a booking needs a hold (`requireHold`, on), so every booking passes the hold caps: per visitor (`maxHoldsPerSubject`, 2, an IPv6 visitor counted by its /64) and live holds per business (`maxHoldsPerCompany`, 30). Then 2 live bookings per email per business a day (`maxBookingsPerEmail`), 5 per email across every business (`maxBookingsPerEmailSitewide`), 50 live bookings per business a day (`dailyBookingLimit`; cancelled ones don't count), and a honeypot field `website` that the widget keeps off screen. `cancelAllFromEmail` ("Cancel all from this email" on the calls screen) clears a day of junk and opens the page again.
+- **Hosts who leave**: `hostMembers` says whose person is still a member. A host whose person left is off: no times, no notices, and their feed is "not found". Switching someone off never asks whether they're still on the team.
+- **Emails**: `bookingEmailVars(event, { businessName, replyTo })` is for a single site. `platformBookingEmails(event, { businessName, appName, replyTo })` is for a platform of many businesses. Its From is "{business} via {app}". The subject is fixed and names only the business's cleaned name. The call type appears only as quoted text in the body. A meeting link is a button only on zoom.us, meet.google.com, teams.microsoft.com, teams.live.com, whereby.com or webex.com; any other link is plain text with its host in bold. Replies go to the address you pass (use the owner's verified sign-in email), and every email ends "Sent for {business} by {app}."
+- **A calendar too big to read** (over 5,000 events, or over the step budget of one read): that host is offered no times and the owner sees "Your calendar address is too large to read…". A COUNT rule jumps straight to the window when it can.
+- **Reminders**: `dueReminders` + `claimReminder`, one business at a time, at most once per call (reset when the call moves).
+- **The calendar reader** connects only to the address it checked (node's https, pinned), accepts only global-unicast IPv6, refuses a named port, and fails closed where it can't check.
+
+### Upgrading from 0.1
+
+**Run `sql/upgrade-0.1-to-0.2.sql` BEFORE you deploy 0.2.** 0.2's queries read the new columns, so 0.2 code on a 0.1 database fails every booking request, the booking page's included. The file is safe to run twice. It adds `booking_hosts.user_id` (with one host per person per business), `booking_bookings.reminded_at` and `booking_bookings.reminder_attempts`, and keeps every row. **The tenant id does not change**: a single site keeps passing the same fixed `tenantId` (adminigloo.com: `adminigloo-calls`, or `adminigloo-calls:<env>` off production). The sandbox's `bookdemo:<hash>` tenants are unchanged too. A new install can run `sql/booking-0.2.0.sql`.
+
 ## What was fixed from the original
 
 - **D23: confirmations sent without the invite.** The `.ics` builder had been

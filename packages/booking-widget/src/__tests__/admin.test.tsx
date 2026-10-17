@@ -24,7 +24,7 @@ import {
   weekProblem,
   weekToWindows,
 } from "../admin/helpers.js";
-import { CalendarCard, FeedCard, HostCard, TypeCard } from "../admin/SettingsPanel.js";
+import { CalendarCard, FeedCard, HostCard, TeamCard, TypeCard } from "../admin/SettingsPanel.js";
 import { bookingAdminCss } from "../admin/styles.js";
 import type { AdminBooking, AdminBookingType, AdminException, AdminHost, BookingAdminAdapter } from "../admin/types.js";
 
@@ -477,5 +477,30 @@ describe("the admin stylesheet", () => {
 
   it("colours only through the widget's tokens, so light, dark and a buyer's theme all apply", () => {
     expect(bookingAdminCss()).not.toMatch(/#[0-9a-f]{3,8}\b/i);
+  });
+});
+
+describe("the 2b-4c review's admin screens (0.2)", () => {
+  it("a host's card is titled with their name, and has an on/off switch", () => {
+    const out = html(<HostCard adapter={adapter(true)} host={host} onSaved={() => {}} />);
+    expect(out).toContain(`>${host.displayName}<`);
+    expect(out).not.toContain("You, as the host");
+    expect(out).toContain('role="switch"');
+    expect(out).toContain("Takes calls");
+    const off = html(<HostCard adapter={adapter(true)} host={{ ...host, isActive: false }} onSaved={() => {}} />);
+    expect(off).toContain("Switched off");
+  });
+
+  it("'Add a person' appears only when the app lists its team", () => {
+    expect(html(<TeamCard adapter={adapter(true, { listTeam: async () => ({ available: true, people: [], limit: null, limitMessage: null }) })} onAdded={() => {}} />)).toContain("Add a person");
+  });
+
+  it("'Cancel all from this email' only with the adapter's bulk cancel", () => {
+    const b = booking();
+    const withBulk = html(<BookingRow booking={b} adapter={adapter(true, { cancelAllFromEmail: async () => ({ cancelled: 1 }) })} scope="upcoming" type={intro} locale="en-US" onChanged={() => {}} nowMs={NOW} />);
+    expect(withBulk).toContain("Cancel all from this email");
+    // Negative control: an app without it shows no such button.
+    const without = html(<BookingRow booking={b} adapter={adapter(true)} scope="upcoming" type={intro} locale="en-US" onChanged={() => {}} nowMs={NOW} />);
+    expect(without).not.toContain("Cancel all from this email");
   });
 });

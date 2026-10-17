@@ -75,6 +75,32 @@ export interface BookingContext {
   contactEmail?: string | null;
   /** Sandbox only: where a real booking is made, appended to sandbox calendar exports. */
   realBookingUrl?: string | null;
+  /**
+   * Which of these people are STILL active members of the business (0.2)?
+   * A host linked to a user id who left is treated as off — no times offered,
+   * no notices, the feed "not found" — however their row says. Absent → every
+   * host counts as before (a single business, whose hosts have no user id).
+   */
+  hostMembers?: HostMembers;
+}
+
+/** The user ids, of these, who are still active members of the tenant (0.2). */
+export type HostMembers = (tenantId: string, userIds: readonly string[]) => ReadonlySet<string> | Promise<ReadonlySet<string>>;
+
+/**
+ * The hosts that may still take calls (0.2): those with no user id, and those
+ * whose person is still a member. A host whose person left is dropped.
+ */
+export async function hostsStillOn<T extends { userId?: string | null }>(
+  hostMembers: HostMembers | undefined,
+  tenantId: string,
+  hosts: readonly T[],
+): Promise<T[]> {
+  if (!hostMembers) return [...hosts];
+  const ids = [...new Set(hosts.flatMap((host) => (host.userId ? [host.userId] : [])))];
+  if (ids.length === 0) return [...hosts];
+  const still = await hostMembers(tenantId, ids);
+  return hosts.filter((host) => !host.userId || still.has(host.userId));
 }
 
 export function nowOf(ctx: Pick<BookingContext, "now">): Date {
@@ -155,6 +181,8 @@ export interface AdminBooking {
 
 /** The host fields an event listener needs to write a notice — never the calendar secret. */
 export interface EventHost {
+  /** The person this host is (0.2), when linked; null (or absent) otherwise. */
+  userId?: string | null;
   displayName: string;
   email: string;
   timezone: string;
@@ -175,6 +203,11 @@ interface EventBase {
   booking: AdminBooking;
   host: EventHost;
   type: EventType;
+  /**
+   * false when the host's person is no longer a member of the business (0.2):
+   * nobody writes them a notice. Absent → true.
+   */
+  hostActive?: boolean;
 }
 
 /**
@@ -199,6 +232,15 @@ export type BookingEvent =
   | (EventBase & { event: "booking.cancelled"; by: BookingActor })
   | (EventBase & { event: "booking.confirmed" });
 
+/** A call due its reminder (0.2, services/reminders.ts): the same shape an `onEvent` payload has, so bookingEmailVars fills the email. */
+export interface DueReminder {
+  event: "booking.reminder";
+  tenantId: string;
+  booking: AdminBooking;
+  host: EventHost;
+  type: EventType;
+}
+
 /** Live = it occupies time: confirmed, requested, or a hold that has not expired. */
 export function isLive(row: Pick<BookingRow, "status" | "holdExpiresAt">, now: Date): boolean {
   if (row.status === "confirmed" || row.status === "requested") return true;
@@ -212,6 +254,7 @@ export function isChangeable(row: Pick<BookingRow, "status" | "startUtc">, now: 
 
 export function eventHost(host: HostRow): EventHost {
   return {
+    userId: host.userId,
     displayName: host.displayName,
     email: host.email,
     timezone: host.timezone,
@@ -353,10 +396,11 @@ export async function recordEvent(
 }
 
 /** Awaited and caught — see BookingContext.onEvent. */
-export async function emit(ctx: Pick<BookingContext, "onEvent">, event: BookingEvent): Promise<void> {
+export async function emit(ctx: Pick<BookingContext, "onEvent" | "hostMembers">, event: BookingEvent): Promise<void> {
   if (!ctx.onEvent) return;
   try {
-    await ctx.onEvent(event);
+    const on = (await hostsStillOn(ctx.hostMembers, event.tenantId, [event.host])).length > 0;
+    await ctx.onEvent(on ? event : { ...event, hostActive: false });
   } catch {
     // A listener that throws must never fail the request it is announcing.
   }

@@ -68,6 +68,7 @@ import { renderDeploymentFeedback, renderFeedbackCron, renderFeedbackGlue } from
 import { assistantChats, renderAssistantGlue, renderAssistantLauncherSlot, renderAssistantTools } from "./assistant-emit.js";
 import { renderAnalyticsCron, renderSiteAnalyticsSlot, renderWebsiteGlue, websitesQuota } from "./website-emit.js";
 import { renderSeoPackageModule, renderSeoRobots, renderSeoSitemap } from "./seo-emit.js";
+import { bookingFiles, bookingHostsQuota } from "./booking-emit.js";
 import {
   aiMentionChecksQuota,
   hasCompanyWebsitePage,
@@ -428,7 +429,9 @@ export async function planEmit(
     answers.includeAnalytics ||
     // Tenancy 2b-4b: and its own search check and AI mentions (/admin/seo, /admin/aeo).
     answers.includeSeoReports ||
-    answers.includeAeo
+    answers.includeAeo ||
+    // Tenancy 2b-4c: a single business's calls are worked on staff keys.
+    (!isCompanies(answers) && answers.includeBooking)
   ) {
     files.set(join("src", "server", "staff-access.ts"), renderStaffAccess(answers));
   }
@@ -470,6 +473,13 @@ export async function planEmit(
   if (answers.includeAeo) {
     files.set(join("src", "server", "ai-mentions.ts"), renderAiMentionsGlue(answers));
     files.set(join("app", "api", "cron", "ai-mentions", "route.ts"), renderAiMentionsCron(answers));
+  }
+  // BOOK A CALL (Tenancy 2b-4c), both modes, generated: whose calls a route is
+  // (a company's, by the path or its web address; the one business's, fixed),
+  // who may take calls, whether a plan limits them, and whether anyone is
+  // emailed are questions about OTHER answers. See booking-emit.ts.
+  if (answers.includeBooking) {
+    for (const [path, body] of bookingFiles(answers)) files.set(join(...path.split("/")), body);
   }
   // A company's Website screen, written with the sections this project has.
   if (hasCompanyWebsitePage(answers)) {
@@ -591,7 +601,9 @@ export async function planEmit(
       answers.includeAnalytics ||
       // Tenancy 2b-4b: and its search checks and AI mentions.
       answers.includeSeoReports ||
-      answers.includeAeo)
+      answers.includeAeo ||
+      // Tenancy 2b-4c: and its calls and booking page.
+      answers.includeBooking)
   ) {
     files.set(join("src", "test", "company-rows.ts"), renderCompanyRows(answers));
     files.set(
@@ -1135,6 +1147,10 @@ export function renderVercelJson(answers: Answers): string {
   if (answers.includeAeo) {
     crons.push({ path: "/api/cron/ai-mentions", schedule: "10 4 * * *" });
   }
+  // Tenancy 2b-4c: daily, tomorrow's calls reminded and old holds cleared.
+  if (answers.includeBooking) {
+    crons.push({ path: "/api/cron/booking", schedule: "0 13 * * *" });
+  }
   const config = {
     $schema: "https://openapi.vercel.sh/vercel.json",
     framework: "nextjs",
@@ -1522,7 +1538,8 @@ export function renderEnvLocal(answers: Answers): string {
     answers.includeFeedback ||
     answers.includeAnalytics ||
     answers.includeSeoReports ||
-    answers.includeAeo
+    answers.includeAeo ||
+    answers.includeBooking
   ) {
     lines.push(
       "",
@@ -1674,6 +1691,7 @@ const ANSWER_LABELS: Partial<Record<keyof Answers, string>> = {
   includeAeo: "AI mentions",
   includeAnalytics: "Website visits",
   includeSeo: "Search basics",
+  includeBooking: "Book a call",
 };
 
 export function renderScaffoldRecord(manifest: ProjectManifest): string {
@@ -1995,7 +2013,8 @@ export function renderEnvModule(answers: Answers): string {
     answers.includeFeedback ||
     answers.includeAnalytics ||
     answers.includeSeoReports ||
-    answers.includeAeo
+    answers.includeAeo ||
+    answers.includeBooking
   ) {
     // The shared secret the cron routes check. Declared here rather than in an
     // env fragment of @__SCOPE_NAME__/comms or /scheduling because it is not a
@@ -2112,6 +2131,13 @@ export function renderEnvModule(answers: Answers): string {
   if (answers.includeAeo) {
     features.push(
       `{ name: "Weekly AI mentions check", vars: ["CRON_SECRET"${answers.includeAi ? ', "ANTHROPIC_API_KEY"' : ""}], disables: "${answers.includeAi ? "The weekly asking of each tracked question: /api/cron/ai-mentions answers 401 until the secret is set, and without ANTHROPIC_API_KEY nothing is ever asked (Check now says checking isn't switched on)." : "The weekly asking of each tracked question: /api/cron/ai-mentions answers 401 until the secret is set. This project has no AI (--ai), so questions are kept but never asked."}" }`,
+    );
+  }
+
+  // Tenancy 2b-4c: the calls' daily job rides on the cron secret too.
+  if (answers.includeBooking) {
+    features.push(
+      `{ name: "Call reminders", vars: ["CRON_SECRET"${answers.includeEmail ? ', "RESEND_API_KEY"' : ""}], disables: "${answers.includeEmail ? "The reminder email the day before a call, and the clean-up of abandoned holds: /api/cron/booking answers 401 until the secret is set. Without RESEND_API_KEY no booking email leaves at all, and the booking page stops promising one." : "The clean-up of abandoned holds: /api/cron/booking answers 401 until the secret is set. This project has no email (--email), so nobody is emailed about a call and the booking page says so."}" }`,
     );
   }
 
@@ -2454,6 +2480,30 @@ export const PACKAGE_PERMISSION_FRAGMENTS: readonly PackagePermissionFragment[] 
       "Each company works its own customers' feedback, so these are company " +
       "keys: everyone but crew sees the board, members answer and sort it, " +
       "owners and admins change its columns, categories and website keys.",
+  },
+  // BOOK A CALL (Tenancy 2b-4c). A company's calls are its own, so in a
+  // companies project the four keys are company keys (bookingCompanyPermissions:
+  // owner, admin, member, viewer). A single business works its calls on the
+  // staff ladder, with the package's own staff fragment.
+  {
+    package: "booking",
+    binding: "bookingCompanyPermissions",
+    scope: "tenant",
+    installedBy: (answers) => answers.tenantNoun !== "none" && answers.includeBooking,
+    why:
+      "Each company takes its own calls, so these are company keys: everyone " +
+      "but crew sees the calls, members confirm, move and cancel them, owners " +
+      "and admins set the hours, who takes calls and the call types.",
+  },
+  {
+    package: "booking",
+    binding: "bookingPermissions",
+    scope: "staff",
+    installedBy: (answers) => answers.tenantNoun === "none" && answers.includeBooking,
+    why:
+      "One business takes calls, worked by its staff at /admin/calls: every " +
+      "staff role sees them, cs_lead and admin change them, admin alone pastes " +
+      "a calendar's secret address and sets the call types.",
   },
 ];
 
@@ -5040,6 +5090,8 @@ export function renderSchemaModule(answers: Answers): string {
   if (answers.includeInvoicing) owners.push("invoicing");
   if (answers.includeComms) owners.push("comms");
   if (answers.includeAeo) owners.push("aeo");
+  // Tenancy 2b-4c: the calls (booking_*); the widget package owns none.
+  if (answers.includeBooking) owners.push("booking");
 
   /**
    * `@scope/auth/schema` -> `authSchema`; `seo-reports` -> `seoReportsSchema`.
@@ -5423,6 +5475,17 @@ export function renderSiteNav(answers: Answers): string {
         ...(answers.includeSeoReports ? ["How search engines and AI assistants read its website and pages, as a list of things to fix."] : []),
         ...(answers.includeAeo ? ["Whether AI assistants name it when customers ask them questions."] : []),
       ].join(" "),
+    });
+  }
+  // Tenancy 2b-4c: the company's calls, after its website.
+  if (!single && answers.includeBooking) {
+    companyFeatureLinks.push({
+      href: "/app/calls",
+      label: "Calls",
+      permission: "booking.calls.view",
+      why:
+        `The calls people booked on the ${label}'s booking page, its people's ` +
+        "hours and time off, its holidays and its call types.",
     });
   }
   if (!single && answers.includeStorage) {
@@ -5945,6 +6008,17 @@ export function renderAdminNav(answers: Answers): string {
         "from (search, AI assistants by name, other sites), the pages read, the " +
         "AI crawlers, its websites and who is left out. From the analytics-admin " +
         "overlay, so a project without the answer has neither this page nor this entry.",
+    });
+  }
+  // Tenancy 2b-4c: a single business's calls (a company's are at /app/calls).
+  if (answers.includeBooking && answers.tenantNoun === "none") {
+    operations.push({
+      href: "/admin/calls",
+      label: "Calls",
+      permission: "booking.calls.view",
+      why:
+        "The calls people booked at /book, the hours and time off of whoever " +
+        "takes them, the holidays and the call types, from the booking package.",
     });
   }
   if (answers.includeAssistant) {
@@ -7151,6 +7225,8 @@ export function renderPlanCatalog(answers: Answers): string {
   // Tenancy 2b-4b: search checks a month, and AI mention checks a month (those need --ai).
   const siteChecksOn = siteChecksQuota(answers);
   const mentionChecksOn = aiMentionChecksQuota(answers);
+  // Tenancy 2b-4c: how many of a company's people may take calls.
+  const bookingHostsOn = bookingHostsQuota(answers);
   const scope = answers.scope;
   const label = tenantLabel(answers).toLowerCase();
 
@@ -7244,7 +7320,10 @@ export const plans = definePlans({
     // Checked before every AI answer (src/server/ai-mentions.ts): one answer to
     // one question is one check. Sized for every question weekly (about 4.35 a
     // month each) plus room for Check now.
-    ai_mention_checks: { kind: "quota", label: "AI mention checks a month", labelOne: "AI mention check a month" },` : ""}
+    ai_mention_checks: { kind: "quota", label: "AI mention checks a month", labelOne: "AI mention check a month" },` : ""}${bookingHostsOn ? `
+    // Checked when someone is added to take calls, or switched back on
+    // (src/server/booking.ts asks src/server/plan-gate.ts).
+    booking_hosts: { kind: "quota", label: "people taking calls", labelOne: "person taking calls" },` : ""}
   },
 
   /**
@@ -7274,7 +7353,8 @@ export const plans = definePlans({
         websites: 1,` : ""}${siteChecksOn ? `
         site_checks: 4,` : ""}${mentionChecksOn ? `
         ai_questions: 5,
-        ai_mention_checks: 40,` : ""}
+        ai_mention_checks: 40,` : ""}${bookingHostsOn ? `
+        booking_hosts: 1,` : ""}
       },
     },
     {
@@ -7296,7 +7376,8 @@ export const plans = definePlans({
         websites: 3,` : ""}${siteChecksOn ? `
         site_checks: 20,` : ""}${mentionChecksOn ? `
         ai_questions: 15,
-        ai_mention_checks: 100,` : ""}
+        ai_mention_checks: 100,` : ""}${bookingHostsOn ? `
+        booking_hosts: 5,` : ""}
       },
     },
     {
@@ -7320,7 +7401,8 @@ export const plans = definePlans({
         websites: null,` : ""}${siteChecksOn ? `
         site_checks: null,` : ""}${mentionChecksOn ? `
         ai_questions: 25,
-        ai_mention_checks: null,` : ""}
+        ai_mention_checks: null,` : ""}${bookingHostsOn ? `
+        booking_hosts: null,` : ""}
       },
     },
     {
@@ -7344,7 +7426,8 @@ export const plans = definePlans({
         websites: 1,` : ""}${siteChecksOn ? `
         site_checks: 4,` : ""}${mentionChecksOn ? `
         ai_questions: 5,
-        ai_mention_checks: 40,` : ""}
+        ai_mention_checks: 40,` : ""}${bookingHostsOn ? `
+        booking_hosts: 1,` : ""}
       },
     },
   ],
@@ -7587,6 +7670,12 @@ export function robotsDisallowed(answers: Answers): { readonly path: string; rea
       why: "A customer's own visit, opened from the link in their email. The URL is the key to it; the page already says noindex and the API sends X-Robots-Tag, and this keeps a crawler that found a leaked link from fetching it at all.",
     });
   }
+  if (single && answers.includeBooking) {
+    disallowed.push({
+      path: "/book/manage/",
+      why: "A customer's own call, opened from the link in their email. The URL is the key to it (anyone holding it can move or cancel); the page already says noindex and the API sends X-Robots-Tag.",
+    });
+  }
   if (single && answers.includeInvoicing) {
     disallowed.push({
       path: "/invoice/",
@@ -7702,6 +7791,12 @@ export function sitemapPages(answers: Answers): { readonly path: string; readonl
     pages.push({
       path: "/book-visit",
       why: "The booking page, from the scheduling overlay — for a field-service business the page most worth finding. The manage pages under /visit are never listed: each URL is one customer's key.",
+    });
+  }
+  if (single && answers.includeBooking) {
+    pages.push({
+      path: "/book",
+      why: "The booking page, from booking: where customers pick a time to talk. The manage pages under /book/manage are never listed: each URL is one customer's key.",
     });
   }
   if (single && answers.includeEstimator) {

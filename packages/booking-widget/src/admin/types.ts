@@ -24,6 +24,8 @@ export type Instant = string | Date;
 
 export interface AdminHost {
   id: string;
+  /** The person this host is (0.2), when the server links hosts to sign-ins; null otherwise. */
+  userId?: string | null;
   displayName: string;
   /** Where host notices go — and, in calendar files, the organizer. */
   email: string;
@@ -165,6 +167,14 @@ export interface ExceptionInput {
 
 export type BookingScope = "upcoming" | "past";
 
+/** GET v1/team (0.2): who could take calls. */
+export interface TeamList {
+  available: boolean;
+  people: Array<{ userId: string; name: string; email: string; hostId: string | null }>;
+  limit: number | null;
+  limitMessage: string | null;
+}
+
 export interface BookingAdminAdapter {
   /**
    * Whether the server actually sends email (booking events wired to a mail
@@ -214,6 +224,14 @@ export interface BookingAdminAdapter {
   upsertType(input: BookingTypeInput): Promise<AdminBookingType>;
 
   // --- optional ---------------------------------------------------------------
+  /**
+   * The business's own people, for "Add a person" (0.2): pick someone from the
+   * team instead of typing their exact email. Without it, the screen keeps the
+   * one host form. `limitMessage` is the plan's sentence once its limit is reached.
+   */
+  listTeam?(): Promise<TeamList>;
+  /** "Cancel all from this email" (0.2): every upcoming call one address booked, called off at once, nobody emailed. */
+  cancelAllFromEmail?(email: string): Promise<{ cancelled: number }>;
   /**
    * Live holds right now (times people are filling in the form for). Shown
    * so a calendar kept full of holds — by a bot or a bad actor — is visible

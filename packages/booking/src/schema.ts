@@ -44,6 +44,12 @@ export const bookingHosts = pgTable(
   {
     id: idColumn(),
     tenantId: text("tenant_id").notNull(),
+    /**
+     * The person this host is, when they have a sign-in here (0.2): a
+     * company's hosts are its own people, linked by their user id. Null for a
+     * host with no account (0.1 rows, a single business's front desk).
+     */
+    userId: text("user_id"),
     displayName: text("display_name").notNull(),
     /** Where host notices go. Never returned by a public route. */
     email: text("email").notNull(),
@@ -79,6 +85,8 @@ export const bookingHosts = pgTable(
   },
   (t) => [
     index("booking_hosts_tenant_idx").on(t.tenantId),
+    // One host per person per business (0.2).
+    uniqueIndex("booking_hosts_tenant_user_idx").on(t.tenantId, t.userId).where(sql`${t.userId} is not null`),
     uniqueIndex("booking_hosts_feed_token_idx").on(t.feedTokenHash),
   ],
 );
@@ -228,6 +236,14 @@ export const bookingBookings = pgTable(
     cancelledBy: text("cancelled_by").$type<BookingActor>(),
     cancelReason: text("cancel_reason"),
     outcome: text("outcome"),
+    /**
+     * When the reminder email was claimed (0.2) — set BEFORE it is sent, so a
+     * reminder goes at most once; cleared when the call moves, so the new
+     * time gets its own.
+     */
+    remindedAt: timestamp("reminded_at", { withTimezone: true }),
+    /** Reminder sends that failed or were skipped (0.2): released for another try, at most MAX_REMINDER_ATTEMPTS. */
+    reminderAttempts: integer("reminder_attempts").notNull().default(0),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

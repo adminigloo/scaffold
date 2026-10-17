@@ -71,6 +71,8 @@ function clearable<T extends z.ZodTypeAny>(schema: T) {
 
 export interface AdminHost {
   id: string;
+  /** The person this host is (0.2), when they have a sign-in here; null otherwise. */
+  userId: string | null;
   displayName: string;
   email: string;
   timezone: string;
@@ -106,6 +108,7 @@ export function maskIcsUrl(value: string | null): string | null {
 export function toAdminHost(host: HostRow): AdminHost {
   return {
     id: host.id,
+    userId: host.userId,
     displayName: host.displayName,
     email: host.email,
     timezone: host.timezone,
@@ -125,6 +128,12 @@ export function toAdminHost(host: HostRow): AdminHost {
 export const upsertHostSchema = z.object({
   /** Present → update that host; absent → create one. */
   id: z.string().min(1).max(100).optional(),
+  /**
+   * The person this host is (0.2). Absent → unchanged; "" or null → no one.
+   * The host app checks it is one of the business's own people (the admin
+   * handlers' `member` seam) — this function takes it as given.
+   */
+  userId: clearable(z.string().min(1).max(200)),
   displayName: z.string().trim().min(1).max(120),
   email: emailSchema,
   timezone: timeZoneSchema,
@@ -138,7 +147,21 @@ export const upsertHostSchema = z.object({
 });
 export type UpsertHostInput = z.input<typeof upsertHostSchema>;
 
-export async function upsertHost(ctx: BookingContext, input: UpsertHostInput): Promise<AdminHost> {
+/** The plan sentence when the business already has as many people taking calls as it may (0.2). */
+export function hostLimitSentence(limit: number): string {
+  return `Your plan lets ${limit} ${limit === 1 ? "person" : "people"} take calls at once. Switch someone off, or move to a bigger plan, to add another.`;
+}
+
+export interface UpsertHostLimits {
+  /**
+   * The most ACTIVE hosts the business may have (its plan's), or null for
+   * none. Counted and written in ONE transaction under a per-business lock
+   * (0.2), so two adds at once can't both be the one that fits.
+   */
+  maxActive?: number | null;
+}
+
+export async function upsertHost(ctx: BookingContext, input: UpsertHostInput, limits: UpsertHostLimits = {}): Promise<AdminHost> {
   const tenantId = tenantOf(ctx);
   const parsed = parse(upsertHostSchema, input);
   const now = nowOf(ctx);
@@ -148,6 +171,7 @@ export async function upsertHost(ctx: BookingContext, input: UpsertHostInput): P
     timezone: parsed.timezone,
     updatedAt: now,
   };
+  if (parsed.userId !== undefined) patch.userId = parsed.userId;
   if (parsed.meetingLink !== undefined) patch.meetingLink = parsed.meetingLink;
   if (parsed.phone !== undefined) patch.phone = parsed.phone;
   if (parsed.inviteMailbox !== undefined) patch.inviteMailbox = parsed.inviteMailbox;
@@ -161,29 +185,71 @@ export async function upsertHost(ctx: BookingContext, input: UpsertHostInput): P
   if (parsed.autoConfirm !== undefined) patch.autoConfirm = parsed.autoConfirm;
   if (parsed.isActive !== undefined) patch.isActive = parsed.isActive;
 
-  if (parsed.id) {
-    await requireHost(ctx.db, tenantId, parsed.id);
-    const [row]: HostRow[] = await ctx.db
-      .update(bookingHosts)
-      .set(patch)
-      .where(and(eq(bookingHosts.tenantId, tenantId), eq(bookingHosts.id, parsed.id)))
+  const existing = parsed.id ? await requireHost(ctx.db, tenantId, parsed.id) : null;
+  const row: HostRow = await ctx.db.transaction(async (tx) => {
+    // One business's host writes, one at a time (0.2): the plan's count and the
+    // one-host-per-person rule are read and written under the same lock.
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`booking-hosts:${tenantId}`}))`);
+    const userId = patch.userId !== undefined ? patch.userId : (existing?.userId ?? null);
+    if (userId) {
+      const taken: Array<{ id: string }> = await tx
+        .select({ id: bookingHosts.id })
+        .from(bookingHosts)
+        .where(and(eq(bookingHosts.tenantId, tenantId), eq(bookingHosts.userId, userId), existing ? ne(bookingHosts.id, existing.id) : undefined))
+        .limit(1);
+      if (taken.length > 0) {
+        throw new BookingError("invalid", "Some details need another look.", [
+          { path: ["email"], message: "This person already takes calls here. Change their card instead." },
+        ]);
+      }
+    }
+    const activating = (patch.isActive ?? existing?.isActive ?? true) && !(existing?.isActive ?? false);
+    const max = limits.maxActive;
+    if (activating && typeof max === "number") {
+      const counted: Array<{ n: number }> = await tx
+        .select({ n: sql<number>`count(*)::int` })
+        .from(bookingHosts)
+        .where(and(eq(bookingHosts.tenantId, tenantId), eq(bookingHosts.isActive, true)));
+      if (Number(counted[0]?.n ?? 0) >= max) throw new BookingError("limit_reached", hostLimitSentence(max));
+    }
+    if (existing) {
+      const [updated]: HostRow[] = await tx
+        .update(bookingHosts)
+        .set(patch)
+        .where(and(eq(bookingHosts.tenantId, tenantId), eq(bookingHosts.id, existing.id)))
+        .returning();
+      if (!updated) throw new BookingError("not_found");
+      return updated;
+    }
+    const [inserted]: HostRow[] = await tx
+      .insert(bookingHosts)
+      .values({
+        tenantId,
+        displayName: parsed.displayName,
+        email: parsed.email,
+        timezone: parsed.timezone,
+        ...patch,
+        createdAt: now,
+      })
       .returning();
-    if (!row) throw new BookingError("not_found");
-    return toAdminHost(row);
-  }
-  const [row]: HostRow[] = await ctx.db
-    .insert(bookingHosts)
-    .values({
-      tenantId,
-      displayName: parsed.displayName,
-      email: parsed.email,
-      timezone: parsed.timezone,
-      ...patch,
-      createdAt: now,
-    })
-    .returning();
-  if (!row) throw new Error("host insert returned no row");
+    if (!inserted) throw new Error("host insert returned no row");
+    return inserted;
+  });
   return toAdminHost(row);
+}
+
+/** One host of this tenant (0.2), or the one not-found. */
+export async function getHost(ctx: BookingContext, hostId: string): Promise<AdminHost> {
+  return toAdminHost(await requireHost(ctx.db, tenantOf(ctx), hostId));
+}
+
+/** How many ACTIVE hosts this tenant has (0.2) — what a plan's "people taking calls" counts. */
+export async function countHosts(ctx: BookingContext): Promise<number> {
+  const rows: Array<{ n: number }> = await ctx.db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(bookingHosts)
+    .where(and(eq(bookingHosts.tenantId, tenantOf(ctx)), eq(bookingHosts.isActive, true)));
+  return Number(rows[0]?.n ?? 0);
 }
 
 export async function listHosts(ctx: BookingContext): Promise<AdminHost[]> {
@@ -510,6 +576,24 @@ export async function upsertType(ctx: BookingContext, input: UpsertTypeInput): P
     updatedAt: now,
   };
   if (parsed.id) {
+    // Another type of this tenant already using the key would be a unique
+    // violation (a 500): said in words instead.
+    const clash: Array<{ id: string }> = await ctx.db
+      .select({ id: bookingTypes.id })
+      .from(bookingTypes)
+      .where(and(eq(bookingTypes.tenantId, tenantId), eq(bookingTypes.key, parsed.key), ne(bookingTypes.id, parsed.id)))
+      .limit(1);
+    if (clash.length > 0) {
+      const own: Array<{ id: string }> = await ctx.db
+        .select({ id: bookingTypes.id })
+        .from(bookingTypes)
+        .where(and(eq(bookingTypes.tenantId, tenantId), eq(bookingTypes.id, parsed.id)))
+        .limit(1);
+      if (own.length === 0) throw new BookingError("not_found");
+      throw new BookingError("invalid", "Some details need another look.", [
+        { path: ["key"], message: "Another call type already uses this short name." },
+      ]);
+    }
     const [row]: TypeRow[] = await ctx.db
       .update(bookingTypes)
       .set(values)
@@ -838,4 +922,42 @@ export async function countLiveHolds(ctx: BookingContext): Promise<{ live: numbe
       ),
     );
   return { live: Number(rows[0]?.live ?? 0), subjects: Number(rows[0]?.subjects ?? 0) };
+}
+
+/**
+ * "CANCEL ALL FROM THIS EMAIL" (0.2): every upcoming call this address booked
+ * with the business, called off at once — the owner's way out when a stranger
+ * fills the day with junk. Nobody is emailed (the address is the junk), the
+ * audit says the host did it, and the day's booking cap opens again (it counts
+ * live bookings only). Returns how many were cancelled.
+ */
+export async function cancelAllFromEmail(ctx: BookingContext, input: { email: string }): Promise<{ cancelled: number }> {
+  const tenantId = tenantOf(ctx);
+  const email = parse(emailSchema, input.email);
+  const now = nowOf(ctx);
+  return ctx.db.transaction(async (tx) => {
+    const rows: Array<{ id: string; status: BookingStatus }> = await tx
+      .update(bookingBookings)
+      .set({
+        status: "cancelled",
+        cancelledAt: now,
+        cancelledBy: "host",
+        cancelReason: "Cancelled with every call from this email address.",
+        sequence: sql`${bookingBookings.sequence} + 1`,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(bookingBookings.tenantId, tenantId),
+          eq(bookingBookings.inviteeEmail, email),
+          inArray(bookingBookings.status, ["confirmed", "requested"]),
+          gt(bookingBookings.startUtc, now),
+        ),
+      )
+      .returning({ id: bookingBookings.id, status: bookingBookings.status });
+    for (const row of rows) {
+      await recordEvent(tx, { tenantId, bookingId: row.id, kind: "cancelled", actor: "host", detail: { bulk: true }, at: now });
+    }
+    return { cancelled: rows.length };
+  });
 }

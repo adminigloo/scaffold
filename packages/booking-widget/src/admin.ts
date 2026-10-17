@@ -15,8 +15,13 @@
 export { BookingAdmin, type BookingAdminProps } from "./admin/BookingAdmin.js";
 export { BookingsPanel, BookingRow, CancelPanel, MovePanel, OutcomePanel, adapterSlotSource } from "./admin/BookingsPanel.js";
 export { AvailabilityPanel, Holidays, TimeOff, WeeklyEditor } from "./admin/AvailabilityPanel.js";
-export { CalendarCard, FeedCard, HostCard, SettingsPanel, TypeCard } from "./admin/SettingsPanel.js";
+export { CalendarCard, FeedCard, HostCard, SettingsPanel, TeamCard, TypeCard } from "./admin/SettingsPanel.js";
 export { bookingAdminCss, injectAdminStyles } from "./admin/styles.js";
+export {
+  BookingAdminRequestError,
+  createBookingAdminFetchAdapter,
+  type BookingAdminFetchAdapterOptions,
+} from "./admin/fetch-adapter.js";
 
 export {
   canCancel,
@@ -55,6 +60,7 @@ export type {
   BookingAdminAdapter,
   BookingScope,
   BookingTypeInput,
+  TeamList,
   ExceptionInput,
   ExceptionKind,
   HostInput,

@@ -30,6 +30,7 @@ export function companyTokenPaths(answers: Answers): string[] {
     ...(answers.includeEstimator ? ["/t/*/quote"] : []),
     ...(answers.includeScheduling ? ["/t/*/visit"] : []),
     ...(answers.includeInvoicing ? ["/t/*/invoice"] : []),
+    ...(answers.includeBooking ? ["/t/*/book/manage"] : []),
   ];
 }
 

@@ -34,7 +34,7 @@ type Status = "per-company" | `chunk:${string}` | `shared:${string}`;
 
 /** Every directory under packages/, and where it stands. */
 export const PER_COMPANY_COVERAGE: Readonly<Record<string, Status>> = {
-  // Per company today (Tenancy 1, 2a, 2b-1, 2b-2a, 2b-3, 2b-4a and 2b-4b).
+  // Per company today (Tenancy 1, 2a, 2b-1, 2b-2a, 2b-3, 2b-4a, 2b-4b and 2b-4c).
   tenancy: "per-company",
   "tenancy-widget": "per-company",
   permissions: "per-company",
@@ -69,9 +69,10 @@ export const PER_COMPANY_COVERAGE: Readonly<Record<string, Status>> = {
   // Tenancy 2b-4b: each company's search check and its AI mentions.
   "seo-reports": "per-company",
   aeo: "per-company",
+  // Tenancy 2b-4c: each company's calls and its booking page.
+  booking: "per-company",
+  "booking-widget": "per-company",
   // Not yet: the chunk that makes each per company.
-  booking: "chunk:2b-4c book-a-call",
-  "booking-widget": "chunk:2b-4c book-a-call",
   commerce: "chunk:getting-paid",
   // Not about any one business, by design.
   catalog: "shared:the site's own plans and products, sold to every company",
@@ -138,6 +139,8 @@ const COMPANY_EVERYTHING: Answers = {
   // Tenancy 2b-4b: and the search check and AI mentions, whose route tables are per company.
   includeSeoReports: true,
   includeAeo: true,
+  // Tenancy 2b-4c: and book a call, whose route tables are per company.
+  includeBooking: true,
 };
 
 let planned: Promise<EmitPlan> | null = null;

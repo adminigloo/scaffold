@@ -317,6 +317,13 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.2.0: a whole-segment * in the path list (a company's token pages,
   // /t/{web address}/quote/…) and a LocalBusiness without an address.
   seo: "0.2.0",
+  // 0.2.0 (Tenancy 2b-4c): book a call per company — the admin and public
+  // handlers and their route tables, the open/closed gate, the company caps,
+  // reminders and the pinned calendar reader. 0.1 had none of these.
+  booking: "0.2.0",
+  // 0.2.0: the fetch adapter over booking 0.2's admin routes, the honeypot and
+  // the "closed" sentence; pinned in step with the workspace.
+  "booking-widget": "0.2.0",
 };
 
 export class UnknownPackageVersionError extends Error {

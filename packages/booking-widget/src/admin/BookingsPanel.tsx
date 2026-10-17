@@ -122,6 +122,15 @@ export function BookingRow({
   const now = nowMs ?? Date.now();
   const emails = adapter.emailsEnabled;
   const confirm = useAction(() => adapter.confirmBooking(b.id), onChanged);
+  // "Cancel all from this email" (0.2): the owner's way out of a day filled with junk.
+  const [cleared, setCleared] = useState<string | null>(null);
+  const cancelAll = useAction(
+    () => (adapter.cancelAllFromEmail && b.inviteeEmail ? adapter.cancelAllFromEmail(b.inviteeEmail) : Promise.resolve({ cancelled: 0 })),
+    (result) => {
+      setCleared(result.cancelled === 1 ? "Cancelled 1 call." : `Cancelled ${result.cancelled} calls.`);
+      onChanged();
+    },
+  );
   const theirTime = formatInviteeTime(b.start, b.inviteeTimezone, b.hostTimezone, locale);
   const toggle = (next: Exclude<Panel, null>) => setPanel(panel === next ? null : next);
   const done = () => {
@@ -146,6 +155,19 @@ export function BookingRow({
           <p className="aibk-row aibk-booking-contact">
             {b.inviteeEmail ? <a href={`mailto:${b.inviteeEmail}`}>{b.inviteeEmail}</a> : null}
             {b.inviteePhone ? <a href={`tel:${b.inviteePhone}`}>{b.inviteePhone}</a> : null}
+            {adapter.cancelAllFromEmail && b.inviteeEmail && cancelOk ? (
+              <button
+                type="button"
+                className="aibk-btn aibk-btn-link"
+                disabled={cancelAll.pending}
+                onClick={() => {
+                  if (typeof window === "undefined" || window.confirm(`Cancel every upcoming call from ${b.inviteeEmail}? Nobody is emailed.`)) void cancelAll.run();
+                }}
+              >
+                Cancel all from this email
+              </button>
+            ) : null}
+            <Outcome ok={cleared} error={cancelAll.error} />
           </p>
         </div>
         <div className="aibk-row aibk-booking-tags">

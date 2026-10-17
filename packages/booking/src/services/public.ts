@@ -15,7 +15,7 @@
  * else, so the routes cannot be used to probe for bookings.
  */
 
-import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { alreadyBookedMessage, BookingError, issuesFrom } from "../errors.js";
 import { HOLD_MINUTES, horizonEnd, unionSlots } from "../engine.js";
@@ -30,11 +30,12 @@ import {
   type PhoneOptions,
 } from "../fields.js";
 import { buildHostFeed, buildIcs } from "../ics.js";
-import { bookingBookings, bookingHosts, bookingTypes, type BookingMedium } from "../schema.js";
+import { bookingBookings, bookingEvents, bookingHosts, bookingTypes, type BookingMedium } from "../schema.js";
 import { generateToken, hashToken, looksLikeToken } from "../tokens.js";
 import { isValidTimeZone } from "../zone.js";
 import {
   emit,
+  hostsStillOn,
   eventHost,
   eventType,
   isChangeable,
@@ -44,6 +45,7 @@ import {
   toAdminBooking,
   toPublicBooking,
   type BookingContext,
+  type BookingDb,
   type BookingRow,
   type HostRow,
   type PublicBooking,
@@ -142,11 +144,15 @@ export interface PublicConfig {
  */
 export async function getPublicConfig(ctx: BookingContext): Promise<PublicConfig> {
   const tenantId = tenantOf(ctx);
-  const hosts: HostRow[] = await ctx.db
-    .select()
-    .from(bookingHosts)
-    .where(and(eq(bookingHosts.tenantId, tenantId), eq(bookingHosts.isActive, true)))
-    .orderBy(asc(bookingHosts.createdAt), asc(bookingHosts.id));
+  const hosts: HostRow[] = await hostsStillOn(
+    ctx.hostMembers,
+    tenantId,
+    await ctx.db
+      .select()
+      .from(bookingHosts)
+      .where(and(eq(bookingHosts.tenantId, tenantId), eq(bookingHosts.isActive, true)))
+      .orderBy(asc(bookingHosts.createdAt), asc(bookingHosts.id)),
+  );
   const types: TypeRow[] = await ctx.db
     .select()
     .from(bookingTypes)
@@ -242,12 +248,17 @@ export interface OpenSlots {
  * buffers). A token that opens nothing changes nothing and says nothing: this
  * route answers the same list either way, so it is no oracle for tokens.
  */
-export async function listOpenSlots(ctx: BookingContext, input: ListOpenSlotsInput): Promise<OpenSlots> {
+export async function listOpenSlots(
+  ctx: BookingContext,
+  input: ListOpenSlotsInput,
+  /** The host's "Move call" picker (0.2): this booking of the tenant's stops counting as busy. */
+  options: { excludeBookingId?: string } = {},
+): Promise<OpenSlots> {
   const tenantId = tenantOf(ctx);
   const { typeKey, from, to, manageToken } = parse(listOpenSlotsSchema, input);
   const now = nowOf(ctx);
   const type = await activeTypeByKey(ctx.db, tenantId, typeKey);
-  const hosts = await poolHosts(ctx.db, tenantId, type);
+  const hosts = await poolHosts(ctx.db, tenantId, type, ctx.hostMembers);
   if (hosts.length === 0) return { slots: [], busySync: "off" };
   const moving = manageToken ? await reschedulableByToken(ctx, manageToken, type, now) : null;
 
@@ -271,7 +282,7 @@ export async function listOpenSlots(ctx: BookingContext, input: ListOpenSlotsInp
     earliest,
     latest,
     now,
-    moving ? [moving.id] : [],
+    moving ? [moving.id] : options.excludeBookingId ? [options.excludeBookingId] : [],
   );
   const slots = hosts.flatMap((host) =>
     hostSlots({ host, type, data, external: external.byHost.get(host.id) ?? [], from: earliest, to: latest, engineNow: now }),
@@ -321,7 +332,79 @@ export interface HoldLimits {
   subject?: string | null;
   /** Live holds one subject may have at once, not counting the one being replaced. Default 2. */
   maxPerSubject?: number;
+  /**
+   * Live holds the whole business may have at once (0.2), whoever placed
+   * them — the cap a script rotating through addresses still meets. null or
+   * absent → no cap. The handler factory defaults it to
+   * DEFAULT_MAX_HOLDS_PER_COMPANY.
+   */
+  maxPerTenant?: number | null;
 }
+
+/** Live holds one business may have at once, unless the host app says otherwise (0.2). */
+export const DEFAULT_MAX_HOLDS_PER_COMPANY = 30;
+
+/** Bookings one business takes in 24 hours, unless the host app says otherwise (0.2). */
+export const DEFAULT_DAILY_BOOKING_LIMIT = 50;
+
+export const TOO_MANY_HOLDS_MESSAGE = "Lots of people are booking right now. Please try again in a few minutes.";
+export const DAILY_LIMIT_MESSAGE = "This booking page has taken all the calls it can for today. Please try again tomorrow.";
+
+/** Live holds of a whole tenant right now. */
+async function liveHoldsOfTenant(db: BookingDb, tenantId: string, now: Date): Promise<number> {
+  const rows: Array<{ n: number }> = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(bookingBookings)
+    .where(and(eq(bookingBookings.tenantId, tenantId), eq(bookingBookings.status, "hold"), gt(bookingBookings.holdExpiresAt, now)));
+  return Number(rows[0]?.n ?? 0);
+}
+
+/**
+ * LIVE bookings made in the 24 hours before `now` (0.2): its "booked" audit
+ * rows whose booking isn't cancelled — so an owner who cancels a stranger's
+ * junk opens the page again. Optionally for one tenant, and optionally for
+ * one invitee email (across every business when no tenant is named).
+ */
+async function liveBookedInLastDay(db: BookingDb, now: Date, scope: { tenantId?: string; email?: string }): Promise<number> {
+  const rows: Array<{ n: number }> = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(bookingEvents)
+    .innerJoin(bookingBookings, and(eq(bookingBookings.id, bookingEvents.bookingId), eq(bookingBookings.tenantId, bookingEvents.tenantId)))
+    .where(
+      and(
+        scope.tenantId ? eq(bookingEvents.tenantId, scope.tenantId) : undefined,
+        scope.email ? eq(bookingBookings.inviteeEmail, scope.email) : undefined,
+        eq(bookingEvents.kind, "booked"),
+        gt(bookingEvents.at, new Date(now.getTime() - DAY_MS)),
+        ne(bookingBookings.status, "cancelled"),
+      ),
+    );
+  return Number(rows[0]?.n ?? 0);
+}
+
+/** Bookings one email address may make in a day (0.2): with one business, and across every business on the site. */
+export const DEFAULT_MAX_BOOKINGS_PER_EMAIL = 2;
+export const DEFAULT_MAX_BOOKINGS_PER_EMAIL_SITEWIDE = 5;
+export const EMAIL_LIMIT_MESSAGE = "You've booked as many calls as we take from one email address today. Please try again tomorrow.";
+export const HOLD_REQUIRED_MESSAGE = "Please pick a time first: it's held for you while you fill in your details.";
+
+/** A booking's limits beyond the slot rules (0.2). */
+export interface BookLimits {
+  /** LIVE bookings the business takes in 24 hours. null or absent → no cap. */
+  maxPerDay?: number | null;
+  /**
+   * The booking must come from a hold of this business (0.2), so the hold
+   * caps (per visitor, per business) apply to every booking. Default false
+   * here; the handler factory turns it on.
+   */
+  requireHold?: boolean;
+  /** Live bookings one email may make with this business in 24 hours. null/absent → no cap. */
+  maxPerEmail?: number | null;
+  /** Live bookings one email may make across EVERY business in 24 hours. null/absent → no cap. */
+  maxPerEmailSitewide?: number | null;
+}
+
+const capOn = (value: number | null | undefined): value is number => typeof value === "number" && Number.isInteger(value) && value >= 1;
 
 /**
  * Claim a start for ten minutes while the prospect fills in the form. Picking
@@ -356,7 +439,7 @@ export async function holdSlot(ctx: BookingContext, input: HoldSlotInput, limits
   const moving = parsed.manageToken !== undefined ? await reschedulableByToken(ctx, parsed.manageToken, type, now) : null;
   if (parsed.manageToken !== undefined && !moving) throw new BookingError("not_found");
   const excludeIds = moving ? [moving.id] : [];
-  const hosts = await poolHosts(ctx.db, tenantId, type);
+  const hosts = await poolHosts(ctx.db, tenantId, type, ctx.hostMembers);
   if (hosts.length === 0) throw new BookingError("slot_taken");
   const external = await fetchExternalBusy(ctx, hosts, new Date(parsed.start.getTime() - DAY_MS), new Date(parsed.start.getTime() + DAY_MS));
   const previousHash = parsed.previousHoldToken ? await hashToken(parsed.previousHoldToken) : null;
@@ -391,6 +474,12 @@ export async function holdSlot(ctx: BookingContext, input: HoldSlotInput, limits
           "You already have times on hold. Finish booking one, or wait a few minutes, then try again.",
         );
       }
+    }
+    const maxPerTenant = limits.maxPerTenant;
+    if (typeof maxPerTenant === "number" && Number.isInteger(maxPerTenant) && maxPerTenant >= 1) {
+      // After the subject lock, always: the same order in every transaction.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`booking-tenant-holds:${tenantId}`}))`);
+      if ((await liveHoldsOfTenant(tx, tenantId, now)) >= maxPerTenant) throw new BookingError("rate_limited", TOO_MANY_HOLDS_MESSAGE);
     }
     const free = await freeHostsAt({ db: tx, tenantId, type, hosts, start: parsed.start, external, now, excludeIds });
     // A reschedule's hold reserves the host who keeps the call when free
@@ -505,7 +594,7 @@ export interface BookResult {
  * hold had expired; and with a host pool it could even book them TWICE, on a
  * second free host. The booked row keeps its hold's token hash for this.
  */
-export async function book(ctx: BookingContext, input: BookInput): Promise<BookResult> {
+export async function book(ctx: BookingContext, input: BookInput, limits: BookLimits = {}): Promise<BookResult> {
   const tenantId = tenantOf(ctx);
   const parsed = parse(bookSchemaFor({ defaultCallingCode: ctx.defaultCallingCode }), input);
   const now = nowOf(ctx);
@@ -515,7 +604,7 @@ export async function book(ctx: BookingContext, input: BookInput): Promise<BookR
       { path: ["medium"], message: `Choose one of: ${type.media.join(", ")}.` },
     ]);
   }
-  const hosts = await poolHosts(ctx.db, tenantId, type);
+  const hosts = await poolHosts(ctx.db, tenantId, type, ctx.hostMembers);
   if (hosts.length === 0) throw new BookingError("slot_taken");
   const external = await fetchExternalBusy(ctx, hosts, new Date(parsed.start.getTime() - DAY_MS), new Date(parsed.start.getTime() + DAY_MS));
   const holdHash = parsed.holdToken ? await hashToken(parsed.holdToken) : null;
@@ -543,6 +632,23 @@ export async function book(ctx: BookingContext, input: BookInput): Promise<BookR
               contactEmail: ctx.contactEmail ?? null,
             }),
       );
+    }
+    // No hold, no booking (0.2): every booking passes the hold caps first.
+    if (limits.requireHold && !hold) throw new BookingError("hold_expired", HOLD_REQUIRED_MESSAGE);
+    if (capOn(limits.maxPerEmail) || capOn(limits.maxPerEmailSitewide)) {
+      // One address, one lock, whichever business: two submits at once can't both fit.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`booking-email:${parsed.email}`}))`);
+      if (capOn(limits.maxPerEmail) && (await liveBookedInLastDay(tx, now, { tenantId, email: parsed.email })) >= limits.maxPerEmail) {
+        throw new BookingError("rate_limited", EMAIL_LIMIT_MESSAGE);
+      }
+      if (capOn(limits.maxPerEmailSitewide) && (await liveBookedInLastDay(tx, now, { email: parsed.email })) >= limits.maxPerEmailSitewide) {
+        throw new BookingError("rate_limited", EMAIL_LIMIT_MESSAGE);
+      }
+    }
+    if (capOn(limits.maxPerDay)) {
+      // The business's day, counted under its own lock so two at once can't both be the 50th.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`booking-tenant-day:${tenantId}`}))`);
+      if ((await liveBookedInLastDay(tx, now, { tenantId })) >= limits.maxPerDay) throw new BookingError("rate_limited", DAILY_LIMIT_MESSAGE);
     }
     const liveHold =
       hold &&
@@ -643,6 +749,16 @@ export async function book(ctx: BookingContext, input: BookInput): Promise<BookR
 // ---------------------------------------------------------------------------
 // Manage by token
 // ---------------------------------------------------------------------------
+
+/** Does this manage token open a booking of this tenant (0.2)? For the handler's gate; says nothing more. */
+export async function manageTokenOpens(ctx: BookingContext, token: string): Promise<boolean> {
+  try {
+    await bookingByManageToken(ctx, token);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 async function bookingByManageToken(ctx: BookingContext, token: string): Promise<BookingRow> {
   if (!looksLikeToken(token)) throw new BookingError("not_found");
@@ -848,7 +964,8 @@ export async function hostFeed(ctx: BookingContext, feedToken: string, options: 
       ),
     )
     .limit(1);
-  const host = hosts[0];
+  // A host whose person left the business has no feed any more (0.2).
+  const host = (await hostsStillOn(ctx.hostMembers, tenantId, hosts))[0];
   if (!host) throw new BookingError("not_found");
   const now = nowOf(ctx);
   const [rows, types] = await Promise.all([

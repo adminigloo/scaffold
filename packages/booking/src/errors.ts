@@ -31,7 +31,16 @@ export type BookingErrorCode =
    * A state-changing request sent by a browser from another site (CSRF).
    * Refused by the handler factory before any work — see handlers.ts.
    */
-  | "forbidden";
+  | "forbidden"
+  /**
+   * The business isn't taking bookings online right now (0.2): suspended, or
+   * its plan ended. The message is the host app's sentence, naming the
+   * business and how to reach it. A link it already sent (manage, cancel,
+   * reschedule) is not closed by a plan that ended — see handlers.ts.
+   */
+  | "closed"
+  /** A plan's limit was reached (0.2): the message is the plan's sentence. */
+  | "limit_reached";
 
 export const BOOKING_ERROR_STATUS: Record<BookingErrorCode, number> = {
   not_found: 404,
@@ -42,6 +51,8 @@ export const BOOKING_ERROR_STATUS: Record<BookingErrorCode, number> = {
   rate_limited: 429,
   unlicensed: 402,
   forbidden: 403,
+  closed: 403,
+  limit_reached: 409,
 };
 
 const DEFAULT_MESSAGES: Record<BookingErrorCode, string> = {
@@ -54,6 +65,8 @@ const DEFAULT_MESSAGES: Record<BookingErrorCode, string> = {
   rate_limited: "Too many requests. Please slow down and try again shortly.",
   unlicensed: "This feature is not licensed for this deployment.",
   forbidden: "This request came from another site, so it was refused.",
+  closed: "This business isn't taking bookings online right now.",
+  limit_reached: "Your plan's limit is reached.",
 };
 
 /**

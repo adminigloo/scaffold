@@ -291,6 +291,8 @@ const CSS_TEXT = `
   background: var(--aibk-surface); color: var(--aibk-ink);
 }
 .aibk-input::placeholder { color: var(--aibk-faint); }
+/* The honeypot: off-screen, not display:none (some bots skip hidden fields). */
+.aibk-hp { position: absolute; left: -10000px; top: auto; width: 1px; height: 1px; overflow: hidden; }
 .aibk-input[aria-invalid="true"] { border-color: var(--aibk-danger); }
 textarea.aibk-input { min-height: 92px; resize: vertical; }
 .aibk-hint { font-size: 13px; color: var(--aibk-muted); }

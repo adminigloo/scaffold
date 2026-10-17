@@ -95,6 +95,10 @@ export const EVERY_CONFIGURATION: readonly Configuration[] = TENANT_NOUNS.flatMa
                     // Tenancy 2b-4a: website visits and search basics, on the suite axis too.
                     includeSuite ? "--analytics" : "--no-analytics",
                     includeSuite ? "--seo" : "--no-seo",
+                    // Tenancy 2b-4c: book a call, on the suite axis too. A single
+                    // business works its calls under /admin, so `--booking
+                    // --tenant-noun none --admin none` is refused and dropped here.
+                    includeSuite && !(tenantNoun === "none" && adminShell === "none") ? "--booking" : "--no-booking",
                     includeMarketing ? "--marketing" : "--no-marketing",
                   ];
                   return {
@@ -120,6 +124,7 @@ export const EVERY_CONFIGURATION: readonly Configuration[] = TENANT_NOUNS.flatMa
                       includeAeo: includeSuite,
                       includeAnalytics: includeSuite,
                       includeSeo: includeSuite,
+                      includeBooking: includeSuite && !(tenantNoun === "none" && adminShell === "none"),
                       includeMarketing,
                     },
                   };

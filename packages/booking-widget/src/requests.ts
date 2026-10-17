@@ -316,6 +316,8 @@ export function buildBookRequest(input: {
   timezone: string;
   source?: string | null;
   defaultCallingCode?: string | null;
+  /** The honeypot's value (0.2): "" from a person. */
+  website?: string | null;
 }): BookRequest {
   const { values } = input;
   const request: BookRequest = {
@@ -335,6 +337,7 @@ export function buildBookRequest(input: {
   if (notes) request.notes = notes;
   const source = input.source ? scrubSource(input.source) : undefined;
   if (source) request.source = source;
+  if (input.website && input.website.trim() !== "") request.website = input.website;
   return request;
 }
 
@@ -401,6 +404,7 @@ const SERVER_CODES = new Set<BookingErrorCode>([
   "invalid",
   "rate_limited",
   "unlicensed",
+  "closed",
 ]);
 
 const STATUS_CODES: Record<number, BookingErrorCode> = {
@@ -557,6 +561,9 @@ export function friendlyError(error: BookingError, context: ErrorContext, facts?
   switch (error.code) {
     case "network":
       return "We couldn't reach the booking service. Check your connection and try again.";
+    case "closed":
+      // The business's own sentence: its name and how to reach it (0.2).
+      return error.message || "This business isn't taking bookings online right now.";
     case "rate_limited": {
       // A ceiling can hold for longer than "a minute"; when the host app gave
       // a human address, name it so a real prospect is never just turned away.

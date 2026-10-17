@@ -38,7 +38,8 @@ export type BookingErrorCode =
   | "already_booked" // 409 — the same form arrived twice; the first one booked
   | "invalid" // 400, with `issues`
   | "rate_limited" // 429
-  | "unlicensed"; // 402
+  | "unlicensed" // 402
+  | "closed"; // 403 — the business isn't taking bookings online right now (0.2); the message names it
 
 /**
  * One bookable thing, as `GET {base}/v1/config` lists it.
@@ -143,6 +144,8 @@ export interface BookRequest {
   /** The IANA zone the invitee chose to see times in. */
   timezone: string;
   source?: string;
+  /** The honeypot (0.2): a field kept off screen. Sent only when something filled it — a person never does. */
+  website?: string;
 }
 
 export interface BookResponse {

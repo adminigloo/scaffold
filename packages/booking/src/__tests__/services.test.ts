@@ -478,6 +478,7 @@ describe("events", () => {
     expect(created?.tenantId).toBe(tenantId);
     expect(created?.booking).toMatchObject({ inviteeEmail: "ada@example.com", notes: "Interested in the support console." });
     expect(created?.host).toEqual({
+      userId: null,
       displayName: "Dallin Humphrey",
       email: "dallin@adminigloo.com",
       timezone: "America/Denver",

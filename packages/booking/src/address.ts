@@ -74,6 +74,7 @@ function reservedV4([a, b, c]: readonly number[]): boolean {
     (a === 169 && b === 254) || //                  169.254/16 link-local — the cloud metadata address
     (a === 172 && b >= 16 && b <= 31) || //         172.16/12 private
     (a === 192 && b === 0 && (c === 0 || c === 2)) || // 192.0.0/24 protocol assignments, 192.0.2/24 documentation
+    (a === 192 && b === 88 && c === 99) || //       192.88.99/24 the old 6to4 relay (0.2)
     (a === 192 && b === 168) || //                  192.168/16 private
     (a === 198 && (b === 18 || b === 19)) || //     198.18/15 benchmarking
     (a === 198 && b === 51 && c === 100) || //      documentation
@@ -84,6 +85,13 @@ function reservedV4([a, b, c]: readonly number[]): boolean {
 
 function reservedV6(groups: readonly number[]): boolean {
   const g = (index: number) => groups[index] ?? 0;
+  // 0.2, the seo-reports net.ts standard: only GLOBAL UNICAST (2000::/3) is
+  // the public internet. Everything else — ::/96, mapped, NAT64, discard,
+  // ULA, link-local, site-local, multicast and every unassigned range — is
+  // refused here first; the checks below stay as the record of why.
+  if ((g(0) & 0xe000) !== 0x2000) return true;
+  if (g(0) === 0x2001 && g(1) < 0x200) return true; // 2001::/23 protocol assignments (Teredo and ORCHID included)
+  if ((g(0) & 0xfff0) === 0x3ff0) return true; // 3fff::/20 documentation
   const embedded = (hi: number, lo: number) => reservedV4([hi >> 8, hi & 0xff, lo >> 8, lo & 0xff]);
   // ::/96 — unspecified (::), loopback (::1) and the deprecated IPv4-compatible form.
   if ([0, 1, 2, 3, 4, 5].every((i) => g(i) === 0)) return true;
@@ -97,7 +105,7 @@ function reservedV6(groups: readonly number[]): boolean {
   if (g(0) === 0x100 && g(1) === 0 && g(2) === 0 && g(3) === 0) return true; // 100::/64 discard
   if (g(0) === 0x2001 && g(1) === 0) return true; // 2001::/32 Teredo (the client address is obfuscated)
   if (g(0) === 0x2001 && g(1) === 0x0db8) return true; // 2001:db8::/32 documentation
-  if (g(0) === 0x2002) return embedded(g(1), g(2)); // 2002::/16 6to4: IPv4 in bits 16–48
+  if (g(0) === 0x2002) return true; // 2002::/16 6to4: an IPv4 address hiding inside (0.2: refused whole, as net.ts does)
   if ((g(0) & 0xfe00) === 0xfc00) return true; // fc00::/7 unique local (ULA)
   if ((g(0) & 0xffc0) === 0xfe80) return true; // fe80::/10 link-local
   if ((g(0) & 0xffc0) === 0xfec0) return true; // fec0::/10 site-local (deprecated)
@@ -122,6 +130,21 @@ export function isPublicAddress(address: string): boolean {
   const v6 = parseIpv6(address);
   if (v6) return !reservedV6(v6);
   return false;
+}
+
+/**
+ * The key a rate limit should count an address under (0.2): an IPv6 address
+ * by its /64 (one machine, or one home, holds a whole /64 to rotate through),
+ * an IPv4 address as it is. Anything that isn't an address is returned as
+ * given (an app's own subject, a session id).
+ */
+export function networkKeyOf(value: string): string {
+  const v6 = parseIpv6(value);
+  if (!v6 || parseIpv4(value.trim())) return value;
+  return `${v6
+    .slice(0, 4)
+    .map((group) => group.toString(16))
+    .join(":")}::/64`;
 }
 
 /**

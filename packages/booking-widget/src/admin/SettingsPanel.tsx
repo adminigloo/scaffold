@@ -3,7 +3,7 @@ import { CopyField, Notice } from "../parts.js";
 import { browserTimeZone } from "../time.js";
 import type { Medium } from "../types.js";
 import { formatStamp, timeZoneOptions, typeIsForHost } from "./helpers.js";
-import type { AdminBookingType, AdminHost, BookingAdminAdapter, BookingTypeInput } from "./types.js";
+import type { AdminBookingType, AdminHost, BookingAdminAdapter, BookingTypeInput, TeamList } from "./types.js";
 import { Card, FormField, Outcome, useAction } from "./ui.js";
 
 /**
@@ -38,6 +38,7 @@ export function SettingsPanel({
   const [adding, setAdding] = useState(mine.length === 0);
   return (
     <div className="aibk-stack">
+      {adapter.listTeam ? <TeamCard adapter={adapter} onAdded={onChanged} /> : null}
       <HostCard key={`${host.id}:${String(host.updatedAt ?? "")}`} adapter={adapter} host={host} onSaved={onChanged} />
       <CalendarCard adapter={adapter} host={host} locale={locale} onChanged={onChanged} />
       <FeedCard adapter={adapter} host={host} onChanged={onChanged} />
@@ -69,6 +70,74 @@ export function SettingsPanel({
   );
 }
 
+/**
+ * "ADD A PERSON" (0.2): the business's own people, each added to take calls
+ * with one press — no typing an exact email. Someone already taking calls is
+ * marked; once the plan's limit is reached its sentence says so.
+ */
+export function TeamCard({ adapter, onAdded }: { adapter: BookingAdminAdapter; onAdded: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [team, setTeam] = useState<TeamList | null>(null);
+  const load = useAction(async () => {
+    const list = adapter.listTeam ? await adapter.listTeam() : null;
+    setTeam(list);
+    return list;
+  });
+  const add = useAction(
+    (person: { name: string; email: string }) =>
+      adapter.upsertHost({ displayName: person.name, email: person.email, timezone: browserTimeZone(), isActive: true }),
+    () => {
+      setOpen(false);
+      setTeam(null);
+      onAdded();
+    },
+  );
+  const free = (team?.people ?? []).filter((person) => person.hostId === null);
+  return (
+    <Card id="team" title="People taking calls" hint="Anyone on your team can take calls. Add them here; switch someone off on their card.">
+      {open && team ? (
+        <div className="aibk-stack">
+          {team.limitMessage ? <p className="aibk-hint" role="status">{team.limitMessage}</p> : null}
+          {free.length === 0 ? (
+            <p className="aibk-hint">Everyone on your team already takes calls. Invite someone to the team first.</p>
+          ) : (
+            <ul className="aibk-stack" aria-label="Your team">
+              {free.map((person) => (
+                <li key={person.userId} className="aibk-row">
+                  <span>
+                    <strong>{person.name}</strong> <span className="aibk-hint">{person.email}</span>
+                  </span>
+                  <button
+                    type="button"
+                    className="aibk-btn aibk-btn-secondary"
+                    disabled={add.pending || Boolean(team.limitMessage)}
+                    onClick={() => void add.run({ name: person.name, email: person.email })}
+                  >
+                    Add
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <Outcome error={add.error} />
+        </div>
+      ) : (
+        <div className="aibk-row">
+          <button
+            type="button"
+            className="aibk-btn aibk-btn-secondary"
+            disabled={load.pending}
+            onClick={() => void load.run().then((list) => setOpen(Boolean(list)))}
+          >
+            Add a person
+          </button>
+          <Outcome error={load.error} />
+        </div>
+      )}
+    </Card>
+  );
+}
+
 /** The fields upsertHost always needs; every partial save sends the host's current values for them. */
 function identity(host: AdminHost) {
   return { id: host.id, displayName: host.displayName, email: host.email, timezone: host.timezone };
@@ -97,6 +166,15 @@ export function HostCard({
     autoConfirm: host?.autoConfirm ?? true,
   });
   const [saved, setSaved] = useState(false);
+  const [on, setOn] = useState(host?.isActive !== false);
+  // On or off on its own (0.2): switching someone off never needs the rest of the form.
+  const toggle = useAction(
+    (next: boolean) => adapter.upsertHost({ ...identity(host as AdminHost), isActive: next }),
+    (updated) => {
+      setOn(updated.isActive !== false);
+      onSaved();
+    },
+  );
   const save = useAction(
     () =>
       adapter.upsertHost({
@@ -127,13 +205,32 @@ export function HostCard({
   return (
     <Card
       id="host"
-      title={host ? "You, as the host" : "Set up who takes the calls"}
+      title={host ? host.displayName : "Set up who takes the calls"}
       hint={
         host
-          ? "What the booking page, the calendar files and any emails say about you."
+          ? "What the booking page, the calendar files and any emails say about this person."
           : "Your booking page opens once there's a host and a call type. You can change all of this later."
       }
     >
+      {host ? (
+        <div className="aibk-row">
+          <label className="aibk-check">
+            <input
+              type="checkbox"
+              role="switch"
+              aria-checked={on}
+              checked={on}
+              disabled={toggle.pending}
+              onChange={(e) => void toggle.run(e.target.checked)}
+            />
+            <span>
+              <strong>{on ? "Takes calls" : "Switched off"}</strong>{" "}
+              <span className="aibk-hint">{on ? "Offered on your booking page." : "Not offered; their booked calls stay."}</span>
+            </span>
+          </label>
+          <Outcome error={toggle.error} />
+        </div>
+      ) : null}
       <div className="aibk-grid2">
         <FormField id={ids.name} label="Name shown to people booking">
           <input id={ids.name} className="aibk-input" value={form.displayName} maxLength={120} onChange={(e) => set({ displayName: e.target.value })} />

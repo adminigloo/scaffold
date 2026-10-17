@@ -259,6 +259,10 @@ export function createSandboxBookingHandlers(options: CreateSandboxBookingHandle
     ...(options.realBookingUrl !== undefined ? { realBookingUrl: options.realBookingUrl } : {}),
     ...(options.holdSubject ? { holdSubject: options.holdSubject } : {}),
     ...(options.maxHoldsPerSubject !== undefined ? { maxHoldsPerSubject: options.maxHoldsPerSubject } : {}),
+    ...(options.requireHold !== undefined ? { requireHold: options.requireHold } : {}),
+    // A sandbox emails nobody, and its bookings are throwaway: no per-address caps (0.2).
+    maxBookingsPerEmail: null,
+    maxBookingsPerEmailSitewide: null,
   });
 
   const cookieAttributes = `Path=/; HttpOnly; SameSite=Lax${options.secureCookie ? "; Secure" : ""}`;

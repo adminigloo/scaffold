@@ -46,6 +46,10 @@ function handlers(tenantId: string, extra: Partial<CreateBookingHandlersOptions>
     now: () => NOW,
     uidDomain: "site.test",
     manageUrl: (token) => `https://site.test/book/manage/${token}`,
+    // 0.2 requires a hold before a booking; these 0.1 tests book directly unless they say otherwise.
+    requireHold: false,
+    maxBookingsPerEmail: null,
+    maxBookingsPerEmailSitewide: null,
     ...extra,
   });
 }

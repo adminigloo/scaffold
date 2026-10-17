@@ -31,6 +31,26 @@ export function upgradeNotesFor(answers: Answers, fromVersion: string): string[]
   const companies = answers.tenantNoun !== "none";
   const noun = tenantLabel(answers).toLowerCase();
   const crossed = (version: string) => (compareVersions(fromVersion, version) ?? -1) < 0;
+  // 0.32.0 — Tenancy 2b-4c: book a call, a new answer (`create-app add booking`).
+  // Nothing to move for a project that didn't have it; one that wired
+  // @adminigloo/booking 0.1 by hand gets the steps.
+  if (crossed("0.32.0") && answers.includeBooking) {
+    notes.push(
+      "Book a call runs on @adminigloo/booking 0.2's own handlers (src/server/booking.ts). If you had booking 0.1 tables already, " +
+        "**run node_modules/@adminigloo/booking/sql/upgrade-0.1-to-0.2.sql BEFORE you deploy** — 0.2 on a 0.1 database fails every booking " +
+        "request — in place of the booking statements `pnpm db:generate` wrote (safe twice): it adds booking_hosts.user_id, " +
+        "booking_bookings.reminded_at and booking_bookings.reminder_attempts and keeps every row. A site that passed a fixed tenantId to 0.1 keeps passing " +
+        "the same one; this project's calls are written for " +
+        (companies ? `each ${noun}'s own id.` : '"primary" (BOOKING_TENANT in src/server/booking.ts).'),
+      (companies
+        ? `Each ${noun} sets up its calls at /app/calls: add someone from the team to take calls (they must already be a member), their weekly ` +
+          `hours and a call type, then share /t/{web address}/book. Only owners and admins change hours, people and call types.`
+        : "Set up calls at /admin/calls: add who takes calls, their weekly hours and a call type, then share /book.") +
+        (answers.includeEmail
+          ? " Confirmations, moves, cancellations and a reminder the day before go out with RESEND_API_KEY set; the reminder runs from /api/cron/booking (it needs CRON_SECRET)."
+          : " This project has no email, so nobody is emailed about a call (`create-app add email`); the confirmation page's private link is the one to keep."),
+    );
+  }
   // 0.31.0 — Tenancy 2b-4b: the search check and AI mentions, per company, on
   // their packages' own handlers (the tRPC seo and aeo routers are gone).
   if (crossed("0.31.0") && answers.includeSeoReports) {

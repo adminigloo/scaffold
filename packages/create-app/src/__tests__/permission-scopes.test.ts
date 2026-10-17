@@ -104,12 +104,20 @@ async function staffLadder(): Promise<string[]> {
   ].flatMap((m) => m[1] ?? []);
 }
 
-/** `{ "orders.view": ["owner", "admin"] }` for one package's fragment file. */
-async function defaultsIn(pkg: string): Promise<Record<string, string[]>> {
-  const source = await readFile(
+/**
+ * `{ "orders.view": ["owner", "admin"] }` for one fragment — the block of
+ * `export const {binding}` in its package's permissions.ts, up to the next
+ * export (booking 0.2 declares a staff fragment AND a company one).
+ */
+async function defaultsIn(pkg: string, binding: string): Promise<Record<string, string[]>> {
+  const file = await readFile(
     join(PACKAGES_DIR, pkg, "src", "permissions.ts"),
     "utf8",
   );
+  const start = file.indexOf(`export const ${binding} `);
+  const rest = start < 0 ? "" : file.slice(start);
+  const next = rest.indexOf("\nexport ", 1);
+  const source = next < 0 ? rest : rest.slice(0, next);
   const out: Record<string, string[]> = {};
   let key: string | null = null;
 
@@ -151,7 +159,7 @@ describe("every package fragment is declared for the ladder its defaults name", 
         staff: await staffLadder(),
       };
       const ladder = new Set(ladders[fragment.scope]);
-      const defaults = await defaultsIn(fragment.package);
+      const defaults = await defaultsIn(fragment.package, fragment.binding);
 
       expect(
         Object.keys(defaults).length,

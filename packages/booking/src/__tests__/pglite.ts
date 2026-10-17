@@ -71,7 +71,9 @@ export function schemaDdl(): string[] {
     for (const index of config.indexes) {
       const columns = index.config.columns.map((column) => `"${(column as { name: string }).name}"`).join(", ");
       statements.push(
-        `CREATE ${index.config.unique ? "UNIQUE " : ""}INDEX "${index.config.name}" ON "${config.name}" (${columns})`,
+        `CREATE ${index.config.unique ? "UNIQUE " : ""}INDEX "${index.config.name}" ON "${config.name}" (${columns})${
+          index.config.where ? ` WHERE ${dialect.sqlToQuery(index.config.where).sql}` : ""
+        }`,
       );
     }
   }

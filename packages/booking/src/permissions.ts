@@ -57,3 +57,35 @@ export const bookingPermissions = {
 } as const satisfies Record<string, BookingPermissionDefinition>;
 
 export type BookingPermission = keyof typeof bookingPermissions;
+
+/**
+ * THE SAME FOUR KEYS FOR A COMPANY'S OWN PEOPLE (0.2), for an app where many
+ * businesses take calls: spread into its `definePermissions("tenant", { ... })`
+ * (the company's roles: owner, admin, member, viewer) instead of the staff
+ * catalog. Each company's calls, hours, holidays and call types are its own,
+ * and the roles that work them are its own.
+ *
+ * `booking.calls.view` ends in ".view", so it stays open while a company's
+ * plan is closed (billing 0.3's rule): its people can always see their calls.
+ */
+export const bookingCompanyPermissions = {
+  "booking.calls.view": {
+    ...bookingPermissions["booking.calls.view"],
+    description: "See the company's booked calls, who booked them, their notes and history, and its hours and call types.",
+    defaultFor: ["owner", "admin", "member", "viewer"],
+  },
+  "booking.calls.manage": {
+    ...bookingPermissions["booking.calls.manage"],
+    defaultFor: ["owner", "admin", "member"],
+  },
+  "booking.availability.manage": {
+    ...bookingPermissions["booking.availability.manage"],
+    description: "Edit the weekly hours, days off and blocks of the people taking calls, and the company's holidays.",
+    defaultFor: ["owner", "admin"],
+  },
+  "booking.settings.manage": {
+    ...bookingPermissions["booking.settings.manage"],
+    description: "Choose who on the team takes calls, connect their calendars, rotate feed links, and set what can be booked.",
+    defaultFor: ["owner", "admin"],
+  },
+} as const satisfies Record<BookingPermission, BookingPermissionDefinition>;

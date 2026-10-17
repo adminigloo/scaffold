@@ -933,6 +933,28 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
       exists(plan, "app", "api", "app", "[tenantId]", "search-check", "[...path]", "route.ts") &&
       mentions(plan, ["app", "(site)", "app", "website", "page.tsx"], "<SearchCheckSection"),
   },
+  {
+    capability: "booking.companies",
+    why:
+      "Each company takes its own calls (Tenancy 2b-4c): its calls screen at /app/calls " +
+      "over /api/app/{id}/calls (the id in the path, asked every call), its booking page " +
+      "at /t/{web address}/book through the public gate, and hosts that are its own people.",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "server", "booking.ts"], "buildBookingAdminHandlers", "companyAuthorizer(", "admitPublic", "teamMember") &&
+      exists(plan, "app", "api", "app", "[tenantId]", "calls", "[...path]", "route.ts") &&
+      exists(plan, "app", "(company)", "t", "[slug]", "book", "page.tsx") &&
+      mentions(plan, ["app", "(site)", "app", "calls", "page.tsx"], "<CallsAdmin"),
+  },
+  {
+    capability: "booking.calls",
+    why:
+      "One business takes calls (Tenancy 2b-4c): the booking page at /book, the manage " +
+      "page behind every confirmation, and the calls at /admin/calls on staff keys.",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "server", "booking.ts"], "BOOKING_TENANT", "authorizeStaffFor(") &&
+      exists(plan, "app", "(site)", "book", "page.tsx") &&
+      mentions(plan, ["app", "admin", "calls", "page.tsx"], "<CallsAdmin"),
+  },
 ];
 
 /**

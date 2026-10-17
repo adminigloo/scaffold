@@ -56,8 +56,15 @@ import { verifyLicense, type LicenseMode } from "@adminigloo/license";
 import type { BusySource } from "./busy-source.js";
 import { BookingError, type BookingErrorCode, type BookingIssue } from "./errors.js";
 import { emailSchema, normalizeCallingCode } from "./fields.js";
-import type { BookingDb, BookingContext, BookingEvent } from "./services/context.js";
+import type { BookingDb, BookingContext, BookingEvent, HostMembers } from "./services/context.js";
+import { networkKeyOf } from "./address.js";
+import { bookingKeptOpenWhilePlanClosed } from "./routes.js";
 import {
+  DEFAULT_DAILY_BOOKING_LIMIT,
+  DEFAULT_MAX_BOOKINGS_PER_EMAIL,
+  DEFAULT_MAX_BOOKINGS_PER_EMAIL_SITEWIDE,
+  manageTokenOpens,
+  DEFAULT_MAX_HOLDS_PER_COMPANY,
   DEFAULT_MAX_HOLDS_PER_SUBJECT,
   book,
   cancelByToken,
@@ -154,7 +161,54 @@ export interface CreateBookingHandlersOptions {
   holdSubject?: (req: Request) => string | null | Promise<string | null>;
   /** Live holds per `holdSubject`, not counting the one being replaced. Default 2. */
   maxHoldsPerSubject?: number;
+  /**
+   * Live holds the whole business may have at once, whoever placed them
+   * (0.2): the cap a script rotating addresses still meets. Default 30;
+   * null → none.
+   */
+  maxHoldsPerCompany?: number | null;
+  /** LIVE bookings the business takes in any 24 hours (0.2): cancelled ones don't count. Default 50; null → none. */
+  dailyBookingLimit?: number | null;
+  /** Live bookings one email address may make with this business in 24 hours (0.2). Default 2; null → none. */
+  maxBookingsPerEmail?: number | null;
+  /** Live bookings one email address may make across every business on this database in 24 hours (0.2). Default 5; null → none. */
+  maxBookingsPerEmailSitewide?: number | null;
+  /**
+   * A booking must come from a hold (0.2), so the hold caps apply to every
+   * booking. Default true; false only for an app with a form of its own that
+   * books without picking a time first.
+   */
+  requireHold?: boolean;
+  /**
+   * IS THIS BUSINESS TAKING NEW BOOKINGS? (0.2) Asked before the config, the
+   * slot list, a hold and a booking: a suspended business, or one whose plan
+   * ended, answers `{ open: false, message }` and every one of those is
+   * refused `closed` (403) with that message — the business's own sentence,
+   * naming it and how to reach it. Absent → always open.
+   */
+  admit?: (tenantId: string, req: Request) => AdmitVerdict | Promise<AdmitVerdict>;
+  /**
+   * The same question for a link the business ALREADY SENT (0.2): a booking's
+   * manage page, its cancel, reschedule and calendar file — and the times a
+   * reschedule offers and holds — and a host's feed. A plan that ended keeps
+   * these open (customers can still cancel or move what they booked, see
+   * bookingKeptOpenWhilePlanClosed); a suspended business closes them too.
+   * Absent → always open.
+   */
+  admitExisting?: (tenantId: string, req: Request) => AdmitVerdict | Promise<AdmitVerdict>;
+  /** Which hosts' people are still members (0.2) — see BookingContext.hostMembers. */
+  hostMembers?: HostMembers;
 }
+
+/** What `admit` answers. */
+export type AdmitVerdict = { readonly open: true } | { readonly open: false; readonly message: string };
+
+/**
+ * The honeypot (0.2): a field the widget keeps off screen, so only a script
+ * fills it. A filled one is refused before any database work.
+ */
+export const BOOKING_HONEYPOT_FIELD = "website";
+export const SPAM_MESSAGE = "Something about this form looked automatic, so it wasn't sent. Please check your details and try again.";
 
 export interface BookingHandlers {
   handle: (req: Request) => Promise<Response>;
@@ -249,6 +303,18 @@ export function createBookingHandlers(options: CreateBookingHandlersOptions): Bo
     throw new Error(`createBookingHandlers: maxHoldsPerSubject must be a whole number of at least 1 (got ${String(options.maxHoldsPerSubject)})`);
   }
   const realBookingUrl = options.realBookingUrl?.trim() || null;
+  const capOf = (value: number | null | undefined, fallback: number, name: string): number | null => {
+    if (value === null) return null;
+    const chosen = value ?? fallback;
+    if (!Number.isInteger(chosen) || chosen < 1) {
+      throw new Error(`createBookingHandlers: ${name} must be a whole number of at least 1, or null (got ${String(value)})`);
+    }
+    return chosen;
+  };
+  const maxHoldsPerCompany = capOf(options.maxHoldsPerCompany, DEFAULT_MAX_HOLDS_PER_COMPANY, "maxHoldsPerCompany");
+  const dailyBookingLimit = capOf(options.dailyBookingLimit, DEFAULT_DAILY_BOOKING_LIMIT, "dailyBookingLimit");
+  const maxBookingsPerEmail = capOf(options.maxBookingsPerEmail, DEFAULT_MAX_BOOKINGS_PER_EMAIL, "maxBookingsPerEmail");
+  const maxBookingsPerEmailSitewide = capOf(options.maxBookingsPerEmailSitewide, DEFAULT_MAX_BOOKINGS_PER_EMAIL_SITEWIDE, "maxBookingsPerEmailSitewide");
 
   const corsHeaders: Record<string, string> = options.cors
     ? {
@@ -357,7 +423,7 @@ export function createBookingHandlers(options: CreateBookingHandlersOptions): Bo
           ? "manage"
           : "read";
 
-  async function dispatch(req: Request, matched: Route, ctx: BookingContext, tokenRoute: boolean): Promise<Response> {
+  async function dispatch(req: Request, matched: Route, ctx: BookingContext, tokenRoute: boolean, input: Record<string, unknown>): Promise<Response> {
     const url = new URL(req.url);
     switch (matched.kind) {
       case "config":
@@ -376,14 +442,15 @@ export function createBookingHandlers(options: CreateBookingHandlersOptions): Bo
         );
       }
       case "hold": {
-        const input = await body(req);
         const previousHoldToken = str(input["previousHoldToken"]);
         // Absent or null: an ordinary hold. Present but not a string still
         // counts as "acting for a booking", so it is not_found rather than
         // silently holding an ordinary time.
         const rawManage = input["manageToken"];
         const manageToken = rawManage === undefined || rawManage === null ? undefined : (str(rawManage) ?? "");
-        const subject = options.holdSubject ? await options.holdSubject(req) : null;
+        // A visitor's IPv6 address is keyed by its /64 (0.2): one machine has a whole /64 to rotate through.
+        const rawSubject = options.holdSubject ? await options.holdSubject(req) : null;
+        const subject = rawSubject ? networkKeyOf(rawSubject) : null;
         return json(
           await holdSlot(
             ctx,
@@ -393,16 +460,19 @@ export function createBookingHandlers(options: CreateBookingHandlersOptions): Bo
               ...(previousHoldToken ? { previousHoldToken } : {}),
               ...(manageToken !== undefined ? { manageToken } : {}),
             },
-            { subject, maxPerSubject: maxHoldsPerSubject },
+            { subject, maxPerSubject: maxHoldsPerSubject, maxPerTenant: maxHoldsPerCompany },
           ),
         );
       }
       case "release": {
-        const input = await body(req);
         return json(await releaseHold(ctx, { holdToken: str(input["holdToken"]) ?? "" }));
       }
       case "book": {
-        const input = await body(req);
+        // Spam first, before any database work: a script learns nothing and costs nothing.
+        const trap = input[BOOKING_HONEYPOT_FIELD];
+        if (trap !== undefined && trap !== null && !(typeof trap === "string" && trap.trim() === "")) {
+          throw new BookingError("invalid", SPAM_MESSAGE);
+        }
         const optional = (key: string) => {
           const value = str(input[key]);
           return value === undefined ? {} : { [key]: value };
@@ -419,18 +489,21 @@ export function createBookingHandlers(options: CreateBookingHandlersOptions): Bo
           ...optional("notes"),
           ...optional("timezone"),
           ...optional("source"),
+        }, {
+          maxPerDay: dailyBookingLimit,
+          requireHold: options.requireHold !== false,
+          maxPerEmail: maxBookingsPerEmail,
+          maxPerEmailSitewide: maxBookingsPerEmailSitewide,
         });
         return json({ ...result, manageUrl: options.manageUrl(result.manageToken) });
       }
       case "manage":
         return json({ booking: await getBookingByToken(ctx, matched.token) }, 200, true);
       case "cancel": {
-        const input = await body(req);
         const reason = str(input["reason"]);
         return json({ booking: await cancelByToken(ctx, matched.token, reason ? { reason } : {}) }, 200, true);
       }
       case "reschedule": {
-        const input = await body(req);
         const holdToken = str(input["holdToken"]);
         return json(
           {
@@ -482,6 +555,8 @@ export function createBookingHandlers(options: CreateBookingHandlersOptions): Bo
       if (options.rateLimit && !(await options.rateLimit(req, bucketOf(matched.kind)))) {
         return errorResponse("rate_limited", "Too many requests. Please slow down and try again shortly.", 429, tokenRoute);
       }
+      // Read once, here, so the gate below can see whether a hold acts for a booking.
+      const input = req.method === "POST" ? await body(req) : {};
       const ctx: BookingContext = {
         db: options.db,
         tenantId,
@@ -495,9 +570,21 @@ export function createBookingHandlers(options: CreateBookingHandlersOptions): Bo
         // The sandbox guarantee is enforced HERE, by never handing the
         // services the two things that reach the outside world.
         ...(sandbox ? {} : { busySource: options.busySource ?? null }),
+        ...(options.hostMembers ? { hostMembers: options.hostMembers } : {}),
         ...(sandbox || !options.onEvent ? {} : { onEvent: options.onEvent }),
       };
-      return await dispatch(req, matched, ctx, tokenRoute);
+      // Times and holds ride an existing link only when its token really opens
+      // a booking of this business (0.2): a made-up `manage` is a new booking's
+      // request, and asks the new-booking gate.
+      const manageToken =
+        matched.kind === "slots" ? url.searchParams.get("manage") : matched.kind === "hold" ? str(input["manageToken"]) ?? null : null;
+      const actingForBooking = (matched.kind === "slots" || matched.kind === "hold") && manageToken !== null && (await manageTokenOpens(ctx, manageToken));
+      const gate = bookingKeptOpenWhilePlanClosed(matched.kind, actingForBooking) ? options.admitExisting : options.admit;
+      if (gate) {
+        const verdict = await gate(tenantId, req);
+        if (!verdict.open) return errorResponse("closed", verdict.message, 403, tokenRoute);
+      }
+      return await dispatch(req, matched, ctx, tokenRoute, input);
     } catch (error) {
       if (error instanceof BookingError) {
         return errorResponse(error.code, error.message, error.status, tokenRoute, wireIssues(error.issues));

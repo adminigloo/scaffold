@@ -52,8 +52,8 @@ project's isolation test.
 | `seo` | Per company | Each company's public pages get their own title, address and business details for search engines and AI assistants, and a place in the sitemap; its token pages stay out of search (Tenancy 2b-4a, with --seo). The site's own search settings stay the site's. |
 | `seo-reports` | Per company | Each company's search check: how search engines and AI assistants read its own pages and websites, as a list of things to fix, with every check kept — reading only its own addresses, never a private one (Tenancy 2b-4b). The site's own checks stay the site's. |
 | `aeo` | Per company | Each company's AI mentions: the questions its customers ask, who it is, and whether AI assistants name it — every answer paid from its own month of AI (Tenancy 2b-4b). The site's own stay the site's. |
-| `booking` | Not yet: 2b-4c book-a-call | Book-a-call is the site owner's own until then. |
-| `booking-widget` | Not yet: 2b-4c book-a-call | The book-a-call page, with booking. |
+| `booking` | Per company | Each company's calls: the people on its team who take them, their weekly hours, time off and time zones, its holidays and call types, its booking page and the private links it sends — new bookings close when it's suspended or its plan ends, links it sent stay open (Tenancy 2b-4c). |
+| `booking-widget` | Per company | The booking page and manage page at a company's web address, and its calls screen at /app/calls. |
 | `commerce` | Not yet: getting-paid | A company taking card payments from its own customers comes with the getting-paid work. |
 | `catalog` | Shared | the site's own plans and products, sold to every company |
 | `stripe` | Shared | the site's own Stripe account; a company taking card payments from its own customers comes with the getting-paid work |

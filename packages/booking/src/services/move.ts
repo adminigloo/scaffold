@@ -92,7 +92,7 @@ export async function moveBooking(
   const type = await typeById(ctx, found.typeId);
   if (!type) throw new BookingError("not_found");
   const previousStart = found.startUtc;
-  const hosts = await poolHosts(ctx.db, tenantId, type);
+  const hosts = await poolHosts(ctx.db, tenantId, type, ctx.hostMembers);
   // The current host stays a candidate even if since removed from the pool.
   const current = await hostById(ctx, found.hostId);
   const candidates = current && !hosts.some((host) => host.id === current.id) && current.isActive ? [...hosts, current] : hosts;
@@ -152,6 +152,9 @@ export async function moveBooking(
         startUtc: input.start,
         endUtc: new Date(input.start.getTime() + (fresh.endUtc.getTime() - fresh.startUtc.getTime())),
         sequence: fresh.sequence + 1,
+        // A new time is a new reminder (0.2).
+        remindedAt: null,
+        reminderAttempts: 0,
         updatedAt: now,
       })
       .where(and(eq(bookingBookings.tenantId, tenantId), eq(bookingBookings.id, fresh.id)))

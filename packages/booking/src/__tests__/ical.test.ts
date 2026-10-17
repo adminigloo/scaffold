@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  IcsBudgetError,
   expandBusy,
   IcsParseError,
   parseContentLine,
@@ -368,11 +369,12 @@ describe("RRULE expansion", () => {
     expect(window(ics)).toEqual(["2026-10-05T15:00/2026-10-05T15:30"]);
   });
 
-  it("caps the expansion, however hostile the feed", () => {
+  it("caps the expansion, however hostile the feed — and refuses the feed rather than cut it short (0.2)", () => {
     const ics = cal(["UID:a\nDTSTART:20200101T000000Z\nDTEND:20200101T000100Z\nRRULE:FREQ=DAILY"]);
-    expect(busy(ics, "2020-01-01T00:00:00Z", "2030-01-01T00:00:00Z", DENVER, 50)).toHaveLength(50);
+    expect(() => busy(ics, "2020-01-01T00:00:00Z", "2030-01-01T00:00:00Z", DENVER, 50)).toThrow(IcsBudgetError);
+    expect(busy(ics, "2020-01-01T00:00:00Z", "2020-02-20T00:00:00Z", DENVER, 50)).toHaveLength(50);
     // The default cap is 5,000.
-    expect(busy(ics, "2000-01-01T00:00:00Z", "2099-01-01T00:00:00Z").length).toBe(5000);
+    expect(() => busy(ics, "2000-01-01T00:00:00Z", "2099-01-01T00:00:00Z")).toThrow(IcsBudgetError);
   });
 
   it("expands only inside the window", () => {

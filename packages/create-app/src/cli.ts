@@ -46,6 +46,7 @@ export interface CliFlags {
   readonly aeo?: boolean;
   readonly analytics?: boolean;
   readonly seo?: boolean;
+  readonly booking?: boolean;
 }
 
 export class UnknownFlagValueError extends Error {
@@ -91,6 +92,7 @@ export function parseArgs(argv: readonly string[]): CliFlags {
   let aeo: boolean | undefined;
   let analytics: boolean | undefined;
   let seo: boolean | undefined;
+  let booking: boolean | undefined;
 
   /** Supports both `--flag value` and `--flag=value`. */
   const readValue = (arg: string, prefix: string, index: number): string | undefined =>
@@ -126,6 +128,8 @@ export function parseArgs(argv: readonly string[]): CliFlags {
     else if (arg === "--no-invoicing") invoicing = false;
     else if (arg === "--comms") comms = true;
     else if (arg === "--no-comms") comms = false;
+    else if (arg === "--booking") booking = true;
+    else if (arg === "--no-booking") booking = false;
     else if (arg === "--aeo") aeo = true;
     else if (arg === "--no-aeo") aeo = false;
     else if (arg === "--analytics") analytics = true;
@@ -178,6 +182,7 @@ export function parseArgs(argv: readonly string[]): CliFlags {
     aeo,
     analytics,
     seo,
+    booking,
   };
 }
 
@@ -249,6 +254,11 @@ export const HELP = `
     / --no-invoicing   customers view without an account, and a staff ledger.
   --comms              Field service: templated email/SMS with a scheduler and a
     / --no-comms       cron drain. Senders are injected — no provider, clean skip.
+  --booking            Book a call: a booking page where customers pick a time
+    / --no-booking     for a call, a private link to move or cancel it, and the
+                       calls, hours, time off and call types behind it. With
+                       companies, each company's own at /app/calls and
+                       /t/{web address}/book; one business, /admin/calls and /book.
   --aeo                AI mentions: do AI assistants name you when customers ask
     / --no-aeo         them questions — the quote, the sources, the competitors,
                        the trend. With companies, each company's own at
@@ -469,6 +479,14 @@ export async function collectAnswers(
         : "Search basics? Titles, addresses and business details search engines and AI assistants read.",
       DEFAULT_ANSWERS.includeSeo,
     ));
+  const includeBooking =
+    flags.booking ??
+    (await prompter.confirm(
+      tenantNoun !== "none"
+        ? "Book a call? Each company gets a booking page where customers pick a time to talk, with its calls and hours on its own screen."
+        : "Book a call? A booking page where customers pick a time to talk, with the calls and hours under /admin.",
+      DEFAULT_ANSWERS.includeBooking,
+    ));
 
   const answers: Answers = {
     projectName,
@@ -490,6 +508,7 @@ export async function collectAnswers(
     includeAeo,
     includeAnalytics,
     includeSeo,
+    includeBooking,
     scope: DEFAULT_ANSWERS.scope,
   };
   // Refused here, before a directory is created, with the reason.

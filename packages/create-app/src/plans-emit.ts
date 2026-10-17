@@ -107,6 +107,16 @@ export async function aiMentionCheckLimit(_tenantId: string): Promise<number | n
   return undefined;
 }
 
+/** People taking calls from a plan: none here (undefined), so there's no limit. */
+export async function bookingHostLimit(_tenantId: string): Promise<number | null | undefined> {
+  return undefined;
+}
+
+/** Is this company on a free trial? Never: there are no plans here. */
+export async function companyOnTrial(_tenantId: string): Promise<boolean> {
+  return false;
+}
+
 /** May this company start new paid work (a search check, an AI answer)? Always: there is no plan here to end. */
 export async function companyPlanOpen(_tenantId: string): Promise<true | string> {
   return true;
@@ -322,6 +332,23 @@ export async function siteCheckLimit(tenantId: string): Promise<number | null | 
  */
 export async function aiMentionCheckLimit(tenantId: string): Promise<number | null | undefined> {
   return planLimit(tenantId, "ai_mention_checks");
+}
+
+/**
+ * How many of the ${noun}'s people may take calls at once, from its plan
+ * (src/plans.ts, "people taking calls"; Tenancy 2b-4c). Checked when someone
+ * is added to take calls, or switched back on. undefined: the plan doesn't say.
+ */
+export async function bookingHostLimit(tenantId: string): Promise<number | null | undefined> {
+  return planLimit(tenantId, "booking_hosts");
+}
+
+/**
+ * Is the ${noun} on its free trial (Tenancy 2b-4c)? Anyone can start one, so a
+ * trial ${noun}'s booking emails are capped at 20 a day (src/server/booking.ts).
+ */
+export async function companyOnTrial(tenantId: string): Promise<boolean> {
+  return (await planStandingOf(tenantId)).state === "trial";
 }
 
 /**

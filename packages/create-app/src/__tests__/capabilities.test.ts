@@ -45,6 +45,8 @@ const EVERY_CONFIGURATION = ["none", "one-time", "subscription", "both"].flatMap
                         // (`--admin none` with either is refused), so the
                         // suite drops them there.
                         `${includeSuite && adminShell !== "none" ? " --estimator --scheduling" : ""}` +
+                        // Book a call needs the shell only for one business.
+                        `${includeSuite && !(tenantNoun === "none" && adminShell === "none") ? " --booking" : ""}` +
                         `${includeMarketing ? " --marketing" : ""}` +
                         ` --tenant ${tenantNoun}`,
                       {
@@ -64,6 +66,7 @@ const EVERY_CONFIGURATION = ["none", "one-time", "subscription", "both"].flatMap
                         includeAeo: includeSuite,
                         includeAnalytics: includeSuite,
                         includeSeo: includeSuite,
+                        includeBooking: includeSuite && !(tenantNoun === "none" && adminShell === "none"),
                         includeMarketing,
                         tenantNoun,
                       },

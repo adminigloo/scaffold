@@ -198,6 +198,15 @@ export interface Answers {
    * company's pages stay out of search (Tenancy 2a, D17).
    */
   readonly includeSeo: boolean;
+  /**
+   * BOOK A CALL (Tenancy 2b-4c): a booking page where customers pick a time
+   * for a call with the business — its people, their weekly hours, time off,
+   * holidays and call types — with a private link to move or cancel, calendar
+   * files, and reminders. With companies, each company's own: its calls at
+   * /app/calls and its booking page at /t/{web address}/book. One business:
+   * /admin/calls and /book.
+   */
+  readonly includeBooking: boolean;
   /** Scope the packages are published under. */
   readonly scope: string;
 }
@@ -222,6 +231,7 @@ export const DEFAULT_ANSWERS: Answers = {
   includeAeo: false,
   includeAnalytics: false,
   includeSeo: false,
+  includeBooking: false,
   scope: "@adminigloo",
 };
 
@@ -244,6 +254,15 @@ export class IncompatibleAnswersError extends Error {
  * pages that 404.
  */
 export function assertAnswersCompatible(answers: Answers): void {
+  // BOOK A CALL, ONE BUSINESS, NEEDS AN ADMIN PANEL: its calls, hours and call
+  // types are worked at /admin/calls. (A company's are at /app/calls, which
+  // needs no shell.)
+  if (answers.includeBooking && answers.tenantNoun === "none" && answers.adminShell === "none") {
+    throw new IncompatibleAnswersError(
+      "Booking calls needs an admin panel in a single-business project: the calls, the hours and the call types are worked at /admin/calls. " +
+        "With --admin none nobody could see a booked call or set when people can book. Use --admin minimal (or full) with --booking.",
+    );
+  }
   if (answers.includeScheduling && answers.adminShell === "none") {
     throw new IncompatibleAnswersError(
       "Scheduling needs an admin panel: staff accept or decline online booking requests on its calendar, and crews open today's route there. " +
@@ -397,6 +416,12 @@ export function packagesFor(answers: Answers): readonly string[] {
   if (answers.includeInvoicing) optional.push("invoicing", "invoicing-widget");
   if (answers.includeComms) optional.push("comms", "comms-widget");
   if (answers.includeAeo) optional.push("aeo");
+  // Two packages for one answer (Tenancy 2b-4c), the feedback split: `booking`
+  // is the server half (the slot engine, the company handlers and route
+  // tables, the calendar reader, the emails as data) and `booking-widget` the
+  // screens (the booking page, the manage page, and the calls admin under
+  // ./admin).
+  if (answers.includeBooking) optional.push("booking", "booking-widget");
   // Two packages for one answer (Tenancy 2b-4a): `analytics` counts the
   // visits and draws the screens; `audience` decides whose visits don't count
   // (the business's own people). Analytics leaves people out only through an
@@ -552,7 +577,9 @@ export function optionalEnvFor(answers: Answers): readonly string[] {
     answers.includeAnalytics ||
     // Tenancy 2b-4b: and the weekly search check and AI mentions.
     answers.includeSeoReports ||
-    answers.includeAeo
+    answers.includeAeo ||
+    // Tenancy 2b-4c: and the calls' reminders and hold clean-up.
+    answers.includeBooking
   ) {
     // What the /api/cron/* routes check. Optional because a laptop drains
     // nothing on a schedule; on a deployment, unset means every cron call is
@@ -1110,7 +1137,7 @@ export function capabilitiesFor(answers: Answers): readonly string[] {
     answers.includeScheduling || answers.includeEstimator || answers.includeInvoicing || answers.includeComms;
   if (companies && fieldFeature) {
     keys.push("companies.feature-area", "companies.feature-isolation-proof");
-  } else if (companies && (answers.includeFeedback || answers.includeSeoReports || answers.includeAeo)) {
+  } else if (companies && (answers.includeFeedback || answers.includeSeoReports || answers.includeAeo || answers.includeBooking)) {
     // Tenancy 2b-2a: each company's feedback board is a feature route the
     // isolation proof drives, so a companies project with feedback alone has
     // the proof too.
@@ -1130,6 +1157,8 @@ export function capabilitiesFor(answers: Answers): readonly string[] {
   if (answers.includeSeoReports && companies) keys.push("seo.search-check-companies");
   if (answers.includeAeo && companies) keys.push("aeo.companies");
   if (answers.includeAeo && answers.includeAi) keys.push("aeo.metered-checks");
+  // Tenancy 2b-4c: book a call — a company's own, or the one business's.
+  if (answers.includeBooking) keys.push(companies ? "booking.companies" : "booking.calls");
   // Tenancy 2b-4a: counting visits (and leaving the business's own people out
   // of them), this site's own report under the shell, and each company's own.
   if (answers.includeAnalytics) keys.push("analytics.visits", "analytics.audience");
