@@ -195,7 +195,7 @@ export function assistantSection(answers: ProjectManifest["answers"]): string[] 
 
 /** What website visits and search basics don't do (Tenancy 2b-4a), said plainly. */
 export const WEBSITE_2B4A_NOT_INCLUDED: readonly string[] = [
-  "**SEO reports and AI-citation tracking** (how search engines read the pages, whether AI assistants name the business) — the next chunk, Tenancy 2b-4b.",
+  "**Search checks and AI mentions** (how search engines read the pages, whether AI assistants name the business) come with `--seo-reports` and `--aeo` (Tenancy 2b-4b).",
   "**Book-a-call per company** — Tenancy 2b-4c.",
   "**Google Search Console** (clicks and positions in Google search).",
   "**Crawlers on a website of the business's own.** Crawlers don't run the pasted line, so they are counted on its pages here only.",
@@ -245,6 +245,62 @@ export function websiteSection(answers: ProjectManifest["answers"]): string[] {
     );
   }
   lines.push("Not included:", "", ...WEBSITE_2B4A_NOT_INCLUDED.map((line) => `- ${line}`), "");
+  return lines;
+}
+
+/** What the search check and AI mentions don't do (Tenancy 2b-4b), said plainly. */
+export const WEBSITE_2B4B_NOT_INCLUDED: readonly string[] = [
+  "**Google Search Console** (clicks, impressions and positions) and **Bing Webmaster**.",
+  "**ChatGPT, Perplexity and Gemini** as answer engines. AI mentions asks Claude with web search; another engine is an adapter of the same shape.",
+  "**Sites behind a password, and pages only a browser can draw.** The search check reads what a server sends, as search engines first do.",
+  "**Checking a page on a laptop's own address** (localhost and private networks are never fetched, for safety). Check a deployed address.",
+  "**Fixing the problems for you.** The search check lists what to change; the changes are yours to make.",
+];
+
+/**
+ * The "Search check" and "AI mentions" sections (Tenancy 2b-4b): what each
+ * reads, where it's seen, what it costs. Empty without either answer.
+ */
+export function websiteReportsSection(answers: ProjectManifest["answers"]): string[] {
+  if (!answers.includeSeoReports && !answers.includeAeo) return [];
+  const companies = answers.tenantNoun !== "none";
+  const noun = companies ? tenantLabel(answers).toLowerCase() : "business";
+  const shell = answers.adminShell !== "none";
+  const plans = plansAnswer(answers);
+  const lines: string[] = [];
+  if (answers.includeSeoReports) {
+    lines.push("### Search check", "");
+    if (companies) {
+      lines.push(
+        `- **Each ${noun}'s own check** on /app/website: how Google, Bing and AI assistants read its pages here and its own websites${answers.includeAnalytics ? " (the ones it added under Website)" : ""}, as a list of things to fix in plain words, with every past check kept. Owners and admins press Check now${plans ? ` (its plan sets how often a month, src/plans.ts)` : " (20 times a month)"}; a check also runs by itself every week, free.`,
+      );
+    }
+    lines.push(
+      shell
+        ? "- **This site's own check** at /admin/seo (staff.seo_reports.view), of its own pages."
+        : "- **This site's own check** over /api/admin/search-check, of its own pages.",
+      "- **Safe by design**: a check reads only the business's own addresses — never a private or cloud-internal one, every redirect re-checked — at most 50 pages, 2 MB a page and 45 seconds. The weekly re-check is /api/cron/search-check (vercel.json; it needs CRON_SECRET).",
+      "",
+    );
+  }
+  if (answers.includeAeo) {
+    lines.push("### AI mentions", "");
+    if (companies) {
+      lines.push(
+        `- **Each ${noun}'s own questions** on /app/website: the questions its customers ask an AI assistant ("wheelchair ramp rental Raleigh"), whether the answer names it (by name, or its website among the sources), the quoted words, the competitors named, and how often over eight weeks.`,
+      );
+    }
+    lines.push(
+      shell
+        ? "- **This site's own** at /admin/aeo (staff.aeo.view)."
+        : "- **This site's own** over /api/admin/ai-mentions.",
+      answers.includeAi
+        ? `- **What it costs**: each check asks Claude Haiku 4.5 with web search; the cost is estimated — see /admin/aeo for the measured average. Every answer is held against the month (src/server/ai-mentions.ts${companies && plans ? ', or its plan\'s "AI mention checks a month" and "questions tracked by AI mentions"' : ""}), AI mentions' own day (AI_MENTIONS_DAILY_CENTS, at most half the site's) and the site's day (AI_SITE_DAILY_CENTS) before it's asked, and recorded in ai_usage — web searches priced in. Code, not the model, decides whether the business was named. Each question is asked again weekly by /api/cron/ai-mentions (it needs CRON_SECRET).`
+        : "- **No answers are asked yet**: this project has no AI (`create-app add ai`). Questions and who the business is can be kept; Check now says checking isn't switched on.",
+      "",
+    );
+  }
+  lines.push("Not included:", "", ...WEBSITE_2B4B_NOT_INCLUDED.map((line) => `- ${line}`), "");
   return lines;
 }
 
@@ -532,6 +588,7 @@ export function renderProjectReadme(manifest: ProjectManifest): string {
   lines.push(...assistantSection(answers));
   lines.push(...alertsAndFilesSection(answers));
   lines.push(...websiteSection(answers));
+  lines.push(...websiteReportsSection(answers));
   lines.push("### Not included", "", ...notIncludedFor(companies, { seo: answers.includeSeo }).map((item) => `- ${item}`), "");
 
   const tables = primaryTables(answers);

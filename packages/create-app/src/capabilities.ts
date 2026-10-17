@@ -362,18 +362,20 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
   {
     capability: "seo.audits",
     why:
-      "The staff router whose mutation actually crawls the deployment and " +
-      "stores the report — audits can run over tRPC (or a cron) whether or " +
-      "not a shell renders them.",
+      "The search check on the package's own handlers (Tenancy 2b-4b): this " +
+      "site's own route, the daily job, and the addresses it may read — " +
+      "whether or not a shell renders the report.",
     provenBy: (plan) =>
-      mentions(plan, ["src", "server", "routers", "seo.ts"], "runSeoReport("),
+      mentions(plan, ["src", "server", "search-check.ts"], "createSeoReportsHandlers(", "buildPlatformSearchCheckHandlers", "runDailySearchChecks") &&
+      exists(plan, "app", "api", "admin", "search-check", "[...path]", "route.ts") &&
+      exists(plan, "app", "api", "cron", "search-check", "route.ts"),
   },
   {
     capability: "seo.reports",
     why:
-      "The report page under the shell, from the seo-admin overlay — the " +
+      "This site's own search check under the shell, from the seo-admin overlay — the " +
       "same two-condition shape as feedback.triage.",
-    provenBy: (plan) => exists(plan, "app", "admin", "seo", "page.tsx"),
+    provenBy: (plan) => mentions(plan, ["app", "admin", "seo", "page.tsx"], "<SearchCheckSection"),
   },
   // ALERTS AND FILES (Tenancy 2b-1, 13.9). Each server half proven by the
   // call that does the work, each screen by the package component on it, in
@@ -890,16 +892,46 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
   {
     capability: "aeo.citations",
     why:
-      "The router that runs citation checks against the injected asker, over " +
-      "tRPC whether or not a shell renders the dashboard. The dashboard is the " +
-      "other key.",
+      "AI mentions on the package's own handlers (Tenancy 2b-4b): this site's own " +
+      "route and the daily job, whether or not a shell renders the screen.",
     provenBy: (plan) =>
-      mentions(plan, ["src", "server", "routers", "aeo.ts"], "runCitationChecks("),
+      mentions(plan, ["src", "server", "ai-mentions.ts"], "createAeoHandlers(", "buildPlatformAiMentionsHandlers", "runDailyAiMentions") &&
+      exists(plan, "app", "api", "admin", "ai-mentions", "[...path]", "route.ts") &&
+      exists(plan, "app", "api", "cron", "ai-mentions", "route.ts"),
   },
   {
     capability: "aeo.dashboard",
-    why: "The staff citation-tracking dashboard under the shell, from aeo-admin.",
-    provenBy: (plan) => exists(plan, "app", "admin", "aeo", "page.tsx"),
+    why: "This site's own AI mentions under the shell, from aeo-admin.",
+    provenBy: (plan) => mentions(plan, ["app", "admin", "aeo", "page.tsx"], "<AiMentionsSection"),
+  },
+  {
+    capability: "aeo.metered-checks",
+    why:
+      "Checks are asked of Claude Haiku 4.5 with web search, and every one is held " +
+      "and settled on the AI ledger (@adminigloo/ai), web searches priced in.",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "server", "ai-mentions.ts"], "createAnthropicAnswerEngine(", "reserveAiAllowance(", "settleAiReservation(", "feesMicros"),
+  },
+  {
+    capability: "aeo.companies",
+    why:
+      "Each company keeps its own questions and answers (Tenancy 2b-4b): its route " +
+      "under /api/app/{id}/ai-mentions, its plan's gate, and its section on /app/website.",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "server", "ai-mentions.ts"], "buildAiMentionsHandlers", "companyAuthorizer(", "companyPlanOpen(") &&
+      exists(plan, "app", "api", "app", "[tenantId]", "ai-mentions", "[...path]", "route.ts") &&
+      mentions(plan, ["app", "(site)", "app", "website", "page.tsx"], "<AiMentionsSection"),
+  },
+  {
+    capability: "seo.search-check-companies",
+    why:
+      "Each company checks its own website and pages (Tenancy 2b-4b): its route " +
+      "under /api/app/{id}/search-check, its addresses only, its plan's checks, and " +
+      "its section on /app/website.",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "server", "search-check.ts"], "buildSearchCheckHandlers", "companyAuthorizer(", "companyAddresses", "siteCheckLimit(") &&
+      exists(plan, "app", "api", "app", "[tenantId]", "search-check", "[...path]", "route.ts") &&
+      mentions(plan, ["app", "(site)", "app", "website", "page.tsx"], "<SearchCheckSection"),
   },
 ];
 

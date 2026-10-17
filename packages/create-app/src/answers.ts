@@ -549,7 +549,10 @@ export function optionalEnvFor(answers: Answers): readonly string[] {
     answers.includeNotifications ||
     answers.includeStorage ||
     // Tenancy 2b-4a: the website numbers' daily tidy-up checks it too.
-    answers.includeAnalytics
+    answers.includeAnalytics ||
+    // Tenancy 2b-4b: and the weekly search check and AI mentions.
+    answers.includeSeoReports ||
+    answers.includeAeo
   ) {
     // What the /api/cron/* routes check. Optional because a laptop drains
     // nothing on a schedule; on a deployment, unset means every cron call is
@@ -743,10 +746,14 @@ export function overlayNamesFor(answers: Answers): readonly string[] {
   // it is reachable over tRPC or HTTP whether or not there is a shell; the
   // `-admin` half is pages, and pages without a shell are the catalog-admin
   // leak all over again.
+  // Tenancy 2b-4b: the search check runs on the package's handlers. Its
+  // route and screen for this site's own (seo-reports), the page under the
+  // shell (seo-admin), and each company's route (seo-reports-companies).
   if (answers.includeSeoReports) names.push("seo-reports");
   if (answers.includeSeoReports && answers.adminShell !== "none") {
     names.push("seo-admin");
   }
+  if (answers.includeSeoReports && answers.tenantNoun !== "none") names.push("seo-reports-companies");
   // ALERTS AND FILES (Tenancy 2b-1), cut by mode the way the field-service
   // features are (below), because their files have the same four
   // conditions. The 0.1 `notifications` overlay is gone: its notify helper
@@ -847,10 +854,12 @@ export function overlayNamesFor(answers: Answers): readonly string[] {
       if (shell) names.push(`${feature.name}-admin`);
     }
   }
+  // Tenancy 2b-4b: AI mentions, cut the same way as the search check.
   if (answers.includeAeo) names.push("aeo");
   if (answers.includeAeo && answers.adminShell !== "none") {
     names.push("aeo-admin");
   }
+  if (answers.includeAeo && answers.tenantNoun !== "none") names.push("aeo-companies");
   // WEBSITE VISITS (Tenancy 2b-4a), cut by its conditions:
   //   analytics             both modes: this site's own beacon endpoint, the
   //                         keyed endpoint every website calls (/api/w), this
@@ -1101,7 +1110,7 @@ export function capabilitiesFor(answers: Answers): readonly string[] {
     answers.includeScheduling || answers.includeEstimator || answers.includeInvoicing || answers.includeComms;
   if (companies && fieldFeature) {
     keys.push("companies.feature-area", "companies.feature-isolation-proof");
-  } else if (companies && answers.includeFeedback) {
+  } else if (companies && (answers.includeFeedback || answers.includeSeoReports || answers.includeAeo)) {
     // Tenancy 2b-2a: each company's feedback board is a feature route the
     // isolation proof drives, so a companies project with feedback alone has
     // the proof too.
@@ -1117,6 +1126,10 @@ export function capabilitiesFor(answers: Answers): readonly string[] {
   if (answers.includeAeo && answers.adminShell !== "none") {
     keys.push("aeo.dashboard");
   }
+  // Tenancy 2b-4b: each company's own search check and AI mentions.
+  if (answers.includeSeoReports && companies) keys.push("seo.search-check-companies");
+  if (answers.includeAeo && companies) keys.push("aeo.companies");
+  if (answers.includeAeo && answers.includeAi) keys.push("aeo.metered-checks");
   // Tenancy 2b-4a: counting visits (and leaving the business's own people out
   // of them), this site's own report under the shell, and each company's own.
   if (answers.includeAnalytics) keys.push("analytics.visits", "analytics.audience");

@@ -69,7 +69,7 @@ describe("packages, overlays and versions", () => {
     const versions = packageVersions();
     expect(versions.assistant).toBe("0.9.0");
     expect(versions["assistant-widget"]).toBe("0.3.0");
-    expect(versions.ai).toBe("0.2.0");
+    expect(versions.ai).toBe("0.3.0"); // 0.3.0 (Tenancy 2b-4b): fees beyond tokens.
   });
 });
 

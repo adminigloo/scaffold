@@ -1,4 +1,4 @@
-import { and, count, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, count, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import type { PgDatabase } from "drizzle-orm/pg-core";
 import { costMinorUnits, estimateCostMicros, type TokenRate } from "./cost.js";
 import { aiUsage, type AiUsageStatus } from "./schema.js";
@@ -43,6 +43,13 @@ export interface AiCallUsage {
    * free: the cost is recorded as unknown (null) instead.
    */
   readonly reported: boolean;
+  /**
+   * What the provider bills per call BEYOND tokens (0.3.0), in micros: web
+   * searches, priced by the caller from the provider's own count (Anthropic's
+   * `usage.server_tool_use.web_search_requests` × $10 per 1,000). Added to
+   * the token cost; never a number the model reported.
+   */
+  readonly feesMicros?: bigint;
 }
 
 /**
@@ -53,13 +60,16 @@ export function aiCallCostMicros(rates: AiRates, usage: AiCallUsage): bigint | n
   if (!usage.reported) return null;
   const rate = rates[usage.model];
   if (rate === undefined) return null;
-  return estimateCostMicros({
-    inputTokens: usage.inputTokens,
-    outputTokens: usage.outputTokens,
-    cachedInputTokens: usage.cachedInputTokens ?? 0,
-    cachedWriteTokens: usage.cachedWriteTokens ?? 0,
-    rate,
-  });
+  const fees = usage.feesMicros ?? 0n;
+  return (
+    estimateCostMicros({
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      cachedInputTokens: usage.cachedInputTokens ?? 0,
+      cachedWriteTokens: usage.cachedWriteTokens ?? 0,
+      rate,
+    }) + (fees > 0n ? fees : 0n)
+  );
 }
 
 export interface RecordAiUsageInput {
@@ -211,7 +221,7 @@ export interface AiAllowance {
 }
 
 /** What closed it: the company's messages, the company's cents, or the whole site's day. */
-export type AiAllowanceLimit = "messages" | "cents" | "day" | "site";
+export type AiAllowanceLimit = "messages" | "cents" | "day" | "feature" | "site";
 
 /** Where a company stands this month, in numbers code worked out. */
 export interface AiAllowanceUsage {
@@ -230,7 +240,7 @@ export interface AiAllowanceUsage {
   readonly siteResetsAt?: Date;
 }
 
-export type AiAllowanceRefusal = "company_messages" | "company_spend" | "company_day" | "site_ceiling" | "unavailable";
+export type AiAllowanceRefusal = "company_messages" | "company_spend" | "company_day" | "feature_day" | "site_ceiling" | "unavailable";
 
 export type AiAllowanceVerdict =
   | { readonly ok: true; readonly usage: AiAllowanceUsage }
@@ -253,6 +263,13 @@ export interface CheckAiAllowanceInput {
    * bounds the owner's bill on the worst day. null: no ceiling (not advised).
    */
   readonly siteDailyCents: number | null;
+  /**
+   * THIS FEATURE'S share of the site's day (0.3.0): cents per UTC day across
+   * every company, for the counted `operations` only — so one feature (AI
+   * mentions, say) can never spend the whole site's ceiling and switch off
+   * the assistant or the estimator's photo reading. Omitted: no feature share.
+   */
+  readonly operationsDailyCents?: number | null;
   readonly now?: Date;
   /** Override the sentences (e.g. to name the product). */
   readonly words?: Partial<Record<AiAllowanceRefusal, string | ((usage: AiAllowanceUsage | null) => string)>>;
@@ -278,6 +295,7 @@ const DEFAULT_WORDS: Record<AiAllowanceRefusal, (usage: AiAllowanceUsage | null)
   company_spend: (usage) =>
     `This month's assistant allowance is used up: it reached its ${usage?.centLimit != null ? dollars(usage.centLimit) : "monthly"} spending limit before its messages ran out. It starts again on ${dayWords(usage?.resetsAt ?? new Date())}.`,
   company_day: () => "Your account has used today's share of this site's AI. It starts again at midnight UTC.",
+  feature_day: () => "This feature has used today's share of this site's AI. It starts again at midnight UTC.",
   site_ceiling: (usage) =>
     `This site's AI has reached its limit for today — that's the whole site, not just your account. It starts again at midnight UTC${usage?.siteResetsAt ? ` (${dayWords(usage.siteResetsAt)})` : ""}.`,
   unavailable: () => "The assistant can't check its allowance right now, so it isn't answering. Try again in a minute.",
@@ -318,6 +336,14 @@ async function judge(db: AiDb, input: CheckAiAllowanceInput, now: Date): Promise
     if (BigInt(mine.micros) >= BigInt(dailyCents) * 10_000n) {
       const usage = { ...base, limitedBy: "day" as const, siteResetsAt: new Date(startOfDayUtc(now).getTime() + 86_400_000) };
       return { ok: false, reason: "company_day", message: wordsFor(input, "company_day", usage), usage };
+    }
+  }
+  const featureCents = input.operationsDailyCents ?? null;
+  if (featureCents !== null) {
+    const feature = await aiSpendSince(db, { since: startOfDayUtc(now), operations: input.operations });
+    if (BigInt(feature.micros) >= BigInt(featureCents) * 10_000n) {
+      const usage = { ...base, limitedBy: "feature" as const, siteResetsAt: new Date(startOfDayUtc(now).getTime() + 86_400_000) };
+      return { ok: false, reason: "feature_day", message: wordsFor(input, "feature_day", usage), usage };
     }
   }
   if (input.siteDailyCents !== null) {
@@ -473,5 +499,28 @@ export async function releaseAiReservation(db: AiDb, reservationId: string): Pro
     await db.delete(aiUsage).where(and(eq(aiUsage.id, BigInt(reservationId)), eq(aiUsage.status, "reserved")));
   } catch {
     /* a reservation left behind over-counts; it never under-counts */
+  }
+}
+
+/**
+ * HOLDS NOBODY SETTLED (0.3.0): "reserved" rows older than `olderThanMs` — the
+ * process that held them died mid-call — are deleted: released, not charged.
+ * Only for the given operations (a feature that knows its calls can't run
+ * that long). Returns how many were swept. Never throws.
+ */
+export async function sweepStaleReservations(
+  db: AiDb,
+  input: { readonly operations: readonly string[]; readonly olderThanMs: number; readonly now?: Date },
+): Promise<number> {
+  if (input.operations.length === 0) return 0;
+  try {
+    const cutoff = new Date((input.now ?? new Date()).getTime() - Math.max(60_000, input.olderThanMs));
+    const rows = (await db
+      .delete(aiUsage)
+      .where(and(eq(aiUsage.status, "reserved"), inArray(aiUsage.operation, [...input.operations]), lt(aiUsage.createdAt, cutoff)))
+      .returning({ id: aiUsage.id })) as unknown[];
+    return rows.length;
+  } catch {
+    return 0;
   }
 }

@@ -271,7 +271,7 @@ describe("the project's README", () => {
     expect(readme).toContain("### Website visits");
     expect(readme).toContain("/app/website");
     expect(readme).toContain("### Search");
-    expect(readme).toContain("SEO reports and AI-citation tracking");
+    expect(readme).toContain("Search checks and AI mentions");
     expect(readme).toContain("Google Search Console");
     expect(readme).not.toContain("**Search indexing of company pages**");
     const without = file(await plan({ ...COMPANIES, ...FIELD, includeSeo: false, includeAnalytics: false }), "README.md");

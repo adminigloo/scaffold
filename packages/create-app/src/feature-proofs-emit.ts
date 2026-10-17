@@ -215,6 +215,40 @@ function suitesFor(answers: Answers): readonly FeatureSuite[] {
       permissions: "audiencePermissions",
     });
   }
+  // TENANCY 2b-4b: a company's search checks and its AI mentions. The search
+  // check is built on the proof's stand-in network (no page is ever fetched);
+  // AI mentions with --ai on a scripted engine (no model is ever asked), its
+  // answers metered on the real ledger.
+  if (answers.includeSeoReports) {
+    suites.push({
+      feature: "seo-reports",
+      glue: "@/server/search-check",
+      adminBuilder: "buildSearchCheckHandlers",
+      adminRoutes: "SEO_REPORTS_ADMIN_ROUTES",
+      adminSegment: "search-check",
+      publicBuilder: null,
+      publicRoutes: null,
+      publicSegment: null,
+      pkg: "seo-reports",
+      permissions: "seoReportsPermissions",
+      adminExpr: "(overrides) => buildSearchCheckHandlers({ ...overrides, network: proofSearchNetwork })",
+    });
+  }
+  if (answers.includeAeo) {
+    suites.push({
+      feature: "aeo",
+      glue: "@/server/ai-mentions",
+      adminBuilder: "buildAiMentionsHandlers",
+      adminRoutes: "AEO_ADMIN_ROUTES",
+      adminSegment: "ai-mentions",
+      publicBuilder: null,
+      publicRoutes: null,
+      publicSegment: null,
+      pkg: "aeo",
+      permissions: "aeoPermissions",
+      ...(answers.includeAi ? { adminExpr: "(overrides) => buildAiMentionsHandlers({ ...overrides, engine: proofAnswerEngine })" } : {}),
+    });
+  }
   return suites;
 }
 
@@ -241,6 +275,9 @@ export const FEATURE_ENTITIES: Readonly<Record<string, readonly string[]>> = {
   // Tenancy 2b-4a: a website of the company's own, and a rule naming who is left out.
   analytics: ["website"],
   audience: ["rule"],
+  // Tenancy 2b-4b: one of the company's search checks, and one of its tracked questions.
+  "seo-reports": ["site-check"],
+  aeo: ["question"],
 };
 
 // ---------------------------------------------------------------------------
@@ -290,6 +327,8 @@ export function renderCompanyRows(answers: Answers): string {
           `import { createAudience, createDrizzleAudienceStore } from "${scope}/audience";`,
         ]
       : []),
+    ...(answers.includeSeoReports ? [`import { saveSeoReport } from "${scope}/seo-reports";`] : []),
+    ...(answers.includeAeo ? [`import { addQuestion, analyzeAnswer, recordCheck, saveProfile } from "${scope}/aeo";`] : []),
     ...(comms ? [`import { enqueueMessage, sendNow, upsertTemplate } from "${scope}/comms";`] : []),
     ...(estimator
       ? [
@@ -738,6 +777,50 @@ export function renderCompanyRows(answers: Answers): string {
   strings.push(\`owner@\${label}-lawncare.com\`, \`\${Label} owner\`);
 `);
   }
+  if (answers.includeSeoReports) {
+    blocks.push(`
+  // SEARCH CHECK (Tenancy 2b-4b): one finished check of the ${noun}'s own,
+  // with a page and a finding that name it — the report a leaking route would
+  // hand another ${noun}.
+  const searchCheck = await saveSeoReport(database, tenantId, {
+    baseUrl: \`https://www.\${label}-search.example\`,
+    addresses: [\`\${Label} website — www.\${label}-search.example\`],
+    startedAt: new Date(),
+    finishedAt: new Date(),
+    score: 70,
+    seoScore: 60,
+    aeoScore: 80,
+    pageCount: 1,
+    stopped: null,
+    counts: { pass: 1, warn: 0, fail: 1 },
+    siteChecks: [{ id: "site.llms-txt", label: "llms.txt", kind: "aeo", status: "fail", detail: \`\${Label} serves no llms.txt.\` }],
+    pages: [{ path: \`/\${label}-search-page\`, checks: [{ id: "page.title", label: "Page title", kind: "seo", status: "pass", detail: \`“\${Label} lawn care” (20 characters).\` }] }],
+  });
+  rows["site-check"] = searchCheck;
+  strings.push(\`\${label}-search.example\`, \`/\${label}-search-page\`, \`\${Label} serves no llms.txt.\`);
+`);
+  }
+  if (answers.includeAeo) {
+    blocks.push(`
+  // AI MENTIONS (Tenancy 2b-4b): who the ${noun} is, one question its
+  // customers ask, and one answer to it as code read it.
+  const mentionTarget = { brand: \`\${Label} Mowing Co\`, domain: \`\${label}-mowing.example\` };
+  await saveProfile(database, tenantId, { ...mentionTarget, competitors: [\`\${Label} Rival\`] });
+  const question = await addQuestion(database, tenantId, \`\${label} lawn mowing near me\`);
+  rows.question = question.id;
+  const mentionAnswer = { text: \`\${Label} Mowing Co mows lawns nearby; \${Label} Rival does too.\`, citedUrls: [\`https://\${label}-mowing.example/\`] };
+  await recordCheck(database, {
+    tenantId,
+    queryId: question.id,
+    engine: "claude",
+    model: "claude-haiku-4-5",
+    analysis: analyzeAnswer(mentionAnswer, mentionTarget, [\`\${Label} Rival\`]),
+    answer: mentionAnswer.text,
+    citedUrls: mentionAnswer.citedUrls,
+  });
+  strings.push(\`\${Label} Mowing Co\`, \`\${label}-mowing.example\`, \`\${label} lawn mowing near me\`, \`\${Label} Rival\`);
+`);
+  }
   if (alerts) {
     blocks.push(`
   // ALERTS (Tenancy 2b-1, 14.1): one alert for the ${noun}'s owner through
@@ -966,6 +1049,40 @@ const proofAssistantModel: ProviderAdapter = {
     yield { type: "text-delta", delta: "Here is what I found." };
     yield { type: "step-end", stopReason: "end_turn", usage: { inputTokens: 12, outputTokens: 6, cacheReadTokens: 0, cacheWriteTokens: 0, reported: true } };
   },
+};
+`;
+
+/**
+ * The proof's network for the search check (Tenancy 2b-4b): every name is a
+ * public address and every page answers 404 at once, so Check now runs its
+ * whole path — the plan, the lock, the row — without one real request.
+ */
+const PROOF_SEARCH_NETWORK = `
+/** A stand-in internet: every page "not found", instantly. Never a real request. */
+const proofSearchNetwork = {
+  resolve: async () => ["93.184.216.34"],
+  transport: async () => ({ status: 404, headers: {}, body: new Uint8Array(0), truncated: false }),
+};
+`;
+
+/**
+ * The proof's answer engine (Tenancy 2b-4b, with --ai): a scripted answer
+ * that names nobody, with usage reported — held and settled on the real
+ * ledger like any answer, and never a real call.
+ */
+const PROOF_ANSWER_ENGINE = `
+/** A scripted answer engine: names nobody, reports its usage. Never a real call. */
+const proofAnswerEngine: AnswerEngine = {
+  key: "claude",
+  label: "Claude",
+  model: "claude-haiku-4-5",
+  worstCaseMicros: 10_000n,
+  feesMicros: () => 0n,
+  ask: async () => ({
+    text: "Several local businesses offer this service.",
+    citedUrls: [],
+    usage: { model: "claude-haiku-4-5", inputTokens: 12, outputTokens: 6, cachedInputTokens: 0, cachedWriteTokens: 0, webSearches: 0, reported: true },
+  }),
 };
 `;
 
@@ -1479,6 +1596,9 @@ export function renderFeatureIsolationTest(answers: Answers): string {
     // The keyed beacon every company's own website calls (its own pass below).
     glueImports.push(`import { buildWebsiteBeaconHandlers } from "@/server/website";`);
   }
+  if (answers.includeAeo && answers.includeAi) {
+    routeImports.push(`import type { AnswerEngine } from "${scope}/aeo";`);
+  }
   const suiteRows = suites
     .map((s) => {
       const pub = s.publicBuilder && s.genericPublic !== false
@@ -1577,6 +1697,17 @@ export function renderFeatureIsolationTest(answers: Answers): string {
       `    aig_audience_rules: await all(sql\`select * from aig_audience_rules where tenant_id = \${a} order by id\`),`,
     );
   }
+  // Tenancy 2b-4b: A's search checks, and its AI mentions (who it is, its questions, the answers).
+  if (answers.includeSeoReports) {
+    snapshot.push(`    seo_reports: await all(sql\`select * from seo_reports where tenant_id = \${a} order by id\`),`);
+  }
+  if (answers.includeAeo) {
+    snapshot.push(
+      `    aeo_profiles: await all(sql\`select * from aeo_profiles where tenant_id = \${a}\`),`,
+      `    aeo_queries: await all(sql\`select * from aeo_queries where tenant_id = \${a} order by id\`),`,
+      `    aeo_checks: await all(sql\`select * from aeo_checks where tenant_id = \${a} order by id\`),`,
+    );
+  }
   // Tenancy 2b-2a: A's feedback board — its tickets, columns, categories,
   // website keys, and the messages on its tickets (by their ticket).
   if (intake) {
@@ -1640,7 +1771,7 @@ vi.mock("@/db", async () => {
   const { createAppPglite } = await import("@/test/pglite");
   return { db: (await createAppPglite()).db };
 });
-${answers.includeEstimator ? ESTIMATOR_PHOTO_STORE_MOCK : ""}${intake ? FEEDBACK_SCREENSHOT_STORE : ""}${assistant ? PROOF_ASSISTANT_MODEL : ""}${filesParts.helpers}
+${answers.includeEstimator ? ESTIMATOR_PHOTO_STORE_MOCK : ""}${intake ? FEEDBACK_SCREENSHOT_STORE : ""}${assistant ? PROOF_ASSISTANT_MODEL : ""}${answers.includeSeoReports ? PROOF_SEARCH_NETWORK : ""}${answers.includeAeo && answers.includeAi ? PROOF_ANSWER_ENGINE : ""}${filesParts.helpers}
 interface FeatureRoute {
   readonly kind: string;
   readonly method: "GET" | "POST";

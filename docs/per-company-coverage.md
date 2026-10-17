@@ -50,8 +50,8 @@ project's isolation test.
 | `analytics` | Per company | Each company's website visits: its pages here and its own websites (each with its own address list and a public key), where visitors came from, the pages they read and the AI crawlers that read them, read at /app/website (Tenancy 2b-4a). The site's own numbers stay the site's. |
 | `audience` | Per company | Who is left out of each company's visit counts — its own team, and the people, addresses and networks it names — and the cleaning of its past numbers (Tenancy 2b-4a). |
 | `seo` | Per company | Each company's public pages get their own title, address and business details for search engines and AI assistants, and a place in the sitemap; its token pages stay out of search (Tenancy 2b-4a, with --seo). The site's own search settings stay the site's. |
-| `seo-reports` | Not yet: 2b-4b website reports | The site checks how search engines read it; the site's own until then. |
-| `aeo` | Not yet: 2b-4b website reports | How AI answer engines read the site; the site's own until then. |
+| `seo-reports` | Per company | Each company's search check: how search engines and AI assistants read its own pages and websites, as a list of things to fix, with every check kept — reading only its own addresses, never a private one (Tenancy 2b-4b). The site's own checks stay the site's. |
+| `aeo` | Per company | Each company's AI mentions: the questions its customers ask, who it is, and whether AI assistants name it — every answer paid from its own month of AI (Tenancy 2b-4b). The site's own stay the site's. |
 | `booking` | Not yet: 2b-4c book-a-call | Book-a-call is the site owner's own until then. |
 | `booking-widget` | Not yet: 2b-4c book-a-call | The book-a-call page, with booking. |
 | `commerce` | Not yet: getting-paid | A company taking card payments from its own customers comes with the getting-paid work. |

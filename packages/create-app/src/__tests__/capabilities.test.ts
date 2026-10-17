@@ -154,7 +154,8 @@ describe("the manifest can prove everything it claims", () => {
         ).toBe(false);
       }
     }
-  });
+  // Plans every configuration: ~25s alone, past 30s when the whole suite runs at once.
+  }, 120_000);
 
   it("keeps the indistinguishable list honest", async () => {
     // The prune mechanism. An exemption is only legitimate while the key really
@@ -181,7 +182,7 @@ describe("the manifest can prove everything it claims", () => {
           `it. Remove the entry so the exclusivity check covers it again.`,
       ).toBe(true);
     }
-  });
+  }, 120_000);
 
   it("refuses to write a manifest claiming something absent", async () => {
     // The assertion the whole file rests on, exercised directly. Without this

@@ -31,6 +31,42 @@ export function upgradeNotesFor(answers: Answers, fromVersion: string): string[]
   const companies = answers.tenantNoun !== "none";
   const noun = tenantLabel(answers).toLowerCase();
   const crossed = (version: string) => (compareVersions(fromVersion, version) ?? -1) < 0;
+  // 0.31.0 — Tenancy 2b-4b: the search check and AI mentions, per company, on
+  // their packages' own handlers (the tRPC seo and aeo routers are gone).
+  if (crossed("0.31.0") && answers.includeSeoReports) {
+    notes.push(
+      "The search check runs on @adminigloo/seo-reports 0.2's own handlers now; the tRPC `seo` router is gone. After `pnpm db:generate`, " +
+        "replace the seo_reports statements in the migration it wrote with node_modules/@adminigloo/seo-reports/sql/upgrade-0.1-to-0.2.sql " +
+        "(safe twice): your old reports become this site's own, at /admin/seo, on the new staff keys staff.seo_reports.view and staff.seo_reports.run.",
+      ...(companies
+        ? [
+            `Each ${noun} now checks its own pages and websites from /app/website (owners and admins press Check now)` +
+              (answers.businessModel === "subscription" || answers.businessModel === "both"
+                ? ', with its plan\'s "Check now presses a month" (src/plans.ts; run `pnpm db:seed:plans` after setting them). The weekly check is free.'
+                : " (20 a month)."),
+          ]
+        : []),
+      "A check only reads public addresses: on a laptop, NEXT_PUBLIC_APP_URL=http://localhost:3000 is refused on purpose. The weekly re-check is " +
+        "/api/cron/search-check (in vercel.json; it needs CRON_SECRET).",
+    );
+  }
+  if (crossed("0.31.0") && answers.includeAeo) {
+    notes.push(
+      "AI mentions runs on @adminigloo/aeo 0.2's own handlers now; the tRPC `aeo` router and src/server/aeo-asker.ts are gone (move anything " +
+        "you wired there into src/server/ai-mentions.ts). After `pnpm db:generate`, replace the aeo statements in the migration it wrote with " +
+        "node_modules/@adminigloo/aeo/sql/upgrade-0.1-to-0.2.sql (safe twice). The questions you kept under the old fixed business become this " +
+        "site's own (at /admin/aeo) with: `update aeo_queries set tenant_id = '*' where tenant_id = 'primary'; update aeo_checks set tenant_id = '*' " +
+        "where tenant_id = 'primary'; update aeo_profiles set tenant_id = '*' where tenant_id = 'primary';`",
+      answers.includeAi
+        ? "Each check asks Claude Haiku 4.5 with web search — its cost is estimated; see /admin/aeo for the measured average. Every check is held " +
+            "against the month's AI, AI_MENTIONS_DAILY_CENTS and AI_SITE_DAILY_CENTS before it's asked, and recorded in ai_usage as aeo_check, web " +
+            "searches priced in (@adminigloo/ai 0.3). Each tracked question is re-asked weekly by /api/cron/ai-mentions (it needs CRON_SECRET)" +
+            (answers.businessModel === "subscription" || answers.businessModel === "both"
+              ? '; plans now sell "questions tracked by AI mentions" and "AI mention checks a month" (run `pnpm db:seed:plans`).'
+              : ".")
+        : "This project has no AI, so questions are kept but never asked: `create-app add ai` switches checks on.",
+    );
+  }
   // 0.29.0 — Tenancy 2b-3: an assistant per company. The tables gain a
   // company column; 0.8's one assistant becomes the site's own ("*").
   if (crossed("0.29.0") && answers.includeAssistant) {

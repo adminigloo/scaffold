@@ -69,6 +69,17 @@ import { assistantChats, renderAssistantGlue, renderAssistantLauncherSlot, rende
 import { renderAnalyticsCron, renderSiteAnalyticsSlot, renderWebsiteGlue, websitesQuota } from "./website-emit.js";
 import { renderSeoPackageModule, renderSeoRobots, renderSeoSitemap } from "./seo-emit.js";
 import {
+  aiMentionChecksQuota,
+  hasCompanyWebsitePage,
+  renderAiMentionsCron,
+  renderAiMentionsGlue,
+  renderCompanyWebsitePage,
+  renderSearchCheckCron,
+  renderSearchCheckGlue,
+  siteChecksQuota,
+  websitePagePermission,
+} from "./website-checks-emit.js";
+import {
   renderCompanyAlertsTest,
   renderCompanyCronsTest,
   renderCompanyEmailTest,
@@ -414,7 +425,10 @@ export async function planEmit(
     // Tenancy 2b-3: this site's OWN assistant (/admin/assistant) is its staff's, in both modes.
     answers.includeAssistant ||
     // Tenancy 2b-4a: and this site's OWN website numbers (/admin/analytics).
-    answers.includeAnalytics
+    answers.includeAnalytics ||
+    // Tenancy 2b-4b: and its own search check and AI mentions (/admin/seo, /admin/aeo).
+    answers.includeSeoReports ||
+    answers.includeAeo
   ) {
     files.set(join("src", "server", "staff-access.ts"), renderStaffAccess(answers));
   }
@@ -443,6 +457,23 @@ export async function planEmit(
   if (answers.includeAnalytics) {
     files.set(join("src", "server", "website.ts"), renderWebsiteGlue(answers));
     files.set(join("app", "api", "cron", "analytics", "route.ts"), renderAnalyticsCron(answers));
+  }
+  // WEBSITE REPORTS (Tenancy 2b-4b), both modes, generated: whose checks a
+  // route is (a company's, by the path; this site's own, fixed), which
+  // addresses a check may read (with --analytics, the website register),
+  // whether answers can be asked and metered (--ai), and whether a plan sells
+  // checks are questions about OTHER answers. See website-checks-emit.ts.
+  if (answers.includeSeoReports) {
+    files.set(join("src", "server", "search-check.ts"), renderSearchCheckGlue(answers));
+    files.set(join("app", "api", "cron", "search-check", "route.ts"), renderSearchCheckCron(answers));
+  }
+  if (answers.includeAeo) {
+    files.set(join("src", "server", "ai-mentions.ts"), renderAiMentionsGlue(answers));
+    files.set(join("app", "api", "cron", "ai-mentions", "route.ts"), renderAiMentionsCron(answers));
+  }
+  // A company's Website screen, written with the sections this project has.
+  if (hasCompanyWebsitePage(answers)) {
+    files.set(join("app", "(site)", "app", "website", "page.tsx"), renderCompanyWebsitePage(answers));
   }
   // This site's own visit counter, in EVERY project: the (site) layout mounts
   // the slot without an `if` — the beacon with --analytics, nothing without.
@@ -557,7 +588,10 @@ export async function planEmit(
       answers.includeFeedback ||
       answers.includeAssistant ||
       // Tenancy 2b-4a: and a company's websites, numbers and who it leaves out.
-      answers.includeAnalytics)
+      answers.includeAnalytics ||
+      // Tenancy 2b-4b: and its search checks and AI mentions.
+      answers.includeSeoReports ||
+      answers.includeAeo)
   ) {
     files.set(join("src", "test", "company-rows.ts"), renderCompanyRows(answers));
     files.set(
@@ -1094,6 +1128,13 @@ export function renderVercelJson(answers: Answers): string {
   if (answers.includeAnalytics) {
     crons.push({ path: "/api/cron/analytics", schedule: "20 0 * * *" });
   }
+  // Tenancy 2b-4b: daily, each address and each question once a week, in the quiet hours (UTC).
+  if (answers.includeSeoReports) {
+    crons.push({ path: "/api/cron/search-check", schedule: "40 3 * * *" });
+  }
+  if (answers.includeAeo) {
+    crons.push({ path: "/api/cron/ai-mentions", schedule: "10 4 * * *" });
+  }
   const config = {
     $schema: "https://openapi.vercel.sh/vercel.json",
     framework: "nextjs",
@@ -1479,7 +1520,9 @@ export function renderEnvLocal(answers: Answers): string {
     answers.includeNotifications ||
     answers.includeStorage ||
     answers.includeFeedback ||
-    answers.includeAnalytics
+    answers.includeAnalytics ||
+    answers.includeSeoReports ||
+    answers.includeAeo
   ) {
     lines.push(
       "",
@@ -1619,7 +1662,7 @@ const ANSWER_LABELS: Partial<Record<keyof Answers, string>> = {
   includeAi: "AI routes",
   includeEmail: "Transactional email",
   includeFeedback: "In-app feedback",
-  includeSeoReports: "SEO & AEO reports",
+  includeSeoReports: "Search check",
   includeNotifications: "In-app notifications",
   includeStorage: "File storage",
   includeAssistant: "AI assistant",
@@ -1628,7 +1671,7 @@ const ANSWER_LABELS: Partial<Record<keyof Answers, string>> = {
   includeScheduling: "Scheduling",
   includeInvoicing: "Invoicing",
   includeComms: "Customer messages",
-  includeAeo: "AI citation tracking",
+  includeAeo: "AI mentions",
   includeAnalytics: "Website visits",
   includeSeo: "Search basics",
 };
@@ -1950,7 +1993,9 @@ export function renderEnvModule(answers: Answers): string {
     answers.includeNotifications ||
     answers.includeStorage ||
     answers.includeFeedback ||
-    answers.includeAnalytics
+    answers.includeAnalytics ||
+    answers.includeSeoReports ||
+    answers.includeAeo
   ) {
     // The shared secret the cron routes check. Declared here rather than in an
     // env fragment of @__SCOPE_NAME__/comms or /scheduling because it is not a
@@ -2055,6 +2100,18 @@ export function renderEnvModule(answers: Answers): string {
     features.push(
       `{ name: "Leaving people out of visits", vars: ["AUDIENCE_SECRET"], disables: "Nothing while CLERK_SECRET_KEY is set: the key is made from it. Rotating Clerk's key then means a person named in a rule reaches only visits made after it." }`,
       `{ name: "Website numbers cron", vars: ["CRON_SECRET"], disables: "The daily tidy-up: /api/cron/analytics answers 401 until the secret is set. Visits are still counted and read; yesterday's visitor keys stop being deletable on schedule, old rows stay past 13 months, and a person's newly linked devices wait to be left out." }`,
+    );
+  }
+
+  // Tenancy 2b-4b: the weekly checks ride on the cron secret too.
+  if (answers.includeSeoReports) {
+    features.push(
+      `{ name: "Weekly search check", vars: ["CRON_SECRET"], disables: "The weekly check of each website and its pages: /api/cron/search-check answers 401 until the secret is set. Check now on the Website screen still works." }`,
+    );
+  }
+  if (answers.includeAeo) {
+    features.push(
+      `{ name: "Weekly AI mentions check", vars: ["CRON_SECRET"${answers.includeAi ? ', "ANTHROPIC_API_KEY"' : ""}], disables: "${answers.includeAi ? "The weekly asking of each tracked question: /api/cron/ai-mentions answers 401 until the secret is set, and without ANTHROPIC_API_KEY nothing is ever asked (Check now says checking isn't switched on)." : "The weekly asking of each tracked question: /api/cron/ai-mentions answers 401 until the secret is set. This project has no AI (--ai), so questions are kept but never asked."}" }`,
     );
   }
 
@@ -2362,6 +2419,31 @@ export const PACKAGE_PERMISSION_FRAGMENTS: readonly PackagePermissionFragment[] 
       "Each company decides whose visits don't count in ITS numbers, so this " +
       "is a company key: owners and admins name the people, addresses and " +
       "networks to leave out.",
+  },
+  // WEBSITE REPORTS, IN A COMPANIES PROJECT (Tenancy 2b-4b). Each company
+  // checks its own website and asks about its own questions, so the keys
+  // belong to the company's roles. This site's own stay on the staff ladder
+  // (staff.seo_reports.*, staff.aeo.*), mapped in src/server/search-check.ts
+  // and src/server/ai-mentions.ts.
+  {
+    package: "seo-reports",
+    binding: "seoReportsPermissions",
+    scope: "tenant",
+    installedBy: (answers) => answers.tenantNoun !== "none" && answers.includeSeoReports,
+    why:
+      "Each company checks its own website and pages, so these are company " +
+      "keys: everyone but crew reads the reports, owners and admins press " +
+      "Check now (each uses one of the month's checks).",
+  },
+  {
+    package: "aeo",
+    binding: "aeoPermissions",
+    scope: "tenant",
+    installedBy: (answers) => answers.tenantNoun !== "none" && answers.includeAeo,
+    why:
+      "Each company tracks its own questions, so these are company keys: " +
+      "everyone but crew sees the answers, owners and admins change the " +
+      "questions and check them (each answer uses the month's AI).",
   },
   {
     package: "feedback",
@@ -2676,6 +2758,37 @@ export function renderPermissionsCatalog(answers: Answers): string {
     defaultFor: ["admin"],
   },`
     : "";
+  // THIS SITE'S OWN search check and AI mentions (Tenancy 2b-4b), both modes.
+  const searchCheckStaffKeys = answers.includeSeoReports
+    ? `
+  "staff.seo_reports.view": {
+    label: "See this site's search checks",
+    description: "How search engines and AI assistants read this site, and the list of things to fix.",
+    category: "Website",
+    defaultFor: ["admin", "cs_lead"],
+  },
+  "staff.seo_reports.run": {
+    label: "Run this site's search checks",
+    description: "Check this site's pages now.",
+    category: "Website",
+    defaultFor: ["admin"],
+  },`
+    : "";
+  const aiMentionsStaffKeys = answers.includeAeo
+    ? `
+  "staff.aeo.view": {
+    label: "See this site's AI mentions",
+    description: "Whether AI assistants name this site when people ask them questions, and what they said.",
+    category: "Website",
+    defaultFor: ["admin", "cs_lead"],
+  },
+  "staff.aeo.manage": {
+    label: "Manage this site's AI mentions",
+    description: "The questions to track, how the site is named, and Check now. Each answer uses part of the site's AI allowance.",
+    category: "Website",
+    defaultFor: ["admin"],
+  },`
+    : "";
   const staffSpread = [...staffFragments, "appStaffPermissions"];
   const tenantSpread = [...tenantFragments, "appTenantPermissions"];
 
@@ -2782,7 +2895,7 @@ const appStaffPermissions = {
     category: "${plural}",
     // Sealed: an override must not hand this to one person quietly.
     sealed: true,
-  },${schedulingStaffKeys}${estimatorStaffKeys}${invoicingStaffKeys}${commsStaffKeys}${alertsStaffKeys}${filesStaffKeys}${feedbackStaffKeys}${assistantStaffKeys}${analyticsStaffKeys}
+  },${schedulingStaffKeys}${estimatorStaffKeys}${invoicingStaffKeys}${commsStaffKeys}${alertsStaffKeys}${filesStaffKeys}${feedbackStaffKeys}${assistantStaffKeys}${analyticsStaffKeys}${searchCheckStaffKeys}${aiMentionsStaffKeys}
 } as const;
 
 export const staffCatalog = definePermissions(
@@ -4745,14 +4858,8 @@ export function renderAppRouter(answers: Answers): string {
     'import { createTRPCRouter, publicProcedure, requireTenant } from "../trpc";',
   ];
   if (answers.includeAi) imports.splice(1, 0, 'import { aiRouter } from "./ai";');
-  if (answers.includeSeoReports) {
-    imports.splice(1, 0, 'import { seoRouter } from "./seo";');
-  }
   if (answers.includeAssistant) {
     imports.splice(1, 0, 'import { assistantRouter } from "./assistant";');
-  }
-  if (answers.includeAeo) {
-    imports.splice(1, 0, 'import { aeoRouter } from "./aeo";');
   }
   if (takesMoney) {
     imports.splice(1, 0, 'import { accountRouter } from "./account";');
@@ -4785,14 +4892,11 @@ export function renderAppRouter(answers: Answers): string {
   // board mounts, and the feature isolation proof drives their routes.
   const feedback = "";
 
-  const seo = answers.includeSeoReports
-    ? `
-  // SEO & AEO audits of THIS deployment, run on demand from the admin. The
-  // crawl targets NEXT_PUBLIC_APP_URL over the public internet — the audit
-  // must see what a crawler sees, headers, redirects and all.
-  seo: seoRouter,
-`
-    : "";
+  // No seo or aeo router (Tenancy 2b-4b): the search check and AI mentions
+  // run on their packages' own HTTP handlers (src/server/search-check.ts,
+  // src/server/ai-mentions.ts), per company, and the isolation proof drives
+  // their routes.
+  const seo = "";
 
   // Alerts and files have no router here (Tenancy 2b-1, D16; 2a D3's
   // reason): the bell, the alerts page, Alert settings, a record's photos and
@@ -4829,13 +4933,7 @@ export function renderAppRouter(answers: Answers): string {
   // (app/api/schedule and app/api/admin/schedule) — the wire the widgets are
   // built against, one path rather than a tRPC copy of it that drifts.
 
-  const aeo = answers.includeAeo
-    ? `
-  // Answer-engine citation tracking. Staff track the questions customers ask an
-  // assistant and check whether the answer mentions them.
-  aeo: aeoRouter,
-`
-    : "";
+  const aeo = "";
 
   const shop = takesMoney
     ? `
@@ -5308,15 +5406,23 @@ export function renderSiteNav(answers: Answers): string {
     });
   }
   // Tenancy 2b-4a: the company's website numbers, its websites and who is left out.
-  if (!single && answers.includeAnalytics) {
+  // Tenancy 2b-4b: and its search check and AI mentions, on the same screen.
+  if (!single && hasCompanyWebsitePage(answers)) {
     companyFeatureLinks.push({
       href: "/app/website",
       label: "Website",
-      permission: "analytics.view",
-      why:
-        `Who visits the ${label}'s pages and its own website — from search, AI ` +
-        "assistants and other sites — which pages they read and which AI crawlers " +
-        "read them, with its own team left out; its websites and the line to paste.",
+      permission: websitePagePermission(answers),
+      why: [
+        ...(answers.includeAnalytics
+          ? [
+              `Who visits the ${label}'s pages and its own website — from search, AI ` +
+                "assistants and other sites — which pages they read and which AI crawlers " +
+                "read them, with its own team left out; its websites and the line to paste.",
+            ]
+          : []),
+        ...(answers.includeSeoReports ? ["How search engines and AI assistants read its website and pages, as a list of things to fix."] : []),
+        ...(answers.includeAeo ? ["Whether AI assistants name it when customers ask them questions."] : []),
+      ].join(" "),
     });
   }
   if (!single && answers.includeStorage) {
@@ -5806,13 +5912,12 @@ export function renderAdminNav(answers: Answers): string {
   if (answers.includeSeoReports) {
     operations.push({
       href: "/admin/seo",
-      label: "SEO & AEO",
-      permission: "staff.dashboard.view",
+      label: "Search check",
+      permission: "staff.seo_reports.view",
       why:
-        "The site grading itself: audit runs from the seo-reports package, " +
-        "receipts in this project's own seo_reports table. From the " +
-        "seo-admin overlay, so a project without the answer has neither " +
-        "this page nor this entry.",
+        "How search engines and AI assistants read this site, as a list of " +
+        "things to fix, from the seo-reports package; every check kept in this " +
+        "project's own seo_reports table. From the seo-admin overlay.",
     });
   }
   // A single business's Files screen (storage-admin). A company's files are
@@ -5973,12 +6078,12 @@ export function renderAdminNav(answers: Answers): string {
   if (answers.includeAeo) {
     fieldService.push({
       href: "/admin/aeo",
-      label: "AI citations",
-      permission: "staff.dashboard.view",
+      label: "AI mentions",
+      permission: "staff.aeo.view",
       why:
-        "Citation tracking from the aeo package: the questions customers ask an " +
-        "assistant, and whether the answer mentions you. From aeo-admin, so a " +
-        "project without the answer has neither the page nor this entry.",
+        "From the aeo package: the questions customers ask an AI assistant, and " +
+        "whether the answer names this site — the quote, the sources, the trend. " +
+        "From aeo-admin, so a project without the answer has neither the page nor this entry.",
     });
   }
   if (fieldService.length > 0) {
@@ -7043,6 +7148,9 @@ export function renderPlanCatalog(answers: Answers): string {
   const assistantQuota = assistantChats(answers) && plansEnforced(answers);
   // Tenancy 2b-4a: how many websites of its own a company may count.
   const websiteQuotaOn = websitesQuota(answers);
+  // Tenancy 2b-4b: search checks a month, and AI mention checks a month (those need --ai).
+  const siteChecksOn = siteChecksQuota(answers);
+  const mentionChecksOn = aiMentionChecksQuota(answers);
   const scope = answers.scope;
   const label = tenantLabel(answers).toLowerCase();
 
@@ -7125,7 +7233,18 @@ export const plans = definePlans({
     assistant_messages: { kind: "quota", label: "AI assistant messages a month", labelOne: "AI assistant message a month" },` : ""}${websiteQuotaOn ? `
     // Checked when a company adds a website of its own to count (its pages
     // here are always counted and never use one up).
-    websites: { kind: "quota", label: "websites of your own counted", labelOne: "website of your own counted" },` : ""}
+    websites: { kind: "quota", label: "websites of your own counted", labelOne: "website of your own counted" },` : ""}${siteChecksOn ? `
+    // Checked when someone presses Check now (src/server/search-check.ts asks
+    // src/server/plan-gate.ts). The weekly check is included and never counts:
+    // reading a site is cheap.
+    site_checks: { kind: "quota", label: "Check now presses a month (a weekly search check is included)", labelOne: "Check now press a month (a weekly search check is included)" },` : ""}${mentionChecksOn ? `
+    // Checked when a question is added (src/server/ai-mentions.ts); each one is
+    // asked about once a week.
+    ai_questions: { kind: "quota", label: "questions tracked by AI mentions", labelOne: "question tracked by AI mentions" },
+    // Checked before every AI answer (src/server/ai-mentions.ts): one answer to
+    // one question is one check. Sized for every question weekly (about 4.35 a
+    // month each) plus room for Check now.
+    ai_mention_checks: { kind: "quota", label: "AI mention checks a month", labelOne: "AI mention check a month" },` : ""}
   },
 
   /**
@@ -7152,7 +7271,10 @@ export const plans = definePlans({
         storage_gb: 5,` : ""}${answers.includeEstimator ? `
         estimates: 100,` : ""}${assistantQuota ? `
         assistant_messages: 100,` : ""}${websiteQuotaOn ? `
-        websites: 1,` : ""}
+        websites: 1,` : ""}${siteChecksOn ? `
+        site_checks: 4,` : ""}${mentionChecksOn ? `
+        ai_questions: 5,
+        ai_mention_checks: 40,` : ""}
       },
     },
     {
@@ -7171,7 +7293,10 @@ export const plans = definePlans({
         storage_gb: 25,` : ""}${answers.includeEstimator ? `
         estimates: 500,` : ""}${assistantQuota ? `
         assistant_messages: 500,` : ""}${websiteQuotaOn ? `
-        websites: 3,` : ""}
+        websites: 3,` : ""}${siteChecksOn ? `
+        site_checks: 20,` : ""}${mentionChecksOn ? `
+        ai_questions: 15,
+        ai_mention_checks: 100,` : ""}
       },
     },
     {
@@ -7192,7 +7317,10 @@ export const plans = definePlans({
         storage_gb: null,` : ""}${answers.includeEstimator ? `
         estimates: null,` : ""}${assistantQuota ? `
         assistant_messages: null,` : ""}${websiteQuotaOn ? `
-        websites: null,` : ""}
+        websites: null,` : ""}${siteChecksOn ? `
+        site_checks: null,` : ""}${mentionChecksOn ? `
+        ai_questions: 25,
+        ai_mention_checks: null,` : ""}
       },
     },
     {
@@ -7213,7 +7341,10 @@ export const plans = definePlans({
         storage_gb: 5,` : ""}${answers.includeEstimator ? `
         estimates: 50,` : ""}${assistantQuota ? `
         assistant_messages: 100,` : ""}${websiteQuotaOn ? `
-        websites: 1,` : ""}
+        websites: 1,` : ""}${siteChecksOn ? `
+        site_checks: 4,` : ""}${mentionChecksOn ? `
+        ai_questions: 5,
+        ai_mention_checks: 40,` : ""}
       },
     },
   ],

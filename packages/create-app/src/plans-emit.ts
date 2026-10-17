@@ -91,6 +91,26 @@ export async function assistantMessageLimit(_tenantId: string): Promise<number |
 export async function websiteQuota(_tenantId: string): Promise<number | null | undefined> {
   return undefined;
 }
+
+/** Search checks a month from a plan: none here (undefined), so the package's own default applies. */
+export async function siteCheckLimit(_tenantId: string): Promise<number | null | undefined> {
+  return undefined;
+}
+
+/** Questions tracked by AI mentions from a plan: none here (undefined), so the project's own number applies. */
+export async function aiQuestionLimit(_tenantId: string): Promise<number | null | undefined> {
+  return undefined;
+}
+
+/** AI mention checks a month from a plan: none here (undefined), so the project's own allowance applies. */
+export async function aiMentionCheckLimit(_tenantId: string): Promise<number | null | undefined> {
+  return undefined;
+}
+
+/** May this company start new paid work (a search check, an AI answer)? Always: there is no plan here to end. */
+export async function companyPlanOpen(_tenantId: string): Promise<true | string> {
+  return true;
+}
 `;
   }
 
@@ -283,6 +303,45 @@ export async function assistantMessageLimit(tenantId: string): Promise<number | 
  */
 export async function websiteQuota(tenantId: string): Promise<number | null | undefined> {
   return planLimit(tenantId, "websites");
+}
+
+/**
+ * "Check now" presses a month, from the ${noun}'s plan (src/plans.ts; Tenancy
+ * 2b-4b). Counted by the search check when one is pressed; the weekly check
+ * is included in every plan and never counts. A number: the limit; null:
+ * unlimited; undefined: the plan doesn't say.
+ */
+export async function siteCheckLimit(tenantId: string): Promise<number | null | undefined> {
+  return planLimit(tenantId, "site_checks");
+}
+
+/**
+ * AI mention checks a month, from the ${noun}'s plan (src/plans.ts, "AI mention
+ * checks a month"; Tenancy 2b-4b): one answer to one question is one check,
+ * counted from ai_usage before each is asked. undefined: the plan doesn't say.
+ */
+export async function aiMentionCheckLimit(tenantId: string): Promise<number | null | undefined> {
+  return planLimit(tenantId, "ai_mention_checks");
+}
+
+/**
+ * Questions a ${noun} may track with AI mentions, from its plan (src/plans.ts,
+ * "questions tracked by AI mentions"): each one is asked about once a week.
+ * Checked when a question is added. undefined: the plan doesn't say.
+ */
+export async function aiQuestionLimit(tenantId: string): Promise<number | null | undefined> {
+  return planLimit(tenantId, "ai_questions");
+}
+
+/**
+ * May this ${noun} start new PAID work right now — a search check, an AI
+ * answer — from a job with no request (the daily crons) as well as a route?
+ * true while its plan is open; otherwise the sentence to refuse with. Its old
+ * reports and answers stay readable either way.
+ */
+export async function companyPlanOpen(tenantId: string): Promise<true | string> {
+  const standing = await planGate.standing(tenantId);
+  return standing.open ? true : "This ${noun}'s plan has ended, so new checks are paused. Choose a plan in Billing to start them again.";
 }
 
 /**

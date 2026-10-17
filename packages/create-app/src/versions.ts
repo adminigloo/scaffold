@@ -104,7 +104,9 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.2.0 (Tenancy 2b-3): the ledger moved into the package — the emitted
   // src/server/ai.ts and src/server/assistant.ts import recordAiUsage,
   // aiSpendSince and checkAiAllowance from ./server, which 0.1.x doesn't have.
-  ai: "0.2.0",
+  // 0.3.0 (Tenancy 2b-4b): a call's fees beyond tokens (`feesMicros`: web
+  // searches), which src/server/ai-mentions.ts settles every AI mention check with.
+  ai: "0.3.0",
   // 0.3.0 (Tenancy 2a, D8): a per-message From name and Reply-To, so a
   // company's email carries its name on the platform's verified address.
   email: "0.3.0",
@@ -113,7 +115,9 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // followed. The emitted routers import from each unconditionally, so a
   // caret over nothing older can resolve wrong; these exist to move IN STEP
   // with the workspace versions the drift test reads.
-  "seo-reports": "0.1.0",
+  // 0.2.0 (Tenancy 2b-4b): the search check per company — its handlers and
+  // route table, the safe fetcher, the screen (./ui) — none of which 0.1 has.
+  "seo-reports": "0.2.0",
   // 0.2.0 (Tenancy 2b-1): alerts per company and per person. The emitted
   // src/server/alerts.ts builds createNotifications over the named tables,
   // the kind registry and the host seams, and the routes mount
@@ -299,7 +303,9 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.1.1 (Tenancy 2b-1): its comms peer is ^0.4.0, and it names the team
   // alert email — pinned for the same lockfile reason.
   "comms-widget": "0.1.1",
-  aeo: "0.1.1",
+  // 0.2.0 (Tenancy 2b-4b): AI mentions per company — the handlers and route
+  // table, the metered runner, the Anthropic engine (./anthropic), the screen.
+  aeo: "0.2.0",
   // Tenancy 2b-4a: each company's website numbers. 0.3.0 has the site
   // register, the company handlers and route tables, the drop-in screens
   // (./dashboard: WebsiteTraffic, WebsitesSettings) and the snippet's script,

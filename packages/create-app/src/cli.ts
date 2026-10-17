@@ -202,9 +202,11 @@ export const HELP = `
                        an admin shell) and, in a project with companies, each
                        company's own board and feedback page. Off by default:
                        the widget does not mount until its key is issued.
-  --seo-reports        SEO & AEO self-audits: the site crawls its own sitemap and
-    / --no-seo-reports scores how search and answer engines read it, receipts in
-                       your own database. The report page rides the admin shell.
+  --seo-reports        Search check: how Google, Bing and AI assistants read the
+    / --no-seo-reports site's pages, as a list of things to fix, every check
+                       kept. With companies, each company checks its own pages
+                       and websites at /app/website; this site's own is at
+                       /admin/seo. Only its own addresses are ever fetched.
   --notifications      Alerts: a bell in the header, an alerts page, and Alert
     / --no-notifications
                        settings, where each person picks "in the app" or "in
@@ -247,9 +249,11 @@ export const HELP = `
     / --no-invoicing   customers view without an account, and a staff ledger.
   --comms              Field service: templated email/SMS with a scheduler and a
     / --no-comms       cron drain. Senders are injected — no provider, clean skip.
-  --aeo                Field service: answer-engine citation tracking — do the AI
-    / --no-aeo         answers to your customers' questions mention you. Staff
-                       screen; the model asker is yours to wire.
+  --aeo                AI mentions: do AI assistants name you when customers ask
+    / --no-aeo         them questions — the quote, the sources, the competitors,
+                       the trend. With companies, each company's own at
+                       /app/website. With --ai, asked of Claude Haiku 4.5 with
+                       web search, metered against each month's AI.
   --analytics          Website visits, cookieless: where visitors came from
     / --no-analytics   (search, AI assistants by name, other sites), the pages
                        they read and the AI crawlers that read them, with the
@@ -352,7 +356,7 @@ export async function collectAnswers(
   const includeSeoReports =
     flags.seoReports ??
     (await prompter.confirm(
-      "SEO & AEO self-audits? The site crawls its own sitemap and keeps the receipts.",
+      "Search check? How search engines and AI assistants read the site, as a list of things to fix.",
       DEFAULT_ANSWERS.includeSeoReports,
     ));
   const includeNotifications =
@@ -445,7 +449,7 @@ export async function collectAnswers(
   const includeAeo =
     flags.aeo ??
     (await prompter.confirm(
-      "Field service — AI citation tracking? Do answer engines mention you for your customers' questions.",
+      "AI mentions? Whether AI assistants name you when customers ask them questions.",
       DEFAULT_ANSWERS.includeAeo,
     ));
 
@@ -637,8 +641,8 @@ export function nextSteps(answers: Answers, targetDir: string): string {
     lines.push(
       // The one feature that works on first boot with no credential at all,
       // and the button that proves it.
-      "Run your first SEO & AEO audit from /admin/seo once the app is up — it",
-      "crawls this deployment's own sitemap, so there is nothing to configure.",
+      "Run your first search check from /admin/seo once the app is deployed — it",
+      "reads this site's own public pages (never localhost), so there is nothing to configure.",
       "",
     );
   }

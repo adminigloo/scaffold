@@ -11,6 +11,7 @@ import {
   settleAiReservation,
   startOfMonthUtc,
   startOfNextMonthUtc,
+  sweepStaleReservations,
   type AiDb,
   type AiRates,
 } from "../server.js";
@@ -106,6 +107,14 @@ describe("recordAiUsage: the cost is code's, from the provider's counts", () => 
   it("writes an unknown cost (null), never zero, when the provider didn't report or the model isn't priced", () => {
     expect(aiCallCostMicros(RATES, { model: DEFAULT_AI_MODEL, inputTokens: 0, outputTokens: 0, reported: false })).toBeNull();
     expect(aiCallCostMicros(RATES, { model: "some-new-model", inputTokens: 10, outputTokens: 10, reported: true })).toBeNull();
+  });
+
+  it("adds a call's fees beyond tokens (0.3: web searches), and never subtracts a negative one", () => {
+    const tokens = aiCallCostMicros(RATES, { model: DEFAULT_AI_MODEL, inputTokens: 1_000, outputTokens: 200, reported: true })!;
+    expect(aiCallCostMicros(RATES, { model: DEFAULT_AI_MODEL, inputTokens: 1_000, outputTokens: 200, reported: true, feesMicros: 20_000n })).toBe(tokens + 20_000n);
+    expect(aiCallCostMicros(RATES, { model: DEFAULT_AI_MODEL, inputTokens: 1_000, outputTokens: 200, reported: true, feesMicros: -5n })).toBe(tokens);
+    // Unknown stays unknown, fees or not.
+    expect(aiCallCostMicros(RATES, { model: DEFAULT_AI_MODEL, inputTokens: 0, outputTokens: 0, reported: false, feesMicros: 20_000n })).toBeNull();
   });
 
   it("never throws when the row can't be written, and says so to onError", async () => {
@@ -324,5 +333,45 @@ describe("reserveAiAllowance: check and hold as one step, so calls in flight cou
   it("FAILS CLOSED when it can't hold the place", async () => {
     const down = { transaction: () => Promise.reject(new Error("down")) } as unknown as AiDb;
     expect(await reserveAiAllowance(down, base("x"))).toMatchObject({ ok: false, reason: "unavailable" });
+  });
+});
+
+describe("a feature's share of the site's day, and holds nobody settled (0.3.0)", () => {
+  it("refuses a feature past its own daily cents across every company, and leaves other features alone", async () => {
+    // Two companies spend 6 cents of AI mentions between them today.
+    await used("co-a", 30_000, 0, "aeo_check");
+    await used("co-b", 30_000, 0, "aeo_check");
+    const input = (tenantId: string, operations: string[]) => ({
+      tenantId,
+      operations,
+      allowance: { monthlyMessages: null, monthlyCents: null },
+      siteDailyCents: 500,
+      operationsDailyCents: 5,
+      now: NOW,
+    });
+    const mentions = await checkAiAllowance(db, input("co-c", ["aeo_check"]));
+    expect(mentions).toMatchObject({ ok: false, reason: "feature_day" });
+    // The assistant has its own day: the feature share never closes it.
+    expect((await checkAiAllowance(db, input("co-c", ["assistant_chat"]))).ok).toBe(true);
+  });
+
+  it("sweeps a hold nobody settled, for its own operation only, after the time given", async () => {
+    const hold = await reserveAiAllowance(db, {
+      tenantId: "sweep",
+      userId: null,
+      operations: ["aeo_check"],
+      operation: "aeo_check",
+      model: DEFAULT_AI_MODEL,
+      allowance: { monthlyMessages: null, monthlyCents: null },
+      siteDailyCents: null,
+      reserveMicros: 90_000n,
+      now: NOW,
+    });
+    expect(hold.ok).toBe(true);
+    await db.execute(sql`update ai_usage set created_at = now() - interval '15 minutes'`);
+    expect(await sweepStaleReservations(db, { operations: ["assistant_chat"], olderThanMs: 10 * 60_000 })).toBe(0);
+    expect(await sweepStaleReservations(db, { operations: ["aeo_check"], olderThanMs: 10 * 60_000 })).toBe(1);
+    const left = await db.select().from(aiUsage);
+    expect(left).toEqual([]);
   });
 });

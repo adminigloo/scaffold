@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AI_CRAWLERS, auditPage, robotsBlocks, runSeoReport } from "../index.js";
+import { fakeNetwork } from "./fake-network.js";
 
 const GOOD_PAGE = `<!doctype html><html><head>
 <title>Feedback that fixes itself — adminigloo</title>
@@ -37,7 +38,8 @@ describe("auditPage", () => {
     expect(statusOf(page, "page.title")).toBe("fail");
     expect(statusOf(page, "page.description")).toBe("fail");
     expect(statusOf(page, "page.h1")).toBe("warn");
-    expect(statusOf(page, "page.robots")).toBe("warn");
+    // 0.2: a page asking to be left out of search FAILS (0.1 only warned).
+    expect(statusOf(page, "page.noindex")).toBe("fail");
     expect(statusOf(page, "page.img-alt")).toBe("warn");
     // Present-but-broken JSON-LD is a warn, not a pass — the block exists,
     // the machine-readability it promises does not.
@@ -68,15 +70,14 @@ describe("robotsBlocks", () => {
 });
 
 describe("runSeoReport", () => {
-  /** A whole site served from a map — the crawl with the network removed. */
-  function siteFetch(routes: Record<string, string>): typeof fetch {
-    return (async (input: RequestInfo | URL) => {
-      const path = new URL(String(input)).pathname;
-      const body = routes[path];
-      return body === undefined
-        ? new Response("", { status: 404 })
-        : new Response(body, { status: 200 });
-    }) as typeof fetch;
+  /** A whole site served from a map — the crawl with the network removed (0.2: through the safe fetcher). */
+  function site(routes: Record<string, string>) {
+    const pages: Record<string, { body: string; headers?: Record<string, string> }> = {};
+    for (const [path, body] of Object.entries(routes)) {
+      pages[`https://example.com${path}`] = { body, ...(path.endsWith(".txt") || path.endsWith(".xml") ? { headers: { "content-type": "text/plain" } } : {}) };
+    }
+    const net = fakeNetwork(pages);
+    return { resolve: net.resolve, transport: net.transport };
   }
 
   const ROUTES = {
@@ -90,7 +91,7 @@ describe("runSeoReport", () => {
   it("crawls the sitemap, same-origin only, and scores both halves", async () => {
     const report = await runSeoReport({
       baseUrl: "https://example.com",
-      fetchImpl: siteFetch(ROUTES),
+      ...site(ROUTES),
     });
     // The foreign origin in the sitemap must not be crawled.
     expect(report.pages.map((p) => p.path)).toEqual(["/", "/bad"]);
@@ -113,7 +114,7 @@ describe("runSeoReport", () => {
     const { "/llms.txt": _omitted, "/bad": _gone, ...rest } = ROUTES;
     const report = await runSeoReport({
       baseUrl: "https://example.com",
-      fetchImpl: siteFetch(rest),
+      ...site(rest),
     });
     expect(report.siteChecks.find((c) => c.id === "site.llms-txt")?.status).toBe("fail");
     const bad = report.pages.find((p) => p.path === "/bad");
@@ -130,10 +131,11 @@ describe("runSeoReport", () => {
     for (let i = 0; i < 5; i++) routes[`/p${i}`] = GOOD_PAGE;
     const report = await runSeoReport({
       baseUrl: "https://example.com",
-      fetchImpl: siteFetch(routes),
+      ...site(routes),
       maxPages: 2,
     });
     expect(report.pageCount).toBe(2);
+    expect(report.stopped).toBe("pages");
     expect(report.siteChecks.find((c) => c.id === "site.crawl-cap")?.status).toBe("warn");
   });
 });
