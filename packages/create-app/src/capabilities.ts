@@ -955,6 +955,31 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
       exists(plan, "app", "(site)", "book", "page.tsx") &&
       mentions(plan, ["app", "admin", "calls", "page.tsx"], "<CallsAdmin"),
   },
+  {
+    capability: "commerce.company-store",
+    why:
+      "Each company sells its own products (getting paid, part 2): its products and orders at " +
+      "/app/store over /api/app/{id}/store (the id in the path, asked every call), its store at " +
+      "/t/{web address}/store through the public gate, paid on its own connected Stripe account " +
+      "and recorded by the Connect webhook.",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "server", "store.ts"], "buildStoreAdminHandlers", "companyAuthorizer(", "admitPublic", "storeCardPayments") &&
+      mentions(plan, ["src", "server", "payments-webhook.ts"], "handleStoreEvent(db, tenantId, event", "companyForConnectEvent") &&
+      exists(plan, "app", "api", "app", "[tenantId]", "store", "[...path]", "route.ts") &&
+      exists(plan, "app", "(company)", "t", "[slug]", "store", "page.tsx") &&
+      mentions(plan, ["app", "(site)", "app", "store", "page.tsx"], "<StoreAdmin"),
+  },
+  {
+    capability: "commerce.store",
+    why:
+      "One business sells its own products (getting paid, part 2): the store at /store, the " +
+      "thank-you page, and the products and orders at /admin/store on staff keys, paid on its own Stripe keys.",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "server", "store.ts"], "STORE_TENANT", "authorizeStaffFor(") &&
+      mentions(plan, ["src", "server", "payments-webhook.ts"], "handleStoreEvent(db, tenantId, event") &&
+      exists(plan, "app", "(site)", "store", "page.tsx") &&
+      mentions(plan, ["app", "admin", "store", "page.tsx"], "<StoreAdmin"),
+  },
 ];
 
 /**

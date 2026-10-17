@@ -76,10 +76,12 @@ export const PER_COMPANY_COVERAGE: Readonly<Record<string, Status>> = {
   // payments screen and its customers' card payments. The site's own plan
   // billing stays on the site's account.
   stripe: "per-company",
-  // Not yet: the chunk that makes each per company.
-  commerce: "chunk:getting-paid-part-2",
+  // Getting paid, part 2: each company's own store — its products (catalog
+  // rows under its id; the site's own plans and products stay under "*"), its
+  // checkouts, orders and the store payments that need its owner.
+  commerce: "per-company",
+  catalog: "per-company",
   // Not about any one business, by design.
-  catalog: "shared:the site's own plans and products, sold to every company",
   db: "shared:the database connection and migration tools every package uses; it keeps no business's records",
   env: "shared:reads the site's own settings when it starts; nothing in it belongs to a business",
   license: "shared:checks the site's own licence key with the seller; one per site, not per business",
@@ -144,6 +146,8 @@ const COMPANY_EVERYTHING: Answers = {
   includeAeo: true,
   // Tenancy 2b-4c: and book a call, whose route tables are per company.
   includeBooking: true,
+  // Getting paid, part 2: and the store, whose route tables are per company.
+  includeStore: true,
 };
 
 let planned: Promise<EmitPlan> | null = null;

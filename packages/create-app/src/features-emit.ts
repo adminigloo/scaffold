@@ -822,7 +822,7 @@ export const INVOICING_RATE_LIMITS = {
  * The caller as the NEAREST proxy saw it: the last X-Forwarded-For entry (on
  * Vercel, the caller) — the rule scheduling's and the estimator's throttles
  * use, because the first entry is whatever the caller chose to send. Null with
- * no proxy in front (a laptop, the project's own tests): not limited.
+ * no proxy in front (a laptop, the project's own tests): ONE shared "unknown" caller, never unlimited.
  */
 function callerKey(req: Request): string | null {
   const entries = (req.headers.get("x-forwarded-for") ?? "")
@@ -1054,12 +1054,12 @@ function endOfDayIn(year: number, month: number, day: number, zone: string): Dat
 
 /**
  * The customer page's throttle, PER ${noun.toUpperCase()}, on the app's shared limiter.
- * A request with no forwarded IP (a laptop, the project's own tests) is not
- * limited — the rule the tRPC ladder's anonymous floor follows.
+ * A request with no forwarded IP shares one "unknown" caller's budget —
+ * never unlimited.
  */
 export async function invoicingRateLimit(req: Request, bucket: keyof typeof INVOICING_RATE_LIMITS): Promise<boolean> {
-  const caller = callerKey(req);
-  if (!caller) return true;
+  // No forwarded address (a laptop, a proxy that forwards nothing): ONE shared "unknown" caller, never unlimited.
+  const caller = callerKey(req) ?? "unknown";
   const tenantId = (await publicCompanies.resolveTenant(req)) ?? "unknown";
   const result = await limiter.limit({ key: \`invoicing:\${tenantId}:\${bucket}:\${caller}\`, policy: INVOICING_RATE_LIMITS[bucket] });
   return result.allowed;
@@ -1323,10 +1323,10 @@ export function reportInvoicingError(error: unknown, context: { tenantId: string
   });
 }
 
-/** The customer page's throttle. A request with no forwarded IP is not limited. */
+/** The customer page's throttle. A request with no forwarded IP shares one "unknown" caller's budget. */
 export async function invoicingRateLimit(req: Request, bucket: keyof typeof INVOICING_RATE_LIMITS): Promise<boolean> {
-  const caller = callerKey(req);
-  if (!caller) return true;
+  // No forwarded address (a laptop, a proxy that forwards nothing): ONE shared "unknown" caller, never unlimited.
+  const caller = callerKey(req) ?? "unknown";
   const result = await limiter.limit({ key: \`invoicing:\${bucket}:\${caller}\`, policy: INVOICING_RATE_LIMITS[bucket] });
   return result.allowed;
 }

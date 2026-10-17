@@ -90,14 +90,22 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // payments glue and the Connect webhook call startConnectOnboarding,
   // companyForConnectEvent, runLedgeredEvent and createDirectCheckoutSession,
   // and the schema has stripe_connected_accounts. None exist in 0.3.x.
-  stripe: "0.4.0",
+  // 0.4.1 (getting paid, part 2): createDirectCheckoutSession's `lines` — the
+  // store's server-priced lines on Stripe's page. Not in 0.4.0.
+  stripe: "0.4.1",
   // 0.2.0 for the variant- and product-name rules. The product builder refuses
   // to start a save that `validateProduct` cannot clear, so a project resolving
   // 0.1.x gets a validator with no opinion about a blank variant name — which
   // is the hole the form used to fall through: it created the product, had
   // `upsertVariant` refuse it, and left a draft with nothing under it.
-  catalog: "0.2.1",
-  commerce: "0.1.7",
+  // 0.3.0 (getting paid, part 2): product_variants.held — the stock open store
+  // checkouts hold, apart from what is on the shelf. The store reads it.
+  catalog: "0.3.0",
+  // 0.2.0 (getting paid, part 2): a store of its own — the emitted store
+  // glue imports @adminigloo/commerce/store and /widget, the route tables and
+  // storePermissions, and the schema has store_checkouts and store_alerts.
+  // None exist in 0.1.x.
+  commerce: "0.2.0",
   // 0.2.0 for the typed plan record. `src/plans.ts` is emitted into every
   // project that sells something and calls `definePlans`, which does not exist
   // in 0.1.x — so a project resolving the old line fails to compile on a file

@@ -198,10 +198,15 @@ describe("productVariants", () => {
     );
   });
 
+  it("refuses a negative held count too (catalog 0.3)", () => {
+    expect(checkNames(productVariants)).toContain("product_variants_held_non_negative");
+    expect(productVariants.held.notNull).toBe(true);
+  });
+
   it("has no CHECK for the interval rule, because that one spans two tables", () => {
     // `kind` lives on `products` and a check constraint may only read columns
     // of its own row. `validateProduct` is where that rule lives.
-    expect(checkNames(productVariants)).toHaveLength(2);
+    expect(checkNames(productVariants)).toHaveLength(3);
   });
 });
 

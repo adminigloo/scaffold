@@ -31,6 +31,8 @@ export function companyTokenPaths(answers: Answers): string[] {
     ...(answers.includeScheduling ? ["/t/*/visit"] : []),
     ...(answers.includeInvoicing ? ["/t/*/invoice"] : []),
     ...(answers.includeBooking ? ["/t/*/book/manage"] : []),
+    // Getting paid, part 2: the thank-you page names the customer's checkout.
+    ...(answers.includeStore ? ["/t/*/store/thanks"] : []),
   ];
 }
 

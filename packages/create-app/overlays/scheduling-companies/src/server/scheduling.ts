@@ -120,13 +120,13 @@ export function reportSchedulingError(error: unknown, context: { tenantId: strin
  *
  * Keyed on the caller's IP as the nearest proxy saw it (`clientIpKey`). A
  * request with no forwarded IP — a laptop with no proxy, the project's own
- * tests — is not limited, the rule the tRPC ladder's anonymous floor follows.
+ * tests — shares ONE "unknown" caller's budget: never unlimited.
  * The company comes from the public seam's per-request cache, so this asks the
  * database nothing new.
  */
 export async function schedulingRateLimit(req: Request, bucket: SchedulingRateLimitBucket): Promise<boolean> {
-  const caller = clientIpKey(req);
-  if (!caller) return true;
+  // No forwarded address (a laptop, a proxy that forwards nothing): ONE shared "unknown" caller, never unlimited.
+  const caller = clientIpKey(req) ?? "unknown";
   const tenantId = (await publicCompanies.resolveTenant(req)) ?? "unknown";
   const result = await limiter.limit({
     key: `scheduling:${tenantId}:${bucket}:${caller}`,

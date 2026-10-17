@@ -88,7 +88,7 @@ const BOOKING_RATE_LIMITS = {
  * The caller as the NEAREST proxy saw it: the last X-Forwarded-For entry (on
  * Vercel, the address its edge saw), an IPv6 address by its /64 (one machine
  * holds a whole /64 to rotate through). Null with no proxy in front (a
- * laptop, the project's own tests): not limited.
+ * laptop, the project's own tests): ONE shared "unknown" caller, never unlimited.
  */
 function callerKey(req: Request): string | null {
   const entries = (req.headers.get("x-forwarded-for") ?? "")
@@ -100,8 +100,8 @@ function callerKey(req: Request): string | null {
 }
 
 async function bookingRateLimit(req: Request, bucket: RateLimitBucket): Promise<boolean> {
-  const caller = callerKey(req);
-  if (!caller) return true;
+  // No forwarded address (a laptop, a proxy that forwards nothing): ONE shared "unknown" caller, never unlimited.
+  const caller = callerKey(req) ?? "unknown";
   return (await limiter.limit({ key: \`booking:\${bucket}:\${caller}\`, policy: BOOKING_RATE_LIMITS[bucket] })).allowed;
 }`;
 

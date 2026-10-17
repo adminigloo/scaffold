@@ -101,8 +101,9 @@ function suitesFor(answers: Answers): readonly FeatureSuite[] {
   }
   // GETTING PAID, PART 1: a company's payments screen (connect its own Stripe
   // account, see it, disconnect it). Admin routes only: the customer's "Pay
-  // now" is invoicing's public pay route, driven with the invoicing suite.
-  if (answers.includeInvoicing) {
+  // now" is invoicing's public pay route, driven with the invoicing suite —
+  // and, since part 2, the store's Check out, driven with the store's.
+  if (answers.includeInvoicing || answers.includeStore) {
     suites.push({
       feature: "stripe",
       glue: "@/server/payments",
@@ -114,6 +115,23 @@ function suitesFor(answers: Answers): readonly FeatureSuite[] {
       publicSegment: null,
       pkg: "stripe",
       permissions: "stripeConnectPermissions",
+    });
+  }
+  // GETTING PAID, PART 2: a company's own store — its products, orders and
+  // what needs attention at /app/store, its store page and Check out at its
+  // web address.
+  if (answers.includeStore) {
+    suites.push({
+      feature: "commerce",
+      glue: "@/server/store",
+      adminBuilder: "buildStoreAdminHandlers",
+      adminRoutes: "STORE_ADMIN_ROUTES",
+      adminSegment: "store",
+      publicBuilder: "buildStorePublicHandlers",
+      publicRoutes: "STORE_PUBLIC_ROUTES",
+      publicSegment: "store",
+      pkg: "commerce",
+      permissions: "storeCompanyPermissions",
     });
   }
   if (answers.includeComms) {
@@ -297,6 +315,9 @@ export const FEATURE_ENTITIES: Readonly<Record<string, readonly string[]>> = {
   invoicing: ["invoice", "item", "payment", "invoice-token", "card-alert"],
   // Getting paid, part 1: the payments screen names no row; it acts on the company in the path.
   stripe: [],
+  // Getting paid, part 2: a product, an order, a store payment that needs the
+  // owner, and one Check out (the thank-you page's).
+  commerce: ["store-product", "store-order", "store-alert", "store-checkout"],
   comms: ["template-key"],
   // Tenancy 2b-1 (3.1).
   notifications: ["alert", "person"],
@@ -407,6 +428,13 @@ export function renderCompanyRows(answers: Answers): string {
       ? [
           `import { createInvoice, invoiceCardAlerts, invoiceCheckouts, invoiceItems, recordPayment, setInvoiceStatus } from "${scope}/invoicing";`,
           `import { stripeConnectedAccounts } from "${scope}/stripe/schema";`,
+        ]
+      : []),
+    ...(answers.includeStore
+      ? [
+          `import { orderItems, orders, storeAlerts, storeCheckouts } from "${scope}/commerce/schema";`,
+          `import { createStoreProduct } from "${scope}/commerce/store";`,
+          ...(invoicing ? [] : [`import { stripeConnectedAccounts } from "${scope}/stripe/schema";`]),
         ]
       : []),
     ...(feedback
@@ -655,6 +683,65 @@ export function renderCompanyRows(answers: Answers): string {
   if (!cardAlert) throw new Error(\`no card alert was planted for \${label}\`);
   rows["card-alert"] = cardAlert.id;
   strings.push(\`\${Label} probe card alert\`, \`pi_\${label}_probe\`);
+`);
+  }
+  if (answers.includeStore) {
+    blocks.push(`
+  // A STORE OF ITS OWN (getting paid, part 2): a product with stock, a Check
+  // out someone opened, the order a paid one became (with its line), and a
+  // store payment that needs the owner.${invoicing ? "" : `
+  await database.insert(stripeConnectedAccounts).values({ tenantId, accountId: \`acct_\${label}_probe\`, chargesEnabled: true, payoutsEnabled: true, detailsSubmitted: true });
+  strings.push(\`acct_\${label}_probe\`);`}
+  const storeProduct = await createStoreProduct(database, tenantId, { name: \`\${Label} probe soap\`, priceMinor: 1_500, currency: "usd", stock: 9 });
+  rows["store-product"] = storeProduct.id;
+  const [storeCheckout] = await database
+    .insert(storeCheckouts)
+    .values({
+      tenantId,
+      accountId: \`acct_\${label}_probe\`,
+      cartKey: \`\${label}-probe-cart\`,
+      sessionId: \`cs_\${label}_store\`,
+      sessionUrl: \`https://checkout.stripe.test/\${label}\`,
+      amount: 1_500,
+      currency: "usd",
+      lines: [{ productId: storeProduct.id, variantId: storeProduct.id, name: \`\${Label} probe soap\`, quantity: 1, unitPriceMinor: 1_500, held: false }],
+      status: "open",
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+    })
+    .returning({ id: storeCheckouts.id });
+  if (!storeCheckout) throw new Error(\`no store checkout was planted for \${label}\`);
+  rows["store-checkout"] = storeCheckout.id;
+  // The order NUMBER counts per ${noun} — both have the same first one — so it
+  // is not something that identifies this ${noun}; its customer and payment are.
+  const [storeOrder] = await database
+    .insert(orders)
+    .values({
+      tenantId,
+      idempotencyKey: \`checkout_session:cs_\${label}_paid\`,
+      orderNumber: "ORD-20260101-000001-00",
+      email: \`buyer@\${label}.test\`,
+      status: "paid",
+      subtotalMinor: 1_500n,
+      shippingMinor: 0n,
+      taxMinor: 0n,
+      discountMinor: 0n,
+      totalMinor: 1_500n,
+      currency: "usd",
+      stripePaymentIntentId: \`pi_\${label}_store\`,
+      stripeCheckoutSessionId: \`cs_\${label}_paid\`,
+      placedAt: new Date(),
+    })
+    .returning({ id: orders.id });
+  if (!storeOrder) throw new Error(\`no store order was planted for \${label}\`);
+  rows["store-order"] = storeOrder.id;
+  await database.insert(orderItems).values({ orderId: storeOrder.id, productRef: storeProduct.id, name: \`\${Label} probe soap\`, quantity: 1, unitPriceMinor: 1_500n, totalMinor: 1_500n });
+  const [storeAlert] = await database
+    .insert(storeAlerts)
+    .values({ tenantId, kind: "amount_mismatch", message: \`\${Label} probe store alert\`, amount: 999, currency: "usd", orderId: null, paymentIntentId: \`pi_\${label}_storealert\`, dedupeKey: \`probe:\${label}:store\` })
+    .returning({ id: storeAlerts.id });
+  if (!storeAlert) throw new Error(\`no store alert was planted for \${label}\`);
+  rows["store-alert"] = storeAlert.id;
+  strings.push(\`\${Label} probe soap\`, \`buyer@\${label}.test\`, \`cs_\${label}_store\`, \`pi_\${label}_store\`, \`\${Label} probe store alert\`, \`pi_\${label}_storealert\`);
 `);
   }
   if (comms) {
@@ -1759,6 +1846,18 @@ export function renderFeatureIsolationTest(answers: Answers): string {
       `    invoice_checkouts: await all(sql\`select * from invoice_checkouts where tenant_id = \${a} order by id\`),`,
       `    invoice_card_alerts: await all(sql\`select * from invoice_card_alerts where tenant_id = \${a} order by id\`),`,
       `    stripe_connected_accounts: await all(sql\`select * from stripe_connected_accounts where tenant_id = \${a}\`),`,
+    );
+  }
+  // Getting paid, part 2: A's products (catalog rows under its id), checkouts, orders and store alerts.
+  if (answers.includeStore) {
+    snapshot.push(
+      `    products: await all(sql\`select * from products where tenant_id = \${a} order by id\`),`,
+      `    product_variants: await all(sql\`select * from product_variants where product_id in (select id from products where tenant_id = \${a}) order by id\`),`,
+      `    store_checkouts: await all(sql\`select * from store_checkouts where tenant_id = \${a} order by id\`),`,
+      `    orders: await all(sql\`select * from orders where tenant_id = \${a} order by id\`),`,
+      `    order_items: await all(sql\`select * from order_items where order_id in (select id from orders where tenant_id = \${a}) order by id\`),`,
+      `    store_alerts: await all(sql\`select * from store_alerts where tenant_id = \${a} order by id\`),`,
+      ...(answers.includeInvoicing ? [] : [`    stripe_connected_accounts: await all(sql\`select * from stripe_connected_accounts where tenant_id = \${a}\`),`]),
     );
   }
   if (answers.includeComms) {

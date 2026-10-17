@@ -32,6 +32,27 @@ export function upgradeNotesFor(answers: Answers, fromVersion: string): string[]
   const companies = answers.tenantNoun !== "none";
   const noun = tenantLabel(answers).toLowerCase();
   const crossed = (version: string) => (compareVersions(fromVersion, version) ?? -1) < 0;
+  // 0.34.0 — getting paid, part 2: a store of its own (`create-app add store`).
+  // Any project with commerce gets the 0.2 columns on orders; one with the store
+  // gets the steps to take its first order.
+  if (crossed("0.34.0") && (answers.includeStore || answers.businessModel !== "none")) {
+    notes.push(
+      "@adminigloo/commerce 0.2 adds a store of its own for every business. **Before you deploy, run " +
+        "node_modules/@adminigloo/commerce/sql/upgrade-0.1-to-0.2.sql and node_modules/@adminigloo/catalog/sql/upgrade-0.2-to-0.3.sql** (or the statements `pnpm db:generate` writes; both safe twice): they add product_variants.held, " +
+        "orders.refunded_minor, the order flags and email marks, and the store_checkouts, store_alerts and store_settings tables, and keep every existing order and product." +
+        (answers.businessModel !== "none" ? " This site's own plans and products stay in the catalog under \"*\"; its checkout now refuses any product that isn't one of them." : ""),
+    );
+    if (answers.includeStore) {
+      notes.push(
+        (companies
+          ? `Each ${noun} adds its products at /app/store and connects its own Stripe account at /app/payments; its store is /t/{web address}/store. `
+          : "Add products at /admin/store; the store is /store. ") +
+          "The store needs no new Stripe webhook events: it reads the ones card payments already listen to" +
+          (answers.includeInvoicing ? "." : " — set up the endpoint as below."),
+      );
+      if (!answers.includeInvoicing) notes.push(cardPaymentsSetup(answers, "####").trim());
+    }
+  }
   // 0.33.0 — getting paid, part 1: customers pay invoices and deposits online.
   if (crossed("0.33.0") && answers.includeInvoicing) {
     notes.push(

@@ -288,6 +288,14 @@ export interface DirectCheckoutInput {
   readonly idempotencyKey: string;
   /** Seconds since the epoch; Stripe's minimum is 30 minutes away. */
   readonly expiresAt?: number;
+  /**
+   * stripe 0.4.1 (a store of its own): the lines Stripe's page lists, each
+   * priced by the server. Their sum must be `amountMinor` exactly, or nothing
+   * is sent. Without them, one line reading `description`.
+   */
+  readonly lines?: readonly { readonly name: string; readonly unitAmountMinor: number; readonly quantity: number }[];
+  /** stripe 0.4.1: the countries Stripe may collect a shipping address in (two-letter codes). Absent or empty: no address is asked. */
+  readonly shippingCountries?: readonly string[] | null;
 }
 
 /**
@@ -302,24 +310,38 @@ export async function createDirectCheckoutSession(client: StripeClient, input: D
   }
   const fee = input.accountId === null ? 0 : platformFeeMinor(input.amountMinor, input.feeBps ?? 0);
   const metadata = { ...input.metadata };
+  if (input.lines !== undefined) {
+    let sum = 0;
+    for (const line of input.lines) {
+      if (!Number.isSafeInteger(line.unitAmountMinor) || line.unitAmountMinor < 1 || !Number.isInteger(line.quantity) || line.quantity < 1) {
+        throw new RangeError(`createDirectCheckoutSession: a line needs a whole price of at least 1 and a quantity of at least 1`);
+      }
+      sum += line.unitAmountMinor * line.quantity;
+    }
+    if (input.lines.length === 0 || sum !== input.amountMinor) {
+      throw new RangeError(`createDirectCheckoutSession: the lines come to ${sum}, not the amount ${input.amountMinor}`);
+    }
+  }
+  const currency = input.currency.toLowerCase();
+  const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = input.lines
+    ? input.lines.map((line) => ({ quantity: line.quantity, price_data: { currency, unit_amount: line.unitAmountMinor, product_data: { name: line.name.slice(0, 250) } } }))
+    : [{ quantity: 1, price_data: { currency, unit_amount: input.amountMinor, product_data: { name: input.description.slice(0, 250) } } }];
   const params = withTenantMetadata(input.tenantId, {
     mode: "payment",
-    line_items: [
-      {
-        quantity: 1,
-        price_data: {
-          currency: input.currency.toLowerCase(),
-          unit_amount: input.amountMinor,
-          product_data: { name: input.description.slice(0, 250) },
-        },
-      },
-    ],
+    line_items: lineItems,
     success_url: input.successUrl,
     cancel_url: input.cancelUrl,
     metadata,
     payment_intent_data: { metadata, ...(fee > 0 ? { application_fee_amount: fee } : {}) },
     ...(input.customerEmail ? { customer_email: input.customerEmail } : {}),
     ...(input.expiresAt ? { expires_at: input.expiresAt } : {}),
+    ...(input.shippingCountries && input.shippingCountries.length > 0
+      ? {
+          shipping_address_collection: {
+            allowed_countries: input.shippingCountries.map((c) => c.toUpperCase()) as Stripe.Checkout.SessionCreateParams.ShippingAddressCollection.AllowedCountry[],
+          },
+        }
+      : {}),
   });
   return client.stripe.checkout.sessions.create(params, {
     idempotencyKey: input.idempotencyKey,

@@ -69,6 +69,7 @@ export const ADDABLE_FEATURES = [
   "analytics",
   "seo",
   "booking",
+  "store",
 ] as const;
 
 export type FeatureName = (typeof ADDABLE_FEATURES)[number];
@@ -91,6 +92,7 @@ const FEATURE_ANSWER: Record<FeatureName, keyof Answers> = {
   analytics: "includeAnalytics",
   seo: "includeSeo",
   booking: "includeBooking",
+  store: "includeStore",
 };
 
 export class UnknownFeatureError extends Error {

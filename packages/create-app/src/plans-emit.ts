@@ -112,6 +112,11 @@ export async function bookingHostLimit(_tenantId: string): Promise<number | null
   return undefined;
 }
 
+/** Products in a store from a plan: none here (undefined), so there's no limit. */
+export async function storeProductLimit(_tenantId: string): Promise<number | null | undefined> {
+  return undefined;
+}
+
 /** Is this company on a free trial? Never: there are no plans here. */
 export async function companyOnTrial(_tenantId: string): Promise<boolean> {
   return false;
@@ -341,6 +346,15 @@ export async function aiMentionCheckLimit(tenantId: string): Promise<number | nu
  */
 export async function bookingHostLimit(tenantId: string): Promise<number | null | undefined> {
   return planLimit(tenantId, "booking_hosts");
+}
+
+/**
+ * How many products the ${noun}'s store may hold, from its plan (src/plans.ts,
+ * "products in your store"; getting paid, part 2). Checked when a product is
+ * added; removed products don't count. undefined: the plan doesn't say.
+ */
+export async function storeProductLimit(tenantId: string): Promise<number | null | undefined> {
+  return planLimit(tenantId, "products");
 }
 
 /**

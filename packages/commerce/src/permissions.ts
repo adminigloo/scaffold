@@ -72,3 +72,43 @@ export const commercePermissions = {
 } as const satisfies PermissionMap;
 
 export type CommercePermission = keyof typeof commercePermissions;
+
+/**
+ * commerce 0.2: A STORE OF ITS OWN — the products a business sells to its own
+ * customers and the orders they place. Two keys, in two ladders:
+ *
+ *   storePermissions         one business, on the staff ladder (/admin/store)
+ *   storeCompanyPermissions  a company's own roles (/app/store), in a
+ *                            project where many companies share the app
+ *
+ * Refunds are not a key here: a company refunds in its own Stripe dashboard,
+ * and the refund comes back to the order by the webhook.
+ */
+export const storePermissions = {
+  "store.view": {
+    label: "See the store",
+    description: "The products for sale, their prices and stock, and the orders customers placed.",
+    category: "Store",
+    defaultFor: ["admin", "cs_lead", "cs_agent"],
+  },
+  "store.manage": {
+    label: "Run the store",
+    description: "Add and change products, prices, photos and stock, mark orders as sent, and clear what needs attention.",
+    category: "Store",
+    defaultFor: ["admin"],
+  },
+} as const satisfies PermissionMap;
+
+export type StorePermission = keyof typeof storePermissions;
+
+export const storeCompanyPermissions = {
+  "store.view": {
+    ...storePermissions["store.view"],
+    description: "The company's products, their prices and stock, and the orders its customers placed.",
+    defaultFor: ["owner", "admin", "member"],
+  },
+  "store.manage": {
+    ...storePermissions["store.manage"],
+    defaultFor: ["owner", "admin"],
+  },
+} as const satisfies PermissionMap;

@@ -69,7 +69,8 @@ import { assistantChats, renderAssistantGlue, renderAssistantLauncherSlot, rende
 import { renderAnalyticsCron, renderSiteAnalyticsSlot, renderWebsiteGlue, websitesQuota } from "./website-emit.js";
 import { renderSeoPackageModule, renderSeoRobots, renderSeoSitemap } from "./seo-emit.js";
 import { bookingFiles, bookingHostsQuota } from "./booking-emit.js";
-import { cardPaymentsSetup, paymentsFiles, renderNavBadges } from "./payments-emit.js";
+import { cardPaymentsOn, cardPaymentsSetup, paymentsFiles, renderNavBadges } from "./payments-emit.js";
+import { storeFiles, storeProductsQuota } from "./store-emit.js";
 import {
   aiMentionChecksQuota,
   hasCompanyWebsitePage,
@@ -432,7 +433,9 @@ export async function planEmit(
     answers.includeSeoReports ||
     answers.includeAeo ||
     // Tenancy 2b-4c: a single business's calls are worked on staff keys.
-    (!isCompanies(answers) && answers.includeBooking)
+    (!isCompanies(answers) && answers.includeBooking) ||
+    // Getting paid, part 2: a single business's store is worked on staff keys.
+    (!isCompanies(answers) && answers.includeStore)
   ) {
     files.set(join("src", "server", "staff-access.ts"), renderStaffAccess(answers));
   }
@@ -486,6 +489,9 @@ export async function planEmit(
   // account (Connect) or the one business's own keys, the webhook, the
   // payments screen and the accepted quote's deposit. See payments-emit.ts.
   for (const [path, body] of paymentsFiles(answers)) files.set(join(...path.split("/")), body);
+  // Getting paid, part 2: a store of its own — each company's products,
+  // cart and orders, paid on its own Stripe account. See store-emit.ts.
+  for (const [path, body] of storeFiles(answers)) files.set(join(...path.split("/")), body);
   // The header's link badges (every project: src/components/AuthHeader.tsx imports it).
   files.set(join("src", "server", "nav-badges.ts"), renderNavBadges(answers));
   // A company's Website screen, written with the sections this project has.
@@ -961,7 +967,7 @@ export function renderPackageJson(answers: Answers): string {
   }
   // Getting paid, part 1: "Pay now" on invoices calls Stripe from the server
   // only (Checkout is Stripe's own page), so the server SDK and nothing else.
-  if (answers.includeInvoicing) deps["stripe"] = "^22.6.0";
+  if (cardPaymentsOn(answers)) deps["stripe"] = "^22.6.0";
   for (const pkg of packagesFor(answers)) deps[pkg] = versionRangeFor(pkg);
 
   const devDeps: Record<string, string> = {
@@ -1702,6 +1708,7 @@ const ANSWER_LABELS: Partial<Record<keyof Answers, string>> = {
   includeAnalytics: "Website visits",
   includeSeo: "Search basics",
   includeBooking: "Book a call",
+  includeStore: "Store",
 };
 
 export function renderScaffoldRecord(manifest: ProjectManifest): string {
@@ -1814,7 +1821,10 @@ export function renderEnvModule(answers: Answers): string {
   // Getting paid, part 1: "Pay now" on invoices. Companies connect their own
   // Stripe accounts (the Connect endpoint's secret and this site's fee); one
   // business uses its own keys and an endpoint of its own.
-  const cardPayments = answers.includeInvoicing;
+  const cardPayments = cardPaymentsOn(answers);
+  // What the customers pay for, in the env check's words.
+  const paidFor = [...(answers.includeInvoicing ? ["Pay now on invoices"] : []), ...(answers.includeStore ? ["the store's Check out"] : [])].join(" and ");
+  const blocked = answers.includeInvoicing ? "invoices show How to pay only" : "the store takes no orders";
   const connect = cardPayments && answers.tenantNoun !== "none";
   const stripeNames = [
     ...(takesMoney ? ["stripeClient", "stripeServer", "STRIPE_MODE_BOUND_KEYS"] : cardPayments ? ["stripeServer"] : []),
@@ -1936,13 +1946,13 @@ export function renderEnvModule(answers: Answers): string {
         "PLATFORM_FEE_BPS: process.env.PLATFORM_FEE_BPS",
       );
       features.push(
-        `{ name: "Card payments on invoices", vars: [${takesMoney ? "" : '"STRIPE_SECRET_KEY", '}"STRIPE_CONNECT_WEBHOOK_SECRET", "PLATFORM_FEE_BPS"], disables: "Pay now on invoices. Each company connects its own Stripe account at /app/payments; without the key or the Connect webhook's secret, nobody can connect and invoices show How to pay only. PLATFORM_FEE_BPS is this site's cut of each payment (default 0, none)." }`,
+        `{ name: "Card payments${answers.includeInvoicing ? " on invoices" : ""}${answers.includeStore ? (answers.includeInvoicing ? " and the store" : " in the store") : ""}", vars: [${takesMoney ? "" : '"STRIPE_SECRET_KEY", '}"STRIPE_CONNECT_WEBHOOK_SECRET", "PLATFORM_FEE_BPS"], disables: "${paidFor}. Each company connects its own Stripe account at /app/payments; without the key or the Connect webhook's secret, nobody can connect and ${blocked}. PLATFORM_FEE_BPS is this site's cut of each payment (default 0, none)." }`,
       );
     } else {
       serverSpreads.push("...stripeInvoicePaymentsServer()");
       runtime.push("STRIPE_INVOICE_WEBHOOK_SECRET: process.env.STRIPE_INVOICE_WEBHOOK_SECRET");
       features.push(
-        `{ name: "Card payments on invoices", vars: [${takesMoney ? "" : '"STRIPE_SECRET_KEY", '}"STRIPE_INVOICE_WEBHOOK_SECRET"], disables: "Pay now on invoices, on your own Stripe account. Without both, invoices show How to pay only." }`,
+        `{ name: "Card payments${answers.includeInvoicing ? " on invoices" : ""}${answers.includeStore ? (answers.includeInvoicing ? " and the store" : " in the store") : ""}", vars: [${takesMoney ? "" : '"STRIPE_SECRET_KEY", '}"STRIPE_INVOICE_WEBHOOK_SECRET"], disables: "${paidFor}, on your own Stripe account. Without both, ${blocked}." }`,
       );
     }
   }
@@ -2557,11 +2567,34 @@ export const PACKAGE_PERMISSION_FRAGMENTS: readonly PackagePermissionFragment[] 
     package: "stripe",
     binding: "stripeConnectPermissions",
     scope: "tenant",
-    installedBy: (answers) => answers.tenantNoun !== "none" && answers.includeInvoicing,
+    installedBy: (answers) => answers.tenantNoun !== "none" && (answers.includeInvoicing || answers.includeStore),
     why:
       "Each company takes card payments into its own Stripe account, so these " +
       "are company keys: owners and admins see whether card payments are on, " +
       "an owner alone connects or disconnects Stripe.",
+  },
+  // GETTING PAID, PART 2: a store of its own. A company's store is its own,
+  // so in a companies project the two keys are company keys (owner, admin and
+  // member see it; owner and admin run it). A single business runs its store
+  // on the staff ladder, with the package's own staff fragment.
+  {
+    package: "commerce",
+    binding: "storeCompanyPermissions",
+    scope: "tenant",
+    installedBy: (answers) => answers.tenantNoun !== "none" && answers.includeStore,
+    why:
+      "Each company sells its own products, so these are company keys: owners, " +
+      "admins and members see the store and its orders, owners and admins " +
+      "change products and mark orders sent.",
+  },
+  {
+    package: "commerce",
+    binding: "storePermissions",
+    scope: "staff",
+    installedBy: (answers) => answers.tenantNoun === "none" && answers.includeStore,
+    why:
+      "One business sells its own products, worked by its staff at /admin/store: " +
+      "every staff role sees the store and its orders, admin changes products.",
   },
 ];
 
@@ -5150,6 +5183,11 @@ export function renderSchemaModule(answers: Answers): string {
   // account (stripe_events, stripe_connected_accounts) — already here in a
   // project that sells.
   if (answers.includeInvoicing && answers.businessModel === "none") owners.push("stripe");
+  // Getting paid, part 2: a store of its own — its products are catalog rows,
+  // its checkouts and orders commerce's, its Stripe accounts stripe's.
+  if (answers.includeStore) {
+    for (const pkg of ["stripe", "catalog", "commerce"]) if (!owners.includes(pkg)) owners.push(pkg);
+  }
   if (answers.includeComms) owners.push("comms");
   if (answers.includeAeo) owners.push("aeo");
   // Tenancy 2b-4c: the calls (booking_*); the widget package owns none.
@@ -5473,12 +5511,23 @@ export function renderSiteNav(answers: Answers): string {
       permission: "invoices.view",
       why: `The ${label}'s ledger: raise and send invoices, record payments.`,
     });
-    // Getting paid, part 1: connect the company's own Stripe account.
+  }
+  // Getting paid, part 2: a store of its own — its products and orders.
+  if (!single && answers.includeStore) {
+    companyFeatureLinks.push({
+      href: "/app/store",
+      label: "Store",
+      permission: "store.view",
+      why: `The products the ${label} sells online — prices, photos, stock — and the orders its customers placed.`,
+    });
+  }
+  // Getting paid, parts 1 and 2: connect the company's own Stripe account.
+  if (!single && (answers.includeInvoicing || answers.includeStore)) {
     companyFeatureLinks.push({
       href: "/app/payments",
       label: "Card payments",
       permission: "payments.view",
-      why: `Connect the ${label}'s own Stripe account so customers can pay invoices and deposits by card.`,
+      why: `Connect the ${label}'s own Stripe account so customers can pay ${answers.includeInvoicing ? "invoices and deposits" : "for store orders"} by card.`,
     });
   }
   if (!single && answers.includeComms) {
@@ -6079,6 +6128,15 @@ export function renderAdminNav(answers: Answers): string {
         "overlay, so a project without the answer has neither this page nor this entry.",
     });
   }
+  // Getting paid, part 2: a single business's store (a company's is at /app/store).
+  if (answers.includeStore && answers.tenantNoun === "none") {
+    operations.push({
+      href: "/admin/store",
+      label: "Store",
+      permission: "store.view",
+      why: "The products for sale at /store — prices, photos, stock — and the orders customers placed, from the commerce package.",
+    });
+  }
   // Tenancy 2b-4c: a single business's calls (a company's are at /app/calls).
   if (answers.includeBooking && answers.tenantNoun === "none") {
     operations.push({
@@ -6527,6 +6585,9 @@ export function renderAdminDashboard(answers: Answers): string {
       `import { formatMinor } from "${scope}/catalog";`,
       `import { products } from "${scope}/catalog/schema";`,
       `import { orders, orderShipments } from "${scope}/commerce/schema";`,
+      // This SITE's own sales only: a business's store products and orders are
+      // catalog and commerce rows too, under its own id (getting paid, part 2).
+      `import { FIRM_WIDE } from "${scope}/permissions";`,
     );
   }
   imports.push(
@@ -6611,7 +6672,8 @@ export function renderAdminDashboard(answers: Answers): string {
         await db
           .select({ n: count() })
           .from(orderShipments)
-          .where(isNull(orderShipments.shippedAt)),
+          .innerJoin(orders, eq(orders.id, orderShipments.orderId))
+          .where(and(isNull(orderShipments.shippedAt), eq(orders.tenantId, FIRM_WIDE))),
       ),
     ),`,
       `    // Orders paid for in the window, simulated ones excluded.
@@ -6631,7 +6693,7 @@ export function renderAdminDashboard(answers: Answers): string {
         await db
           .select({ n: count() })
           .from(orders)
-          .where(wasSimulated()),
+          .where(and(eq(orders.tenantId, FIRM_WIDE), wasSimulated())),
       ),
     ),`,
       `    // Products a customer can buy right now. Drafts and archived rows are
@@ -6642,7 +6704,7 @@ export function renderAdminDashboard(answers: Answers): string {
         await db
           .select({ n: count() })
           .from(products)
-          .where(and(eq(products.status, "active"), isNull(products.deletedAt))),
+          .where(and(eq(products.tenantId, FIRM_WIDE), eq(products.status, "active"), isNull(products.deletedAt))),
       ),
     ),`,
     );
@@ -6846,6 +6908,8 @@ const WINDOW_DAYS = 30;
  */
 function paidInWindow(since: Date) {
   return and(
+    // This site's own sales ("*"); a business's store orders are its own.
+    eq(orders.tenantId, FIRM_WIDE),
     inArray(orders.status, ["paid", "fulfilled"]),
     gte(orders.placedAt, since),
   );
@@ -7296,6 +7360,8 @@ export function renderPlanCatalog(answers: Answers): string {
   const mentionChecksOn = aiMentionChecksQuota(answers);
   // Tenancy 2b-4c: how many of a company's people may take calls.
   const bookingHostsOn = bookingHostsQuota(answers);
+  // Getting paid, part 2: how many products a company's store may hold.
+  const storeProductsOn = storeProductsQuota(answers);
   const scope = answers.scope;
   const label = tenantLabel(answers).toLowerCase();
 
@@ -7392,7 +7458,10 @@ export const plans = definePlans({
     ai_mention_checks: { kind: "quota", label: "AI mention checks a month", labelOne: "AI mention check a month" },` : ""}${bookingHostsOn ? `
     // Checked when someone is added to take calls, or switched back on
     // (src/server/booking.ts asks src/server/plan-gate.ts).
-    booking_hosts: { kind: "quota", label: "people taking calls", labelOne: "person taking calls" },` : ""}
+    booking_hosts: { kind: "quota", label: "people taking calls", labelOne: "person taking calls" },` : ""}${storeProductsOn ? `
+    // Checked when a product is added to the store (src/server/store.ts asks
+    // src/server/plan-gate.ts); removed products don't count.
+    products: { kind: "quota", label: "products in your store", labelOne: "product in your store" },` : ""}
   },
 
   /**
@@ -7423,7 +7492,8 @@ export const plans = definePlans({
         site_checks: 4,` : ""}${mentionChecksOn ? `
         ai_questions: 5,
         ai_mention_checks: 40,` : ""}${bookingHostsOn ? `
-        booking_hosts: 1,` : ""}
+        booking_hosts: 1,` : ""}${storeProductsOn ? `
+        products: 20,` : ""}
       },
     },
     {
@@ -7446,7 +7516,8 @@ export const plans = definePlans({
         site_checks: 20,` : ""}${mentionChecksOn ? `
         ai_questions: 15,
         ai_mention_checks: 100,` : ""}${bookingHostsOn ? `
-        booking_hosts: 5,` : ""}
+        booking_hosts: 5,` : ""}${storeProductsOn ? `
+        products: 200,` : ""}
       },
     },
     {
@@ -7471,7 +7542,8 @@ export const plans = definePlans({
         site_checks: null,` : ""}${mentionChecksOn ? `
         ai_questions: 25,
         ai_mention_checks: null,` : ""}${bookingHostsOn ? `
-        booking_hosts: null,` : ""}
+        booking_hosts: null,` : ""}${storeProductsOn ? `
+        products: null,` : ""}
       },
     },
     {
@@ -7496,7 +7568,8 @@ export const plans = definePlans({
         site_checks: 4,` : ""}${mentionChecksOn ? `
         ai_questions: 5,
         ai_mention_checks: 40,` : ""}${bookingHostsOn ? `
-        booking_hosts: 1,` : ""}
+        booking_hosts: 1,` : ""}${storeProductsOn ? `
+        products: 20,` : ""}
       },
     },
   ],
@@ -7745,6 +7818,12 @@ export function robotsDisallowed(answers: Answers): { readonly path: string; rea
       why: "A customer's own call, opened from the link in their email. The URL is the key to it (anyone holding it can move or cancel); the page already says noindex and the API sends X-Robots-Tag.",
     });
   }
+  if (single && answers.includeStore) {
+    disallowed.push({
+      path: "/store/thanks/",
+      why: "A customer's thank-you page after paying, with the checkout's id in the URL. Never a search result.",
+    });
+  }
   if (single && answers.includeInvoicing) {
     disallowed.push({
       path: "/invoice/",
@@ -7860,6 +7939,12 @@ export function sitemapPages(answers: Answers): { readonly path: string; readonl
     pages.push({
       path: "/book-visit",
       why: "The booking page, from the scheduling overlay — for a field-service business the page most worth finding. The manage pages under /visit are never listed: each URL is one customer's key.",
+    });
+  }
+  if (single && answers.includeStore) {
+    pages.push({
+      path: "/store",
+      why: "The store, from commerce: the products for sale. The thank-you pages under /store/thanks are never listed: each URL is one customer's checkout.",
     });
   }
   if (single && answers.includeBooking) {

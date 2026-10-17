@@ -12,35 +12,49 @@
  *               STRIPE_INVOICE_WEBHOOK_SECRET).
  *
  * Emitted variants: every file below is one mode's or the other's, never an
- * `if` about the answers. Only with --invoicing.
+ * `if` about the answers. Only with --invoicing or --store (getting paid, part
+ * 2: the store rides the same account, webhook and payments screen).
  */
 
 import { tenantLabel, type Answers } from "./answers.js";
 import { companiesMode } from "./tenancy-emit.js";
 
-/** Every file Pay now writes, by path (POSIX separators; emit.ts joins them). */
+/**
+ * Does this project take card payments from a business's own customers —
+ * "Pay now" on invoices (part 1), a store of its own (part 2), or both? Both
+ * ride the same Stripe account per business, the same webhook and the same
+ * payments screen.
+ */
+export function cardPaymentsOn(answers: Pick<Answers, "includeInvoicing" | "includeStore">): boolean {
+  return answers.includeInvoicing || answers.includeStore;
+}
+
+/** Every file Pay now and the store's payments write, by path (POSIX separators; emit.ts joins them). */
 export function paymentsFiles(answers: Answers): ReadonlyArray<readonly [string, string]> {
-  if (!answers.includeInvoicing) {
+  if (!cardPaymentsOn(answers)) {
     return answers.includeEstimator ? [["src/server/quote-deposit.ts", renderQuoteDepositStub(answers)]] : [];
   }
   const companies = companiesMode(answers);
   const files: Array<readonly [string, string]> = [
     ["src/server/payments.ts", companies ? renderCompanyPayments(answers) : renderSinglePayments(answers)],
     ["src/server/payments-webhook.ts", renderPaymentsWebhook(answers)],
-    // "Needs your attention": on /app/payments, or the admin invoices page for one business.
-    ["src/components/PaymentsAttention.tsx", renderPaymentsAttention(answers)],
   ];
+  // "Needs your attention" for invoices: on /app/payments, or the admin invoices page for one business.
+  if (answers.includeInvoicing) files.push(["src/components/PaymentsAttention.tsx", renderPaymentsAttention(answers)]);
+  if (!answers.includeInvoicing) {
+    if (answers.includeEstimator) files.push(["src/server/quote-deposit.ts", renderQuoteDepositStub(answers)]);
+  }
   if (companies) {
     files.push(
-      ["app/api/webhooks/stripe-connect/route.ts", webhookRoute("Connect", "the companies' own Stripe accounts")],
+      ["app/api/webhooks/stripe-connect/route.ts", webhookRoute("Connect", "the companies' own Stripe accounts", paidFor(answers))],
       ["app/api/app/[tenantId]/payments/[...path]/route.ts", paymentsAdminRoute(answers)],
       ["app/(site)/app/payments/page.tsx", renderPaymentsPage(answers)],
       ["src/components/PaymentsPanel.tsx", renderPaymentsPanel(answers)],
     );
   } else {
-    files.push(["app/api/webhooks/stripe-invoices/route.ts", webhookRoute("invoice", "this business's own Stripe account")]);
+    files.push(["app/api/webhooks/stripe-invoices/route.ts", webhookRoute(answers.includeInvoicing ? "invoice" : "payments", "this business's own Stripe account", paidFor(answers))]);
   }
-  if (answers.includeEstimator) {
+  if (answers.includeEstimator && answers.includeInvoicing) {
     files.push(["src/server/quote-deposit.ts", renderQuoteDeposit(answers)]);
     files.push([companies ? "app/api/t/[slug]/quote-deposit/[token]/route.ts" : "app/api/quote-deposit/[token]/route.ts", quoteDepositRoute(answers)]);
   }
@@ -54,6 +68,9 @@ export function paymentsFiles(answers: Answers): ReadonlyArray<readonly [string,
 function renderCompanyPayments(answers: Answers): string {
   const scope = answers.scope;
   const noun = tenantLabel(answers).toLowerCase();
+  const invoicing = answers.includeInvoicing;
+  const store = answers.includeStore;
+  const what = [...(invoicing ? ['"Pay now" on its invoices'] : []), ...(store ? ["its store's Check out"] : [])].join(" and ");
   return `import {
   accountTakesCharges,
   connectedAccountFor,
@@ -63,8 +80,7 @@ function renderCompanyPayments(answers: Answers): string {
   expireDirectCheckoutSession,
   type StripeClient,
 } from "${scope}/stripe";
-import { expireCompanyCheckouts, type InvoiceCardPayments } from "${scope}/invoicing";
-import { db } from "@/db";
+${invoicing ? `import { expireCompanyCheckouts, type InvoiceCardPayments } from "${scope}/invoicing";\n` : ""}${store ? `import { expireCompanyStoreCheckouts, type StoreCardPayments } from "${scope}/commerce/store";\n` : ""}import { db } from "@/db";
 import { env } from "@/env";
 import { SITE_NAME } from "@/seo";
 import { companyLinks } from "@/server/company-links";
@@ -73,12 +89,12 @@ import { reportError } from "@/server/error-reporter";
 import { tenancy } from "@/server/tenancy";
 
 /**
- * HOW A ${noun.toUpperCase()}'S CUSTOMERS PAY BY CARD (getting paid, part 1).
+ * HOW A ${noun.toUpperCase()}'S CUSTOMERS PAY BY CARD (getting paid, parts 1 and 2).
  *
  * Each ${noun} connects ITS OWN Stripe account at /app/payments (Stripe
  * Connect, Standard-style: the ${noun} signs in to its own Stripe dashboard,
  * pays its own Stripe fees, and Stripe handles refunds and disputes it can't
- * cover). "Pay now" on its invoices charges that account directly; the money
+ * cover). ${what} charges that account directly; the money
  * and the payout are the ${noun}'s. This site's cut, if any, is PLATFORM_FEE_BPS
  * (basis points; 0, the default, takes nothing), shown to the owner before
  * they connect.
@@ -101,16 +117,21 @@ export function cardPaymentsConfigured(): boolean {
 // Number(): a test or a skipped validation hands the raw text (or nothing) through.
 export const PLATFORM_FEE_BPS: number = Number(env.PLATFORM_FEE_BPS ?? 0);
 
-/**
- * Pay now's Stripe side, for @adminigloo/invoicing: a ${noun} is ready once its
- * own account is connected and Stripe has turned charges on.
- */
+/** A ${noun} is ready once its own account is connected and Stripe has turned charges on. */
+async function readyFor(tenantId: string): Promise<{ ready: true; accountId: string } | { ready: false }> {
+  if (!cardPaymentsConfigured()) return { ready: false };
+  const row = await connectedAccountFor(db, tenantId);
+  return row && accountTakesCharges(row) ? { ready: true, accountId: row.accountId } : { ready: false };
+}
+
+async function expirePage(input: { readonly accountId: string | null; readonly sessionId: string }): Promise<void> {
+  const client = paymentsStripe();
+  if (client) await expireDirectCheckoutSession(client, { accountId: input.accountId, sessionId: input.sessionId });
+}
+${invoicing ? `
+/** Pay now's Stripe side, for @adminigloo/invoicing. */
 export const invoiceCardPayments: InvoiceCardPayments = {
-  async ready(tenantId) {
-    if (!cardPaymentsConfigured()) return { ready: false };
-    const row = await connectedAccountFor(db, tenantId);
-    return row && accountTakesCharges(row) ? { ready: true, accountId: row.accountId } : { ready: false };
-  },
+  ready: readyFor,
   async createSession(input) {
     const client = paymentsStripe();
     if (!client || !input.accountId) throw new Error("Card payments aren't set up for this ${noun}.");
@@ -131,12 +152,39 @@ export const invoiceCardPayments: InvoiceCardPayments = {
     if (!session.url) throw new Error(\`Stripe opened checkout \${session.id} with no page to send the customer to.\`);
     return { id: session.id, url: session.url };
   },
-  async expireSession(input) {
-    const client = paymentsStripe();
-    if (client) await expireDirectCheckoutSession(client, { accountId: input.accountId, sessionId: input.sessionId });
-  },
+  expireSession: expirePage,
 };
-
+` : ""}${store ? `
+/**
+ * The store's Stripe side, for @adminigloo/commerce (getting paid, part 2):
+ * the lines and the total the SERVER priced, direct on the ${noun}'s account,
+ * with this site's fee; the page closes in an hour.
+ */
+export const storeCardPayments: StoreCardPayments = {
+  ready: readyFor,
+  async createSession(input) {
+    const client = paymentsStripe();
+    if (!client || !input.accountId) throw new Error("Card payments aren't set up for this ${noun}.");
+    const session = await createDirectCheckoutSession(client, {
+      tenantId: input.tenantId,
+      accountId: input.accountId,
+      amountMinor: input.amount,
+      currency: input.currency,
+      description: input.description,
+      lines: input.lines,
+      successUrl: input.successUrl,
+      cancelUrl: input.cancelUrl,
+      feeBps: PLATFORM_FEE_BPS,
+      metadata: { storeCheckoutId: input.checkoutId },
+      expiresAt: input.expiresAt,
+      idempotencyKey: \`store-checkout:\${input.checkoutId}\`,
+    });
+    if (!session.url) throw new Error(\`Stripe opened checkout \${session.id} with no page to send the customer to.\`);
+    return { id: session.id, url: session.url };
+  },
+  expireSession: expirePage,
+};
+` : ""}
 /**
  * The ${noun}'s payments screen API (/api/app/{${noun} id}/payments): its status,
  * "Connect Stripe" and "Disconnect", for the ${noun} in the path, on
@@ -158,7 +206,9 @@ export function buildPaymentsAdminHandlers(overrides: FeatureHandlerOverrides = 
     siteName: SITE_NAME,
     // Disconnecting closes the ${noun}'s open payment pages, so none is paid after.
     onDisconnect: async (tenantId) => {
-      await expireCompanyCheckouts(db, invoiceCardPayments, tenantId, (error) => void reportError({ error, source: "route", tenantId, context: { feature: "payments", step: "disconnect" } }));
+      const report = (error: unknown) => void reportError({ error, source: "route", tenantId, context: { feature: "payments", step: "disconnect" } });${invoicing ? `
+      await expireCompanyCheckouts(db, invoiceCardPayments, tenantId, report);` : ""}${store ? `
+      await expireCompanyStoreCheckouts(db, storeCardPayments, tenantId, report);` : ""}
     },
     onError: (error, context) => void reportError({ error, source: "route", tenantId: context.tenantId, context: { feature: "payments", route: context.route } }),
   });
@@ -168,16 +218,17 @@ export function buildPaymentsAdminHandlers(overrides: FeatureHandlerOverrides = 
 
 function renderSinglePayments(answers: Answers): string {
   const scope = answers.scope;
+  const invoicing = answers.includeInvoicing;
+  const store = answers.includeStore;
+  const what = [...(invoicing ? ['"Pay now" shows on an invoice'] : []), ...(store ? ["the store takes orders"] : [])].join(" and ");
   return `import { createDirectCheckoutSession, createStripeClient, expireDirectCheckoutSession, type StripeClient } from "${scope}/stripe";
-import type { InvoiceCardPayments } from "${scope}/invoicing";
-import { env } from "@/env";
+${invoicing ? `import type { InvoiceCardPayments } from "${scope}/invoicing";\n` : ""}${store ? `import type { StoreCardPayments } from "${scope}/commerce/store";\n` : ""}import { env } from "@/env";
 
 /**
- * HOW CUSTOMERS PAY BY CARD (getting paid, part 1): on this business's OWN
- * Stripe account — STRIPE_SECRET_KEY, no Connect, no fee. "Pay now" shows on
- * an invoice once the key and the invoice webhook's secret
- * (STRIPE_INVOICE_WEBHOOK_SECRET, the endpoint /api/webhooks/stripe-invoices)
- * are both set; without them the page shows "How to pay" only.
+ * HOW CUSTOMERS PAY BY CARD (getting paid, parts 1 and 2): on this business's
+ * OWN Stripe account — STRIPE_SECRET_KEY, no Connect, no fee. ${what}
+ * once the key and the payments webhook's secret (STRIPE_INVOICE_WEBHOOK_SECRET,
+ * the endpoint /api/webhooks/stripe-invoices) are both set.
  */
 
 /** The Stripe client, or null without STRIPE_SECRET_KEY (cached by the package). */
@@ -189,11 +240,18 @@ export function cardPaymentsConfigured(): boolean {
   return paymentsStripe() !== null && Boolean(env.STRIPE_INVOICE_WEBHOOK_SECRET);
 }
 
+async function readyHere(): Promise<{ ready: true; accountId: null } | { ready: false }> {
+  return cardPaymentsConfigured() ? { ready: true, accountId: null } : { ready: false };
+}
+
+async function expirePage(input: { readonly sessionId: string }): Promise<void> {
+  const client = paymentsStripe();
+  if (client) await expireDirectCheckoutSession(client, { accountId: null, sessionId: input.sessionId });
+}
+${invoicing ? `
 /** Pay now's Stripe side, for @adminigloo/invoicing: the site's own account (accountId null). */
 export const invoiceCardPayments: InvoiceCardPayments = {
-  async ready() {
-    return cardPaymentsConfigured() ? { ready: true, accountId: null } : { ready: false };
-  },
+  ready: readyHere,
   async createSession(input) {
     const client = paymentsStripe();
     if (!client) throw new Error("Card payments aren't set up (STRIPE_SECRET_KEY).");
@@ -213,12 +271,34 @@ export const invoiceCardPayments: InvoiceCardPayments = {
     if (!session.url) throw new Error(\`Stripe opened checkout \${session.id} with no page to send the customer to.\`);
     return { id: session.id, url: session.url };
   },
-  async expireSession(input) {
-    const client = paymentsStripe();
-    if (client) await expireDirectCheckoutSession(client, { accountId: null, sessionId: input.sessionId });
-  },
+  expireSession: expirePage,
 };
-`;
+` : ""}${store ? `
+/** The store's Stripe side, for @adminigloo/commerce: the server-priced lines, on the site's own account. */
+export const storeCardPayments: StoreCardPayments = {
+  ready: readyHere,
+  async createSession(input) {
+    const client = paymentsStripe();
+    if (!client) throw new Error("Card payments aren't set up (STRIPE_SECRET_KEY).");
+    const session = await createDirectCheckoutSession(client, {
+      tenantId: input.tenantId,
+      accountId: null,
+      amountMinor: input.amount,
+      currency: input.currency,
+      description: input.description,
+      lines: input.lines,
+      successUrl: input.successUrl,
+      cancelUrl: input.cancelUrl,
+      metadata: { storeCheckoutId: input.checkoutId },
+      expiresAt: input.expiresAt,
+      idempotencyKey: \`store-checkout:\${input.checkoutId}\`,
+    });
+    if (!session.url) throw new Error(\`Stripe opened checkout \${session.id} with no page to send the customer to.\`);
+    return { id: session.id, url: session.url };
+  },
+  expireSession: expirePage,
+};
+` : ""}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -229,7 +309,9 @@ function renderPaymentsWebhook(answers: Answers): string {
   const scope = answers.scope;
   const companies = companiesMode(answers);
   const noun = tenantLabel(answers).toLowerCase();
-  const alerts = answers.includeNotifications;
+  const invoicing = answers.includeInvoicing;
+  const store = answers.includeStore;
+  const alerts = answers.includeNotifications && invoicing;
   const stripeNames = companies
     ? ["applyAccountUpdate", "assertEventLivemode", "companyForConnectEvent", "connectLedgerKey", "ledgerRunStatus", "markAccountDeauthorized", "runLedgeredEvent", "verifyStripeSignature"]
     : ["assertEventLivemode", "ledgerRunStatus", "runLedgeredEvent", "verifyStripeSignature"];
@@ -237,17 +319,19 @@ function renderPaymentsWebhook(answers: Answers): string {
     `import { NextResponse } from "next/server";`,
     `import type Stripe from "stripe";`,
     `import { resolveAppEnv } from "${scope}/env";`,
-    `import { handleInvoiceCardEvent, resolveInvoicingBusiness, type CardAlert, type CardEventOutcome } from "${scope}/invoicing";`,
+    ...(store ? [`import { handleStoreEvent, type StoreEventOutcome } from "${scope}/commerce/store";`] : []),
+    ...(invoicing ? [`import { handleInvoiceCardEvent, resolveInvoicingBusiness, type CardAlert, type CardEventOutcome } from "${scope}/invoicing";`] : []),
     `import { RATE_LIMIT_POLICIES, rateLimitHeaders } from "${scope}/observability";`,
     `import { ${stripeNames.join(", ")} } from "${scope}/stripe";`,
     `import { db } from "@/db";`,
     `import { env } from "@/env";`,
     ...(alerts ? [`import { alertOnCardPayment, alertOnInvoicingEvent } from "@/server/alerts";`] : []),
     `import { reportError } from "@/server/error-reporter";`,
-    companies ? `import { invoicingBusiness } from "@/server/invoicing";` : `import { INVOICING_TENANT, invoicingBusiness } from "@/server/invoicing";`,
+    ...(invoicing ? [companies ? `import { invoicingBusiness } from "@/server/invoicing";` : `import { INVOICING_TENANT, invoicingBusiness } from "@/server/invoicing";`] : []),
     `import { log } from "@/server/logger";`,
     `import { paymentsStripe } from "@/server/payments";`,
     `import { limiter } from "@/server/rate-limit";`,
+    ...(store ? [companies || invoicing ? `import { storeEventOptions } from "@/server/store";` : `import { STORE_TENANT, storeEventOptions } from "@/server/store";`] : []),
   ];
   const secret = companies ? "STRIPE_CONNECT_WEBHOOK_SECRET" : "STRIPE_INVOICE_WEBHOOK_SECRET";
   const whose = companies
@@ -276,26 +360,26 @@ function renderPaymentsWebhook(answers: Answers): string {
     log.warn({ eventId: event.id, account: event.account }, "payments: an event from a connected account at the invoice endpoint — ignored");
     return NextResponse.json({ received: true, ignored: true });
   }
-  const tenantId = INVOICING_TENANT;
-  // Its own key space: the store's endpoint can receive the same event id.
-  const key = \`invoices:\${event.id}\`;`;
+  const tenantId = ${invoicing ? "INVOICING_TENANT" : "STORE_TENANT"};
+  // Its own key space: the site store's endpoint can receive the same event id.
+  const key = \`${invoicing ? "invoices" : "store"}:\${event.id}\`;`;
   return `${imports.join("\n")}
 
 /**
- * THE ${companies ? "CONNECT" : "INVOICE PAYMENTS"} WEBHOOK (getting paid, part 1): Stripe tells this site
- * a customer paid an invoice${companies ? ` on a ${noun}'s own account` : ""}, a payment was refunded or
+ * THE ${companies ? "CONNECT" : invoicing ? "INVOICE PAYMENTS" : "STORE PAYMENTS"} WEBHOOK (getting paid, parts 1 and 2): Stripe tells this site
+ * a customer paid ${[...(invoicing ? ["an invoice"] : []), ...(store ? ["a store order"] : [])].join(" or ")}${companies ? ` on a ${noun}'s own account` : ""}, a payment was refunded or
  * disputed, or a checkout expired${companies ? `, or a ${noun}'s account changed` : ""}.
  *
  *   1. the signature, with ${secret} (this endpoint's own);
  *   2. the mode (a test event never reaches a live site, and the reverse);
  *   3. ${companies ? `the ${noun}: the one that connected \`event.account\`. An unknown account is
- *      logged and ignored (200), so Stripe doesn't retry it for days;` : "the business: this site's one (INVOICING_TENANT);"}
- *   4. the ledger (stripe_events, keyed ${companies ? "by account AND event" : "\"invoices:<event>\""}): an event is
+ *      logged and ignored (200), so Stripe doesn't retry it for days;` : `the business: this site's one (${invoicing ? "INVOICING_TENANT" : "STORE_TENANT"});`}
+ *   4. the ledger (stripe_events, keyed ${companies ? "by account AND event" : invoicing ? "\"invoices:<event>\"" : "\"store:<event>\""}): an event is
  *      handled once however often it arrives, a failure is retried;
- *   5. @adminigloo/invoicing's rules: the payment is recorded only for a
- *      checkout this ${companies ? noun : "business"} started, for its invoice, in the exact amount
- *      and currency it asked; anything else is logged, reported, and not
- *      recorded.
+ *   5. ${[...(invoicing ? ["@adminigloo/invoicing's"] : []), ...(store ? ["@adminigloo/commerce's (the store's)"] : [])].join(" and ")} rules: the payment is recorded only for a
+ *      checkout this ${companies ? noun : "business"} started, in the exact amount and
+ *      currency it asked; anything else is logged, reported, and not
+ *      recorded. Each ignores the other's payments (they carry other metadata).
  */
 export async function handlePaymentsWebhook(req: Request): Promise<Response> {
   const client = paymentsStripe();
@@ -321,8 +405,7 @@ export async function handlePaymentsWebhook(req: Request): Promise<Response> {
   if (!verdict.allowed) return new NextResponse("slow down", { status: 429, headers: rateLimitHeaders(verdict, RATE_LIMIT_POLICIES.webhook) });
 
 ${whose}
-  let outcome: CardEventOutcome | null = null;
-  const result = await runLedgeredEvent(db, { key, type: event.type, tenantId, payload: event }, async () => {
+${invoicing ? "  let outcome: CardEventOutcome | null = null;\n" : ""}${store ? "  let storeOutcome: StoreEventOutcome | null = null;\n" : ""}  const result = await runLedgeredEvent(db, { key, type: event.type, tenantId, payload: event }, async () => {${invoicing ? `
     outcome = await handleInvoiceCardEvent(db, tenantId, event, {
       onAlert: (alert) => reportCardAlert(alert),
       format: async (id) => {
@@ -333,16 +416,24 @@ ${whose}
       // A customer's payment settled an invoice: the "invoice paid" alert.
       onEvent: (paid) => alertOnInvoicingEvent(paid),` : ""}
       report: (error) => void reportError({ error, source: "webhook", tenantId, context: { provider: "stripe", eventId: event.id } }),
-    });
+    });` : ""}${store ? `
+    // A store order (getting paid, part 2): only for this ${companies ? noun : "business"}'s checkout, in exactly its amount.
+    storeOutcome = await handleStoreEvent(db, tenantId, event, storeEventOptions(tenantId));` : ""}
   });
   if (result.outcome === "failed") {
     await reportError({ error: result.error, source: "webhook", url: req.url, tenantId, context: { provider: "stripe", eventType: event.type, eventId: event.id } });
     return new NextResponse("handler failed", { status: 500 });
   }
   if (result.outcome === "in-flight") return new NextResponse("in flight", { status: 500 });
-  return NextResponse.json({ received: true, duplicate: result.outcome === "duplicate", outcome: (outcome as CardEventOutcome | null)?.outcome ?? null }, { status: ledgerRunStatus(result) });
+  return NextResponse.json({ received: true, duplicate: result.outcome === "duplicate", outcome: ${
+    invoicing && store
+      ? '[outcome as CardEventOutcome | null, storeOutcome as StoreEventOutcome | null].find((o) => o !== null && o.outcome !== "ignored")?.outcome ?? null'
+      : invoicing
+        ? "(outcome as CardEventOutcome | null)?.outcome ?? null"
+        : "(storeOutcome as StoreEventOutcome | null)?.outcome ?? null"
+  } }, { status: ledgerRunStatus(result) });
 }
-
+${invoicing ? `
 /**
  * Money Stripe took that didn't land cleanly (the wrong amount, a checkout
  * this ${companies ? noun : "business"} never started, money on a voided invoice, an overpayment), a
@@ -360,17 +451,22 @@ async function reportCardAlert(alert: CardAlert): Promise<void> {${alerts ? `
     context: { feature: "payments", kind: alert.kind, invoiceId: alert.invoiceId, paymentIntentId: alert.paymentIntentId },
   });
 }
-`;
+` : ""}`;
 }
 
-function webhookRoute(kind: string, whose: string): string {
+/** What the customers pay for, in words: "invoices", "store orders", or both. */
+function paidFor(answers: Answers): string {
+  return [...(answers.includeInvoicing ? ["invoices"] : []), ...(answers.includeStore ? ["store orders"] : [])].join(" and ");
+}
+
+function webhookRoute(kind: string, whose: string, what: string): string {
   return `import { handlePaymentsWebhook } from "@/server/payments-webhook";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * The ${kind} webhook: card payments on invoices, from ${whose}
+ * The ${kind} webhook: card payments on ${what}, from ${whose}
  * (src/server/payments-webhook.ts). Reads the RAW body; never req.json().
  */
 export const POST = handlePaymentsWebhook;
@@ -403,9 +499,10 @@ export const POST = handle;
 
 function renderPaymentsPage(answers: Answers): string {
   const noun = tenantLabel(answers).toLowerCase();
-  return `import { CompanyGate } from "@/components/CompanyGate";
-import { PaymentsAttention } from "@/components/PaymentsAttention";
-import { PaymentsPanel } from "@/components/PaymentsPanel";
+  const invoicing = answers.includeInvoicing;
+  const store = answers.includeStore;
+  return `${store ? `import { StoreAttention } from "${answers.scope}/commerce/widget";\n` : ""}import { CompanyGate } from "@/components/CompanyGate";
+${invoicing ? `import { PaymentsAttention } from "@/components/PaymentsAttention";\n` : ""}import { PaymentsPanel } from "@/components/PaymentsPanel";
 
 export const dynamic = "force-dynamic";
 
@@ -427,8 +524,7 @@ export default async function CompanyPaymentsPage({
       {({ company }) => (
         <main className="mx-auto max-w-3xl space-y-8 px-4 py-8 sm:px-6">
           <PaymentsPanel baseUrl={\`/api/app/\${company.id}/payments\`} justConnected={query.connected === "1"} />
-          <PaymentsAttention baseUrl={\`/api/app/\${company.id}/invoices\`} />
-        </main>
+${invoicing ? `          <PaymentsAttention baseUrl={\`/api/app/\${company.id}/invoices\`} />\n` : ""}${store ? `          <StoreAttention baseUrl={\`/api/app/\${company.id}/store\`} heading=${JSON.stringify(invoicing ? "Store payments that need your attention" : "Needs your attention")} />\n` : ""}        </main>
       )}
     </CompanyGate>
   );
@@ -511,7 +607,7 @@ export function PaymentsPanel(props: { readonly baseUrl: string; readonly justCo
     <section className="space-y-5">
       <header>
         <h1 className="text-2xl font-semibold">Card payments</h1>
-        <p className="mt-1 text-sm text-neutral-600">Let customers pay your invoices and deposits by card, into your own Stripe account.</p>
+        <p className="mt-1 text-sm text-neutral-600">${answers.includeInvoicing && answers.includeStore ? "Let customers pay your invoices, deposits and store orders by card, into your own Stripe account." : answers.includeStore ? "Let customers buy from your store by card, into your own Stripe account." : "Let customers pay your invoices and deposits by card, into your own Stripe account."}</p>
       </header>
       {error ? <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-800">{error}</p> : null}
       {!status ? (
@@ -521,13 +617,13 @@ export function PaymentsPanel(props: { readonly baseUrl: string; readonly justCo
           {!status.configured ? <p className="text-sm text-amber-800">{status.configuredReason}</p> : null}
           <p className="text-base font-medium" data-payments-state={status.takingPayments ? "on" : status.connected ? "pending" : "off"}>
             {status.takingPayments
-              ? "On: customers see Pay now on your invoices."
+              ? "${answers.includeInvoicing && answers.includeStore ? "On: customers see Pay now on your invoices and can buy from your store." : answers.includeStore ? "On: customers can buy from your store." : "On: customers see Pay now on your invoices."}"
               : status.connected
                 ? props.justConnected
-                  ? "Thanks — Stripe is checking your details. Pay now turns on as soon as Stripe says you can take payments."
+                  ? "Thanks — Stripe is checking your details. ${answers.includeInvoicing ? "Pay now" : "Your store"} turns on as soon as Stripe says you can take payments."
                   : "Connected, but Stripe isn't letting this account take payments yet. Finish your details in Stripe."
                 : status.disconnected
-                  ? "Off: you disconnected Stripe. Customers pay the ways your invoices describe."
+                  ? "${answers.includeInvoicing ? "Off: you disconnected Stripe. Customers pay the ways your invoices describe." : "Off: you disconnected Stripe. Your store shows its products but takes no orders."}"
                   : "Off: connect your Stripe account to take card payments."}
           </p>
           {accountLine ? <p className="text-sm text-neutral-700" data-payments-account="">Connected to {accountLine}</p> : null}
@@ -594,15 +690,27 @@ export function PaymentsPanel(props: { readonly baseUrl: string; readonly justCo
  * variables, for this project's mode.
  */
 export function cardPaymentsSetup(answers: Answers, heading: string): string {
-  if (!answers.includeInvoicing) return "";
+  if (!cardPaymentsOn(answers)) return "";
   const companies = companiesMode(answers);
   const noun = tenantLabel(answers).toLowerCase();
-  const events = [...INVOICE_EVENTS, ...(companies ? ["account.updated", "account.application.deauthorized"] : [])];
+  const invoicing = answers.includeInvoicing;
+  const store = answers.includeStore;
+  // The store's events are all on invoicing's list: with both, nothing is added.
+  const events = [...(invoicing ? INVOICE_EVENTS : STORE_EVENTS), ...(companies ? ["account.updated", "account.application.deauthorized"] : [])];
+  const takes = [...(invoicing ? ["on its invoices and deposits"] : []), ...(store ? ["for its store's orders"] : [])].join(" and ");
+  const storeNote = store
+    ? [
+        `The store: every price is read from the product when the customer presses Check out, stock is held for the 30 minutes Stripe's page stays open (and comes back if it closes unpaid), and an order is written only when Stripe reports exactly the amount asked — anything else, a refund or a dispute shows under "Needs your attention"${companies ? " at /app/payments" : " at /admin/store"}.`,
+        "",
+        `Shipping and tax: in the store's settings the owner chooses "I ship it" (customers give an address on Stripe's page and pay a flat shipping price the owner sets, in the countries the owner lists) or "Pickup or digital only", and whether prices include any sales tax (on by default). **Automatic sales tax isn't supported yet**: customers pay exactly the prices set, plus shipping.`,
+        "",
+      ]
+    : [];
   const lines = companies
     ? [
         `${heading} Taking card payments`,
         "",
-        `Each ${noun} takes card (and bank) payments on its invoices and deposits into ITS OWN Stripe account (Stripe Connect, Standard: its own Stripe dashboard, its own Stripe fees; Stripe carries losses). This site's own Stripe account only bills ${noun}s for their plans.`,
+        `Each ${noun} takes card (and bank) payments ${takes} into ITS OWN Stripe account (Stripe Connect, Standard: its own Stripe dashboard, its own Stripe fees; Stripe carries losses). This site's own Stripe account only bills ${noun}s for their plans.`,
         "",
         "1. **Turn on Connect** for this site's Stripe account (Dashboard → Connect → Get started), choosing that " + `${noun}s` + " get the full Stripe dashboard.",
         "2. **Fill in the platform profile and branding** (Connect → Settings: your business name, icon, colour and support details). Stripe's hosted onboarding shows them to every owner who connects, and refuses to start without them.",
@@ -611,27 +719,48 @@ export function cardPaymentsSetup(answers: Answers, heading: string): string {
         ...events.map((e) => `   - \`${e}\``),
         "",
         "4. **Set the variables** (Vercel → Settings → Environment Variables, both environments): `STRIPE_SECRET_KEY` (this site's account), `STRIPE_CONNECT_WEBHOOK_SECRET` (the endpoint's `whsec_…`), and optionally `PLATFORM_FEE_BPS` — this site's cut of each payment in basis points (250 = 2.5%; default 0, none; rounded down to the cent, shown to each owner, not returned on refunds). Use test-mode keys and a test-mode endpoint on staging.",
-        `5. **Each ${noun}'s owner** connects at /app/payments (they choose their country once). Pay now appears on their invoices as soon as Stripe turns charges on.`,
+        `5. **Each ${noun}'s owner** connects at /app/payments (they choose their country once). ${invoicing ? "Pay now appears on their invoices" : "Their store takes orders"} as soon as Stripe turns charges on.`,
         "",
-        `Every payment is recorded on the right invoice, or the ${noun}'s owners are told (the alert bell and email, with the payment's page in Stripe) — a wrong amount, a payment on a cancelled invoice, an overpayment after the invoice changed, a refund, a dispute, a bank payment that failed.`,
-        "",
+        ...storeNote,
+        ...(invoicing
+          ? [
+              `Every payment is recorded on the right invoice, or the ${noun}'s owners are told (the alert bell and email, with the payment's page in Stripe) — a wrong amount, a payment on a cancelled invoice, an overpayment after the invoice changed, a refund, a dispute, a bank payment that failed.`,
+              "",
+            ]
+          : []),
       ]
     : [
         `${heading} Taking card payments`,
         "",
-        "Customers pay invoices and deposits by card (or bank) on this business's OWN Stripe account — no Connect, no fee.",
+        `Customers pay ${[...(invoicing ? ["invoices and deposits"] : []), ...(store ? ["for store orders"] : [])].join(" and ")} by card (or bank) on this business's OWN Stripe account — no Connect, no fee.`,
         "",
-        "1. **Add a webhook endpoint on your own account** (Developers → Webhooks → Add endpoint → \"Listen to events on Your account\") at `{your site}/api/webhooks/stripe-invoices`, with these events:",
+        `1. **Add a webhook endpoint on your own account** (Developers → Webhooks → Add endpoint → "Listen to events on Your account") at \`{your site}/api/webhooks/stripe-invoices\`${store ? ` — this one endpoint handles card payments for ${invoicing ? "invoices and the store" : "the store (its name says invoices; it is the one card-payments endpoint)"} —` : ","} with these events:`,
         "",
         ...events.map((e) => `   - \`${e}\``),
         "",
-        "2. **Set the variables**: `STRIPE_SECRET_KEY` and `STRIPE_INVOICE_WEBHOOK_SECRET` (that endpoint's `whsec_…` — separate from the store's `STRIPE_WEBHOOK_SECRET`). Until both are set, invoices show How to pay only. Use test-mode keys and a test-mode endpoint on staging.",
+        `2. **Set the variables**: \`STRIPE_SECRET_KEY\` and \`STRIPE_INVOICE_WEBHOOK_SECRET\` (that endpoint's \`whsec_…\` — separate from the site store's \`STRIPE_WEBHOOK_SECRET\`). Until both are set, ${invoicing ? "invoices show How to pay only" : "the store shows its products and takes no orders"}. Use test-mode keys and a test-mode endpoint on staging.`,
         "",
-        "Every payment is recorded on the right invoice, or reported (in /admin/errors, and to the alert bell and email with notifications) — a wrong amount, a payment on a cancelled invoice, an overpayment, a refund, a dispute, a bank payment that failed.",
-        "",
+        ...storeNote,
+        ...(invoicing
+          ? [
+              "Every payment is recorded on the right invoice, or reported (in /admin/errors, and to the alert bell and email with notifications) — a wrong amount, a payment on a cancelled invoice, an overpayment, a refund, a dispute, a bank payment that failed.",
+              "",
+            ]
+          : []),
       ];
   return `${lines.join("\n")}\n`;
 }
+
+/** @adminigloo/commerce's STORE_CARD_EVENT_TYPES (a store with no invoicing): the same list less payment_intent.succeeded. */
+export const STORE_EVENTS = [
+  "checkout.session.completed",
+  "checkout.session.async_payment_succeeded",
+  "checkout.session.async_payment_failed",
+  "checkout.session.expired",
+  "charge.refunded",
+  "charge.dispute.created",
+  "charge.dispute.closed",
+] as const;
 
 /** @adminigloo/invoicing's INVOICE_CARD_EVENT_TYPES, spelled out for the docs (the generator test checks they agree). */
 export const INVOICE_EVENTS = [
@@ -913,20 +1042,24 @@ export function PaymentsAttention(props: { readonly baseUrl: string }) {
  * open card-payment problems on "Card payments"; anything else has none.
  */
 export function renderNavBadges(answers: Answers): string {
-  if (companiesMode(answers) && answers.includeInvoicing) {
-    return `import { openCardAlertCount } from "${answers.scope}/invoicing";
-import { db } from "@/db";
+  if (companiesMode(answers) && cardPaymentsOn(answers)) {
+    const invoicing = answers.includeInvoicing;
+    const store = answers.includeStore;
+    const key = invoicing ? "invoices.payments.reverse" : "store.manage";
+    return `${invoicing ? `import { openCardAlertCount } from "${answers.scope}/invoicing";\n` : ""}${store ? `import { openStoreAlertCount } from "${answers.scope}/commerce/store";\n` : ""}import { db } from "@/db";
 
 /**
  * Counts beside header links, by href, for the person's ACTIVE company: the
- * card payments that need its owner (getting paid, part 1), shown on "Card
- * payments" while any is open — only to someone who may handle them
- * (\`invoices.payments.reverse\`). A failure shows no badge, never a broken header.
+ * card payments that need its owner (getting paid, parts 1 and 2), shown on
+ * "Card payments" while any is open — only to someone who may handle them
+ * (\`${key}\`${invoicing && store ? " for invoices, `store.manage` for the store" : ""}). A failure shows no badge, never a broken header.
  */
 export async function navBadges(tenantId: string | null, can: readonly string[]): Promise<Readonly<Record<string, number>>> {
-  if (!tenantId || !can.includes("invoices.payments.reverse")) return {};
+  if (!tenantId) return {};
   try {
-    const open = await openCardAlertCount(db, tenantId);
+    let open = 0;${invoicing ? `
+    if (can.includes("invoices.payments.reverse")) open += await openCardAlertCount(db, tenantId);` : ""}${store ? `
+    if (can.includes("store.manage")) open += await openStoreAlertCount(db, tenantId);` : ""}
     return open > 0 ? { "/app/payments": open } : {};
   } catch {
     return {};

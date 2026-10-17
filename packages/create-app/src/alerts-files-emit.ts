@@ -1338,6 +1338,7 @@ export function renderFiles(answers: Answers): string {
     ...(answers.includeInvoicing ? [`import { invoicingFileRecords } from "${scope}/invoicing";`] : []),
     ...(answers.includeScheduling ? [`import { schedulingFileRecords } from "${scope}/scheduling";`] : []),
     ...(companies && answers.includeFeedback ? [`import { feedbackFileRecords, feedbackScreenshotPurpose } from "${scope}/feedback";`] : []),
+    ...(answers.includeStore ? [`import { STORE_PHOTO_PURPOSE } from "${scope}/commerce/store";`] : []),
     `import { db } from "@/db";`,
     `import { env } from "@/env";`,
     ...(companies ? [`import { SITE_NAME } from "@/seo";`] : []),
@@ -1633,7 +1634,7 @@ export function createFilesStorage(
     // table of the same name somebody else made.
     tables: storageTables,
     stores,
-    purposes: [...STORAGE_BUILT_IN_PURPOSES${est ? ", estimatorPhotoPurpose, estimatorStaffPhotoPurpose" : ""}${companies && answers.includeFeedback ? ", feedbackScreenshotPurpose" : ""}],
+    purposes: [...STORAGE_BUILT_IN_PURPOSES${est ? ", estimatorPhotoPurpose, estimatorStaffPhotoPurpose" : ""}${companies && answers.includeFeedback ? ", feedbackScreenshotPurpose" : ""}${answers.includeStore ? ", STORE_PHOTO_PURPOSE" : ""}],
     // GENERATED: the records files can belong to, one per installed feature.
     // The record's own permissions decide who sees its files (D12).
     records: [${records.length > 0 ? `\n${records.join("\n")}\n    ` : ""}],
@@ -1692,6 +1693,18 @@ ${
  * feedback then takes no screenshots (src/server/feedback.ts).
  */
 export const feedbackScreenshotStore: StoragePurposeStore | undefined = files.purposeStore("feedback.screenshot");
+`
+    : ""
+}${
+  answers.includeStore
+    ? `
+/**
+ * Where a store's product photos are kept (getting paid, part 2): PUBLIC (they
+ * are on the store page), COUNTED in the ${companies ? noun + "'s" : "business's"} storage allowance and
+ * refused when it is full, in storage's own words. Undefined without a public
+ * store: the store screen then says photo uploads aren't switched on.
+ */
+export const storePhotoStore: StoragePurposeStore | undefined = files.purposeStore(STORE_PHOTO_PURPOSE.key);
 `
     : ""
 }

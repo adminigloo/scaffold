@@ -99,6 +99,9 @@ export const EVERY_CONFIGURATION: readonly Configuration[] = TENANT_NOUNS.flatMa
                     // business works its calls under /admin, so `--booking
                     // --tenant-noun none --admin none` is refused and dropped here.
                     includeSuite && !(tenantNoun === "none" && adminShell === "none") ? "--booking" : "--no-booking",
+                    // Getting paid, part 2: the store, on the suite axis too, with
+                    // the same single-business admin rule as booking.
+                    includeSuite && !(tenantNoun === "none" && adminShell === "none") ? "--store" : "--no-store",
                     includeMarketing ? "--marketing" : "--no-marketing",
                   ];
                   return {
@@ -125,6 +128,7 @@ export const EVERY_CONFIGURATION: readonly Configuration[] = TENANT_NOUNS.flatMa
                       includeAnalytics: includeSuite,
                       includeSeo: includeSuite,
                       includeBooking: includeSuite && !(tenantNoun === "none" && adminShell === "none"),
+                      includeStore: includeSuite && !(tenantNoun === "none" && adminShell === "none"),
                       includeMarketing,
                     },
                   };

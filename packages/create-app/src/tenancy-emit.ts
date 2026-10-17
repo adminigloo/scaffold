@@ -129,6 +129,8 @@ function renderCompanyPageConstants(answers: Answers): string {
     ...(answers.includeFeedback ? [`  { path: "/feedback", label: "Send feedback" },`] : []),
     // Tenancy 2b-4c: where its customers book a call with it.
     ...(answers.includeBooking ? [`  { path: "/book", label: "Book a call" },`] : []),
+    // Getting paid, part 2: where its customers buy from it.
+    ...(answers.includeStore ? [`  { path: "/store", label: "Shop" },`] : []),
   ];
   return `
 /**

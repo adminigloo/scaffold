@@ -47,6 +47,7 @@ export interface CliFlags {
   readonly analytics?: boolean;
   readonly seo?: boolean;
   readonly booking?: boolean;
+  readonly store?: boolean;
 }
 
 export class UnknownFlagValueError extends Error {
@@ -93,6 +94,7 @@ export function parseArgs(argv: readonly string[]): CliFlags {
   let analytics: boolean | undefined;
   let seo: boolean | undefined;
   let booking: boolean | undefined;
+  let store: boolean | undefined;
 
   /** Supports both `--flag value` and `--flag=value`. */
   const readValue = (arg: string, prefix: string, index: number): string | undefined =>
@@ -130,6 +132,8 @@ export function parseArgs(argv: readonly string[]): CliFlags {
     else if (arg === "--no-comms") comms = false;
     else if (arg === "--booking") booking = true;
     else if (arg === "--no-booking") booking = false;
+    else if (arg === "--store") store = true;
+    else if (arg === "--no-store") store = false;
     else if (arg === "--aeo") aeo = true;
     else if (arg === "--no-aeo") aeo = false;
     else if (arg === "--analytics") analytics = true;
@@ -183,6 +187,7 @@ export function parseArgs(argv: readonly string[]): CliFlags {
     analytics,
     seo,
     booking,
+    store,
   };
 }
 
@@ -259,6 +264,11 @@ export const HELP = `
                        calls, hours, time off and call types behind it. With
                        companies, each company's own at /app/calls and
                        /t/{web address}/book; one business, /admin/calls and /book.
+  --store              A store of its own: products with photos, prices and stock,
+    / --no-store       a cart, Stripe checkout and an orders list. With companies,
+                       each company sells at /t/{web address}/store into its own
+                       Stripe account (/app/store); one business, /store and
+                       /admin/store (needs --admin minimal or full).
   --aeo                AI mentions: do AI assistants name you when customers ask
     / --no-aeo         them questions — the quote, the sources, the competitors,
                        the trend. With companies, each company's own at
@@ -487,6 +497,14 @@ export async function collectAnswers(
         : "Book a call? A booking page where customers pick a time to talk, with the calls and hours under /admin.",
       DEFAULT_ANSWERS.includeBooking,
     ));
+  const includeStore =
+    flags.store ??
+    (await prompter.confirm(
+      tenantNoun !== "none"
+        ? "A store? Each company sells its own products online — photos, prices, stock — paid into its own Stripe account, with its orders on its own screen."
+        : "A store? Sell your own products online — photos, prices, stock — paid into your own Stripe account, with the orders under /admin.",
+      DEFAULT_ANSWERS.includeStore,
+    ));
 
   const answers: Answers = {
     projectName,
@@ -509,6 +527,7 @@ export async function collectAnswers(
     includeAnalytics,
     includeSeo,
     includeBooking,
+    includeStore,
     scope: DEFAULT_ANSWERS.scope,
   };
   // Refused here, before a directory is created, with the reason.

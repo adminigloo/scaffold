@@ -218,14 +218,13 @@ export async function resolveSchedulingTenant(): Promise<string> {
  *
  * Keyed on the caller's IP as the nearest proxy saw it (`clientIpKey`: the
  * last X-Forwarded-For entry — on Vercel, the caller). A request with no
- * forwarded IP — a laptop with no proxy in front of it — is not limited at
- * all, the same rule the tRPC ladder's anonymous floor follows: counting every
- * local request as one "anonymous" caller would refuse the developer's sixth
- * test booking of the hour and teach nothing.
+ * forwarded IP — a laptop with no proxy in front of it — shares ONE "unknown"
+ * caller's budget with every other such request: never unlimited (a proxy
+ * that forwards nothing must not turn the limit off).
  */
 export async function schedulingRateLimit(req: Request, bucket: SchedulingRateLimitBucket): Promise<boolean> {
-  const caller = clientIpKey(req);
-  if (!caller) return true;
+  // No forwarded address (a laptop, a proxy that forwards nothing): ONE shared "unknown" caller, never unlimited.
+  const caller = clientIpKey(req) ?? "unknown";
   const result = await limiter.limit({
     key: `scheduling:${bucket}:${caller}`,
     policy: SCHEDULING_RATE_LIMITS[bucket],

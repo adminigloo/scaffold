@@ -155,13 +155,13 @@ export async function resolveEstimatorTenant(): Promise<string> {
  *
  * Keyed on the caller's IP as the nearest proxy saw it (`clientIpKey`: the
  * last X-Forwarded-For entry — on Vercel, the caller). A request with no
- * forwarded IP — a laptop with no proxy in front of it — is not limited here
- * at all, the rule the tRPC ladder's anonymous floor follows. The package's
- * own daily photo budget and per-visitor count still apply to it.
+ * forwarded IP — a laptop with no proxy in front of it — shares ONE
+ * "unknown" caller's budget with every other such request: never unlimited.
+ * The package's own daily photo budget and per-visitor count apply too.
  */
 export async function estimatorRateLimit(req: Request, bucket: EstimatorRateLimitBucket): Promise<boolean> {
-  const caller = clientIpKey(req);
-  if (!caller) return true;
+  // No forwarded address (a laptop, a proxy that forwards nothing): ONE shared "unknown" caller, never unlimited.
+  const caller = clientIpKey(req) ?? "unknown";
   const store = ESTIMATOR_FAIL_CLOSED_BUCKETS.has(bucket) ? failClosedLimiter : limiter;
   const result = await store.limit({
     key: `estimator:${bucket}:${caller}`,

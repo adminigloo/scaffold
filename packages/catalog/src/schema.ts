@@ -237,6 +237,16 @@ export const productVariants = pgTable(
      * friction for a value meaning "the question does not apply".
      */
     inventory: integer("inventory"),
+    /**
+     * catalog 0.3 (a store of its own): how many of `inventory` are HELD by
+     * checkout pages still open — taken from what a customer can buy, not yet
+     * from the shelf. Available is `inventory - held`. A payment takes the
+     * quantity off both; a page that closes unpaid gives it back to `held`
+     * only. The owner edits `inventory` (what is on the shelf) and never this,
+     * so a count typed while carts hold some is never overwritten by them.
+     * 0 for the site's own products, whose sales take `inventory` directly.
+     */
+    held: integer("held").notNull().default(0),
     sortOrder: integer("sort_order").notNull().default(0),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -288,6 +298,7 @@ export const productVariants = pgTable(
      * exactly right here — untracked inventory is not a violation.
      */
     check("product_variants_inventory_non_negative", sql`${t.inventory} >= 0`),
+    check("product_variants_held_non_negative", sql`${t.held} >= 0`),
   ],
 );
 

@@ -245,6 +245,42 @@ describe("a direct charge", () => {
     expect(params.payment_intent_data?.metadata).toEqual({ invoiceId: "inv_1", checkoutId: "chk_1", tenantId: "co_1" });
   });
 
+  it("lists a store's server-priced lines, and refuses lines that don't add up to the amount (0.4.1)", async () => {
+    const { client: stripe, calls } = fakeStripe();
+    const base = {
+      tenantId: "co_1",
+      accountId: "acct_1",
+      currency: "usd",
+      description: "Order from Green Acres",
+      successUrl: "https://app.test/t/green/store/thanks/c1",
+      cancelUrl: "https://app.test/t/green/store",
+      feeBps: 250,
+      metadata: { storeCheckoutId: "c1" },
+      idempotencyKey: "store-checkout:c1",
+    };
+    await createDirectCheckoutSession(stripe, {
+      ...base,
+      amountMinor: 3_400,
+      lines: [
+        { name: "Pine soap", unitAmountMinor: 1_250, quantity: 2 },
+        { name: "Candle", unitAmountMinor: 900, quantity: 1 },
+      ],
+    });
+    const [params] = calls[0]!.args as [Stripe.Checkout.SessionCreateParams];
+    expect(params.line_items?.map((l) => [l.price_data?.product_data?.name, l.price_data?.unit_amount, l.quantity])).toEqual([
+      ["Pine soap", 1_250, 2],
+      ["Candle", 900, 1],
+    ]);
+    expect(params.payment_intent_data?.application_fee_amount).toBe(85);
+    expect(params.payment_intent_data?.metadata).toEqual({ storeCheckoutId: "c1", tenantId: "co_1" });
+    expect(params.shipping_address_collection).toBeUndefined();
+    await createDirectCheckoutSession(stripe, { ...base, amountMinor: 900, lines: [{ name: "Candle", unitAmountMinor: 900, quantity: 1 }], shippingCountries: ["us", "CA"] });
+    const [shipped] = calls[1]!.args as [Stripe.Checkout.SessionCreateParams];
+    expect(shipped.shipping_address_collection).toEqual({ allowed_countries: ["US", "CA"] });
+    await expect(createDirectCheckoutSession(stripe, { ...base, amountMinor: 3_399, lines: [{ name: "Soap", unitAmountMinor: 3_400, quantity: 1 }] })).rejects.toThrow(/come to 3400, not the amount 3399/);
+    expect(calls.length).toBe(2);
+  });
+
   it("takes no fee and no account for a single business on its own keys", async () => {
     const { client: stripe, calls } = fakeStripe();
     await createDirectCheckoutSession(stripe, {

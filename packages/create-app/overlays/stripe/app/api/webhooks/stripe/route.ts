@@ -102,6 +102,20 @@ registry.on("payment_intent.succeeded", async (event) => {
   }
 
   /**
+   * A STORE ORDER (getting paid, part 2) is a business's own sale, not this
+   * site's: the payments webhook writes it (src/server/payments-webhook.ts)
+   * from the store's own checkout row. It carries a tenantId and no variant,
+   * so — like an invoice payment — it is skipped here, not retried for days.
+   */
+  if (metadata["storeCheckoutId"]) {
+    logger.info(
+      { paymentIntentId: intent.id, eventId: event.id },
+      "payment_intent.succeeded is a store order — the payments webhook records it; no order is booked here.",
+    );
+    return;
+  }
+
+  /**
    * A PaymentIntent with NO METADATA AT ALL was not created by this
    * application, and the only thing that creates one here is Stripe itself:
    * every renewal of a subscription opens an invoice and collects it through a

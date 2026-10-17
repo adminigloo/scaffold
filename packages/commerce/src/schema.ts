@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   boolean,
   check,
   index,
@@ -125,6 +126,28 @@ export const orders = pgTable(
      * NULL while the order is still `pending`.
      */
     placedAt: timestamp("placed_at", { withTimezone: true }),
+    /**
+     * commerce 0.2 (a company's own store): how much of `total_minor` Stripe
+     * has refunded — the running total from `charge.refunded`. A part refund
+     * leaves the order `paid` with this above 0; all of it makes it
+     * `refunded`. 0 on every order written before 0.2.
+     */
+    refundedMinor: amountMinor("refunded_minor").default(sql`0`),
+    /**
+     * commerce 0.2: a dispute on this order — "disputed" (the customer's bank
+     * disputed the payment) or "dispute_lost". NULL: none.
+     */
+    flag: text("flag"),
+    flaggedAt: timestamp("flagged_at", { withTimezone: true }),
+    /** commerce 0.2: when this order was paid for after its stock had run out (kept apart from a dispute). */
+    oversoldAt: timestamp("oversold_at", { withTimezone: true }),
+    /**
+     * commerce 0.2: when the customer's receipt and the owner's "new order"
+     * email went (or were deliberately skipped). NULL: still owed — a webhook
+     * retry sends any that is missing, once.
+     */
+    receiptSentAt: timestamp("receipt_sent_at", { withTimezone: true }),
+    noticeSentAt: timestamp("notice_sent_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -374,9 +397,128 @@ export const discountCodes = pgTable(
   ],
 );
 
+/**
+ * One line of a store checkout, as the SERVER priced it when the customer
+ * pressed "Check out" (commerce 0.2). The order is written from these — never
+ * from the browser's cart, and never from the product as it is when the
+ * money lands.
+ */
+export interface StoreCheckoutLine {
+  readonly productId: string;
+  readonly variantId: string;
+  readonly name: string;
+  readonly quantity: number;
+  /** Minor units, from the product row at checkout time. */
+  readonly unitPriceMinor: number;
+  /** True when this line took `quantity` off the product's stock (it had a count). */
+  readonly held: boolean;
+}
+
+/**
+ * commerce 0.2: every "Check out" on a company's store — a row per press, as
+ * invoicing's `invoice_checkouts`. It holds the amount and currency Stripe
+ * must report back EXACTLY, the priced lines the order is written from, and
+ * whether the stock those lines took is still held.
+ *
+ *   creating → open → paid
+ *                   → processing (a bank payment on its way) → paid | failed
+ *                   → expired (an hour passed, the owner changed a product in
+ *                     it, or a newer checkout of the same cart replaced it)
+ *
+ * `stock_held` goes false exactly once, in the statement that moves the row
+ * to expired or failed, so stock comes back once however often Stripe
+ * repeats itself.
+ */
+export const storeCheckouts = pgTable(
+  "store_checkouts",
+  {
+    id: idColumn(),
+    tenantId: text("tenant_id").notNull(),
+    /** The company's connected Stripe account; null for one business on its own keys. */
+    accountId: text("account_id"),
+    /** The browser's cart (a random id it keeps): a second press of the same cart, unchanged, gets the same page. */
+    cartKey: text("cart_key").notNull(),
+    sessionId: text("session_id"),
+    sessionUrl: text("session_url"),
+    amount: bigint("amount", { mode: "number" }).notNull(),
+    /** ISO 4217, lower case, as Stripe reports it. */
+    currency: text("currency").notNull(),
+    lines: jsonb("lines").$type<readonly StoreCheckoutLine[]>().notNull(),
+    /** The flat shipping the server added (minor units), part of `amount`; 0 for pickup or digital. */
+    shippingMinor: bigint("shipping_minor", { mode: "number" }).notNull().default(0),
+    /** The visitor who opened it (a hash of their network address, or of "unknown"): at most 3 open and 5 an hour each. */
+    visitorKey: text("visitor_key").notNull().default("unknown"),
+    status: text("status").notNull().default("creating"),
+    stockHeld: boolean("stock_held").notNull().default(false),
+    paymentIntentId: text("payment_intent_id"),
+    orderId: text("order_id"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    processingAt: timestamp("processing_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("store_checkouts_tenant_status_idx").on(t.tenantId, t.status, t.expiresAt),
+    index("store_checkouts_cart_idx").on(t.tenantId, t.cartKey),
+    index("store_checkouts_visitor_idx").on(t.tenantId, t.visitorKey, t.createdAt),
+    uniqueIndex("store_checkouts_session_uidx").on(t.sessionId).where(sql`${t.sessionId} is not null`),
+  ],
+);
+
+/**
+ * commerce 0.2: store payments that need the company's owner — money Stripe
+ * took that couldn't become an order as it was, a refund, a dispute, a bank
+ * payment that failed, something sold after its stock ran out. The owner's
+ * "Needs your attention" list on the payments screen, beside invoicing's.
+ * One row per thing that happened (`dedupe_key`).
+ */
+export const storeAlerts = pgTable(
+  "store_alerts",
+  {
+    id: idColumn(),
+    tenantId: text("tenant_id").notNull(),
+    kind: text("kind").notNull(),
+    message: text("message").notNull(),
+    amount: bigint("amount", { mode: "number" }),
+    currency: text("currency"),
+    orderId: text("order_id"),
+    paymentIntentId: text("payment_intent_id"),
+    dedupeKey: text("dedupe_key").notNull(),
+    createdAt: createdAt(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolvedBy: text("resolved_by"),
+  },
+  (t) => [
+    uniqueIndex("store_alerts_dedupe_uidx").on(t.tenantId, t.dedupeKey),
+    index("store_alerts_open_idx").on(t.tenantId, t.resolvedAt, t.createdAt),
+  ],
+);
+
+/**
+ * commerce 0.2: each business's store settings — how customers get their
+ * order (shipped, or pickup/digital), where it ships and the flat shipping
+ * price, and whether prices include any sales tax. One row per business,
+ * written the first time the owner saves; no row reads as the defaults.
+ */
+export const storeSettings = pgTable("store_settings", {
+  tenantId: text("tenant_id").primaryKey(),
+  /** "ship" or "pickup" (pickup or digital only). */
+  fulfilment: text("fulfilment").notNull().default("pickup"),
+  /** ISO 3166-1 alpha-2 codes Stripe may collect an address in. */
+  shipCountries: jsonb("ship_countries").$type<readonly string[]>().notNull().default(sql`'["US"]'::jsonb`),
+  /** The flat shipping price per order, minor units of `currency`. */
+  shippingMinor: bigint("shipping_minor", { mode: "number" }).notNull().default(0),
+  currency: text("currency").notNull().default("usd"),
+  pricesIncludeTax: boolean("prices_include_tax").notNull().default(true),
+  updatedAt: updatedAt(),
+});
+
 export const commerceSchema = {
   orders,
   orderItems,
   orderShipments,
   discountCodes,
+  storeCheckouts,
+  storeAlerts,
+  storeSettings,
 };

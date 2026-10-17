@@ -95,16 +95,16 @@ export function reportEstimatorError(error: unknown, context: { tenantId: string
  * The public API's throttle, PER COMPANY (one company's busy day never spends
  * another's budget), on the app's shared limiters. Photo READING counts on the
  * limiter that fails closed — it spends money — and everything else on the one
- * that fails open. A request with no forwarded IP is not limited here (the
- * package's own daily budget and per-visitor count still apply).
+ * that fails open. A request with no forwarded IP shares one "unknown" caller's budget (and
+ * the package's own daily budget and per-visitor count still apply).
  */
 export async function estimatorRateLimit(
   req: Request,
   bucket: EstimatorRateLimitBucket,
   context: { tenantId: string; keyId: string | null },
 ): Promise<boolean> {
-  const caller = clientIpKey(req);
-  if (!caller) return true;
+  // No forwarded address (a laptop, a proxy that forwards nothing): ONE shared "unknown" caller, never unlimited.
+  const caller = clientIpKey(req) ?? "unknown";
   const store = ESTIMATOR_FAIL_CLOSED_BUCKETS.has(bucket) ? failClosedLimiter : limiter;
   const result = await store.limit({
     key: `estimator:${context.tenantId}:${bucket}:${caller}`,

@@ -462,7 +462,11 @@ async function purchasableOrThrow(
   quantity: number,
 ): Promise<PurchasableVariant> {
   const variant = await loadVariantForPurchase(variantId);
-  if (!variant) {
+  // THIS SITE'S OWN CATALOG ONLY (getting paid, part 2): a business's own
+  // products are catalog rows too, under its own id, and are sold only by
+  // its own store on its own Stripe account — never here, on this site's.
+  // Same message as a draft, so the check can't be used to find them.
+  if (!variant || variant.tenantId !== STOREFRONT_TENANT_ID) {
     // Same message a draft product gets. A 404 that distinguishes "no such
     // variant" from "not published" is a way to enumerate an unreleased catalog.
     throw new TRPCError({

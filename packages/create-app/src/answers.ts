@@ -207,6 +207,18 @@ export interface Answers {
    * /admin/calls and /book.
    */
   readonly includeBooking: boolean;
+  /**
+   * A STORE OF ITS OWN (getting paid, part 2): the business sells its own
+   * products online — name, price, photo, stock — with a cart, Stripe's
+   * checkout and an orders list. With companies, each company's own: its
+   * products and orders at /app/store, its store at /t/{web address}/store,
+   * paid into its own connected Stripe account (as invoices' Pay now is).
+   * One business: /admin/store and /store, on its own Stripe keys.
+   *
+   * Not the same as --model one-time, which is THIS SITE selling its own
+   * catalog. DEFAULTS TO FALSE: it is a sellable feature.
+   */
+  readonly includeStore: boolean;
   /** Scope the packages are published under. */
   readonly scope: string;
 }
@@ -232,6 +244,7 @@ export const DEFAULT_ANSWERS: Answers = {
   includeAnalytics: false,
   includeSeo: false,
   includeBooking: false,
+  includeStore: false,
   scope: "@adminigloo",
 };
 
@@ -261,6 +274,14 @@ export function assertAnswersCompatible(answers: Answers): void {
     throw new IncompatibleAnswersError(
       "Booking calls needs an admin panel in a single-business project: the calls, the hours and the call types are worked at /admin/calls. " +
         "With --admin none nobody could see a booked call or set when people can book. Use --admin minimal (or full) with --booking.",
+    );
+  }
+  // A STORE, ONE BUSINESS, NEEDS AN ADMIN PANEL: its products and orders are
+  // worked at /admin/store. (A company's are at /app/store, which needs none.)
+  if (answers.includeStore && answers.tenantNoun === "none" && answers.adminShell === "none") {
+    throw new IncompatibleAnswersError(
+      "A store needs an admin panel in a single-business project: the products, prices and orders are worked at /admin/store. " +
+        "With --admin none nobody could add a product or see an order. Use --admin minimal (or full) with --store.",
     );
   }
   if (answers.includeScheduling && answers.adminShell === "none") {
@@ -418,6 +439,11 @@ export function packagesFor(answers: Answers): readonly string[] {
   // (Connect in a companies project, the business's own keys for one), so a
   // project that sells nothing itself still installs it with invoicing.
   if (answers.includeInvoicing && answers.businessModel === "none") optional.push("stripe");
+  // Getting paid, part 2: a store of its own — its products are catalog rows
+  // under the business's id, its orders are commerce's, paid through stripe.
+  if (answers.includeStore) {
+    for (const pkg of ["stripe", "catalog", "commerce"]) if (!optional.includes(pkg)) optional.push(pkg);
+  }
   if (answers.includeComms) optional.push("comms", "comms-widget");
   if (answers.includeAeo) optional.push("aeo");
   // Two packages for one answer (Tenancy 2b-4c), the feedback split: `booking`
@@ -620,7 +646,8 @@ export function optionalEnvFor(answers: Answers): readonly string[] {
   // invoice page shows "How to pay" only. A companies project uses Connect
   // (each company's own Stripe account) and may take a fee; one business uses
   // its own Stripe keys and an endpoint of its own.
-  if (answers.includeInvoicing) {
+  // Getting paid, part 2: a store of its own takes the same card payments, on the same variables.
+  if (answers.includeInvoicing || answers.includeStore) {
     if (answers.businessModel === "none") vars.push("STRIPE_SECRET_KEY");
     if (answers.tenantNoun !== "none") vars.push("STRIPE_CONNECT_WEBHOOK_SECRET", "PLATFORM_FEE_BPS");
     else vars.push("STRIPE_INVOICE_WEBHOOK_SECRET");
@@ -1172,6 +1199,8 @@ export function capabilitiesFor(answers: Answers): readonly string[] {
   if (answers.includeAeo && answers.includeAi) keys.push("aeo.metered-checks");
   // Tenancy 2b-4c: book a call — a company's own, or the one business's.
   if (answers.includeBooking) keys.push(companies ? "booking.companies" : "booking.calls");
+  // Getting paid, part 2: a store of its own — each company's, or the one business's.
+  if (answers.includeStore) keys.push(companies ? "commerce.company-store" : "commerce.store");
   // Tenancy 2b-4a: counting visits (and leaving the business's own people out
   // of them), this site's own report under the shell, and each company's own.
   if (answers.includeAnalytics) keys.push("analytics.visits", "analytics.audience");
