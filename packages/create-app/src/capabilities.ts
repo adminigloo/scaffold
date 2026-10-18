@@ -970,6 +970,28 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
       mentions(plan, ["app", "(site)", "app", "store", "page.tsx"], "<StoreAdmin"),
   },
   {
+    capability: "customers.companies",
+    why:
+      "Each company's own customer list (create-app 0.35): /app/customers over /api/app/{id}/customers " +
+      "(the id in the path, asked every call), and every installed feature's glue finding or creating " +
+      "the customer inside the company and linking the record (src/server/customer-activity.ts).",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "server", "customers.ts"], "buildCustomersAdminHandlers", "companyAuthorizer(") &&
+      mentions(plan, ["src", "server", "customer-activity.ts"], "createDrizzleCustomerDirectory(db)", "recordCustomerActivity(") &&
+      exists(plan, "app", "api", "app", "[tenantId]", "customers", "[...path]", "route.ts") &&
+      mentions(plan, ["app", "(site)", "app", "customers", "page.tsx"], "<CustomersAdmin"),
+  },
+  {
+    capability: "customers.list",
+    why:
+      "One business's customer list (create-app 0.35): /admin/customers on staff keys, and every installed " +
+      "feature's glue linking its records to the customer (src/server/customer-activity.ts).",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "server", "customers.ts"], "CUSTOMERS_TENANT", "authorizeStaffFor(") &&
+      mentions(plan, ["src", "server", "customer-activity.ts"], "createDrizzleCustomerDirectory(db)", "recordCustomerActivity(") &&
+      mentions(plan, ["app", "admin", "customers", "page.tsx"], "<CustomersAdmin"),
+  },
+  {
     capability: "commerce.store",
     why:
       "One business sells its own products (getting paid, part 2): the store at /store, the " +

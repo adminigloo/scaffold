@@ -32,6 +32,26 @@ export function upgradeNotesFor(answers: Answers, fromVersion: string): string[]
   const companies = answers.tenantNoun !== "none";
   const noun = tenantLabel(answers).toLowerCase();
   const crossed = (version: string) => (compareVersions(fromVersion, version) ?? -1) < 0;
+  // 0.35.0 — the customer list (`create-app add customers`). A project made
+  // before it has no customer list until it is added; one that has it gets the
+  // tables and the backfill.
+  if (crossed("0.35.0") && answers.includeCustomers) {
+    notes.push(
+      "One customer list (@adminigloo/customers 0.1, with @adminigloo/invoicing 0.6 and @adminigloo/comms 0.5). **Before you deploy, run " +
+        "node_modules/@adminigloo/customers/sql/customers-0.1.0.sql** (or the statements `pnpm db:generate` writes; safe twice): it adds the customers, " +
+        "customer_addresses, customer_links and customer_merges tables and changes nothing else.",
+      `Then run \`pnpm customers:backfill\` once against each database: it puts every quote, visit, invoice, call, order and message ${companies ? `each ${noun}` : "the business"} already has on its customer's timeline, finding or creating each customer by email, else phone${companies ? ` — always inside its own ${noun}` : ""}. Safe to run again. New ones are linked as they happen; customers are at ${companies ? "/app/customers" : "/admin/customers"}.`,
+    );
+  } else if (
+    crossed("0.35.0") &&
+    (answers.includeEstimator || answers.includeScheduling || answers.includeInvoicing || answers.includeBooking || answers.includeStore || answers.includeComms) &&
+    (companies || answers.adminShell !== "none")
+  ) {
+    notes.push(
+      "New in 0.35: one customer list — each customer once, with every quote, visit, invoice, call, order and message of theirs on one timeline, " +
+        "search, merge, and CSV import and export. `npx @adminigloo/create-app add customers`, then `pnpm customers:backfill`.",
+    );
+  }
   // 0.34.0 — getting paid, part 2: a store of its own (`create-app add store`).
   // Any project with commerce gets the 0.2 columns on orders; one with the store
   // gets the steps to take its first order.

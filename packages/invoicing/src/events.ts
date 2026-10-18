@@ -8,7 +8,9 @@ import type { MoneyFormatWire } from "./wire.js";
 
 /**
  * Invoicing's events (Tenancy 2b-1, 11.1): a customer opened their invoice, an
- * invoice was paid in full. One envelope, so the alerts glue (`invoicingAlertsFor`
+ * invoice was paid in full — and, since 0.6, staff made an invoice
+ * (`invoice.created`, for the customer list: @adminigloo/customers links the
+ * invoice to its customer). One envelope, so the alerts glue (`invoicingAlertsFor`
  * → `alerts.notify`) — or a host's own Slack ping or webhook — reacts to one
  * stream instead of wrapping the handlers.
  *
@@ -30,7 +32,7 @@ import type { MoneyFormatWire } from "./wire.js";
  *     reference was already recorded.
  */
 
-export type InvoicingEventType = "invoice.viewed" | "invoice.paid";
+export type InvoicingEventType = "invoice.created" | "invoice.viewed" | "invoice.paid";
 
 /** The invoice AFTER the change, as the event carries it. Money in cents. */
 export interface InvoiceEventSnapshot {
@@ -39,6 +41,8 @@ export interface InvoiceEventSnapshot {
   readonly status: StoredInvoiceStatus;
   readonly customerName: string | null;
   readonly customerEmail: string | null;
+  /** 0.6: the phone on the invoice, as typed. */
+  readonly customerPhone?: string | null;
   /** Cents. */
   readonly total: number;
   /** Cents. */
@@ -125,6 +129,7 @@ export async function emitInvoicingEvent(
           status: row.status as StoredInvoiceStatus,
           customerName: row.customerName ?? null,
           customerEmail: row.customerEmail ?? null,
+          customerPhone: row.customerPhone ?? null,
           total: Number(row.total),
           amountPaid: Number(row.amountPaid),
           balanceDue: outstandingBalance({ status: row.status, total: Number(row.total), amountPaid: Number(row.amountPaid) }),

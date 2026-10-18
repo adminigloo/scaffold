@@ -57,6 +57,7 @@ project's isolation test.
 | `stripe` | Per company | Each company's own Stripe account (it connects it at /app/payments) and its customers' card payments on invoices and deposits, recorded only for the company that owns the account (getting paid, part 1). The site's own plan billing stays on the site's own account. |
 | `commerce` | Per company | Each company's own store: its checkouts, orders and the store payments that need its owner, paid into its own Stripe account and recorded only for the company that owns it (getting paid, part 2). The site's own storefront orders stay the site's. |
 | `catalog` | Per company | Each company's own products (name, price, photo, stock) for its store; the site's own plans and products are kept apart under "*" and only the site sells them. |
+| `customers` | Per company | Each company's own customer list: its customers, their emails, phones, addresses and notes, and everything that is theirs — quotes, visits, invoices, calls, orders and messages — on one timeline. The same email in two companies is two customers, and a company's features only ever find or create customers inside it (create-app 0.35). |
 | `db` | Shared | the database connection and migration tools every package uses; it keeps no business's records |
 | `env` | Shared | reads the site's own settings when it starts; nothing in it belongs to a business |
 | `license` | Shared | checks the site's own licence key with the seller; one per site, not per business |

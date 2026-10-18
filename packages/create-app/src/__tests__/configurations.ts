@@ -102,6 +102,9 @@ export const EVERY_CONFIGURATION: readonly Configuration[] = TENANT_NOUNS.flatMa
                     // Getting paid, part 2: the store, on the suite axis too, with
                     // the same single-business admin rule as booking.
                     includeSuite && !(tenantNoun === "none" && adminShell === "none") ? "--store" : "--no-store",
+                    // The customer list (create-app 0.35), on the suite axis too, with
+                    // the same single-business admin rule.
+                    includeSuite && !(tenantNoun === "none" && adminShell === "none") ? "--customers" : "--no-customers",
                     includeMarketing ? "--marketing" : "--no-marketing",
                   ];
                   return {
@@ -129,6 +132,7 @@ export const EVERY_CONFIGURATION: readonly Configuration[] = TENANT_NOUNS.flatMa
                       includeSeo: includeSuite,
                       includeBooking: includeSuite && !(tenantNoun === "none" && adminShell === "none"),
                       includeStore: includeSuite && !(tenantNoun === "none" && adminShell === "none"),
+                      includeCustomers: includeSuite && !(tenantNoun === "none" && adminShell === "none"),
                       includeMarketing,
                     },
                   };

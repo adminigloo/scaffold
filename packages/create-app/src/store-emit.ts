@@ -205,7 +205,8 @@ async function emailOwnerAbout(alert: StoreAlert): Promise<void> {
 }`;
 }
 
-const WEBHOOK_OPTIONS = `
+function webhookOptions(answers: Answers): string {
+  return `
 /**
  * What the payments webhook hands the store's rules (src/server/payments-webhook.ts):
  * a new order's emails, and every store payment that needs the owner — kept
@@ -214,7 +215,15 @@ const WEBHOOK_OPTIONS = `
  */
 export function storeEventOptions(tenantId: string): StoreEventOptions {
   return {
-    onOrder: (order, owed) => sendOrderEmails(order, owed),
+    onOrder: ${
+      answers.includeCustomers
+        ? `async (order, owed) => {
+      // The order on its buyer's timeline first (create-app 0.35), then its emails.
+      await customerOnStoreOrder(order);
+      return sendOrderEmails(order, owed);
+    }`
+        : "(order, owed) => sendOrderEmails(order, owed)"
+    },
     onAlert: async (alert) => {
       log.error({ tenantId: alert.tenantId, kind: alert.kind, orderId: alert.orderId, paymentIntentId: alert.paymentIntentId }, \`store: \${alert.message}\`);
       void reportError({ error: new Error(alert.message), source: "webhook", tenantId: alert.tenantId, context: { feature: "store", kind: alert.kind, paymentIntentId: alert.paymentIntentId } });
@@ -224,6 +233,7 @@ export function storeEventOptions(tenantId: string): StoreEventOptions {
   };
 }
 `;
+}
 
 function renderCompanyStoreGlue(answers: Answers): string {
   const scope = answers.scope;
@@ -238,6 +248,7 @@ function renderCompanyStoreGlue(answers: Answers): string {
     ...(email ? [`import { SITE_NAME } from "@/seo";`] : []),
     `import { companyLinks${email ? ", companyLinksFor" : ""} } from "@/server/company-links";`,
     `import { admitPublic, companyAuthorizer, companyRoutes, resolvePublicTenant, type FeatureHandlerOverrides } from "@/server/company-routes";`,
+    ...(answers.includeCustomers ? [`import { customerOnStoreOrder } from "@/server/customer-activity";`] : []),
     `import { reportError } from "@/server/error-reporter";`,
     ...(answers.includeStorage ? [`import { storePhotoStore } from "@/server/files";`] : []),
     `import { log } from "@/server/logger";`,
@@ -258,7 +269,7 @@ function renderCompanyStoreGlue(answers: Answers): string {
  */
 
 ${RATE_LIMITS}
-${mailBlock(answers, true)}${WEBHOOK_OPTIONS}
+${mailBlock(answers, true)}${webhookOptions(answers)}
 /** The ${noun}'s currency for new products: its Stripe account's country decides payouts; prices start in dollars. */
 const DEFAULT_CURRENCY = "usd";
 
@@ -320,6 +331,7 @@ function renderSingleStoreGlue(answers: Answers): string {
     `import { db } from "@/db";`,
     `import { env } from "@/env";`,
     `import { SITE_NAME } from "@/seo";`,
+    ...(answers.includeCustomers ? [`import { customerOnStoreOrder } from "@/server/customer-activity";`] : []),
     `import { reportError } from "@/server/error-reporter";`,
     ...(answers.includeStorage ? [`import { storePhotoStore } from "@/server/files";`] : []),
     `import { log } from "@/server/logger";`,
@@ -346,7 +358,7 @@ const STORE_STAFF_KEYS: Readonly<Record<StorePermission, string>> = Object.fromE
 ) as Record<StorePermission, string>;
 
 ${RATE_LIMITS}
-${mailBlock(answers, false)}${WEBHOOK_OPTIONS}
+${mailBlock(answers, false)}${webhookOptions(answers)}
 /** The store, for this business's staff (/admin/store over /api/admin/store). */
 export function buildStoreAdminHandlers() {
   return createStoreAdminHandlers({

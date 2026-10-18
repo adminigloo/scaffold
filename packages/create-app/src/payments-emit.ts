@@ -16,6 +16,7 @@
  * 2: the store rides the same account, webhook and payments screen).
  */
 
+import { invoicingOnEvent } from "./customers-emit.js";
 import { tenantLabel, type Answers } from "./answers.js";
 import { companiesMode } from "./tenancy-emit.js";
 
@@ -326,6 +327,7 @@ function renderPaymentsWebhook(answers: Answers): string {
     `import { db } from "@/db";`,
     `import { env } from "@/env";`,
     ...(alerts ? [`import { alertOnCardPayment, alertOnInvoicingEvent } from "@/server/alerts";`] : []),
+    ...(invoicing && answers.includeCustomers ? [`import { customerOnInvoicingEvent } from "@/server/customer-activity";`] : []),
     `import { reportError } from "@/server/error-reporter";`,
     ...(invoicing ? [companies ? `import { invoicingBusiness } from "@/server/invoicing";` : `import { INVOICING_TENANT, invoicingBusiness } from "@/server/invoicing";`] : []),
     `import { log } from "@/server/logger";`,
@@ -412,9 +414,9 @@ ${invoicing ? "  let outcome: CardEventOutcome | null = null;\n" : ""}${store ? 
         const b = resolveInvoicingBusiness(await invoicingBusiness(${companies ? "id" : ""}));
         void id;
         return { currency: b.currency, locale: b.locale, timeZone: b.timeZone };
-      },${alerts ? `
-      // A customer's payment settled an invoice: the "invoice paid" alert.
-      onEvent: (paid) => alertOnInvoicingEvent(paid),` : ""}
+      },${invoicingOnEvent(answers, "paid") ? `
+      // A customer's payment settled an invoice: the "invoice paid" alert${answers.includeCustomers ? ", and the invoice paid on its customer's timeline" : ""}.
+      onEvent: ${invoicingOnEvent(answers, "paid")},` : ""}
       report: (error) => void reportError({ error, source: "webhook", tenantId, context: { provider: "stripe", eventId: event.id } }),
     });` : ""}${store ? `
     // A store order (getting paid, part 2): only for this ${companies ? noun : "business"}'s checkout, in exactly its amount.

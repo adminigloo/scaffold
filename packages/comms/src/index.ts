@@ -198,6 +198,30 @@ interface CommsDeliveryConfig {
    * have gone, and "didn't go" would be a guess.
    */
   onFailed?: (failure: CommsFailure) => void | Promise<void>;
+  /**
+   * Told once a message has GONE (0.5): every `sendNow` / `deliverNow` and
+   * every queued message the drain sends, after its log row is written.
+   * Never told about a skip or a failure. Awaited; a throw is swallowed, so
+   * it can never fail a send or a drain.
+   *
+   * WHY. The customer list (@adminigloo/customers) puts each message on the
+   * timeline of the customer it went to: one seam here, instead of every
+   * feature that sends wrapping its own calls.
+   */
+  onSent?: (sent: CommsSent) => void | Promise<void>;
+}
+
+/** A message that went (`onSent`). No body: the log row has it. */
+export interface CommsSent {
+  readonly tenantId: string;
+  /** The delivery-log row. */
+  readonly messageId: string;
+  readonly scheduledId: string | null;
+  readonly channel: CommsChannel;
+  readonly to: string;
+  readonly templateKey: string;
+  readonly subject: string | null;
+  readonly at: Date;
 }
 
 /** The log's words for a message the business's sending allowance held back. */
@@ -766,10 +790,33 @@ async function deliver(
 
   if (verdict.outcome === "failed") return settle("failed", verdict.error, false, rendered);
   if (verdict.outcome === "skipped") return settle("skipped", verdict.reason, true, rendered);
+  let sent: Delivery;
   try {
-    return await settle("sent", null, true, { ...rendered, providerId: verdict.providerId });
+    sent = await settle("sent", null, true, { ...rendered, providerId: verdict.providerId });
   } catch (cause) {
     throw new SentButUnloggedError(cause);
+  }
+  await tellSent(senders, {
+    tenantId: sent.message.tenantId,
+    messageId: sent.message.id,
+    scheduledId,
+    channel,
+    to: sent.message.toAddress,
+    templateKey: parsed.templateKey,
+    subject: sent.message.subject ?? null,
+    at: now,
+  });
+  return sent;
+}
+
+/** Hand a sent message to `onSent`, awaited, never throwing (`tellFailed`'s rule). */
+async function tellSent(senders: CommsSenders, sent: CommsSent): Promise<void> {
+  const told = senders.onSent;
+  if (!told) return;
+  try {
+    await told(sent);
+  } catch {
+    // Swallowed on purpose: see CommsDeliveryConfig.onSent.
   }
 }
 

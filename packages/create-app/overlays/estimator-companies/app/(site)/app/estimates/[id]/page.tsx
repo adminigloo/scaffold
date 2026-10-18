@@ -1,5 +1,6 @@
 import { EstimateEditor } from "__SCOPE__/estimator-widget/admin";
 import { CompanyGate } from "@/components/CompanyGate";
+import { CustomerLinkSlot } from "@/components/CustomerLinkSlot";
 import { RecordFilesSlot } from "@/components/RecordFilesSlot";
 
 export const dynamic = "force-dynamic";
@@ -24,6 +25,10 @@ export const dynamic = "force-dynamic";
  * the editor above already has its own "Photos" panel — the job's photos the
  * estimate reads — so this card is for everything else (a site plan, a
  * permit). RecordFilesSlot is generated: nothing without file storage.
+ *
+ * Above it all, "Customer: Mrs Lee →" (create-app 0.35): the customer this
+ * estimate is linked to, with everything else of theirs. CustomerLinkSlot is
+ * generated: nothing without the customer list.
  */
 const ESTIMATE_FILES_HINT =
   "Photos of the job go in Photos above, so the estimate can read them. Your team sees these; they aren't sent to the customer.";
@@ -34,6 +39,7 @@ export default async function CompanyEstimatePage({ params }: { readonly params:
     <CompanyGate path={`/app/estimates/${encodeURIComponent(id)}`} permission="estimator.view">
       {({ company, can }) => (
         <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
+          <CustomerLinkSlot tenantId={company.id} kind="estimate" refId={id} />
           <EstimateEditor
             baseUrl={`/api/app/${company.id}/estimator`}
             estimateId={id}

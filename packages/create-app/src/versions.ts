@@ -299,7 +299,9 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // record. The alerts and files glue imports all of them.
   // 0.5.0 (getting paid, part 1): Pay now — the `payments` seam, the pay route,
   // deposits, handleInvoiceCardEvent and invoice_checkouts. None exist in 0.4.x.
-  invoicing: "0.5.0",
+  // 0.6.0 (the customer list): `invoice.created` and the phone on an event —
+  // the customers glue links a staff-made invoice to its customer from it.
+  invoicing: "0.6.0",
   // First release (Tenancy 2a): the ledger, one invoice's editor and the
   // customer's invoice page, over invoicing 0.3's wire. 0.1.1 (Tenancy 2b-1):
   // its invoicing peer is ^0.4.0 — pinned for the same lockfile reason.
@@ -315,7 +317,9 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.4.0 (Tenancy 2b-1): `onFailed` (a customer email that didn't go
   // becomes an alert), `deliverNow` (the office emails' outcomes),
   // `templateLabel` and the failed-email alert kind.
-  comms: "0.4.0",
+  // 0.5.0 (the customer list): `onSent` — each message that went lands on
+  // its customer's timeline (src/server/comms-senders.ts).
+  comms: "0.5.0",
   // First release (Tenancy 2a): the Messages console, over comms 0.3's wire.
   // 0.1.1 (Tenancy 2b-1): its comms peer is ^0.4.0, and it names the team
   // alert email — pinned for the same lockfile reason.
@@ -341,6 +345,11 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.2.0: the fetch adapter over booking 0.2's admin routes, the honeypot and
   // the "closed" sentence; pinned in step with the workspace.
   "booking-widget": "0.2.0",
+  // First release (the customer list): one customer list per company —
+  // find-or-create, the links every feature's glue writes, the timeline,
+  // merge, CSV import and export, the directory seam, the backfill, the
+  // handler and its route table, and the screens (./admin).
+  customers: "0.1.0",
 };
 
 export class UnknownPackageVersionError extends Error {

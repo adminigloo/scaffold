@@ -159,7 +159,7 @@ an invoice. Nothing to migrate.
 
 | Install | What you get |
 | --- | --- |
-| `@adminigloo/invoicing` alone | `onEvent` (`invoice.viewed`, `invoice.paid`), `listOverdueInvoices`, the alert kinds and their mappers, `invoicingFileRecords` (plain data and functions: you decide what to do with them) |
+| `@adminigloo/invoicing` alone | `onEvent` (`invoice.created`, `invoice.viewed`, `invoice.paid`), `listOverdueInvoices`, the alert kinds and their mappers, `invoicingFileRecords` (plain data and functions: you decide what to do with them) |
 | with `@adminigloo/notifications` (+ widget) | "Pat Rivera opened invoice INV-2026-0042" in the owner's bell, an email when an invoice goes overdue, and the owner choosing who else hears, in Alert settings |
 | with `@adminigloo/storage` (+ widget) | "Photos and files" on an invoice, seen by whoever can see invoices |
 | with `@adminigloo/create-app` (`--invoicing --notifications --storage`) | all of it wired, with the overdue sweep in the daily alerts job |
@@ -167,6 +167,12 @@ an invoice. Nothing to migrate.
 **Events: `onEvent`.** Both handler factories take `onEvent(event)` and
 `onEventError(error, event)`:
 
+- `invoice.created` (0.6), from the staff "create" route, once, after the
+  invoice is saved. The actor is the staff member. **Upgrading from 0.5: your
+  listener now hears this type too.** A listener that switched on the type and
+  treated anything not `invoice.viewed` as a payment must check for
+  `invoice.paid` by name (the alerts mapper already ignores types it doesn't
+  know). The event's invoice also carries `customerPhone` (optional).
 - `invoice.viewed`, from the customer's page, the FIRST time a customer opens
   a sent invoice (a second view, the business's own preview link and a draft
   tell nobody). The actor is the customer.

@@ -241,6 +241,37 @@ describe("invoice.viewed (11.1)", () => {
   });
 });
 
+describe("invoice.created (0.6, the customer list)", () => {
+  it("fires once when staff make an invoice, as the staff member, with the customer on it", async () => {
+    const a = tenant("green");
+    const rec = recorder();
+    const res = await staff(a, rec)("v1/admin/invoices", "POST", {
+      customerName: "Pat Customer",
+      customerEmail: "pat@example.com",
+      customerPhone: "(415) 555-0123",
+      items: [{ description: "Spring cleanup", quantity: 1, unitPrice: 12_500 }],
+    });
+    expect(res.status).toBe(201);
+    const inv = (await json<InvoiceResponse>(res)).invoice;
+    expect(rec.events).toHaveLength(1);
+    expect(rec.events[0]).toMatchObject({
+      type: "invoice.created",
+      tenantId: a,
+      invoiceId: inv.id,
+      actor: { type: "staff", id: "user-gail" },
+      data: { invoice: { customerName: "Pat Customer", customerEmail: "pat@example.com", customerPhone: "(415) 555-0123", status: "draft" } },
+    });
+  });
+
+  it("a refused invoice (no customer name) tells nobody", async () => {
+    const a = tenant("green");
+    const rec = recorder();
+    const res = await staff(a, rec)("v1/admin/invoices", "POST", { items: [] });
+    expect(res.status).toBe(400);
+    expect(rec.events).toEqual([]);
+  });
+});
+
 describe("invoice.paid (11.1)", () => {
   it("only on the payment that settles it: a part payment tells nobody, the last one does, as the staff member", async () => {
     const a = tenant("green");

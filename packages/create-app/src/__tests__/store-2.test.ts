@@ -255,6 +255,6 @@ describe("docs, versions and the upgrade notes", () => {
     expect(notes).toContain("upgrade-0.1-to-0.2.sql");
     expect(notes).toContain("catalog/sql/upgrade-0.2-to-0.3.sql");
     expect(notes).toContain("/app/store");
-    expect(upgradeNotesFor(answers(COMPANIES), "0.34.0")).toEqual([]);
+    expect(upgradeNotesFor(answers(COMPANIES), "0.35.0")).toEqual([]);
   });
 });

@@ -219,6 +219,19 @@ export interface Answers {
    * catalog. DEFAULTS TO FALSE: it is a sellable feature.
    */
   readonly includeStore: boolean;
+  /**
+   * ONE CUSTOMER LIST (create-app 0.35, @adminigloo/customers): each
+   * customer once — their emails, phones, addresses and notes — with every
+   * quote, visit, invoice, call, order and message that is theirs on one
+   * timeline. With companies, each company's own at /app/customers; one
+   * business at /admin/customers. The features' glue finds or creates the
+   * customer inside the company and links the record (src/server/customers.ts).
+   *
+   * ON BY DEFAULT WHENEVER A FIELD FEATURE IS (`customersByDefault`):
+   * estimator, scheduling, invoicing, booking, the store or comms. --no-customers
+   * turns it off.
+   */
+  readonly includeCustomers: boolean;
   /** Scope the packages are published under. */
   readonly scope: string;
 }
@@ -245,6 +258,7 @@ export const DEFAULT_ANSWERS: Answers = {
   includeSeo: false,
   includeBooking: false,
   includeStore: false,
+  includeCustomers: false,
   scope: "@adminigloo",
 };
 
@@ -252,6 +266,17 @@ export const DEFAULT_ANSWERS: Answers = {
  * A combination of answers that generates a project which can't do what it
  * promises — refused, in plain words, before anything is written.
  */
+/**
+ * The customer list's default (create-app 0.35): on whenever a field feature
+ * is — something that has customers — and there is somewhere to work it (a
+ * company's /app, or one business's admin panel).
+ */
+export function customersByDefault(answers: Pick<Answers, "tenantNoun" | "adminShell" | "includeEstimator" | "includeScheduling" | "includeInvoicing" | "includeBooking" | "includeStore" | "includeComms">): boolean {
+  const field =
+    answers.includeEstimator || answers.includeScheduling || answers.includeInvoicing || answers.includeBooking || answers.includeStore || answers.includeComms;
+  return field && (answers.tenantNoun !== "none" || answers.adminShell !== "none");
+}
+
 export class IncompatibleAnswersError extends Error {
   readonly name = "IncompatibleAnswersError";
 }
@@ -282,6 +307,14 @@ export function assertAnswersCompatible(answers: Answers): void {
     throw new IncompatibleAnswersError(
       "A store needs an admin panel in a single-business project: the products, prices and orders are worked at /admin/store. " +
         "With --admin none nobody could add a product or see an order. Use --admin minimal (or full) with --store.",
+    );
+  }
+  // THE CUSTOMER LIST, ONE BUSINESS, NEEDS AN ADMIN PANEL: it is worked at
+  // /admin/customers. (A company's is at /app/customers, which needs none.)
+  if (answers.includeCustomers && answers.tenantNoun === "none" && answers.adminShell === "none") {
+    throw new IncompatibleAnswersError(
+      "The customer list needs an admin panel in a single-business project: customers are looked up, edited, merged and imported at /admin/customers. " +
+        "Use --admin minimal (or full) with --customers, or leave it off with --no-customers.",
     );
   }
   if (answers.includeScheduling && answers.adminShell === "none") {
@@ -445,6 +478,8 @@ export function packagesFor(answers: Answers): readonly string[] {
     for (const pkg of ["stripe", "catalog", "commerce"]) if (!optional.includes(pkg)) optional.push(pkg);
   }
   if (answers.includeComms) optional.push("comms", "comms-widget");
+  // The customer list (create-app 0.35): one package, its screens under ./admin.
+  if (answers.includeCustomers) optional.push("customers");
   if (answers.includeAeo) optional.push("aeo");
   // Two packages for one answer (Tenancy 2b-4c), the feedback split: `booking`
   // is the server half (the slot engine, the company handlers and route
@@ -1201,6 +1236,8 @@ export function capabilitiesFor(answers: Answers): readonly string[] {
   if (answers.includeBooking) keys.push(companies ? "booking.companies" : "booking.calls");
   // Getting paid, part 2: a store of its own — each company's, or the one business's.
   if (answers.includeStore) keys.push(companies ? "commerce.company-store" : "commerce.store");
+  // The customer list (create-app 0.35) — each company's, or the one business's.
+  if (answers.includeCustomers) keys.push(companies ? "customers.companies" : "customers.list");
   // Tenancy 2b-4a: counting visits (and leaving the business's own people out
   // of them), this site's own report under the shell, and each company's own.
   if (answers.includeAnalytics) keys.push("analytics.visits", "analytics.audience");

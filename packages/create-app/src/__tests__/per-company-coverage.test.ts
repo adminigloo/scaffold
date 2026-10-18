@@ -81,6 +81,8 @@ export const PER_COMPANY_COVERAGE: Readonly<Record<string, Status>> = {
   // checkouts, orders and the store payments that need its owner.
   commerce: "per-company",
   catalog: "per-company",
+  // The customer list (create-app 0.35): each company's customers and their timelines.
+  customers: "per-company",
   // Not about any one business, by design.
   db: "shared:the database connection and migration tools every package uses; it keeps no business's records",
   env: "shared:reads the site's own settings when it starts; nothing in it belongs to a business",
@@ -148,6 +150,8 @@ const COMPANY_EVERYTHING: Answers = {
   includeBooking: true,
   // Getting paid, part 2: and the store, whose route tables are per company.
   includeStore: true,
+  // The customer list (create-app 0.35), whose route table is per company.
+  includeCustomers: true,
 };
 
 let planned: Promise<EmitPlan> | null = null;

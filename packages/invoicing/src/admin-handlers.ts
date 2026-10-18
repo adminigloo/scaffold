@@ -486,6 +486,13 @@ export function createInvoicingAdminHandlers(options: CreateInvoicingAdminHandle
           },
           userId ?? undefined,
         );
+        // 0.6: `invoice.created` (the customer list links the invoice to its
+        // customer). After commit, awaited, contained, like the others.
+        await emitInvoicingEvent(
+          db,
+          { type: "invoice.created", tenantId, invoiceId: created.id, actor: { type: "staff", id: userId }, format: async () => moneyFormatOf(b), now },
+          { onEvent: options.onEvent, onEventError: options.onEventError, report: (error) => report(error, tenantId, matched.kind) },
+        );
         return respond(created.id, 201);
       }
       case "get":

@@ -1,5 +1,6 @@
 import { InvoiceEditor } from "__SCOPE__/invoicing-widget/admin";
 import { CompanyGate } from "@/components/CompanyGate";
+import { CustomerLinkSlot } from "@/components/CustomerLinkSlot";
 import { RecordFilesSlot } from "@/components/RecordFilesSlot";
 
 export const dynamic = "force-dynamic";
@@ -16,7 +17,8 @@ export const dynamic = "force-dynamic";
  *
  * Under it, the invoice's photos and files (Tenancy 2b-1): a signed work
  * order, a receipt — the team's, never sent to the customer. RecordFilesSlot
- * is generated: nothing without file storage.
+ * is generated: nothing without file storage. Above it, "Customer: Mrs Lee →"
+ * (create-app 0.35; CustomerLinkSlot is nothing without the customer list).
  */
 export default async function CompanyInvoicePage({ params }: { readonly params: Promise<{ readonly id: string }> }) {
   const { id } = await params;
@@ -24,6 +26,7 @@ export default async function CompanyInvoicePage({ params }: { readonly params: 
     <CompanyGate path={`/app/invoices/${encodeURIComponent(id)}`} permission="invoices.view">
       {({ company }) => (
         <main className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
+          <CustomerLinkSlot tenantId={company.id} kind="invoice" refId={id} />
           <InvoiceEditor baseUrl={`/api/app/${company.id}/invoices`} invoiceId={id} backHref="/app/invoices" />
           <div className="mt-8">
             <RecordFilesSlot

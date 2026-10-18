@@ -1,4 +1,5 @@
 import { InvoiceEditor } from "__SCOPE__/invoicing-widget/admin";
+import { CustomerLinkSlot } from "@/components/CustomerLinkSlot";
 import { RecordFilesSlot } from "@/components/RecordFilesSlot";
 
 export const dynamic = "force-dynamic";
@@ -20,6 +21,8 @@ export default async function InvoicePage({ params }: { readonly params: Promise
   const { id } = await params;
   return (
     <>
+      {/* "Customer: Mrs Lee →" (create-app 0.35): nothing without the customer list. */}
+      <CustomerLinkSlot kind="invoice" refId={id} />
       <InvoiceEditor baseUrl="/api/admin/invoices" invoiceId={id} backHref="/admin/invoices" />
       <div className="mt-8">
         <RecordFilesSlot

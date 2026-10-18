@@ -5,6 +5,7 @@ import {
   DEFAULT_ANSWERS,
   TENANT_NOUNS,
   assertAnswersCompatible,
+  customersByDefault,
   packagesFor,
   requiredEnvFor,
   deferredUntilDeployedFor,
@@ -48,6 +49,7 @@ export interface CliFlags {
   readonly seo?: boolean;
   readonly booking?: boolean;
   readonly store?: boolean;
+  readonly customers?: boolean;
 }
 
 export class UnknownFlagValueError extends Error {
@@ -95,6 +97,7 @@ export function parseArgs(argv: readonly string[]): CliFlags {
   let seo: boolean | undefined;
   let booking: boolean | undefined;
   let store: boolean | undefined;
+  let customers: boolean | undefined;
 
   /** Supports both `--flag value` and `--flag=value`. */
   const readValue = (arg: string, prefix: string, index: number): string | undefined =>
@@ -134,6 +137,8 @@ export function parseArgs(argv: readonly string[]): CliFlags {
     else if (arg === "--no-booking") booking = false;
     else if (arg === "--store") store = true;
     else if (arg === "--no-store") store = false;
+    else if (arg === "--customers") customers = true;
+    else if (arg === "--no-customers") customers = false;
     else if (arg === "--aeo") aeo = true;
     else if (arg === "--no-aeo") aeo = false;
     else if (arg === "--analytics") analytics = true;
@@ -188,6 +193,7 @@ export function parseArgs(argv: readonly string[]): CliFlags {
     seo,
     booking,
     store,
+    customers,
   };
 }
 
@@ -269,6 +275,11 @@ export const HELP = `
                        each company sells at /t/{web address}/store into its own
                        Stripe account (/app/store); one business, /store and
                        /admin/store (needs --admin minimal or full).
+  --customers          One customer list: each customer once, with every quote,
+    / --no-customers   visit, invoice, call, order and message of theirs on one
+                       timeline; search, merge, CSV import and export. On by
+                       default with any field feature. With companies, each
+                       company's at /app/customers; one business, /admin/customers.
   --aeo                AI mentions: do AI assistants name you when customers ask
     / --no-aeo         them questions — the quote, the sources, the competitors,
                        the trend. With companies, each company's own at
@@ -506,6 +517,11 @@ export async function collectAnswers(
       DEFAULT_ANSWERS.includeStore,
     ));
 
+  // The customer list (create-app 0.35): on whenever a field feature is, unless --no-customers.
+  const includeCustomers =
+    flags.customers ??
+    customersByDefault({ tenantNoun, adminShell, includeEstimator, includeScheduling, includeInvoicing, includeBooking, includeStore, includeComms });
+
   const answers: Answers = {
     projectName,
     tenantNoun,
@@ -528,6 +544,7 @@ export async function collectAnswers(
     includeSeo,
     includeBooking,
     includeStore,
+    includeCustomers,
     scope: DEFAULT_ANSWERS.scope,
   };
   // Refused here, before a directory is created, with the reason.

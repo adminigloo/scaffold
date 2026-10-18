@@ -21,6 +21,7 @@
 
 import { tenantLabel, tenantLabelPlural, type Answers } from "./answers.js";
 import { COMMS_CRON_DAILY_AT_UTC } from "./emit.js";
+import { customersListener, customersListenerImport, invoicingCustomersImport, invoicingOnEvent } from "./customers-emit.js";
 import { plansEnforced } from "./plans-emit.js";
 import { companiesMode } from "./tenancy-emit.js";
 
@@ -863,6 +864,7 @@ function renderInvoicingCompanies(answers: Answers): string {
     `import { db } from "@/db";`,
     ...(startingZones.length > 0 ? [`import { env } from "@/env";`] : []),
     ...(alerts ? [`import { alertOnInvoicingEvent } from "@/server/alerts";`] : []),
+    ...(answers.includeCustomers ? [`import { customerOnInvoicingEvent } from "@/server/customer-activity";`] : []),
     ...(comms ? [`import { commsEmailConfigured, commsSenders } from "@/server/comms-senders";`] : []),
     `import { companyLinks } from "@/server/company-links";`,
     `import { invoiceCardPayments } from "@/server/payments";`,
@@ -1099,11 +1101,10 @@ export function buildInvoicingAdminHandlers(overrides: FeatureHandlerOverrides =
     delivery: (tenantId) => invoicingDelivery(tenantId),
     detailsHref: "/settings/company#invoicing",
     // Getting paid, part 1: voiding an invoice closes its open Stripe pages.
-    payments: invoiceCardPayments,${alerts ? `
-    // A customer opened an invoice, or a payment settled it: the alerts
-    // (Tenancy 2b-1). Inside an arrow on purpose: alerts.ts and this module
-    // import each other, and nothing here reads it at load (13.10 rule 3).
-    onEvent: (event) => alertOnInvoicingEvent(event),` : ""}
+    payments: invoiceCardPayments,${invoicingOnEvent(answers) ? `
+    // ${answers.includeNotifications ? "A customer opened an invoice, or a payment settled it: the alerts (Tenancy 2b-1)" : "An invoice raised, opened or paid"}${answers.includeNotifications && answers.includeCustomers ? "; and every one" : ""}${answers.includeCustomers ? " on its customer's timeline (create-app 0.35)" : ""}.
+    // Inside an arrow on purpose: nothing here reads it at load (13.10 rule 3).
+    onEvent: ${invoicingOnEvent(answers)},` : ""}
     onError: reportInvoicingError,
   });
 }
@@ -1119,11 +1120,10 @@ export function buildInvoicingPublicHandlers() {
     // Getting paid, part 1: "Pay now", on the ${noun}'s own Stripe account
     // (src/server/payments.ts), back to the ${noun}'s own invoice page.
     payments: invoiceCardPayments,
-    invoicePageUrl: async (token, tenantId) => (await companyLinks(tenantId)).invoice(token),${alerts ? `
-    // A customer opened an invoice, or a payment settled it: the alerts
-    // (Tenancy 2b-1). Inside an arrow on purpose: alerts.ts and this module
-    // import each other, and nothing here reads it at load (13.10 rule 3).
-    onEvent: (event) => alertOnInvoicingEvent(event),` : ""}
+    invoicePageUrl: async (token, tenantId) => (await companyLinks(tenantId)).invoice(token),${invoicingOnEvent(answers) ? `
+    // ${answers.includeNotifications ? "A customer opened an invoice, or a payment settled it: the alerts (Tenancy 2b-1)" : "An invoice raised, opened or paid"}${answers.includeNotifications && answers.includeCustomers ? "; and every one" : ""}${answers.includeCustomers ? " on its customer's timeline (create-app 0.35)" : ""}.
+    // Inside an arrow on purpose: nothing here reads it at load (13.10 rule 3).
+    onEvent: ${invoicingOnEvent(answers)},` : ""}
     onError: reportInvoicingError,
   });
 }
@@ -1166,6 +1166,7 @@ function renderInvoicingSingle(answers: Answers): string {
     `import { env } from "@/env";`,
     `import { SITE_NAME } from "@/seo";`,
     ...(alerts ? [`import { alertOnInvoicingEvent } from "@/server/alerts";`] : []),
+    ...(answers.includeCustomers ? [`import { customerOnInvoicingEvent } from "@/server/customer-activity";`] : []),
     ...(comms ? [`import { commsEmailConfigured, commsSenders } from "@/server/comms-senders";`] : []),
     `import { reportError } from "@/server/error-reporter";`,
     ...(detailsFrom === "estimator" ? [`import { ESTIMATOR_TENANT } from "@/server/estimator-staff";`] : []),
@@ -1357,11 +1358,10 @@ export function buildInvoicingAdminHandlers() {
     invoiceUrl: (token) => invoiceLink(token),${comms ? "\n    sendInvoiceEmail: (input) => invoicingComms.sendInvoice(input)," : ""}
     delivery: () => invoicingDelivery(),
     // Getting paid, part 1: voiding an invoice closes its open Stripe pages.
-    payments: invoiceCardPayments,${alerts ? `
-    // A customer opened an invoice, or a payment settled it: the alerts
-    // (Tenancy 2b-1). Inside an arrow on purpose: alerts.ts and this module
-    // import each other, and nothing here reads it at load (13.10 rule 3).
-    onEvent: (event) => alertOnInvoicingEvent(event),` : ""}
+    payments: invoiceCardPayments,${invoicingOnEvent(answers) ? `
+    // ${answers.includeNotifications ? "A customer opened an invoice, or a payment settled it: the alerts (Tenancy 2b-1)" : "An invoice raised, opened or paid"}${answers.includeNotifications && answers.includeCustomers ? "; and every one" : ""}${answers.includeCustomers ? " on its customer's timeline (create-app 0.35)" : ""}.
+    // Inside an arrow on purpose: nothing here reads it at load (13.10 rule 3).
+    onEvent: ${invoicingOnEvent(answers)},` : ""}
     onError: reportInvoicingError,
   });
 }
@@ -1376,11 +1376,10 @@ export function buildInvoicingPublicHandlers() {
     // Getting paid, part 1: "Pay now", on the business's own Stripe account
     // (src/server/payments.ts), back to the customer's invoice page.
     payments: invoiceCardPayments,
-    invoicePageUrl: (token) => invoiceLink(token),${alerts ? `
-    // A customer opened an invoice, or a payment settled it: the alerts
-    // (Tenancy 2b-1). Inside an arrow on purpose: alerts.ts and this module
-    // import each other, and nothing here reads it at load (13.10 rule 3).
-    onEvent: (event) => alertOnInvoicingEvent(event),` : ""}
+    invoicePageUrl: (token) => invoiceLink(token),${invoicingOnEvent(answers) ? `
+    // ${answers.includeNotifications ? "A customer opened an invoice, or a payment settled it: the alerts (Tenancy 2b-1)" : "An invoice raised, opened or paid"}${answers.includeNotifications && answers.includeCustomers ? "; and every one" : ""}${answers.includeCustomers ? " on its customer's timeline (create-app 0.35)" : ""}.
+    // Inside an arrow on purpose: nothing here reads it at load (13.10 rule 3).
+    onEvent: ${invoicingOnEvent(answers)},` : ""}
     onError: reportInvoicingError,
   });
 }
@@ -1672,7 +1671,7 @@ export async function onSchedulingEvent(event: SchedulingEvent): Promise<void> {
 `;
   if (!answers.includeComms) {
     return `import type { DeliveryStatus, SchedulingEvent, SchedulingEventListener } from "${scope}/scheduling";
-${alerts ? `import { alertOnSchedulingEvent } from "@/server/alerts";\n` : ""}import { log } from "@/server/logger";
+${alerts ? `import { alertOnSchedulingEvent } from "@/server/alerts";\n` : ""}${customersListenerImport(answers, "Scheduling")}import { log } from "@/server/logger";
 import { schedulingDeliveryStatus } from "@/server/scheduling-config";
 
 ${header}
@@ -1683,7 +1682,7 @@ ${header}
  * hands them, and each ${noun} sees its requests in /app/schedule${alerts ? " — and its\n * people get the alerts (the bell), in the app" : ""}.
  * \`add comms\` (and \`add email\`) wires the emails in.
  */
-const LISTENERS: readonly SchedulingEventListener[] = [${alertListener.join(", ")}];
+const LISTENERS: readonly SchedulingEventListener[] = [${[...alertListener, ...customersListener(answers, "Scheduling")].join(", ")}];
 
 /** False: the booking page promises no email and shows the manage link to keep instead. */
 export const SCHEDULING_EMAILS_ENABLED: boolean = false;
@@ -1715,7 +1714,7 @@ import { db } from "@/db";
 import { env } from "@/env";
 import { commsEmailConfigured, commsSenders } from "@/server/comms-senders";
 ${alerts ? `import { alertOnSchedulingEvent, officeRecipientsFor, officeSentFor } from "@/server/alerts";\n` : ""}import { companyLinks } from "@/server/company-links";
-import { log } from "@/server/logger";
+${customersListenerImport(answers, "Scheduling")}import { log } from "@/server/logger";
 import { schedulingDeliveryStatus } from "@/server/scheduling-config";
 import { tenancy } from "@/server/tenancy";
 
@@ -1773,7 +1772,7 @@ export const schedulingComms = createSchedulingCommsListener({
   onError: (error, context) => log.error({ err: error, ...context }, "scheduling: an email step failed"),
 });
 
-const LISTENERS: readonly SchedulingEventListener[] = [${[...alertListener, "schedulingComms.onEvent"].join(", ")}];
+const LISTENERS: readonly SchedulingEventListener[] = [${[...alertListener, ...customersListener(answers, "Scheduling"), "schedulingComms.onEvent"].join(", ")}];
 
 /**
  * Told to the booking widget through the public handler's \`emailsEnabled\`:
@@ -1876,7 +1875,7 @@ export async function onEstimatorEvent(event: EstimatorEvent): Promise<void> {
   if (!answers.includeComms) {
     return `import type { EstimatorDelivery, EstimatorEvent, EstimatorEventListener } from "${scope}/estimator";
 ${alerts ? `import { alertOnEstimatorEvent } from "@/server/alerts";\n` : ""}import { estimatorDeliveryStatus } from "@/server/estimator-config";
-import { log } from "@/server/logger";
+${customersListenerImport(answers, "Estimator")}import { log } from "@/server/logger";
 
 ${header}
 
@@ -1885,7 +1884,7 @@ ${header}
  * email is sent about an estimate. New leads wait in each ${noun}'s
  * /app/estimates${alerts ? " (and its people get the alerts, in the app)" : ""}, and staff copy a quote's link to the customer themselves.
  */
-const LISTENERS: readonly EstimatorEventListener[] = [${alertListener.join(", ")}];
+const LISTENERS: readonly EstimatorEventListener[] = [${[...alertListener, ...customersListener(answers, "Estimator")].join(", ")}];
 
 /** False: the estimate page promises no email. */
 export const ESTIMATOR_EMAILS_ENABLED: boolean = false;
@@ -1909,7 +1908,7 @@ import { env } from "@/env";
 ${alerts ? `import { alertOnEstimatorEvent, officeRecipientsFor, officeSentFor } from "@/server/alerts";\n` : ""}import { commsEmailConfigured, commsSenders } from "@/server/comms-senders";
 import { companyLinks } from "@/server/company-links";
 import { estimatorDeliveryStatus } from "@/server/estimator-config";
-import { log } from "@/server/logger";
+${customersListenerImport(answers, "Estimator")}import { log } from "@/server/logger";
 import { tenancy } from "@/server/tenancy";
 
 ${header}
@@ -1950,7 +1949,7 @@ export const estimatorComms = createEstimatorCommsListener({
   onError: (error, context) => log.error({ err: error, ...context }, "estimator: an email step failed"),
 });
 
-const LISTENERS: readonly EstimatorEventListener[] = [${[...alertListener, "estimatorComms.onEvent"].join(", ")}];
+const LISTENERS: readonly EstimatorEventListener[] = [${[...alertListener, ...customersListener(answers, "Estimator"), "estimatorComms.onEvent"].join(", ")}];
 
 /** Told to the estimate page: true only when an email would actually leave (RESEND_API_KEY set). */
 export const ESTIMATOR_EMAILS_ENABLED: boolean = commsEmailConfigured;

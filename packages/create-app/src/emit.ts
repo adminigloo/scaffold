@@ -71,6 +71,7 @@ import { renderSeoPackageModule, renderSeoRobots, renderSeoSitemap } from "./seo
 import { bookingFiles, bookingHostsQuota } from "./booking-emit.js";
 import { cardPaymentsOn, cardPaymentsSetup, paymentsFiles, renderNavBadges } from "./payments-emit.js";
 import { storeFiles, storeProductsQuota } from "./store-emit.js";
+import { customersFiles, customersListener, customersListenerImport, hasCustomerLinkPages, renderCustomerLinkSlot } from "./customers-emit.js";
 import {
   aiMentionChecksQuota,
   hasCompanyWebsitePage,
@@ -435,7 +436,9 @@ export async function planEmit(
     // Tenancy 2b-4c: a single business's calls are worked on staff keys.
     (!isCompanies(answers) && answers.includeBooking) ||
     // Getting paid, part 2: a single business's store is worked on staff keys.
-    (!isCompanies(answers) && answers.includeStore)
+    (!isCompanies(answers) && answers.includeStore) ||
+    // The customer list (create-app 0.35): a single business's is worked on staff keys.
+    (!isCompanies(answers) && answers.includeCustomers)
   ) {
     files.set(join("src", "server", "staff-access.ts"), renderStaffAccess(answers));
   }
@@ -492,6 +495,15 @@ export async function planEmit(
   // Getting paid, part 2: a store of its own — each company's products,
   // cart and orders, paid on its own Stripe account. See store-emit.ts.
   for (const [path, body] of storeFiles(answers)) files.set(join(...path.split("/")), body);
+  // THE CUSTOMER LIST (create-app 0.35): each company's customers (or the one
+  // business's), the hooks every installed feature tells, and the backfill.
+  // See customers-emit.ts.
+  for (const [path, body] of customersFiles(answers)) files.set(join(...path.split("/")), body);
+  // "Customer: Mrs Lee →" on an estimate's and an invoice's page: the link
+  // with --customers, nothing without — the record pages carry no `if`.
+  if (hasCustomerLinkPages(answers)) {
+    files.set(join("src", "components", "CustomerLinkSlot.tsx"), renderCustomerLinkSlot(answers));
+  }
   // The header's link badges (every project: src/components/AuthHeader.tsx imports it).
   files.set(join("src", "server", "nav-badges.ts"), renderNavBadges(answers));
   // A company's Website screen, written with the sections this project has.
@@ -1070,6 +1082,10 @@ export function renderPackageJson(answers: Answers): string {
       // feedback settings page. A script entry rather than a documented `pnpm tsx` line,
       // because the widget stays dark until this runs and a command nobody is
       // told about is a feature nobody has.
+      // The customer list (create-app 0.35): link every quote, visit, invoice,
+      // call, order and message a business already has to its customer. Safe
+      // to run again; see scripts/customers-backfill.ts.
+      ...(answers.includeCustomers ? { "customers:backfill": "tsx scripts/customers-backfill.ts" } : {}),
       ...(answers.includeFeedback
         ? {
             "feedback:issue-key":
@@ -1709,6 +1725,7 @@ const ANSWER_LABELS: Partial<Record<keyof Answers, string>> = {
   includeSeo: "Search basics",
   includeBooking: "Book a call",
   includeStore: "Store",
+  includeCustomers: "Customers",
 };
 
 export function renderScaffoldRecord(manifest: ProjectManifest): string {
@@ -2596,6 +2613,29 @@ export const PACKAGE_PERMISSION_FRAGMENTS: readonly PackagePermissionFragment[] 
       "One business sells its own products, worked by its staff at /admin/store: " +
       "every staff role sees the store and its orders, admin changes products.",
   },
+  // THE CUSTOMER LIST (create-app 0.35): a company's customers are its own,
+  // so company keys in a companies project (owner, admin and member see them;
+  // owner and admin change, merge, import and export); one business's on the
+  // staff ladder.
+  {
+    package: "customers",
+    binding: "customersCompanyPermissions",
+    scope: "tenant",
+    installedBy: (answers) => answers.tenantNoun !== "none" && answers.includeCustomers,
+    why:
+      "Each company keeps its own customers, so these are company keys: owners, " +
+      "admins and members see them and their timelines, owners and admins " +
+      "change, merge, import and export them.",
+  },
+  {
+    package: "customers",
+    binding: "customersPermissions",
+    scope: "staff",
+    installedBy: (answers) => answers.tenantNoun === "none" && answers.includeCustomers,
+    why:
+      "One business keeps its customers, worked by its staff at /admin/customers: " +
+      "every staff role sees them, cs_lead and admin change, merge, import and export them.",
+  },
 ];
 
 export class PermissionScopeMismatchError extends Error {
@@ -3414,6 +3454,14 @@ export function renderCommsSenders(answers: Answers): string {
   // module, and a static import back would be a load-time cycle.
   onFailed: (failure) => import("./alerts").then((m) => m.alertOnCommsFailure(failure)),`
     : "";
+  // THE CUSTOMER LIST (create-app 0.35): each message that went lands on its
+  // customer's timeline. Dynamic for onFailed's reason: the hooks' module is
+  // reached from the features' glue, which reaches this one.
+  const onSent = answers.includeCustomers
+    ? `
+  // A message that went: on the timeline of the customer it went to (create-app 0.35).
+  onSent: (sent) => import("./customer-activity").then((m) => m.customerOnMessageSent(sent)),`
+    : "";
   const teamKeys = teamTemplateKeys(answers);
 
   const header = `/**
@@ -3593,7 +3641,7 @@ ${identity}
  * throws. \`add email\` (pnpm dlx @adminigloo/create-app add email) rewrites
  * this file with Resend wired in.
  */
-export const commsSenders: CommsSenders = { identity: companyIdentity${onFailed ? `,${onFailed}\n` : " "}};
+export const commsSenders: CommsSenders = { identity: companyIdentity${onFailed || onSent ? `,${onFailed}${onSent}\n` : " "}};
 
 /** False: an email "sent" from this project is logged as skipped. Promise none. */
 export const commsEmailConfigured: boolean = false;
@@ -3636,7 +3684,7 @@ function sendersOver(mailer: EmailSender): CommsSenders {
   return {
     identity: companyIdentity,
     // Each ${noun}'s sending allowance (above): asked before every email leaves.
-    allowance: companySendAllowance,${onFailed.replace(/\n  /g, "\n    ")}
+    allowance: companySendAllowance,${(onFailed + onSent).replace(/\n  /g, "\n    ")}
     // The template is plain text; comms hands over \`html\` already converted
     // (escaped first, then paragraphs and links), so a customer's name can
     // never become markup. The ${noun}'s name and reply-to ride on each
@@ -3704,7 +3752,7 @@ ${header}
  * and nothing throws. \`add email\` (pnpm dlx @adminigloo/create-app add email)
  * rewrites this file with Resend wired in.
  */
-export const commsSenders: CommsSenders = {${onFailed ? `${onFailed}\n` : ""}};
+export const commsSenders: CommsSenders = {${onFailed || onSent ? `${onFailed}${onSent}\n` : ""}};
 
 /** False: an email "sent" from this project is logged as skipped. Promise none. */
 export const commsEmailConfigured: boolean = false;
@@ -3737,7 +3785,7 @@ const mailer = createEmailSender({
   replyTo: env.EMAIL_REPLY_TO,
 });
 
-export const commsSenders: CommsSenders = {${onFailed}
+export const commsSenders: CommsSenders = {${onFailed}${onSent}
   // The template is plain text; comms hands over \`html\` already converted
   // (escaped first, then paragraphs and links), so a customer's name can
   // never become markup. Never interpolate \`message.body\` into HTML yourself.
@@ -3959,7 +4007,7 @@ export async function onSchedulingEvent(event: SchedulingEvent): Promise<void> {
 
   if (!answers.includeComms) {
     return `import type { DeliveryStatus, SchedulingEvent, SchedulingEventListener } from "${scope}/scheduling";
-${alerts ? `import { alertOnSchedulingEvent } from "@/server/alerts";\n` : ""}import { log } from "@/server/logger";
+${alerts ? `import { alertOnSchedulingEvent } from "@/server/alerts";\n` : ""}${customersListenerImport(answers, "Scheduling")}import { log } from "@/server/logger";
 import { schedulingDeliveryStatus } from "@/server/scheduling-config";
 
 ${header}
@@ -3970,7 +4018,7 @@ ${header}
  * page hands them, and staff see requests in /admin/schedule${alerts ? " (and get the\n * alerts, in the app)" : ""}.
  * \`add comms\` (and \`add email\`) wires the emails in.
  */
-const LISTENERS: readonly SchedulingEventListener[] = [${alertListener.join(", ")}];
+const LISTENERS: readonly SchedulingEventListener[] = [${[...alertListener, ...customersListener(answers, "Scheduling")].join(", ")}];
 
 /** False: the booking page promises no email and shows the manage link to keep instead. */
 export const SCHEDULING_EMAILS_ENABLED: boolean = false;
@@ -4011,7 +4059,7 @@ import { SCHEDULING_COMMS_REF_TYPE, createSchedulingCommsListener } from "${scop
 import { db } from "@/db";
 import { env } from "@/env";
 ${alerts ? `import { ${routed ? "alertOnSchedulingEvent, officeRecipientsFor, officeSentFor" : "alertOnSchedulingEvent"} } from "@/server/alerts";\n` : ""}import { commsEmailConfigured, commsSenders } from "@/server/comms-senders";
-import { log } from "@/server/logger";
+${customersListenerImport(answers, "Scheduling")}import { log } from "@/server/logger";
 import { schedulingDeliveryStatus, schedulingLinks } from "@/server/scheduling-config";
 import { SCHEDULING_TENANT } from "@/server/scheduling-staff";
 
@@ -4066,7 +4114,7 @@ export const schedulingComms = createSchedulingCommsListener({
   onError: (error, context) => log.error({ err: error, ...context }, "scheduling: an email step failed"),
 });
 
-const LISTENERS: readonly SchedulingEventListener[] = [${[...alertListener, "schedulingComms.onEvent"].join(", ")}];
+const LISTENERS: readonly SchedulingEventListener[] = [${[...alertListener, ...customersListener(answers, "Scheduling"), "schedulingComms.onEvent"].join(", ")}];
 
 /**
  * Told to the booking widget through the public handler's \`emailsEnabled\`:
@@ -4235,7 +4283,7 @@ export async function onEstimatorEvent(event: EstimatorEvent): Promise<void> {
   if (!answers.includeComms) {
     return `import type { EstimatorDelivery, EstimatorEvent, EstimatorEventListener } from "${scope}/estimator";
 ${alerts ? `import { alertOnEstimatorEvent } from "@/server/alerts";\n` : ""}import { estimatorDeliveryStatus } from "@/server/estimator-config";
-import { log } from "@/server/logger";
+${customersListenerImport(answers, "Estimator")}import { log } from "@/server/logger";
 
 ${header}
 
@@ -4245,7 +4293,7 @@ ${header}
  * staff copy a quote's link to the customer from the estimate ("Copy link").
  * \`add comms\` (and \`add email\`) wires the emails in.
  */
-const LISTENERS: readonly EstimatorEventListener[] = [${alertListener.join(", ")}];
+const LISTENERS: readonly EstimatorEventListener[] = [${[...alertListener, ...customersListener(answers, "Estimator")].join(", ")}];
 
 /** False: the estimate page promises no email. */
 export const ESTIMATOR_EMAILS_ENABLED: boolean = false;
@@ -4274,7 +4322,7 @@ import { env } from "@/env";
 ${alerts ? `import { ${routed ? "alertOnEstimatorEvent, officeRecipientsFor, officeSentFor" : "alertOnEstimatorEvent"} } from "@/server/alerts";\n` : ""}import { commsEmailConfigured, commsSenders } from "@/server/comms-senders";
 import { estimatorDeliveryStatus, estimatorLinks } from "@/server/estimator-config";
 import { ESTIMATOR_TENANT } from "@/server/estimator-staff";
-import { log } from "@/server/logger";
+${customersListenerImport(answers, "Estimator")}import { log } from "@/server/logger";
 
 ${header}
 
@@ -4326,7 +4374,7 @@ export const estimatorComms = createEstimatorCommsListener({
   onError: (error, context) => log.error({ err: error, ...context }, "estimator: an email step failed"),
 });
 
-const LISTENERS: readonly EstimatorEventListener[] = [${[...alertListener, "estimatorComms.onEvent"].join(", ")}];
+const LISTENERS: readonly EstimatorEventListener[] = [${[...alertListener, ...customersListener(answers, "Estimator"), "estimatorComms.onEvent"].join(", ")}];
 
 /**
  * Told to the estimate page through the public handler's \`emailsEnabled\`:
@@ -5192,6 +5240,8 @@ export function renderSchemaModule(answers: Answers): string {
   if (answers.includeAeo) owners.push("aeo");
   // Tenancy 2b-4c: the calls (booking_*); the widget package owns none.
   if (answers.includeBooking) owners.push("booking");
+  // The customer list (create-app 0.35): customers, their addresses, links and merges.
+  if (answers.includeCustomers) owners.push("customers");
 
   /**
    * `@scope/auth/schema` -> `authSchema`; `seo-reports` -> `seoReportsSchema`.
@@ -5510,6 +5560,15 @@ export function renderSiteNav(answers: Answers): string {
       label: "Invoices",
       permission: "invoices.view",
       why: `The ${label}'s ledger: raise and send invoices, record payments.`,
+    });
+  }
+  // The customer list (create-app 0.35): everyone who is the company's customer, with everything of theirs.
+  if (!single && answers.includeCustomers) {
+    companyFeatureLinks.push({
+      href: "/app/customers",
+      label: "Customers",
+      permission: "customers.view",
+      why: `The ${label}'s customers, each with every quote, visit, invoice, call, order and message of theirs on one timeline.`,
     });
   }
   // Getting paid, part 2: a store of its own — its products and orders.
@@ -6126,6 +6185,15 @@ export function renderAdminNav(answers: Answers): string {
         "from (search, AI assistants by name, other sites), the pages read, the " +
         "AI crawlers, its websites and who is left out. From the analytics-admin " +
         "overlay, so a project without the answer has neither this page nor this entry.",
+    });
+  }
+  // The customer list (create-app 0.35): a single business's (a company's is at /app/customers).
+  if (answers.includeCustomers && answers.tenantNoun === "none") {
+    operations.push({
+      href: "/admin/customers",
+      label: "Customers",
+      permission: "customers.view",
+      why: "Every customer once, with their quotes, visits, invoices, calls, orders and messages on one timeline: search, edit, merge, import and export, from the customers package.",
     });
   }
   // Getting paid, part 2: a single business's store (a company's is at /app/store).

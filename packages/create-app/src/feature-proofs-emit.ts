@@ -285,6 +285,22 @@ function suitesFor(answers: Answers): readonly FeatureSuite[] {
       permissions: "bookingCompanyPermissions",
     });
   }
+  // THE CUSTOMER LIST (create-app 0.35): a company's customers, one customer
+  // and their timeline, edits, merge, import and export.
+  if (answers.includeCustomers) {
+    suites.push({
+      feature: "customers",
+      glue: "@/server/customers",
+      adminBuilder: "buildCustomersAdminHandlers",
+      adminRoutes: "CUSTOMERS_ADMIN_ROUTES",
+      adminSegment: "customers",
+      publicBuilder: null,
+      publicRoutes: null,
+      publicSegment: null,
+      pkg: "customers",
+      permissions: "customersCompanyPermissions",
+    });
+  }
   if (answers.includeAeo) {
     suites.push({
       feature: "aeo",
@@ -338,6 +354,9 @@ export const FEATURE_ENTITIES: Readonly<Record<string, readonly string[]>> = {
   // type — and what a visitor holds: the type's key, a hold, the private link
   // and a host's calendar feed.
   booking: ["booking", "host", "exception", "holiday", "type", "type-key", "hold-token", "manage-token", "feed-token"],
+  // create-app 0.35: a customer, one of their addresses, and a second
+  // customer (the one a merge would fold in), and a notice on the first (new details from a form).
+  customers: ["customer", "customer-address", "spare-customer", "customer-notice"],
 };
 
 // ---------------------------------------------------------------------------
@@ -405,6 +424,7 @@ export function renderCompanyRows(answers: Answers): string {
         ]
       : []),
     ...(comms ? [`import { enqueueMessage, sendNow, upsertTemplate } from "${scope}/comms";`] : []),
+    ...(answers.includeCustomers ? [`import { findOrCreateCustomer, getCustomer, linkCustomer, mergeCustomers } from "${scope}/customers/server";`] : []),
     ...(estimator
       ? [
           `import {
@@ -988,6 +1008,32 @@ export function renderCompanyRows(answers: Answers): string {
   rows["hold-token"] = (await holdCall(callCtx, { typeKey: callType.key, start: callDay(4).toISOString() })).holdToken;
   rows["feed-token"] = (await rotateCallFeed(callCtx, callHost.id)).feedToken;
   strings.push(\`\${Label} Call Host\`, \`calls@\${label}.test\`, \`\${Label} dentist\`, \`\${Label} closed day\`, \`\${label}-call\`, \`\${Label} intro call\`, \`\${Label} Caller\`, \`caller@\${label}.test\`);
+`);
+  }
+  if (answers.includeCustomers) {
+    blocks.push(`
+  // THE CUSTOMER LIST (create-app 0.35): the ${noun}'s customer with an
+  // address and a quote on their timeline, a second customer (the one a merge
+  // would fold in), and a duplicate already merged into the first (the record
+  // of merges).
+  const listed = await findOrCreateCustomer(database, { tenantId, name: \`\${Label} Listed Customer\`, email: \`listed@\${label}.test\`, address: \`1 \${Label} Lane\` });
+  rows.customer = listed.customer.id;
+  const listedCard = await getCustomer(database, tenantId, listed.customer.id);
+  const listedAddress = listedCard?.addresses[0]?.id;
+  if (!listedAddress) throw new Error(\`no customer address was planted for \${label}\`);
+  rows["customer-address"] = listedAddress;
+  await linkCustomer(database, { tenantId, customerId: listed.customer.id, kind: "estimate", refId: \`\${label}-probe-estimate\`, action: "submitted", occurredAt: new Date(), summary: \`\${Label} probe quote\` });
+  const spare = await findOrCreateCustomer(database, { tenantId, name: \`\${Label} Spare Customer\`, email: \`spare@\${label}.test\` });
+  rows["spare-customer"] = spare.customer.id;
+  const duplicate = await findOrCreateCustomer(database, { tenantId, name: \`\${Label} Duplicate\`, email: \`duplicate@\${label}.test\` });
+  await mergeCustomers(database, tenantId, listed.customer.id, duplicate.customer.id);
+  // A public form with the customer's email and an address they don't have:
+  // nothing of theirs changes; it waits on their record (a notice).
+  await findOrCreateCustomer(database, { tenantId, email: \`listed@\${label}.test\`, address: \`9 \${Label} Form Road\`, sourceLabel: \`\${Label} probe form\` });
+  const notice = (await getCustomer(database, tenantId, listed.customer.id))?.notices[0]?.id;
+  if (!notice) throw new Error(\`no customer notice was planted for \${label}\`);
+  rows["customer-notice"] = notice;
+  strings.push(\`\${Label} Listed Customer\`, \`listed@\${label}.test\`, \`1 \${Label} Lane\`, \`\${Label} probe quote\`, \`\${Label} Spare Customer\`, \`spare@\${label}.test\`, \`\${Label} Duplicate\`, \`duplicate@\${label}.test\`, \`9 \${Label} Form Road\`, \`\${Label} probe form\`);
 `);
   }
   if (answers.includeAeo) {
@@ -1911,6 +1957,14 @@ export function renderFeatureIsolationTest(answers: Answers): string {
   if (answers.includeBooking) {
     snapshot.push(
       ...["booking_hosts", "booking_availability", "booking_exceptions", "booking_blackouts", "booking_types", "booking_bookings", "booking_events"].map(
+        (table) => `    ${table}: await all(sql\`select * from ${table} where tenant_id = \${a} order by id\`),`,
+      ),
+    );
+  }
+  // create-app 0.35: A's customers, their addresses, timelines and merges.
+  if (answers.includeCustomers) {
+    snapshot.push(
+      ...["customers", "customer_addresses", "customer_links", "customer_merges", "customer_notices"].map(
         (table) => `    ${table}: await all(sql\`select * from ${table} where tenant_id = \${a} order by id\`),`,
       ),
     );

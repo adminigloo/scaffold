@@ -46,7 +46,7 @@ const EVERY_CONFIGURATION = ["none", "one-time", "subscription", "both"].flatMap
                         // suite drops them there.
                         `${includeSuite && adminShell !== "none" ? " --estimator --scheduling" : ""}` +
                         // Book a call needs the shell only for one business.
-                        `${includeSuite && !(tenantNoun === "none" && adminShell === "none") ? " --booking --store" : ""}` +
+                        `${includeSuite && !(tenantNoun === "none" && adminShell === "none") ? " --booking --store --customers" : ""}` +
                         `${includeMarketing ? " --marketing" : ""}` +
                         ` --tenant ${tenantNoun}`,
                       {
@@ -68,6 +68,7 @@ const EVERY_CONFIGURATION = ["none", "one-time", "subscription", "both"].flatMap
                         includeSeo: includeSuite,
                         includeBooking: includeSuite && !(tenantNoun === "none" && adminShell === "none"),
                         includeStore: includeSuite && !(tenantNoun === "none" && adminShell === "none"),
+                        includeCustomers: includeSuite && !(tenantNoun === "none" && adminShell === "none"),
                         includeMarketing,
                         tenantNoun,
                       },

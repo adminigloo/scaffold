@@ -93,6 +93,7 @@ describe("create-adminigloo-app add <feature>", () => {
         seo: "includeSeo",
         booking: "includeBooking",
         store: "includeStore",
+        customers: "includeCustomers",
       } as const)[feature];
       const expected = await projectFiles({ ...BASE, [key]: true });
 

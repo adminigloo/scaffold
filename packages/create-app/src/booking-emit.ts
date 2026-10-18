@@ -142,6 +142,7 @@ function renderBookingGlue(answers: Answers): string {
           `import { companyLinksFor } from "@/server/company-links";`,
         ]
       : []),
+    ...(answers.includeCustomers ? [`import { customerOnBookingEvent } from "@/server/customer-activity";`] : []),
     `import { reportError } from "@/server/error-reporter";`,
     ...(email ? [`import { log } from "@/server/logger";`] : []),
     ...(companies ? [`import { bookingHostLimit${email ? ", companyOnTrial" : ""} } from "@/server/plan-gate";`] : []),
@@ -334,7 +335,11 @@ export async function sendBookingEmails(event: BookingEvent | DueReminder): Prom
  */
 export const bookingEmailsConfigured: boolean = false;
 `;
-  const onEvent = email ? "\n    onEvent: async (event) => {\n      await sendBookingEmails(event);\n    }," : "";
+  // The customer list first (create-app 0.35: the call on its caller's
+  // timeline), then the emails. Both contained by the package.
+  const bookingListeners = [...(answers.includeCustomers ? ["await customerOnBookingEvent(event);"] : []), ...(email ? ["await sendBookingEmails(event);"] : [])];
+  const onEvent =
+    bookingListeners.length > 0 ? `\n    onEvent: async (event) => {\n${bookingListeners.map((line) => `      ${line}`).join("\n")}\n    },` : "";
 
   const company = companies
     ? `
