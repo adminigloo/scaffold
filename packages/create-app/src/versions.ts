@@ -161,7 +161,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // the company, the emitted glue builds createAssistantHandlers and
   // createAnthropicProvider (./anthropic), and the tools import saveFaq — none
   // of which exist in 0.8.x.
-  assistant: "0.9.0",
+  assistant: "0.9.1",
   // 0.3.0: the launcher, history, Stop, starters and the "ask before acting"
   // card, and the settings screen (./admin) the company pages mount.
   "assistant-widget": "0.3.0",

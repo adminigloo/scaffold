@@ -1,5 +1,11 @@
 # create-adminigloo-app
 
+## 0.35.1
+
+### Patch Changes
+
+- dba20d8: A project with every feature compiles: the isolation proof's helper declared `const rule` twice (the assistant's house rule and the website visits rule). New test: every emitted TypeScript file of the all-features projects (companies and one business) parses and declares no name twice in one scope, on every `pnpm test`.
+
 ## 0.35.0
 
 ### Minor Changes
