@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/customers",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "One customer list per company: a customer's emails, phones, addresses and notes, found or created by email or phone (never across companies), linked to the quotes, visits, invoices, calls, orders and messages that are theirs, with one timeline, search, merge, and CSV import and export.",
   "license": "UNLICENSED",
   "type": "module",

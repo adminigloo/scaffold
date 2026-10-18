@@ -1,5 +1,12 @@
 # @adminigloo/estimator
 
+## 0.5.1
+
+### Patch Changes
+
+- Updated dependencies [452e94a]
+  - @adminigloo/comms@0.5.0
+
 ## 0.5.0
 
 ### Minor Changes

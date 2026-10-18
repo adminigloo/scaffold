@@ -1,5 +1,12 @@
 # @adminigloo/invoicing-widget
 
+## 0.2.1
+
+### Patch Changes
+
+- Updated dependencies [452e94a]
+  - @adminigloo/invoicing@0.6.0
+
 ## 0.2.0
 
 ### Minor Changes

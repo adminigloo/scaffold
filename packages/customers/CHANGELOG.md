@@ -1,0 +1,7 @@
+# @adminigloo/customers
+
+## 0.1.0
+
+### Minor Changes
+
+- 452e94a: First release: one customer list per company. A customer's emails, phones, addresses, notes and tags; `findOrCreateCustomer` by email (lower case; Gmail's dots and +tags folded for matching only) or phone (E.164 with the business's country), never across companies, with unique partial indexes and a retry so two requests at once make one customer. `customer_links` puts every quote, visit, invoice, call, order and message on one paged timeline, once per record and action. Search by name, company, email, phone or address; merge two customers (links, addresses and contacts move; every merge kept in `customer_merges`); CSV import with a preview first (at most 5,000 rows, deduped against the list and within the file, a plain-words reason per row) and CSV export safe to open in a spreadsheet. `CustomerDirectory` with a drizzle default so an app can plug in its own customer table; `recordCustomerActivity` for the features' glue; `backfillCustomers`, chunked and idempotent. `createCustomersAdminHandlers` and `CUSTOMERS_ADMIN_ROUTES` with `customers.view` and `customers.manage` (staff and company ladders); the screens under `./admin`; `sql/customers-0.1.0.sql`.

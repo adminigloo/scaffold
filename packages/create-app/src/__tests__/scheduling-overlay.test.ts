@@ -268,7 +268,7 @@ describe("what the project installs and declares", () => {
     expect(pkgs).toContain("@adminigloo/scheduling");
     expect(pkgs).toContain("@adminigloo/scheduling-widget");
     const manifest = JSON.parse(file(await plan(), "package.json")) as { dependencies: Record<string, string> };
-    expect(manifest.dependencies["@adminigloo/scheduling"]).toBe("^0.6.0");
+    expect(manifest.dependencies["@adminigloo/scheduling"]).toBe("^0.6.1");
     expect(manifest.dependencies["@adminigloo/scheduling-widget"]).toBe("^0.3.0");
   });
 

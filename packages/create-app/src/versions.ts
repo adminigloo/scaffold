@@ -231,7 +231,8 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // `officeSent` on the comms listener, `alertsHref`, the estimate as a
   // file record and the private photo purpose. The alerts and files glue
   // imports all of them.
-  estimator: "0.5.0",
+  // 0.5.1 (the customer list): its comms range moves to ^0.5.0 with comms 0.5 (onSent).
+  estimator: "0.5.1",
   // 0.2.0: the estimate page, the quote page and the four staff pages render
   // its components (EstimateTool, QuoteView, EstimatesQueue, EstimateEditor,
   // PriceBook, EstimatorSettings, EmbedKeys). It speaks 0.3's wire, so it
@@ -269,7 +270,8 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.6.0 (Tenancy 2b-1): the alert kinds and mapper, the expiring sweep,
   // `officeRecipients` / `officeSent`, `alertsHref` and the visit as a
   // file record. The alerts and files glue imports all of them.
-  scheduling: "0.6.0",
+  // 0.6.1 (the customer list): its comms range moves to ^0.5.0 with comms 0.5.
+  scheduling: "0.6.1",
   // First release. The booking page, the manage page and the three staff
   // pages render its components; it speaks 0.4's wire, so it moves with
   // scheduling 0.4 and never with 0.3.
@@ -307,7 +309,8 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // its invoicing peer is ^0.4.0 — pinned for the same lockfile reason.
   // 0.2.0 (getting paid, part 1): Pay now on the customer's page, the deposit
   // and a payment's dispute/refund mark in the ledger, over invoicing 0.5's wire.
-  "invoicing-widget": "0.2.0",
+  // 0.2.1 (the customer list): its invoicing range moves to ^0.6.0 with invoicing 0.6.
+  "invoicing-widget": "0.2.1",
   // 0.2.0 (sweep): SMS compliance is required with an SMS sender, the queue is
   // bounded and cancellable, and the emitted router calls setTemplateActive and
   // requireEmailSubject — none exist in 0.1.x.
@@ -323,7 +326,8 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // First release (Tenancy 2a): the Messages console, over comms 0.3's wire.
   // 0.1.1 (Tenancy 2b-1): its comms peer is ^0.4.0, and it names the team
   // alert email — pinned for the same lockfile reason.
-  "comms-widget": "0.1.1",
+  // 0.1.2 (the customer list): its comms range moves to ^0.5.0 with comms 0.5.
+  "comms-widget": "0.1.2",
   // 0.2.0 (Tenancy 2b-4b): AI mentions per company — the handlers and route
   // table, the metered runner, the Anthropic engine (./anthropic), the screen.
   aeo: "0.2.0",

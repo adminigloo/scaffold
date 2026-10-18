@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/estimator",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Instant estimates priced from the business's own supplies, labor and markup: customers answer what they know (how many steps, a width and a length), code works out every number, a photo is read for counts only (Claude Haiku, budgeted and metered), and staff edit the lead and send a quote the customer accepts online, with follow-ups and expiry.",
   "license": "UNLICENSED",
   "type": "module",
@@ -48,7 +48,7 @@
   "peerDependencies": {
     "drizzle-orm": "catalog:peers",
     "zod": "^4.0.0",
-    "@adminigloo/comms": "^0.4.0",
+    "@adminigloo/comms": "^0.5.0",
     "@anthropic-ai/sdk": ">=0.122.0"
   },
   "peerDependenciesMeta": {

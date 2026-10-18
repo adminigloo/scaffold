@@ -373,7 +373,7 @@ describe("answers, packages and the CLI", () => {
     const installed = packagesFor(answers());
     expect(installed).toContain("@adminigloo/estimator");
     expect(installed).toContain("@adminigloo/estimator-widget");
-    expect(versionRangeFor("@adminigloo/estimator")).toBe("^0.5.0");
+    expect(versionRangeFor("@adminigloo/estimator")).toBe("^0.5.1");
     expect(versionRangeFor("@adminigloo/estimator-widget")).toBe("^0.5.0");
   });
 
