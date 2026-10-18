@@ -117,7 +117,7 @@ export interface AssistantUsage {
   readonly centLimit: number | null;
   readonly resetsAt: Date;
   /** On a refusal: what closed it — the month's messages, its spending limit, or the whole site's day. */
-  readonly limitedBy?: "messages" | "cents" | "day" | "site";
+  readonly limitedBy?: "messages" | "cents" | "day" | "feature" | "site";
   /** On a site refusal: when the site's day starts again. */
   readonly siteResetsAt?: Date;
 }
@@ -354,7 +354,10 @@ export function allowanceToWire(verdict: AssistantAllowanceVerdict | null): Assi
       message: verdict.message,
     };
   }
-  const limitedBy = verdict.ok ? null : (usage.limitedBy ?? (verdict.code === "site_limit" ? "site" : "messages"));
+  // A feature's share of the site's day (ai 0.3) resets with the day, so the
+  // customer is told the same thing as for the day's share.
+  const limit = usage.limitedBy === "feature" ? "day" : usage.limitedBy;
+  const limitedBy = verdict.ok ? null : (limit ?? (verdict.code === "site_limit" ? "site" : "messages"));
   return {
     messagesUsed: usage.messagesUsed,
     messageLimit: usage.messageLimit,

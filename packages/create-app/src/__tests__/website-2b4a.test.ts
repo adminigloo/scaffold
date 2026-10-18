@@ -131,7 +131,7 @@ describe("companies mode", () => {
     const rows = code(file(p, "src", "test", "company-rows.ts"));
     expect(rows).toContain("rows.website = website.id");
     expect(rows).toContain('rows["site-key"] = website.siteKey');
-    expect(rows).toContain("rows.rule = rule.rule.id");
+    expect(rows).toContain("rows.rule = audienceRule.rule.id");
   });
 
   it("a company's people are only ever its own: members and invitations, never the whole users table (review H1)", async () => {

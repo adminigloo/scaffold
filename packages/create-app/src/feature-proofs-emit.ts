@@ -951,8 +951,8 @@ export function renderCompanyRows(answers: Answers): string {
     secret: "proof-audience-key-0123456789-abcdefghij",
     tenantId,
   });
-  const rule = await leaving.addRule({ kind: "email", value: \`owner@\${label}-lawncare.com\`, reasonLabel: \`\${Label} owner\` });
-  rows.rule = rule.rule.id;
+  const audienceRule = await leaving.addRule({ kind: "email", value: \`owner@\${label}-lawncare.com\`, reasonLabel: \`\${Label} owner\` });
+  rows.rule = audienceRule.rule.id;
   strings.push(\`owner@\${label}-lawncare.com\`, \`\${Label} owner\`);
 `);
   }
