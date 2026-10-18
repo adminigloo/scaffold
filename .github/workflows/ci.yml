@@ -65,7 +65,12 @@ jobs:
         id: build
       - run: pnpm typecheck
         id: typecheck
-      - run: pnpm test
+      # ONE PACKAGE AT A TIME. Every package's suite at once on a two-core
+      # runner starved the clock: hooks timed out at 10 s, widgets missed their
+      # 1 s waits, a 100 ms budget read 102 ms. A different test failed on each
+      # push (2026-10-12 to 10-18) while every one passed alone. Slower, but red
+      # means something again.
+      - run: pnpm -r --workspace-concurrency=1 test
         id: test
 
       # EVERY CHANGED PACKAGE CARRIES A CHANGESET, checked rather than

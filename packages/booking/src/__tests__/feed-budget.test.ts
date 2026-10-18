@@ -27,7 +27,11 @@ function feed(events: number, rule: string, dtstart = "18000101T090000Z"): strin
  * suite running beside it (PGlite workers). The point is "milliseconds, not
  * the minutes 0.1 took", which 100 ms proves.
  */
-const TIME_LIMIT_MS = 100;
+// The package's own backstop is 100 ms of wall clock. A shared CI machine
+// running every package's tests can be several times slower than a laptop,
+// so CI gets headroom; the step budget, not the clock, is what is proved.
+const SLOWER = process.env.CI ? 4 : 1;
+const TIME_LIMIT_MS = 100 * SLOWER;
 
 const WINDOW = { from: new Date("2026-10-05T00:00:00Z"), to: new Date("2026-11-05T00:00:00Z"), timezone: "UTC" };
 
@@ -135,7 +139,7 @@ describe("a feed too large fails closed for its host", () => {
         }
       })();
       expect(isFeedTooLarge(result)).toBe(true);
-      if (i > 0) expect(ms).toBeLessThan(5);
+      if (i > 0) expect(ms).toBeLessThan(5 * SLOWER);
     }
     expect(fetched).toBe(1);
   });
