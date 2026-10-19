@@ -67,7 +67,7 @@ describe("packages, overlays and versions", () => {
     expect(overlayNamesFor(answers({ ...COMPANIES, includeAi: false }))).not.toContain("assistant-chat-admin");
     expect(overlayNamesFor(answers({ includeAssistant: true, tenantNoun: "none", adminShell: "full" }))).not.toContain("assistant-companies");
     const versions = packageVersions();
-    expect(versions.assistant).toBe("0.9.0");
+    expect(versions.assistant).toBe("0.9.1"); // 0.9.1: takes ai 0.3's "feature" limit.
     expect(versions["assistant-widget"]).toBe("0.3.0");
     expect(versions.ai).toBe("0.3.0"); // 0.3.0 (Tenancy 2b-4b): fees beyond tokens.
   });
