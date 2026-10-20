@@ -124,6 +124,12 @@ describe("every checkpoint asks it", () => {
     expect(file(await plan(SAAS), "src", "components", "PlanBannerSlot.tsx")).toContain("Free trial:");
     expect(file(await plan(SINGLE), "src", "components", "PlanBannerSlot.tsx")).toContain("return null;");
   });
+
+  it("the banner finds the company by the app's own user, not Clerk's id (it never showed in Igloo Back Office)", async () => {
+    const banner = file(await plan(SAAS), "src", "components", "PlanBannerSlot.tsx");
+    expect(banner).toContain("tenancy.resolveSession({ userId: principal.userId })");
+    expect(banner).not.toContain("@clerk/nextjs/server");
+  });
 });
 
 describe("what a plan sells", () => {

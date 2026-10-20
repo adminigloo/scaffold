@@ -443,9 +443,9 @@ export async function PlanBannerSlot(): Promise<ReactNode> {
   return `import Link from "next/link";
 import { headers } from "next/headers";
 import type { ReactNode } from "react";
-import { auth } from "@clerk/nextjs/server";
 import type { PlanStanding } from "${scope}/billing";
 import { env } from "@/env";
+import { currentPrincipal } from "@/server/auth";
 import { loadTenantPermissions } from "@/server/permissions";
 import { planStandingOf } from "@/server/plan-gate";
 import { tenancy } from "@/server/tenancy";
@@ -466,14 +466,16 @@ export async function PlanBannerSlot(): Promise<ReactNode> {
     if (!env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY || !env.CLERK_SECRET_KEY) return null;
     // A prerendered page has no request, and no reader to tell.
     if ((await headers()).get("host") === null) return null;
-    const { userId } = await auth();
-    if (!userId) return null;
-    const session = await tenancy.resolveSession({ userId });
+    // The app's own user, not Clerk's id: a session is looked up by the
+    // users-table id, and a Clerk id finds nobody (so the banner never showed).
+    const principal = await currentPrincipal();
+    if (!principal) return null;
+    const session = await tenancy.resolveSession({ userId: principal.userId });
     if (session.state !== "ready") return null;
     const standing = await planStandingOf(session.company.id);
     const sentence = bannerSentence(standing, session.company.name);
     if (sentence === null) return null;
-    const permissions = await loadTenantPermissions({ principal: { userId }, tenantId: session.company.id });
+    const permissions = await loadTenantPermissions({ principal, tenantId: session.company.id });
     const canChoose = permissions?.can("subscriptions.manage") ?? false;
     const closed = !standing.open;
     return (

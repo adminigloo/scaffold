@@ -5352,6 +5352,18 @@ interface GeneratedLink {
    * runtime filter over a generated list; absent means every member.
    */
   readonly permission?: string;
+  /**
+   * The plain-word heading the link sits under in a company's sidebar
+   * ("Work", "Money", ...). Absent: above the headings (Dashboard), or, in a
+   * project with no company area, in the header row as before.
+   */
+  readonly group?: string;
+  /**
+   * Drawn in the top bar beside the account button rather than in the
+   * sidebar: the person's own things (Your account) and the platform's
+   * (Admin), which are not part of any one company's work.
+   */
+  readonly bar?: boolean;
 }
 
 /** `// ...` lines, wrapped and indented one level into an array literal. */
@@ -5391,7 +5403,7 @@ function renderLinkArray(
           .map(
             (link) =>
               `${indentedComment(link.why)}  ` +
-              `{ href: "${link.href}", label: "${link.label}"${link.audience && link.audience !== "everyone" ? `, audience: "${link.audience}"` : ""}${link.permission ? `, permission: "${link.permission}"` : ""} },\n`,
+              `{ href: "${link.href}", label: "${link.label}"${link.audience && link.audience !== "everyone" ? `, audience: "${link.audience}"` : ""}${link.permission ? `, permission: "${link.permission}"` : ""}${link.group ? `, group: "${link.group}"` : ""}${link.bar ? ", bar: true" : ""} },\n`,
           )
           .join("\n")}]`;
   return `${doc}\nexport const ${name}: readonly SiteLink[] = ${body};\n`;
@@ -5523,13 +5535,22 @@ export function renderSiteNav(answers: Answers): string {
   // staff screens under /admin. /members still exists (old links and old
   // invitation emails) and redirects to /settings/team, so it is not listed
   // twice.
+  //
+  // GROUPED FOR THE SIDEBAR (create-app 0.35.2). A companies project's work
+  // area is a left sidebar, the shape Jobber and Housecall Pro use, and 18
+  // links in one header row was a header that scrolled sideways on a 1900px
+  // screen. Each link names its plain-word heading (`group`), and the links
+  // are pushed here in sidebar order, heading by heading — the header groups
+  // them in the order they first appear, so this order IS the sidebar.
   const companyFeatureLinks: GeneratedLink[] = [];
+  // WORK: what the crew does today and what is booked.
   if (!single && answers.includeScheduling) {
     companyFeatureLinks.push(
       {
         href: "/app/schedule",
         label: "Schedule",
         permission: "schedule.view",
+        group: "Work",
         why:
           `The ${label}'s calendar: every crew's visits, the online requests ` +
           "waiting for an answer, and Schedule settings beside it.",
@@ -5538,6 +5559,7 @@ export function renderSiteNav(answers: Answers): string {
         href: "/app/schedule/today",
         label: "Today's route",
         permission: "schedule.route",
+        group: "Work",
         why:
           "A crew's stops for the day, on a phone. On the one key the Crew " +
           "role holds, so a crew member's header shows this and the dashboard.",
@@ -5549,35 +5571,67 @@ export function renderSiteNav(answers: Answers): string {
       href: "/app/estimates",
       label: "Estimates",
       permission: "estimator.view",
+      group: "Work",
       why:
         `The ${label}'s leads and quotes; its price book and estimate ` +
         "settings are linked from the Estimates page's header.",
     });
   }
-  if (!single && answers.includeInvoicing) {
+  // Tenancy 2b-4c: the company's calls.
+  if (!single && answers.includeBooking) {
     companyFeatureLinks.push({
-      href: "/app/invoices",
-      label: "Invoices",
-      permission: "invoices.view",
-      why: `The ${label}'s ledger: raise and send invoices, record payments.`,
+      href: "/app/calls",
+      label: "Calls",
+      permission: "booking.calls.view",
+      group: "Work",
+      why:
+        `The calls people booked on the ${label}'s booking page, its people's ` +
+        "hours and time off, its holidays and its call types.",
     });
   }
+  // CUSTOMERS: who they are and what they said.
   // The customer list (create-app 0.35): everyone who is the company's customer, with everything of theirs.
   if (!single && answers.includeCustomers) {
     companyFeatureLinks.push({
       href: "/app/customers",
       label: "Customers",
       permission: "customers.view",
+      group: "Customers",
       why: `The ${label}'s customers, each with every quote, visit, invoice, call, order and message of theirs on one timeline.`,
     });
   }
-  // Getting paid, part 2: a store of its own — its products and orders.
-  if (!single && answers.includeStore) {
+  if (!single && answers.includeComms) {
     companyFeatureLinks.push({
-      href: "/app/store",
-      label: "Store",
-      permission: "store.view",
-      why: `The products the ${label} sells online — prices, photos, stock — and the orders its customers placed.`,
+      href: "/app/messages",
+      label: "Messages",
+      permission: "comms.view",
+      group: "Customers",
+      why: `The emails the ${label}'s customers get, their wording, and what went out.`,
+    });
+  }
+  // Tenancy 2b-2a: the company's feedback board. Its epics (Feedback 0.12)
+  // are NOT a nav entry: "Epics" is a board's word, not a business owner's,
+  // and the board's own toolbar links to them (FeedbackWorkspace's epicsHref).
+  if (!single && answers.includeFeedback) {
+    companyFeatureLinks.push({
+      href: "/app/feedback",
+      label: "Feedback",
+      permission: "feedback.view",
+      group: "Customers",
+      why:
+        `What the ${label}'s customers sent from its feedback page or its own ` +
+        "website, as a board to answer and sort; its epics, columns, categories " +
+        "and website keys are linked from the board.",
+    });
+  }
+  // MONEY: getting paid.
+  if (!single && answers.includeInvoicing) {
+    companyFeatureLinks.push({
+      href: "/app/invoices",
+      label: "Invoices",
+      permission: "invoices.view",
+      group: "Money",
+      why: `The ${label}'s ledger: raise and send invoices, record payments.`,
     });
   }
   // Getting paid, parts 1 and 2: connect the company's own Stripe account.
@@ -5586,61 +5640,28 @@ export function renderSiteNav(answers: Answers): string {
       href: "/app/payments",
       label: "Card payments",
       permission: "payments.view",
+      group: "Money",
       why: `Connect the ${label}'s own Stripe account so customers can pay ${answers.includeInvoicing ? "invoices and deposits" : "for store orders"} by card.`,
     });
   }
-  if (!single && answers.includeComms) {
+  // Getting paid, part 2: a store of its own — its products and orders.
+  if (!single && answers.includeStore) {
     companyFeatureLinks.push({
-      href: "/app/messages",
-      label: "Messages",
-      permission: "comms.view",
-      why: `The emails the ${label}'s customers get, their wording, and what went out.`,
+      href: "/app/store",
+      label: "Store",
+      permission: "store.view",
+      group: "Money",
+      why: `The products the ${label} sells online — prices, photos, stock — and the orders its customers placed.`,
     });
   }
-  // Tenancy 2b-1: the company's Files screen, after Messages. (Alerts need
-  // no link: the bell is in the header, and its menu opens the alerts page
-  // and Alert settings.)
-  // Tenancy 2b-2a: the company's feedback board, after Messages.
-  if (!single && answers.includeFeedback) {
-    companyFeatureLinks.push({
-      href: "/app/feedback",
-      label: "Feedback",
-      permission: "feedback.view",
-      why:
-        `What the ${label}'s customers sent from its feedback page or its own ` +
-        "website, as a board to answer and sort; its columns, categories and " +
-        "website keys are under Feedback settings.",
-    });
-    // Feedback 0.12: the company's epics, beside its board.
-    companyFeatureLinks.push({
-      href: "/app/feedback/epics",
-      label: "Epics",
-      permission: "feedback.view",
-      why:
-        `The bigger pieces of work the ${label}'s feedback tickets are grouped ` +
-        "under, each with its progress, who leads it and when it's due.",
-    });
-  }
-  // Tenancy 2b-3: the company's assistant settings (its chat is the button on
-  // every /app page), for whoever may change what it knows.
-  if (!single && answers.includeAssistant) {
-    companyFeatureLinks.push({
-      href: "/app/assistant",
-      label: "Assistant",
-      permission: "assistant.settings.manage",
-      why:
-        `What the ${label}'s assistant knows — its profile, answers to common ` +
-        "questions, house rules and words — and this month's AI use. Everyone " +
-        "else asks it from the button on every page.",
-    });
-  }
-  // Tenancy 2b-4a: the company's website numbers, its websites and who is left out.
-  // Tenancy 2b-4b: and its search check and AI mentions, on the same screen.
+  // WEBSITE: how it is found, and the assistant that answers on it.
+  // Tenancy 2b-4a/b: the company's website numbers, search check and AI mentions.
   if (!single && hasCompanyWebsitePage(answers)) {
     companyFeatureLinks.push({
       href: "/app/website",
       label: "Website",
       permission: websitePagePermission(answers),
+      group: "Website",
       why: [
         ...(answers.includeAnalytics
           ? [
@@ -5654,23 +5675,64 @@ export function renderSiteNav(answers: Answers): string {
       ].join(" "),
     });
   }
-  // Tenancy 2b-4c: the company's calls, after its website.
-  if (!single && answers.includeBooking) {
+  // Tenancy 2b-3: the company's assistant settings (its chat is the button on
+  // every /app page), for whoever may change what it knows.
+  if (!single && answers.includeAssistant) {
     companyFeatureLinks.push({
-      href: "/app/calls",
-      label: "Calls",
-      permission: "booking.calls.view",
+      href: "/app/assistant",
+      label: "Assistant",
+      permission: "assistant.settings.manage",
+      group: "Website",
       why:
-        `The calls people booked on the ${label}'s booking page, its people's ` +
-        "hours and time off, its holidays and its call types.",
+        `What the ${label}'s assistant knows — its profile, answers to common ` +
+        "questions, house rules and words — and this month's AI use. Everyone " +
+        "else asks it from the button on every page.",
     });
   }
+  // COMPANY: the people, the files, the settings and the plan. (Alerts need
+  // no link: the bell is in the top bar, and its menu opens the alerts page
+  // and Alert settings.)
+  const companyLinks: GeneratedLink[] = [
+    {
+      href: "/settings/team",
+      label: "Team",
+      permission: "members.view",
+      group: "Company",
+      why:
+        `Who is in this ${label} and who has been invited: invite, ` +
+        "resend, withdraw, change a role, remove, hand over ownership.",
+    },
+  ];
+  // Tenancy 2b-1: the company's Files screen.
   if (!single && answers.includeStorage) {
-    companyFeatureLinks.push({
+    companyLinks.push({
       href: "/app/files",
       label: "Files",
       permission: "files.view",
+      group: "Company",
       why: `The photos and files the ${label} keeps, what each is attached to, and how much room is left.`,
+    });
+  }
+  companyLinks.push({
+    href: "/settings/company",
+    label: "Settings",
+    permission: "tenant.view",
+    group: "Company",
+    why:
+      `The ${label}'s name, web address, logo, brand colour, time ` +
+      "zone and contact details — typed once, read by every feature.",
+  });
+  // The company's own plan with this site, where this site sells plans to
+  // companies (the account overlay's tenant-scoped billing page).
+  if (!single && (answers.businessModel === "subscription" || answers.businessModel === "both")) {
+    companyLinks.push({
+      href: "/account/billing",
+      label: "Plan and billing",
+      permission: "subscriptions.view",
+      group: "Company",
+      why:
+        `The ${label}'s plan with this site: what it pays, what it grants, ` +
+        "its invoices and the one thing to do about it.",
     });
   }
   const app: GeneratedLink[] =
@@ -5693,25 +5755,11 @@ export function renderSiteNav(answers: Answers): string {
               `The active ${label}'s home: its setup checklist and a card for ` +
               "every part of it the person's role opens. Any member may open " +
               "it; a new owner who has no company yet is sent from here to " +
-              "onboarding.",
+              "onboarding. Above the sidebar's headings, and the one work link " +
+              "the public site's header carries.",
           },
           ...companyFeatureLinks,
-          {
-            href: "/settings/team",
-            label: "Team",
-            permission: "members.view",
-            why:
-              `Who is in this ${label} and who has been invited: invite, ` +
-              "resend, withdraw, change a role, remove, hand over ownership.",
-          },
-          {
-            href: "/settings/company",
-            label: "Settings",
-            permission: "tenant.view",
-            why:
-              `The ${label}'s name, web address, logo, brand colour, time ` +
-              "zone and contact details — typed once, read by every feature.",
-          },
+          ...companyLinks,
         ];
 
   // The customer's own side of the line, from the account overlay. Present on
@@ -5730,6 +5778,7 @@ export function renderSiteNav(answers: Answers): string {
     app.push({
       href: "/account",
       label: "Your account",
+      bar: true,
       why:
         "Orders, licence keys, allowances and billing — the read half of " +
         "everything `fulfilPurchase` writes. It was the gap: a person could " +
@@ -5748,6 +5797,7 @@ export function renderSiteNav(answers: Answers): string {
       href: "/admin",
       label: "Admin",
       audience: "staff",
+      bar: true,
       why:
         "The admin shell, from the admin overlay. Drawn only for someone " +
         "with a staff role: a business owner's header is about their " +
@@ -5916,6 +5966,10 @@ export interface SiteLink {
   readonly audience?: "staff" | "developer";
   /** A permission key of the viewer's ACTIVE company; the link shows only when their role there holds it. */
   readonly permission?: string;
+  /** The plain-word heading it sits under in a company's sidebar ("Work", "Money", ...). */
+  readonly group?: string;
+  /** In the top bar beside the account button, not in the sidebar (Your account, Admin). */
+  readonly bar?: boolean;
 }
 
 ${arrays.join("\n")}`;

@@ -8,6 +8,7 @@ import {
   AdminUnavailable,
   type AdminUnavailableReason,
 } from "@/components/admin/AdminUnavailable";
+import { SITE_NAME } from "@/seo";
 import { currentPrincipal } from "@/server/auth";
 import { loadStaffPermissions } from "@/server/permissions";
 import { tenancy } from "@/server/tenancy";
@@ -82,9 +83,7 @@ export default async function AdminLayout({ children }: { children: ReactNode })
       <aside className="order-last flex w-full flex-col border-t border-line bg-surface md:sticky md:top-0 md:order-none md:h-dvh md:w-60 md:shrink-0 md:border-r md:border-t-0">
         <div className="flex items-start justify-between gap-2 border-b border-line px-4 py-4">
           <div className="min-w-0">
-            <p className="truncate font-mono text-[11px] uppercase tracking-[0.14em] text-ink-muted">
-              __PROJECT_NAME__
-            </p>
+            <p className="truncate text-sm font-semibold text-ink-muted">{SITE_NAME}</p>
             <p className="mt-0.5 text-sm font-semibold tracking-tight">Admin</p>
           </div>
           {/* THE ALERTS BELL, where a single business's staff work (Tenancy

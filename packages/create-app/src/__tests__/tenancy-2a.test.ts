@@ -889,28 +889,30 @@ describe("the settings registry and the checklist (11.10)", () => {
 
 describe("the header and the company links (11.11)", () => {
   it("lists the company area on the company's own keys, per feature set", async () => {
+    // In sidebar order, each under its plain-word heading (create-app 0.35.2):
+    // Work, Customers, Money, Company; Admin in the top bar.
     const expected = (a: Answers) => [
       '{ href: "/dashboard", label: "Dashboard" }',
       ...(a.includeScheduling
         ? [
-            '{ href: "/app/schedule", label: "Schedule", permission: "schedule.view" }',
-            '{ href: "/app/schedule/today", label: "Today\'s route", permission: "schedule.route" }',
+            '{ href: "/app/schedule", label: "Schedule", permission: "schedule.view", group: "Work" }',
+            '{ href: "/app/schedule/today", label: "Today\'s route", permission: "schedule.route", group: "Work" }',
           ]
         : []),
-      ...(a.includeEstimator ? ['{ href: "/app/estimates", label: "Estimates", permission: "estimator.view" }'] : []),
+      ...(a.includeEstimator ? ['{ href: "/app/estimates", label: "Estimates", permission: "estimator.view", group: "Work" }'] : []),
+      ...(a.includeComms ? ['{ href: "/app/messages", label: "Messages", permission: "comms.view", group: "Customers" }'] : []),
       ...(a.includeInvoicing
         ? [
-            '{ href: "/app/invoices", label: "Invoices", permission: "invoices.view" }',
+            '{ href: "/app/invoices", label: "Invoices", permission: "invoices.view", group: "Money" }',
             // Getting paid, part 1: the company's own Stripe account.
-            '{ href: "/app/payments", label: "Card payments", permission: "payments.view" }',
+            '{ href: "/app/payments", label: "Card payments", permission: "payments.view", group: "Money" }',
           ]
         : []),
-      ...(a.includeComms ? ['{ href: "/app/messages", label: "Messages", permission: "comms.view" }'] : []),
+      '{ href: "/settings/team", label: "Team", permission: "members.view", group: "Company" }',
       // Tenancy 2b-1: each company's files, with storage.
-      ...(a.includeStorage ? ['{ href: "/app/files", label: "Files", permission: "files.view" }'] : []),
-      '{ href: "/settings/team", label: "Team", permission: "members.view" }',
-      '{ href: "/settings/company", label: "Settings", permission: "tenant.view" }',
-      '{ href: "/admin", label: "Admin", audience: "staff" }',
+      ...(a.includeStorage ? ['{ href: "/app/files", label: "Files", permission: "files.view", group: "Company" }'] : []),
+      '{ href: "/settings/company", label: "Settings", permission: "tenant.view", group: "Company" }',
+      '{ href: "/admin", label: "Admin", audience: "staff", bar: true }',
     ];
     for (const overrides of [COMPANY_FULL, ...COMPANY_EACH_ALONE.map(([, o]) => o)]) {
       const nav = code(file(await plan(overrides), "src", "nav.ts"));
@@ -937,6 +939,41 @@ describe("the header and the company links (11.11)", () => {
     for (const m of nav.matchAll(/permission: "([^"]+)"/g)) {
       expect(declared.has(m[1]!), `${m[1]} is not a company key`).toBe(true);
     }
+  });
+
+  it("groups a company's links for a sidebar, with no Epics entry and the plan where plans are sold (0.35.2)", async () => {
+    const every = {
+      ...COMPANY_FULL,
+      businessModel: "subscription" as const,
+      includeFeedback: true,
+      includeCustomers: true,
+      includeStore: true,
+      includeBooking: true,
+      includeAssistant: true,
+      includeAnalytics: true,
+    };
+    const nav = code(file(await plan(every), "src", "nav.ts"));
+    const appLinks = nav.slice(nav.indexOf("export const APP_LINKS"), nav.indexOf("export const FOOTER_LINKS"));
+    const headings = [...appLinks.matchAll(/group: "([^"]+)"/g)].map((m) => m[1]);
+    // Contiguous headings, in the sidebar's order: each appears in one run.
+    expect([...new Set(headings)]).toEqual(["Work", "Customers", "Money", "Website", "Company"]);
+    expect(headings.join(",")).toMatch(/^(Work,)+(Customers,)+(Money,)+(Website,)+(Company,)*Company$/);
+    // Epics is the Feedback board's own toolbar link, not a nav entry.
+    expect(appLinks).not.toContain("/app/feedback/epics");
+    expect(code(file(await plan(every), "app", "(site)", "app", "feedback", "page.tsx"))).toContain('epicsHref="/app/feedback/epics"');
+    expect(appLinks).toContain('{ href: "/account/billing", label: "Plan and billing", permission: "subscriptions.view", group: "Company" }');
+    expect(appLinks).toContain('{ href: "/account", label: "Your account", bar: true }');
+    // No plans sold, no plan link.
+    const oneTime = code(file(await plan({ ...every, businessModel: "one-time" }), "src", "nav.ts"));
+    expect(oneTime).not.toContain('"/account/billing"');
+    // The public links are the public site's: none of them carries a heading.
+    const siteLinks = nav.slice(nav.indexOf("export const SITE_LINKS"), nav.indexOf("export const APP_LINKS"));
+    expect(siteLinks).not.toContain("group:");
+    // A single business has no headings, so its header keeps the one row.
+    const single = code(file(await plan(SINGLE_FULL), "src", "nav.ts"));
+    expect(single).not.toContain("group:");
+    const header = code(file(await plan(every), "src", "components", "AuthHeader.tsx"));
+    expect(header).toContain("if (!APP_LINKS.some((link) => link.group !== undefined)) return null;");
   });
 
   it("filters the header and the dashboard by the person's role in their active company", async () => {

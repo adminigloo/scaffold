@@ -90,7 +90,7 @@ describe("companies: each company's own Stripe account", () => {
     expect(env).toContain("PLATFORM_FEE_BPS: process.env.PLATFORM_FEE_BPS");
     expect(optionalEnvFor(answers(COMPANIES))).toEqual(expect.arrayContaining(["STRIPE_CONNECT_WEBHOOK_SECRET", "PLATFORM_FEE_BPS"]));
     expect(code(file(p, "src", "permissions", "catalog.ts"))).toContain("...stripeConnectPermissions");
-    expect(code(file(p, "src", "nav.ts"))).toContain('{ href: "/app/payments", label: "Card payments", permission: "payments.view" }');
+    expect(code(file(p, "src", "nav.ts"))).toContain('{ href: "/app/payments", label: "Card payments", permission: "payments.view", group: "Money" }');
     expect(featureSuiteNames(answers(COMPANIES))).toContain("stripe");
     const proof = code(file(p, "src", "server", "__tests__", "feature-isolation.test.ts"));
     expect(proof).toContain("adminRoutes: STRIPE_CONNECT_ADMIN_ROUTES");
@@ -214,7 +214,8 @@ describe("Needs your attention: the owner is told with or without alerts", () =>
     expect(list).toContain("Open it in Stripe");
     const badges = code(file(p, "src", "server", "nav-badges.ts"));
     expect(badges).toContain('return open > 0 ? { "/app/payments": open } : {};');
-    expect(code(file(p, "src", "components", "AuthHeader.tsx"))).toContain("<Badge count={viewer.badges[link.href]} />");
+    expect(code(file(p, "src", "components", "AuthHeader.tsx"))).toContain("framed(link, viewer.badges)");
+    expect(code(file(p, "src", "components", "SiteFrame.tsx"))).toContain("<Badge count={link.badge} />");
     const rows = code(file(p, "src", "test", "company-rows.ts"));
     expect(rows).toContain("database\n    .insert(invoiceCardAlerts)");
     expect(rows).toContain('rows["card-alert"] = cardAlert.id;');

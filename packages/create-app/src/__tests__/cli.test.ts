@@ -1355,12 +1355,19 @@ describe("nothing links to the shop — end to end", () => {
     expect(header).toContain('from "@/nav"');
     expect(header).toContain("SITE_LINKS.map");
 
-    // Once per branch: Clerk unconfigured, signed out, signed in. A shop only
+    // Once per branch: Clerk unconfigured, signed out, signed in — all three
+    // spread the same frame, which carries the public links. A shop only
     // account holders can see is the same bug one level up.
-    expect(header.match(/<SiteLinks \/>/g)).toHaveLength(3);
+    expect(header).toContain("const frame = { siteName: SITE_NAME, siteLinks: siteLinks(),");
+    expect(header.match(/\{\.\.\.frame\}/g)).toHaveLength(3);
 
-    // Before the signed-in destinations, not after them.
-    expect(header.lastIndexOf("<SiteLinks />")).toBeLessThan(header.indexOf("<AppLinks "));
+    // The frame draws them in the public header, before the signed-in
+    // destinations — and NOT in a company's work area (WorkArea never reads them).
+    const frame = withoutComments(plan.files.get(join("src", "components", "SiteFrame.tsx")) ?? "");
+    const publicHeader = frame.slice(0, frame.indexOf("function WorkArea"));
+    expect(publicHeader.indexOf("props.siteLinks.map")).toBeGreaterThan(-1);
+    expect(publicHeader.indexOf("props.siteLinks.map")).toBeLessThan(publicHeader.indexOf("props.headerLinks.map"));
+    expect(frame.slice(frame.indexOf("function WorkArea"))).not.toContain("siteLinks");
   });
 
   it("keeps the Clerk Core 3 warning, and does not do the thing it warns about", async () => {
@@ -1389,7 +1396,7 @@ const ADMIN_SHELLS = ["minimal", "full"] as const;
 describe("the signed-in nav", () => {
   it.each(ADMIN_SHELLS)("carries /admin for --admin %s, drawn for staff only", (adminShell) => {
     const nav = renderSiteNav(answers({ adminShell }));
-    expect(nav).toContain(`{ href: "/admin", label: "Admin", audience: "staff" }`);
+    expect(nav).toContain(`{ href: "/admin", label: "Admin", audience: "staff", bar: true }`);
   });
 
   it("drops /admin, and only /admin, when no admin shell was generated", () => {
@@ -1426,8 +1433,8 @@ describe("the signed-in nav", () => {
     expect(companies).toContain('{ href: "/dashboard", label: "Dashboard" }');
     // Each on the company key it needs (Tenancy 2a): the header shows a person
     // only what their role in their active company opens.
-    expect(companies).toContain('{ href: "/settings/team", label: "Team", permission: "members.view" }');
-    expect(companies).toContain('{ href: "/settings/company", label: "Settings", permission: "tenant.view" }');
+    expect(companies).toContain('{ href: "/settings/team", label: "Team", permission: "members.view", group: "Company" }');
+    expect(companies).toContain('{ href: "/settings/company", label: "Settings", permission: "tenant.view", group: "Company" }');
     const single = renderSiteNav(answers({ tenantNoun: "none" }));
     expect(single).not.toContain('"/dashboard"');
     expect(single).not.toContain('"/settings/company"');
@@ -1466,9 +1473,10 @@ describe("the signed-in nav", () => {
     // a company link only for a role that holds its key (Tenancy 2a).
     expect(header).toContain('(link.audience !== "staff" || viewer.isStaff) &&');
     expect(header).toContain("(link.permission === undefined || viewer.can.includes(link.permission))");
-    // Three public renders, one signed-in render.
-    expect(header.match(/<SiteLinks \/>/g)).toHaveLength(3);
-    expect(header.match(/<AppLinks /g)).toHaveLength(1);
+    // Three public renders (the shared frame), and the signed-in links only in
+    // the branch that has a viewer: the header row's and the sidebar's.
+    expect(header.match(/\{\.\.\.frame\}/g)).toHaveLength(3);
+    expect(header.match(/visibleAppLinks\(viewer\)/g)).toHaveLength(2);
   });
 
   it("has no hardcoded admin link left in the header", async () => {

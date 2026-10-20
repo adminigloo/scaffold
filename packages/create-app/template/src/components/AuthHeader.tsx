@@ -2,21 +2,26 @@ import { UserButton } from "@clerk/nextjs";
 import { auth } from "@clerk/nextjs/server";
 import { headers } from "next/headers";
 import Link from "next/link";
+import type { ReactNode } from "react";
 import type { Principal } from "__SCOPE__/auth";
 import type { SessionState } from "__SCOPE__/tenancy/server";
 import { env } from "@/env";
 import { APP_LINKS, SITE_LINKS, type SiteLink } from "@/nav";
+import { SITE_NAME } from "@/seo";
 import { buttonClass } from "@/components/ui";
 import { AlertsBellSlot } from "@/components/AlertsBellSlot";
 import { CompanySwitcherSlot } from "@/components/CompanySwitcherSlot";
+import { SiteFrame, type FrameGroup, type FrameLink, type FrameWork } from "@/components/SiteFrame";
 import { currentPrincipal } from "@/server/auth";
 import { navBadges } from "@/server/nav-badges";
 import { loadStaffPermissions, loadTenantPermissions } from "@/server/permissions";
 import { tenancy } from "@/server/tenancy";
 
 /**
- * The public destinations, sign in / out, and whatever a signed-in user gets:
- * the company switcher, the links for their role, and the account menu.
+ * The site's chrome: the header with the public destinations and sign in /
+ * out, and — for someone signed in to a company — the company's work area: a
+ * sidebar with the switcher at the top and the links their role opens, under
+ * plain-word headings (`<SiteFrame>` draws both; this decides what is in them).
  *
  * A SERVER component reading `auth()`, deliberately. Clerk Core 3 (@clerk/nextjs
  * v7) removed the `<SignedIn>` / `<SignedOut>` control components that every
@@ -34,28 +39,45 @@ import { tenancy } from "@/server/tenancy";
  * The public links render in ALL THREE states, including signed out and Clerk
  * off. They are public routes — a storefront you cannot find without an account
  * is a storefront nobody finds, which is the same bug one level up from the one
- * that put this list here.
+ * that put this list here. They are NOT in a company's work area: a business
+ * owner at work does not need this site's own Products and Pricing beside their
+ * company's Store.
  *
- * ON A PHONE (below `sm`) the links fold into a "Menu" disclosure with 44px
- * rows, so the company switcher and the account button always fit on one line
- * — at 360px, the most common Android width, the row used to scroll sideways
- * and push the account (sign-out) button off the screen.
+ * ON A PHONE the public links fold into a "Menu" disclosure, and the work
+ * area's sidebar into a drawer behind a Menu button, with 44px rows — so the
+ * account (sign-out) button always fits on one line.
  *
  * Mounted by `app/(site)/layout.tsx`, not by a page. It used to be mounted by
  * the landing page alone, which meant the nav existed on exactly one route.
  */
-export async function AuthHeader() {
+export async function AuthHeader({
+  children,
+  banner,
+  footer,
+}: {
+  readonly children: ReactNode;
+  /** Where the company stands with its plan (PlanBannerSlot): under the header. */
+  readonly banner?: ReactNode;
+  /** The site footer: on the public site, not in the work area. */
+  readonly footer?: ReactNode;
+}) {
+  const frame = { siteName: SITE_NAME, siteLinks: siteLinks(), banner, footer, children };
+
   if (!env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY || !env.CLERK_SECRET_KEY) {
     return (
-      <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1">
-        <SiteLinks />
-        <p className="text-sm text-ink-muted">
-          Sign-in is off until Clerk is configured &mdash;{" "}
-          <Link href="/setup" className="text-accent underline underline-offset-2">
-            /setup
-          </Link>
-        </p>
-      </div>
+      <SiteFrame
+        {...frame}
+        headerLinks={[]}
+        work={null}
+        account={
+          <p className="text-sm text-ink-muted">
+            Sign-in is off until Clerk is configured &mdash;{" "}
+            <Link href="/setup" className="text-accent underline underline-offset-2">
+              /setup
+            </Link>
+          </p>
+        }
+      />
     );
   }
 
@@ -63,45 +85,47 @@ export async function AuthHeader() {
 
   if (!userId) {
     return (
-      <div className="flex items-center gap-4">
-        <div className="hidden items-center gap-4 sm:flex">
-          <SiteLinks />
-        </div>
-        <PhoneMenu app={[]} badges={{}} />
-        <Link href="/sign-in" className={buttonClass("secondary")}>
-          Sign in
-        </Link>
-      </div>
+      <SiteFrame
+        {...frame}
+        headerLinks={[]}
+        work={null}
+        account={
+          <Link href="/sign-in" className={buttonClass("secondary")}>
+            Sign in
+          </Link>
+        }
+      />
     );
   }
 
   const viewer = await signedInViewer();
 
   return (
-    <div className="flex min-w-0 max-w-full items-center gap-3 sm:gap-4">
-      <div className="hidden items-center gap-4 sm:flex">
-        <SiteLinks />
-      </div>
-      {/* THE SWITCHER, before the app's links (Tenancy 1). Renders nothing for
-          someone with one workspace in a single-business project, and nothing
-          if the database can't answer — the header must never fail a page. */}
-      <CompanySwitcherSlot principal={viewer.principal} session={viewer.session} />
-      <div className="hidden items-center gap-4 sm:flex">
-        <AppLinks viewer={viewer} />
-      </div>
-      <PhoneMenu app={visibleAppLinks(viewer)} badges={viewer.badges} />
-      {/* THE ALERTS BELL (Tenancy 2b-1), OUTSIDE the phone menu so it shows on
-          a phone too. Generated in three variants (src/components/
-          AlertsBellSlot.tsx): the active company's bell for someone whose role
-          there holds alerts.view, the staff bell in a single business, or
-          nothing in a project generated without alerts. It reads only what
-          the viewer above already resolved (inside its try/catch), so it can
-          never fail the page. */}
-      <AlertsBellSlot session={viewer.session} can={viewer.can} isStaff={viewer.isStaff} />
-      <UserButton />
-    </div>
+    <SiteFrame
+      {...frame}
+      // On the public site a signed-in person gets the way back to work
+      // (Dashboard) and their own links, not the whole company menu.
+      headerLinks={visibleAppLinks(viewer)
+        .filter((link) => link.group === undefined)
+        .map((link) => framed(link, viewer.badges))}
+      work={workArea(viewer)}
+      // THE SWITCHER (Tenancy 1): at the top of the sidebar in a company's work
+      // area, in the header otherwise. Renders nothing for someone with one
+      // workspace in a single-business project, and nothing if the database
+      // can't answer — the header must never fail a page.
+      switcher={<CompanySwitcherSlot principal={viewer.principal} session={viewer.session} />}
+      // THE ALERTS BELL (Tenancy 2b-1), in the top bar so it shows on a phone
+      // too. Generated in three variants (src/components/AlertsBellSlot.tsx):
+      // the active company's bell for someone whose role there holds
+      // alerts.view, the staff bell in a single business, or nothing in a
+      // project generated without alerts. It reads only what the viewer above
+      // already resolved (inside its try/catch), so it can never fail the page.
+      bell={<AlertsBellSlot session={viewer.session} can={viewer.can} isStaff={viewer.isStaff} />}
+      account={<UserButton />}
+    />
   );
 }
+
 
 /** Who is looking at the header, as much as it needs to know. */
 interface Viewer {
@@ -116,6 +140,7 @@ interface Viewer {
 }
 
 const NOBODY: Viewer = { principal: null, session: null, isStaff: false, can: [], badges: {} };
+
 
 /**
  * The signed-in person, their session, whether they are on the platform's
@@ -204,89 +229,57 @@ async function viewerId(): Promise<string | null> {
  *
  * `src/nav.ts` is written per project, which is why there is no test here for
  * whether a shop exists: a project that sells nothing contributes no entries
- * and this renders nothing at all. Quieter than the signed-in links on purpose
- * — these are where a customer goes.
+ * and the header draws nothing for them. Quieter than the signed-in links on
+ * purpose — these are where a customer goes.
  */
-function SiteLinks() {
-  return (
-    <>
-      {SITE_LINKS.map((link) => (
-        <Link
-          key={link.href}
-          href={link.href}
-          className="text-sm text-ink-muted no-underline hover:text-ink"
-        >
-          {link.label}
-        </Link>
-      ))}
-    </>
-  );
+function siteLinks(): readonly FrameLink[] {
+  return SITE_LINKS.map((link) => ({ href: link.href, label: link.label }));
+}
+
+/** A link as the frame draws it, with its count when something there needs the person. */
+function framed(link: SiteLink, badges: Readonly<Record<string, number>>): FrameLink {
+  const badge = badges[link.href];
+  return badge ? { href: link.href, label: link.label, badge } : { href: link.href, label: link.label };
 }
 
 /**
- * Where a signed-in user goes that a visitor does not, filtered for this
- * viewer (see `visibleAppLinks`).
+ * Where a company's work area is: the first path segment of every link a
+ * company member gets (/dashboard, /app, /settings, /account). Every other
+ * page under `(site)` is the public site and gets the public header.
+ */
+const WORK_PREFIXES: readonly string[] = [
+  ...new Set(APP_LINKS.filter((link) => link.audience !== "staff").map((link) => `/${link.href.split("/")[1]}`)),
+];
+
+/**
+ * The work area for this viewer, or null when there is none: signed in with no
+ * company yet (onboarding), a suspended company, or a project whose links
+ * carry no headings at all (a single business — its work is in /admin, and
+ * its header keeps the short row it always had).
  *
- * Read from a generated array: no admin shell means no Admin entry, and there
- * is no `if` here asking whether one was installed. Separate from SITE_LINKS
- * because the audiences are different — these render only once there is a
- * user.
+ * Groups in the order their first link appears in APP_LINKS, which is the
+ * order `src/nav.ts` was generated in — so the sidebar's order is decided
+ * there, once. A heading with nothing this person may open is not drawn.
  */
-function AppLinks({ viewer }: { readonly viewer: Viewer }) {
-  return (
-    <>
-      {visibleAppLinks(viewer).map((link) => (
-        <Link
-          key={link.href}
-          href={link.href}
-          className="text-sm text-accent underline underline-offset-2"
-        >
-          {link.label}
-          <Badge count={viewer.badges[link.href]} />
-        </Link>
-      ))}
-    </>
-  );
-}
-
-/** A count beside a link while something there needs the person; nothing at 0. */
-function Badge({ count }: { readonly count: number | undefined }) {
-  if (!count) return null;
-  return (
-    <span className="ml-1 inline-flex min-w-5 items-center justify-center rounded-full bg-red-700 px-1.5 text-xs font-semibold text-white no-underline" aria-label={`, ${count} need your attention`} data-nav-badge="">
-      {count}
-    </span>
-  );
-}
-
-/**
- * The same links, folded into a disclosure below `sm`. A native <details>, so
- * it works with no JavaScript and the keyboard and screen readers already know
- * it; each row is at least 44px tall, the size a thumb can hit.
- */
-function PhoneMenu({ app, badges }: { readonly app: readonly SiteLink[]; readonly badges: Readonly<Record<string, number>> }) {
-  const links = [...SITE_LINKS, ...app];
-  if (links.length === 0) return null;
-  return (
-    <details className="relative sm:hidden">
-      <summary className="flex min-h-11 cursor-pointer list-none items-center rounded-[4px] border border-line px-3 text-sm text-ink">
-        Menu
-      </summary>
-      <nav
-        aria-label="Menu"
-        className="absolute right-0 z-20 mt-1 flex w-56 max-w-[calc(100vw-2rem)] flex-col rounded-[6px] border border-line bg-surface py-1 shadow-lg"
-      >
-        {links.map((link) => (
-          <Link
-            key={link.href}
-            href={link.href}
-            className="flex min-h-11 items-center px-4 text-sm text-ink no-underline hover:bg-canvas"
-          >
-            {link.label}
-            <Badge count={badges[link.href]} />
-          </Link>
-        ))}
-      </nav>
-    </details>
-  );
+function workArea(viewer: Viewer): FrameWork | null {
+  const session = viewer.session;
+  if (session?.state !== "ready") return null;
+  if (!APP_LINKS.some((link) => link.group !== undefined)) return null;
+  const grouped = new Map<string | null, FrameLink[]>();
+  const bar: FrameLink[] = [];
+  for (const link of visibleAppLinks(viewer)) {
+    if (link.bar) {
+      bar.push(framed(link, viewer.badges));
+      continue;
+    }
+    const heading = link.group ?? null;
+    grouped.set(heading, [...(grouped.get(heading) ?? []), framed(link, viewer.badges)]);
+  }
+  const groups: FrameGroup[] = [...grouped].map(([heading, links]) => ({ heading, links }));
+  return {
+    company: { name: session.company.name, logoUrl: session.company.logoUrl },
+    groups,
+    bar,
+    prefixes: WORK_PREFIXES,
+  };
 }

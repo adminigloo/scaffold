@@ -119,7 +119,7 @@ describe("companies: each company's own store", () => {
 
   it("puts the store on the nav, its keys on the company roles, the products limit on the plans, both lists on /app/payments", async () => {
     const p = await plan(COMPANIES);
-    expect(code(file(p, "src", "nav.ts"))).toContain('{ href: "/app/store", label: "Store", permission: "store.view" }');
+    expect(code(file(p, "src", "nav.ts"))).toContain('{ href: "/app/store", label: "Store", permission: "store.view", group: "Money" }');
     expect(code(file(p, "src", "permissions", "catalog.ts"))).toContain("...storeCompanyPermissions");
     expect(code(file(p, "src", "permissions", "catalog.ts"))).not.toMatch(/\.\.\.storePermissions\b/);
     const plans = file(p, "src", "plans.ts");
@@ -159,7 +159,7 @@ describe("companies: each company's own store", () => {
     expect(hook).toContain("handleStoreEvent(db, tenantId, event");
     expect(code(file(p, "src", "server", "payments.ts"))).not.toContain("invoic");
     expect(code(file(p, "src", "permissions", "catalog.ts"))).toContain("...stripeConnectPermissions");
-    expect(code(file(p, "src", "nav.ts"))).toContain('{ href: "/app/payments", label: "Card payments", permission: "payments.view" }');
+    expect(code(file(p, "src", "nav.ts"))).toContain('{ href: "/app/payments", label: "Card payments", permission: "payments.view", group: "Money" }');
     expect(optionalEnvFor(answers(STORE_ONLY))).toEqual(expect.arrayContaining(["STRIPE_SECRET_KEY", "STRIPE_CONNECT_WEBHOOK_SECRET", "PLATFORM_FEE_BPS"]));
     // Plans aren't sold here, so the store has no product limit to check.
     expect(code(file(p, "src", "server", "store.ts"))).not.toContain("productLimit");

@@ -1,4 +1,3 @@
-import Link from "next/link";
 import type { ReactNode } from "react";
 import { AuthHeader } from "@/components/AuthHeader";
 import { PlanBannerSlot } from "@/components/PlanBannerSlot";
@@ -27,40 +26,29 @@ import { SiteFooter } from "@/components/SiteFooter";
  * sidebar out of the viewport and give the page two competing navigations.
  * Admin is reached from the header instead, via APP_LINKS.
  *
- * `min-h-dvh` with the children in a `flex-1` row is what keeps the footer at
- * the bottom of a short page rather than floating halfway up it. The root
+ * `AuthHeader` draws the chrome, because which chrome depends on who is
+ * looking and where: the public header (and footer) on the public site, and a
+ * company's sidebar in its work area (/dashboard, /app/…, /settings/…). Its
+ * `min-h-dvh` column keeps the footer at the bottom of a short page. The root
  * layout already paints the background, so nothing here declares one.
  */
 export default function SiteLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="flex min-h-dvh flex-col">
-      <header className="border-b border-line bg-surface">
-        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-x-6 gap-y-2 px-6 py-3">
-          {/* The wordmark is a link home, because on every site ever built it
-              is, and a customer three pages into a storefront tries it before
-              they look for a Home link. */}
-          <Link
-            href="/"
-            className="font-mono text-[11px] uppercase tracking-[0.14em] text-ink-muted no-underline hover:text-ink"
-          >
-            __PROJECT_NAME__
-          </Link>
-          <AuthHeader />
-        </div>
-      </header>
-
-      {/* Where the company stands with its plan (billing 0.3): a free trial's
-          days left, a failed payment, a plan that has ended. Generated in two
-          variants (src/components/PlanBannerSlot.tsx); nothing in a project
-          that doesn't sell plans, and nothing while a plan is paid up. */}
-      <PlanBannerSlot />
-      <div className="flex-1">{children}</div>
-
-      <SiteFooter />
+    <>
+      {/* The header, and in a company's work area the sidebar (AuthHeader →
+          SiteFrame). Where the company stands with its plan (billing 0.3) —
+          a free trial's days left, a failed payment, a plan that has ended —
+          sits under it: generated in two variants (src/components/
+          PlanBannerSlot.tsx), nothing in a project that doesn't sell plans
+          and nothing while a plan is paid up. The footer is the public
+          site's; the work area has none. */}
+      <AuthHeader banner={<PlanBannerSlot />} footer={<SiteFooter />}>
+        {children}
+      </AuthHeader>
       {/* This site's own visit counter (Tenancy 2b-4a). Generated in two
           variants (src/components/SiteAnalyticsSlot.tsx): the cookieless
           beacon with --analytics, nothing without. */}
       <SiteAnalyticsSlot />
-    </div>
+    </>
   );
 }

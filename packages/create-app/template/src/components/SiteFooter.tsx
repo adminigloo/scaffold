@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { resolveAppEnv } from "__SCOPE__/env";
 import { FOOTER_LINKS, SITE_LINKS, type SiteLink } from "@/nav";
+import { SITE_NAME } from "@/seo";
 
 /**
  * The footer's links for THIS deployment: everything, minus the developer
@@ -48,9 +49,7 @@ export function SiteFooter() {
   return (
     <footer className="mt-16 border-t border-line">
       <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-6 gap-y-3 px-6 py-6">
-        <p className="mr-auto font-mono text-[11px] uppercase tracking-[0.14em] text-ink-muted">
-          __PROJECT_NAME__
-        </p>
+        <p className="mr-auto text-sm font-semibold text-ink-muted">{SITE_NAME}</p>
 
         <nav aria-label="Footer" className="flex flex-wrap gap-x-5 gap-y-2">
           {visibleFooterLinks().map((link) => (
