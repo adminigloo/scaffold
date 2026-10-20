@@ -229,6 +229,6 @@ describe("the README and the upgrade notes", () => {
     expect(notes).toContain("sql/upgrade-0.1-to-0.2.sql");
     expect(notes).toContain("node_modules/@adminigloo/aeo/sql/upgrade-0.1-to-0.2.sql");
     expect(notes).toContain("tenant_id = 'primary'");
-    expect(upgradeNotesFor(answers({ ...COMPANIES, ...AI }), "0.36.0")).toEqual([]);
+    expect(upgradeNotesFor(answers({ ...COMPANIES, ...AI }), "0.36.1")).toEqual([]);
   });
 });

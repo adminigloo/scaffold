@@ -43,6 +43,7 @@ describe("hydration", () => {
     ["Onboarding", <Onboarding transport={t()} initialSession={onboardingSession()} />],
     ["CompanySwitcher", <CompanySwitcher transport={t()} session={session()} />],
     ["SetupChecklist", <SetupChecklist transport={t()} tenantId="t" initial={checklist()} />],
+    ["SetupChecklist collapsible", <SetupChecklist transport={t()} tenantId="t" initial={checklist()} collapsible />],
     ["TeamManager", <TeamManager transport={t()} tenantId="t" initial={team({ you: { ...team().you, canInvite: false } })} />],
     ["CompanySettings", <CompanySettings transport={t()} tenantId="t" initialCompany={profile()} initialSettings={settings()} />],
   ] as const) {

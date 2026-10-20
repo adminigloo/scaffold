@@ -1436,6 +1436,124 @@ describe("feature isolation: the assistant's tools", () => {
 `;
 }
 
+/** Does the dashboard read any company rows here (create-app 0.36.1)? Scheduling, the estimator or invoicing. */
+function hasDashboardReads(answers: Answers): boolean {
+  return answers.includeScheduling || answers.includeEstimator || answers.includeInvoicing;
+}
+
+/**
+ * B'S DASHBOARD NEVER SHOWS A'S ROWS (create-app 0.36.1): the numbers and the
+ * lists under them — today's visits, the newest leads, the overdue invoices —
+ * read for B carry nothing of A's, with A AND B each holding one of every row
+ * a list shows (planted through the packages' own writes); read for A, they
+ * do show A's (so the check can fail). And by permission: each list only for
+ * someone who may open its page, nothing for someone who may open none.
+ */
+function dashboardSuite(answers: Answers): string {
+  const noun = tenantLabel(answers).toLowerCase();
+  const nouns = tenantLabelPlural(answers).toLowerCase();
+  const parts: { readonly permission: string; readonly list: string; readonly what: string; readonly plant: string }[] = [];
+  if (answers.includeScheduling) {
+    parts.push({
+      permission: "schedule.view",
+      list: "visits",
+      what: "a visit today",
+      plant: `
+      // A visit TODAY, on this ${noun}'s own calendar, for its planted crew.
+      const { timeZone } = await getSchedulingSettings(db, tenantId);
+      const resourceId = rows.resource;
+      if (!resourceId) throw new Error(\`no crew was planted for \${label}\`);
+      const { visit } = await bookVisit(
+        db,
+        {
+          tenantId,
+          resourceId,
+          scheduledDate: todayIn(now, timeZone),
+          startTime: "07:00",
+          endTime: "07:30",
+          customerName: \`\${Label} Dashboard Visitor\`,
+          address: \`9 \${Label} Dashboard Lane\`,
+          status: "confirmed",
+        },
+        { skipValidation: true },
+      );
+      strings.push(visit.id, \`\${Label} Dashboard Visitor\`, \`9 \${Label} Dashboard Lane\`);`,
+    });
+  }
+  if (answers.includeEstimator) {
+    parts.push({
+      permission: "estimator.view",
+      list: "leads",
+      what: "a lead from the website",
+      plant: `
+      // A LEAD: a request from the website nobody has answered.
+      const lead = await createEstimate(
+        db,
+        { tenantId, source: "public_tool", customerName: \`\${Label} Dashboard Lead\`, items: [{ description: \`\${Label} dashboard ramp\`, quantity: 1, unitPrice: 120_000 }] },
+        undefined,
+        { now },
+      );
+      strings.push(lead.id, \`\${Label} Dashboard Lead\`, \`\${Label} dashboard ramp\`);`,
+    });
+  }
+  if (answers.includeInvoicing) {
+    parts.push({
+      permission: "invoices.view",
+      list: "overdue",
+      what: "an invoice three days overdue",
+      plant: `
+      // An OVERDUE INVOICE: sent, due three days ago, nothing paid.
+      const overdue = await createInvoice(db, {
+        tenantId,
+        customerName: \`\${Label} Dashboard Debtor\`,
+        dueDate: new Date(now.getTime() - 3 * 86_400_000),
+        items: [{ description: \`\${Label} dashboard work\`, quantity: 1, unitPrice: 40_000 }],
+      });
+      await setInvoiceStatus(db, { tenantId, id: overdue.id, status: "sent" });
+      strings.push(overdue.id, \`\${Label} Dashboard Debtor\`);`,
+    });
+  }
+  const can = parts.map((part) => JSON.stringify(part.permission)).join(", ");
+  const lists = parts.map((part) => `${JSON.stringify(part.permission)}: [${JSON.stringify(part.list)}]`).join(", ");
+  const what = parts.map((part) => part.what);
+  const planted = what.length < 2 ? (what[0] ?? "") : `${what.slice(0, -1).join(", ")} and ${what[what.length - 1]}`;
+  return `
+describe("feature isolation: the dashboard", () => {
+  it("reads the ${noun}'s own rows only: B's numbers and lists never carry A's, A's do, and each list needs its page's permission", async () => {
+    const now = new Date();
+    /** Every permission a dashboard part asks for here, and the list each one opens. GENERATED. */
+    const DASHBOARD_CAN: readonly string[] = [${can}];
+    const DASHBOARD_LISTS: Readonly<Record<string, readonly string[]>> = { ${lists} };
+    // For both ${nouns}: ${planted}. Every name carries the ${noun}'s
+    // label, so one's can never be the other's by chance.
+    const plant = async (tenantId: string, rows: Readonly<Record<string, string>>, label: string): Promise<string[]> => {
+      const Label = label.charAt(0).toUpperCase() + label.slice(1);
+      const strings: string[] = [];${parts.map((part) => part.plant).join("\n")}
+      return strings;
+    };
+    const ofA = await plant(fx.aId, fx.aRows, "alpha");
+    const ofB = await plant(fx.bId, fx.bRows, "bravo");
+    const forB = await dashboardOverview(fx.bId, DASHBOARD_CAN, "en-US", now);
+    const textB = JSON.stringify(forB);
+    // Nothing of A's on B's dashboard: not these rows, nor anything else that names A.
+    expect(ofA.filter((s) => textB.includes(s)), "B's dashboard shows A's rows").toEqual([]);
+    expect(mentionsA(textB), "B's dashboard names A").toEqual([]);
+    // The check can fail: B's own rows are on B's dashboard, and A's on A's.
+    expect(ofB.filter((s) => !textB.includes(s)), "B's dashboard is missing B's own rows").toEqual([]);
+    expect(forB.fresh, "B has work, so its dashboard isn't a brand-new ${noun}'s").toBe(false);
+    const textA = JSON.stringify(await dashboardOverview(fx.aId, DASHBOARD_CAN, "en-US", now));
+    expect(ofA.filter((s) => !textA.includes(s)), "A's dashboard is missing A's own rows").toEqual([]);
+    // By permission: each list only for someone who may open its page; nothing for someone who may open none.
+    for (const permission of DASHBOARD_CAN) {
+      const only = await dashboardOverview(fx.bId, [permission], "en-US", now);
+      expect(only.lists.map((list) => list.key), permission).toEqual(DASHBOARD_LISTS[permission]);
+    }
+    expect(await dashboardOverview(fx.bId, [], "en-US", now)).toEqual({ numbers: [], lists: [], fresh: false, hint: null });
+  });
+});
+`;
+}
+
 const ESTIMATOR_PHOTO_STORE_MOCK = `
 /**
  * Photos kept in memory, so the photo routes reach their row checks whether or
@@ -1834,6 +1952,15 @@ export function renderFeatureIsolationTest(answers: Answers): string {
   }
   if (answers.includeAeo && answers.includeAi) {
     routeImports.push(`import type { AnswerEngine } from "${scope}/aeo";`);
+  }
+  // create-app 0.36.1: the dashboard's numbers and lists (their own pass below),
+  // planted through the packages' own writes.
+  const dashboard = hasDashboardReads(answers);
+  if (dashboard) {
+    if (answers.includeScheduling) routeImports.push(`import { bookVisit, getSchedulingSettings, todayIn } from "${scope}/scheduling";`);
+    if (answers.includeEstimator) routeImports.push(`import { createEstimate } from "${scope}/estimator";`);
+    if (answers.includeInvoicing) routeImports.push(`import { createInvoice, setInvoiceStatus } from "${scope}/invoicing";`);
+    glueImports.push(`import { dashboardOverview } from "@/server/dashboard";`);
   }
   const suiteRows = suites
     .map((s) => {
@@ -2584,7 +2711,7 @@ describe("feature isolation: each role is refused what it doesn't hold", () => {
     expect(refused, "no role was refused anything, so the pass checked nothing").toBeGreaterThan(0);
   });
 });
-${filesParts.suites}${assistant ? assistantToolsSuite(answers) : ""}${answers.includeAnalytics ? websiteBeaconsSuite(answers) + audiencePeopleSuite(answers) : ""}
+${filesParts.suites}${assistant ? assistantToolsSuite(answers) : ""}${answers.includeAnalytics ? websiteBeaconsSuite(answers) + audiencePeopleSuite(answers) : ""}${dashboard ? dashboardSuite(answers) : ""}
 describe("feature isolation: the check bites (negative control)", () => {
   it("rejects a handler that answers with company A's row, for a row route and for a reference route", async () => {
     const routes = SUITES.flatMap((suite) => [...suite.adminRoutes, ...suite.publicRoutes]);

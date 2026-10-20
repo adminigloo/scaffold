@@ -994,7 +994,7 @@ describe("the header and the company links (11.11)", () => {
     expect(dashboard).not.toContain('permission="tenant.view"');
     // The numbers are filtered by the same permissions (create-app 0.36): no
     // "Money owed" for someone who can't open Invoices.
-    expect(dashboard).toContain("dashboardNumbers(company.id, can, locale)");
+    expect(dashboard).toContain("dashboardOverview(company.id, can, locale)");
     const numbers = code(file(p, "src", "server", "dashboard.ts"));
     expect(numbers).toContain('if (can.includes("invoices.view")) {');
     expect(numbers).toContain('if (can.includes("schedule.view")) {');
@@ -1167,9 +1167,10 @@ describe("what the project claims and documents (11.13)", () => {
     expect(pkgs).toContain("@adminigloo/comms-widget");
     const manifest = JSON.parse(file(await plan(COMPANY_FULL), "package.json")) as { dependencies: Record<string, string> };
     for (const [pkg, range] of [
-      // Tenancy 2b-1 moved every line it changed (versions.ts says why); the showroom (0.36) moved the widgets again.
+      // Tenancy 2b-1 moved every line it changed (versions.ts says why); the showroom (0.36) moved the widgets again,
+      // and its second round (0.36.1) the tenancy widget (the collapsible setup card).
       ["tenancy", "^0.7.0"],
-      ["tenancy-widget", "^0.3.0"],
+      ["tenancy-widget", "^0.4.0"],
       ["scheduling", "^0.6.1"],
       ["scheduling-widget", "^0.4.0"],
       ["estimator", "^0.6.0"],

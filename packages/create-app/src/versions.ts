@@ -292,7 +292,9 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // (Tenancy 2b-1): its tenancy peer is ^0.6.0 — pinned, so a project's
   // lockfile can't keep a 0.2.0 whose peer still names tenancy 0.5.
   // 0.3.0: <SetupChecklist compact> on the dashboard (create-app 0.36).
-  "tenancy-widget": "0.3.0",
+  // 0.4.0: <SetupChecklist collapsible>, the dashboard's one-line card above
+  // its numbers (create-app 0.36.1); a 0.3.x project's dashboard won't compile.
+  "tenancy-widget": "0.4.0",
   // 0.2.0 (sweep): line items after creation, atomic idempotent payments,
   // reversals, a status transition table and tenant-scoped reads — the emitted
   // admin page and router call addInvoiceItem/reversePayment/markInvoiceViewed

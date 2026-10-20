@@ -2,7 +2,7 @@
 import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SetupChecklist } from "../SetupChecklist.js";
-import { button, checklist, click, fail, fakeTenancy, mount, ok, settle, text } from "./fakes.js";
+import { button, checklist, click, fail, fakeTenancy, mount, ok, settle, spoken, text } from "./fakes.js";
 
 /**
  * <SetupChecklist> (contract 8.5): "{done} of {total} done" on a native
@@ -142,6 +142,53 @@ describe("<SetupChecklist compact> (the dashboard's, create-app 0.36)", () => {
     const folded = container.querySelector("[data-aitw-folded]")!;
     expect(text(folded.querySelector("summary"))).toBe("1 done or skipped");
     expect(folded.querySelector('[data-item="company.details"]')).not.toBeNull();
+    await unmount();
+  });
+});
+
+describe("<SetupChecklist collapsible> (the dashboard's card, create-app 0.36.1)", () => {
+  it("is one line until opened: what's left, how far along, and a button that opens the compact list", async () => {
+    const f = fakeTenancy({});
+    const initial = checklist({ done: 1, items: checklist().items.map((i, n) => (n === 0 ? { ...i, done: true } : i)) });
+    const { container, unmount } = await mount(<SetupChecklist transport={f.transport} tenantId={T} initial={initial} collapsible />);
+    const toggle = container.querySelector<HTMLButtonElement>("h2 > button[aria-expanded]")!;
+    expect(spoken(toggle)).toBe("2 things left to set up, 1 of 3 done");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    const body = container.querySelector(`[id="${toggle.getAttribute("aria-controls")}"]`)!;
+    expect(body.hasAttribute("hidden")).toBe(true);
+    // The title isn't drawn: the line is the heading.
+    expect(text(container)).not.toContain("Finish setting up");
+    await click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(body.hasAttribute("hidden")).toBe(false);
+    // Open, it is the compact list: what's left in full, what's done folded.
+    expect(body.querySelectorAll(".aitw-items > [data-item]")).toHaveLength(2);
+    expect(text(body.querySelector("[data-aitw-folded] summary"))).toBe("1 done or skipped");
+    await click(toggle);
+    expect(body.hasAttribute("hidden")).toBe(true);
+    await unmount();
+  });
+
+  it("starts open with defaultOpen, and its line keeps count as items are skipped", async () => {
+    const skipped = checklist({ done: 0, items: checklist().items.map((i) => (i.key === "team.invite" ? { ...i, dismissed: true } : i)) });
+    const f = fakeTenancy({ dismissChecklistItem: () => ok(skipped) });
+    const { container, unmount } = await mount(<SetupChecklist transport={f.transport} tenantId={T} initial={checklist()} collapsible defaultOpen />);
+    const toggle = container.querySelector<HTMLButtonElement>("h2 > button[aria-expanded]")!;
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(text(toggle)).toContain("3 things left to set up");
+    await click(button(container.querySelector('[data-item="team.invite"]')!, "Not needed"));
+    expect(text(toggle)).toContain("2 things left to set up");
+    // The announcement still reaches a screen reader, outside the folding part.
+    expect(text(container.querySelector('[role="status"]'))).toContain("marked as not needed");
+    await unmount();
+  });
+
+  it("says 'You're all set.' once the last one is done here, and keeps 'Hide this list' beside it", async () => {
+    const complete = checklist({ done: 3, complete: true, items: checklist().items.map((i) => ({ ...i, done: true })) });
+    const { container, unmount } = await mount(<SetupChecklist transport={fakeTenancy({}).transport} tenantId={T} initial={complete} collapsible defaultOpen />);
+    expect(text(container.querySelector("h2"))).toContain("You're all set.");
+    expect(button(container, "Hide this list")).not.toBeNull();
+    expect(container.querySelector(".aitw-items")).toBeNull();
     await unmount();
   });
 });

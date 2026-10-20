@@ -231,6 +231,6 @@ describe("upgrading", () => {
     expect(withList).toContain("pnpm customers:backfill");
     const without = upgradeNotesFor(answers({ ...COMPANIES, includeCustomers: false }), "0.34.0").join("\n");
     expect(without).toContain("add customers");
-    expect(upgradeNotesFor(answers(COMPANIES), "0.36.0")).toEqual([]);
+    expect(upgradeNotesFor(answers(COMPANIES), "0.36.1")).toEqual([]);
   });
 });

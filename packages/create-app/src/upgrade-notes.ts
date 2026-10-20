@@ -32,6 +32,27 @@ export function upgradeNotesFor(answers: Answers, fromVersion: string): string[]
   const companies = answers.tenantNoun !== "none";
   const noun = tenantLabel(answers).toLowerCase();
   const crossed = (version: string) => (compareVersions(fromVersion, version) ?? -1) < 0;
+  // 0.36.1 — the dashboard keeps its numbers while setup is unfinished, and
+  // lists the day's work under them. No database change; the files carry it.
+  if (crossed("0.36.1") && companies) {
+    const lists = [
+      ...(answers.includeScheduling ? ["today's visits"] : []),
+      ...(answers.includeEstimator ? ["the newest leads"] : []),
+      ...(answers.includeInvoicing ? ["the overdue invoices"] : []),
+    ];
+    const listed = lists.length < 2 ? (lists[0] ?? "") : `${lists.slice(0, -1).join(", ")} and ${lists[lists.length - 1]}`;
+    notes.push(
+      `The ${noun} dashboard no longer hides its numbers while setup is unfinished: what's left is one card above them ` +
+        `("2 things left to set up") that opens into the list (@adminigloo/tenancy-widget 0.4, \`<SetupChecklist collapsible>\`), and it's gone ` +
+        `once everything is done or skipped.` +
+        (lists.length > 0
+          ? ` Under the numbers, up to five lines each of ${listed}, for whoever may open their pages, read by \`dashboardOverview\` in ` +
+            "src/server/dashboard.ts (`dashboardNumbers` still answers the numbers alone) and drawn by src/components/Dashboard.tsx." +
+            (answers.includeEstimator ? " New leads now counts exactly what the Estimates page's Leads shows." : "")
+          : "") +
+        " No database change.",
+    );
+  }
   // 0.36.0 — the showroom: how every screen looks to an owner and their
   // customers. No database change; the files carry it.
   if (crossed("0.36.0")) {
@@ -54,7 +75,7 @@ export function upgradeNotesFor(answers: Answers, fromVersion: string): string[]
           `your hours — shown on /t/{web address} and given to search engines) and **Dates and money** (en-US unless a ${noun} picks another). ` +
           `Each ${noun}'s /t/{web address} is now a small website: its name and tagline, one big button${answers.includeEstimator ? " (Get an instant estimate)" : ""}, ` +
           `${answers.includeEstimator ? "its price book's website products with \"from $X\", " : ""}the other pages it offers customers, and how to reach it.`,
-        `The ${noun} dashboard shows the setup checklist (compact) until setup is done, then Today, New leads, Money owed and Paid this week ` +
+        `The ${noun} dashboard shows Today, New leads, Money owed and Paid this week ` +
           "(src/server/dashboard.ts, generated for your features) — no more grid of links that repeats the sidebar.",
       );
     }

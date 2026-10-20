@@ -135,10 +135,12 @@ describe("one page shape", () => {
 });
 
 describe("the dashboard", () => {
-  it("shows the compact checklist until setup is done, then the numbers this project has", async () => {
+  it("puts the setup checklist on it while setup is unfinished, and the numbers this project has", async () => {
     const all = files(await plan(EVERYTHING));
     const page = code(all.get("app/(site)/dashboard/page.tsx")!);
-    expect(page).toContain("<SetupChecklist baseUrl={TENANCY_API} tenantId={company.id} noun={NOUN} initial={checklist} compact />");
+    // 0.36.1: one collapsible card above the numbers, never instead of them (dashboard-0361.test.ts).
+    expect(page).toContain("<SetupChecklist");
+    expect(page).toContain("collapsible");
     expect(page).not.toContain("APP_LINKS");
     const numbers = code(all.get("src/server/dashboard.ts")!);
     for (const label of ['label: "Today"', 'label: "New leads"', 'label: "Money owed"', 'label: "Paid this week"']) expect(numbers).toContain(label);
@@ -210,12 +212,12 @@ describe("plans in owner language", () => {
 });
 
 describe("upgrading to 0.36", () => {
-  it("tells a 0.35 project what changed, and a 0.36 project nothing", () => {
+  it("tells a 0.35 project what changed, and a 0.36.1 project nothing", () => {
     const notes = upgradeNotesFor(answers(EVERYTHING), "0.35.2").join("\n");
     expect(notes).toContain("src/marketing-copy.ts");
     expect(notes).toContain("Your public page");
     expect(notes).toContain("HEADLINE_FEATURES");
     expect(notes).toContain("sending allowance");
-    expect(upgradeNotesFor(answers(EVERYTHING), "0.36.0")).toEqual([]);
+    expect(upgradeNotesFor(answers(EVERYTHING), "0.36.1")).toEqual([]);
   });
 });

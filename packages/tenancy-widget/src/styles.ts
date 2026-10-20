@@ -381,6 +381,36 @@ textarea.aitw-input { min-height: 92px; resize: vertical; }
 .aitw-folded .aitw-item-icon { width: 22px; height: 22px; }
 .aitw-folded .aitw-item-icon svg { width: 18px; height: 18px; }
 .aitw-folded-title { flex: 1 1 auto; min-width: 0; }
+/* The dashboard's collapsible card (create-app 0.36.1): one line — the
+   heading's own button — until opened, then the compact list beneath it. The
+   title sits 20px in, level with the text of the stat cards below it. */
+.aitw-checklist-card { gap: 0; padding: 6px; }
+.aitw-card-heading { font-size: 16px; font-weight: 700; line-height: 1.35; }
+.aitw-disclosure {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto 28px; align-items: center; gap: 4px 16px;
+  width: 100%; min-height: 52px; padding: 8px 8px 8px 14px; border: 0; border-radius: var(--aitw-radius-sm);
+  background: transparent; color: var(--aitw-ink); font-weight: 700; text-align: left; cursor: pointer;
+}
+.aitw-disclosure:hover { background: var(--aitw-ground); }
+.aitw-disclosure-title { min-width: 0; overflow-wrap: anywhere; }
+.aitw-disclosure-progress { display: flex; align-items: center; gap: 12px; min-width: 0; font-weight: 400; }
+.aitw-disclosure-progress .aitw-sub { font-size: 14px; white-space: nowrap; }
+.aitw-disclosure-progress .aitw-progress { width: 120px; height: 6px; flex: none; }
+.aitw-disclosure-icon { display: inline-flex; width: 28px; height: 28px; align-items: center; justify-content: center; color: var(--aitw-muted); }
+.aitw-disclosure-icon svg { width: 18px; height: 18px; transition: transform .15s ease; }
+.aitw-disclosure[aria-expanded="true"] .aitw-disclosure-icon svg { transform: rotate(180deg); }
+.aitw-card-body {
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px;
+  margin: 6px -6px 0; padding: 16px 20px 14px; border-top: 1px solid var(--aitw-line);
+}
+.aitw-card-body[hidden] { display: none; }
+@media (max-width: 480px) {
+  .aitw-disclosure { grid-template-columns: minmax(0, 1fr) 28px; }
+  .aitw-disclosure-progress { grid-column: 1; grid-row: 2; }
+  .aitw-disclosure-icon { grid-column: 2; grid-row: 1; }
+  .aitw-disclosure-progress .aitw-progress { flex: 1 1 auto; width: auto; max-width: 160px; }
+  .aitw-card-body { padding: 14px 16px 12px; }
+}
 .aitw-root details > summary { min-height: 44px; min-width: 44px; padding: 0 8px; display: inline-flex; align-items: center; cursor: pointer; font-weight: 600; color: var(--aitw-muted); }
 
 /* Tables: a real table from 640px, label-and-value cards below it. */

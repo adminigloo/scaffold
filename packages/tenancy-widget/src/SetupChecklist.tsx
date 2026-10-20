@@ -2,6 +2,7 @@ import { useEffect, useId, useState } from "react";
 import type { TenancyTransport } from "./client.js";
 import {
   CheckCircleIcon,
+  ChevronDownIcon,
   CircleIcon,
   LiveRegion,
   Loading,
@@ -26,6 +27,13 @@ import { CHECKLIST, errorText, nounOf, NOT_CONNECTED_MESSAGE, W } from "./words.
  *
  * "HIDE THIS LIST" WAITS. Until everything is done or skipped it sits behind
  * "More", so it isn't the tempting way out of a list nobody has started.
+ *
+ * COLLAPSIBLE (create-app 0.36.1): the dashboard's card above the numbers.
+ * Closed it is one line — "2 things left to set up", how far along, and a
+ * chevron — so an operating company's numbers stay the page; open, it is the
+ * compact list. The line is the list's own count, so it stays true as items
+ * are ticked or skipped here, or elsewhere (the list asks again when the tab
+ * comes back).
  */
 
 export interface SetupChecklistProps extends ChromeProps, NounProps {
@@ -42,6 +50,16 @@ export interface SetupChecklistProps extends ChromeProps, NounProps {
    * list reads as "what's left", not as a wall of nine cards. Default false.
    */
   compact?: boolean;
+  /**
+   * One line until opened: "2 things left to set up", "7 of 9 done" and a
+   * chevron — a disclosure button in the heading (an accordion's) that opens
+   * the compact list beneath it. Implies `compact`; `title` isn't shown. For a
+   * page whose own content comes first, like the dashboard's numbers.
+   * Default false.
+   */
+  collapsible?: boolean;
+  /** With `collapsible`: start open, for a page that leads with the list (a brand-new company's). Default false. */
+  defaultOpen?: boolean;
 }
 
 export function SetupChecklist(props: SetupChecklistProps) {
@@ -54,6 +72,8 @@ export function SetupChecklist(props: SetupChecklistProps) {
   const [busy, setBusy] = useState<string | null>(null);
   const headingId = useId();
   const progressId = useId();
+  const bodyId = useId();
+  const [open, setOpen] = useState(props.defaultOpen === true);
   const chrome = { theme, nonce, className, style };
   const reload = list.reload;
 
@@ -146,7 +166,8 @@ export function SetupChecklist(props: SetupChecklistProps) {
   };
 
   const progressText = CHECKLIST.progress(data.done, data.total);
-  const compact = props.compact === true;
+  const collapsible = props.collapsible === true;
+  const compact = collapsible || props.compact === true;
   // Compact: what's left, in full; what's done (or skipped), folded away.
   const shown = compact ? data.items.filter((item) => !item.done && !item.dismissed) : data.items;
   const folded = compact ? data.items.filter((item) => item.done || item.dismissed) : [];
@@ -155,23 +176,15 @@ export function SetupChecklist(props: SetupChecklistProps) {
       {CHECKLIST.hide}
     </button>
   );
+  const progressBar = (
+    <progress id={progressId} className="aitw-progress" value={data.done} max={Math.max(1, data.total)}>
+      {progressText}
+    </progress>
+  );
 
-  return (
-    <WidgetRoot {...chrome} data={{ "aitw-checklist": data.complete ? "complete" : "open" }}>
-      <section className={compact ? "aitw-panel aitw-checklist-compact" : "aitw-panel"} aria-labelledby={headingId}>
-        <div className="aitw-head">
-          <h2 className="aitw-title" id={headingId}>
-            {title}
-          </h2>
-        </div>
-        <div className="aitw-progress-row">
-          <label className="aitw-sub" htmlFor={progressId}>
-            {progressText}
-          </label>
-          <progress id={progressId} className="aitw-progress" value={data.done} max={Math.max(1, data.total)}>
-            {progressText}
-          </progress>
-        </div>
+  const body = (
+    <>
+      {shown.length > 0 ? (
         <ul className="aitw-items">
           {shown.map((item) => (
             <li key={item.key} className="aitw-item" data-item={item.key} data-done={item.done ? "" : undefined} data-dismissed={item.dismissed && !item.done ? "" : undefined}>
@@ -225,41 +238,92 @@ export function SetupChecklist(props: SetupChecklistProps) {
             </li>
           ))}
         </ul>
-        {folded.length > 0 ? (
-          <details className="aitw-more" data-aitw-folded="">
-            <summary>{folded.length === 1 ? "1 done or skipped" : `${folded.length} done or skipped`}</summary>
-            <ul className="aitw-folded">
-              {folded.map((item) => (
-                <li key={item.key} data-item={item.key} data-done={item.done ? "" : undefined} data-dismissed={item.dismissed && !item.done ? "" : undefined}>
-                  <span className="aitw-item-icon">{item.done ? <CheckCircleIcon /> : <CircleIcon />}</span>
-                  <span className="aitw-folded-title">{item.title}</span>
-                  {!item.done && item.dismissed ? (
-                    <button
-                      type="button"
-                      className="aitw-btn aitw-btn-link"
-                      disabled={busy !== null}
-                      onClick={() => void restore(item.key, item.title)}
-                    >
-                      {CHECKLIST.undo}
-                      <span className="aitw-sr">: {item.title}</span>
-                    </button>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          </details>
-        ) : null}
-        {data.complete ? (
-          <div className="aitw-row">
-            <p className="aitw-ok-text aitw-grow">{CHECKLIST.allSet}</p>
-            {hideButton}
+      ) : null}
+      {folded.length > 0 ? (
+        <details className="aitw-more" data-aitw-folded="">
+          <summary>{folded.length === 1 ? "1 done or skipped" : `${folded.length} done or skipped`}</summary>
+          <ul className="aitw-folded">
+            {folded.map((item) => (
+              <li key={item.key} data-item={item.key} data-done={item.done ? "" : undefined} data-dismissed={item.dismissed && !item.done ? "" : undefined}>
+                <span className="aitw-item-icon">{item.done ? <CheckCircleIcon /> : <CircleIcon />}</span>
+                <span className="aitw-folded-title">{item.title}</span>
+                {!item.done && item.dismissed ? (
+                  <button
+                    type="button"
+                    className="aitw-btn aitw-btn-link"
+                    disabled={busy !== null}
+                    onClick={() => void restore(item.key, item.title)}
+                  >
+                    {CHECKLIST.undo}
+                    <span className="aitw-sr">: {item.title}</span>
+                  </button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+      {data.complete ? (
+        <div className="aitw-row">
+          <p className="aitw-ok-text aitw-grow">{CHECKLIST.allSet}</p>
+          {hideButton}
+        </div>
+      ) : (
+        <details className="aitw-more">
+          <summary>{CHECKLIST.more}</summary>
+          <div className="aitw-actions">{hideButton}</div>
+        </details>
+      )}
+    </>
+  );
+
+  if (collapsible) {
+    // The heading IS the button (an accordion's): its name reads the whole
+    // line — "2 things left to set up, 7 of 9 done" — and the bar beside it
+    // only draws what the words already say.
+    const left = shown.length;
+    return (
+      <WidgetRoot {...chrome} data={{ "aitw-checklist": data.complete ? "complete" : "open" }}>
+        <section className="aitw-panel aitw-checklist-compact aitw-checklist-card" aria-labelledby={headingId} data-aitw-collapsible={open ? "open" : "closed"}>
+          <h2 className="aitw-card-heading" id={headingId}>
+            <button type="button" className="aitw-disclosure" aria-expanded={open} aria-controls={bodyId} onClick={() => setOpen((was) => !was)}>
+              <span className="aitw-disclosure-title">{left === 0 ? CHECKLIST.allSet : CHECKLIST.left(left)}</span>
+              <span className="aitw-disclosure-progress">
+                <span className="aitw-sub">
+                  <span className="aitw-sr">, </span>
+                  {progressText}
+                </span>
+                <progress className="aitw-progress" value={data.done} max={Math.max(1, data.total)} aria-hidden="true" />
+              </span>
+              <span className="aitw-disclosure-icon">
+                <ChevronDownIcon />
+              </span>
+            </button>
+          </h2>
+          <div className="aitw-card-body" id={bodyId} hidden={!open}>
+            {body}
           </div>
-        ) : (
-          <details className="aitw-more">
-            <summary>{CHECKLIST.more}</summary>
-            <div className="aitw-actions">{hideButton}</div>
-          </details>
-        )}
+          <LiveRegion status={status} alert={alert} />
+        </section>
+      </WidgetRoot>
+    );
+  }
+
+  return (
+    <WidgetRoot {...chrome} data={{ "aitw-checklist": data.complete ? "complete" : "open" }}>
+      <section className={compact ? "aitw-panel aitw-checklist-compact" : "aitw-panel"} aria-labelledby={headingId}>
+        <div className="aitw-head">
+          <h2 className="aitw-title" id={headingId}>
+            {title}
+          </h2>
+        </div>
+        <div className="aitw-progress-row">
+          <label className="aitw-sub" htmlFor={progressId}>
+            {progressText}
+          </label>
+          {progressBar}
+        </div>
+        {body}
         <LiveRegion status={status} alert={alert} />
       </section>
     </WidgetRoot>

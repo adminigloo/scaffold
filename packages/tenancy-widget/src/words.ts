@@ -265,6 +265,8 @@ export const SWITCHER = {
 export const CHECKLIST = {
   title: "Finish setting up",
   progress: (done: number, total: number) => `${done} of ${total} done`,
+  /** The collapsible card's one line (the dashboard's, create-app 0.36.1). */
+  left: (count: number) => (count === 1 ? "1 thing left to set up" : `${count} things left to set up`),
   notNeeded: "Not needed",
   skipped: "Skipped",
   done: "Done",
