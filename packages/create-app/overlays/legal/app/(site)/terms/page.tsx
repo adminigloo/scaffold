@@ -12,7 +12,7 @@ import { PUBLISHER } from "@/legal-publisher";
 export const metadata: Metadata = {
   title: "Terms",
   description:
-    "The agreement between you and __PROJECT_NAME__: your account, what you may do with the service, and what we owe each other.",
+    "The agreement between you and __DISPLAY_NAME__: your account, what you may do with the service, and what we owe each other.",
   alternates: { canonical: "/terms" },
 };
 

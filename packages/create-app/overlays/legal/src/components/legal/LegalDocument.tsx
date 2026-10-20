@@ -32,7 +32,7 @@ export function LegalDocument({
   return (
     <main className="mx-auto max-w-[46rem] px-6 py-14">
       <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-ink-muted">
-        __PROJECT_NAME__ &mdash; legal
+        __DISPLAY_NAME__ &mdash; legal
       </p>
 
       <h1 className="mt-3 text-3xl font-semibold tracking-[-0.02em] text-balance">

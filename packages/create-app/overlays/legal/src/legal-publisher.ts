@@ -44,7 +44,7 @@ export interface Publisher {
 
 export const PUBLISHER: Publisher = {
   legalName: "PLACEHOLDER — the registered company name",
-  tradingName: "__PROJECT_NAME__",
+  tradingName: "__DISPLAY_NAME__",
   address: "PLACEHOLDER — registered address",
   contactEmail: "",
   governingLaw: "PLACEHOLDER — the law these terms are governed by",

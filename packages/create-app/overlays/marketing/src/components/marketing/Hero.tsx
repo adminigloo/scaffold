@@ -42,7 +42,7 @@ export function Hero() {
             `tenantLabelPlural` exists: the noun is one of five and the generator
             cannot know whether it takes "a" or "an". "a organization" on the
             first line of a client's landing page is the whole impression. */}
-        __PROJECT_NAME__ keeps everything your __TENANT_LABEL_LOWER__ runs on in
+        __DISPLAY_NAME__ keeps everything your __TENANT_LABEL_LOWER__ runs on in
         one system &mdash; so nothing lives in a spreadsheet somebody forgot to
         share, and nobody spends the last day of the month reconciling three
         tools that disagree.

@@ -97,7 +97,7 @@ const ChatBody = z
  * this string; do not add a parameter for it.
  */
 const SYSTEM_PROMPT =
-  "You are the assistant inside __PROJECT_NAME__. Answer the question that " +
+  "You are the assistant inside __DISPLAY_NAME__. Answer the question that " +
   "was asked, in plain prose, and say plainly when you do not know.";
 
 /** The dimension the usage rows are grouped by. */

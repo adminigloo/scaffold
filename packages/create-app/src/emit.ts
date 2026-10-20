@@ -157,6 +157,9 @@ export async function assertTargetUsable(targetDir: string): Promise<void> {
 export function renderTokens(source: string, answers: Answers): string {
   const tokens: Record<string, string> = {
     __PROJECT_NAME__: answers.projectName,
+    // The name people read ("Igloo Backoffice"), where __PROJECT_NAME__ is the
+    // slug ("igloo-backoffice") a log, a package or a file wants.
+    __DISPLAY_NAME__: displayNameOf(answers.projectName),
     __SCOPE__: answers.scope,
     __SCOPE_NAME__: answers.scope.replace(/^@/, ""),
     __TENANT_LABEL__: tenantLabel(answers),

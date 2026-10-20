@@ -57,7 +57,7 @@ const SAMPLE = {
   roleName: "Admin",
   url: "https://example.com/invite/sample-token-not-a-real-invitation",
   expiresAt: new Date("2026-01-08T09:00:00.000Z"),
-  productName: "__PROJECT_NAME__",
+  productName: "__DISPLAY_NAME__",
 } as const;
 
 export default function EmailPreviewPage() {

@@ -18,7 +18,7 @@ import { PUBLISHER } from "@/legal-publisher";
 export const metadata: Metadata = {
   title: "Privacy",
   description:
-    "What __PROJECT_NAME__ holds about you, why, and everyone else who sees it.",
+    "What __DISPLAY_NAME__ holds about you, why, and everyone else who sees it.",
   alternates: { canonical: "/privacy" },
 };
 

@@ -41,7 +41,7 @@ export default function GlobalError({
           error={error}
           reset={reset}
           boundary="global"
-          title="__PROJECT_NAME__ could not start this page"
+          title="__DISPLAY_NAME__ could not start this page"
           // "/" is the one route every configuration of this scaffold has. A
           // link to anything else would be a link to a 404 in the projects that
           // did not install it — on the screen a person reaches when everything
