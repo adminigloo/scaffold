@@ -520,6 +520,7 @@ function renderCompanyPage(answers: Answers): string {
   const noun = tenantLabel(answers).toLowerCase();
   return `import { CustomersAdmin } from "${answers.scope}/customers/admin";
 import { CompanyGate } from "@/components/CompanyGate";
+import { PageHeader, WORK_MAIN } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -537,14 +538,24 @@ export default async function CompanyCustomersPage({ searchParams }: { readonly 
   const customerId = typeof query.customer === "string" ? query.customer : null;
   return (
     <CompanyGate path="/app/customers" permission="customers.view">
-      {({ company, can }) => (
-        <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
+      {({ company, can, locale }) => (
+        <main className={WORK_MAIN}>
+          {/* The list gets the shared page header; one customer's page is
+              headed by their own name, drawn by the widget. */}
+          {customerId ? null : (
+            <PageHeader
+              title="Customers"
+              description="Everyone who has asked for a quote, booked, been invoiced or bought from you, each with their whole history."
+            />
+          )}
           <CustomersAdmin
             baseUrl={\`/api/app/\${company.id}/customers\`}
             pageHref="/app/customers"
             customerId={customerId}
             recordHrefs={RECORD_HREFS}
             canManage={can.includes("customers.manage")}
+            title={false}
+            locale={locale}
           />
         </main>
       )}

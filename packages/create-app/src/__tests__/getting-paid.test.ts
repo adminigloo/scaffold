@@ -207,7 +207,7 @@ describe("Needs your attention: the owner is told with or without alerts", () =>
   it("companies: /app/payments lists it, the header counts it, and the proof drives both routes with A's planted problem", async () => {
     const p = await plan(COMPANIES);
     const page = file(p, "app", "(site)", "app", "payments", "page.tsx");
-    expect(page).toContain("<PaymentsAttention baseUrl={`/api/app/${company.id}/invoices`} />");
+    expect(page).toContain("<PaymentsAttention baseUrl={`/api/app/${company.id}/invoices`} locale={locale} />");
     const list = code(file(p, "src", "components", "PaymentsAttention.tsx"));
     expect(list).toContain("/v1/admin/attention");
     expect(list).toContain("Mark as handled");

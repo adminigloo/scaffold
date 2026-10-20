@@ -38,8 +38,10 @@ export interface MessagesConsoleProps extends ChromeProps {
   transport?: CommsTransport;
   /** Show the Edit and Send-due-now controls. The server still refuses; this only avoids offering them. Default true. */
   canManage?: boolean;
-  /** Dates in the log use this locale. Default: the viewer's. */
+  /** Dates in the log use this locale (the company's). Default "en-US". */
   locale?: string;
+  /** Staff of the SITE: also show the technical reason email is off. An owner reads one plain sentence. */
+  showTechnical?: boolean;
 }
 
 const MISSING: Result<never> = {
@@ -64,7 +66,7 @@ async function safely<T>(call: () => Promise<Result<T>>): Promise<Result<T>> {
 }
 
 export function MessagesConsole(props: MessagesConsoleProps) {
-  const { baseUrl, transport: given, canManage = true, locale, ...chrome } = props;
+  const { baseUrl, transport: given, canManage = true, locale = "en-US", showTechnical = false, ...chrome } = props;
   const transport = useMemo(() => given ?? (baseUrl ? createCommsClient({ baseUrl }) : missingTransport()), [given, baseUrl]);
 
   const [status, setStatus] = useState<Load<CommsStatusWire>>({ state: "loading" });
@@ -159,7 +161,7 @@ export function MessagesConsole(props: MessagesConsoleProps) {
           ) : status.state === "error" ? (
             <ErrorNotice error={status.error} onRetry={() => void loadStatus()} />
           ) : (
-            <StatusLines status={status.data} />
+            <StatusLines status={status.data} showTechnical={showTechnical} />
           )}
         </section>
 
@@ -291,7 +293,10 @@ function ErrorNotice({ error, onRetry }: { error: ClientError; onRetry: () => vo
   );
 }
 
-function StatusLines({ status }: { status: CommsStatusWire }) {
+/** What an owner reads when email is off: the operator's job, in plain words. */
+export const EMAILS_OFF_FOR_OWNER = "Email isn't switched on for this site yet, so nothing is emailed: each message is logged as skipped.";
+
+function StatusLines({ status, showTechnical }: { status: CommsStatusWire; showTechnical: boolean }) {
   const from = status.fromName ?? "your site's usual name";
   const reply = status.replyTo ?? "your site's usual reply address";
   return (
@@ -299,7 +304,12 @@ function StatusLines({ status }: { status: CommsStatusWire }) {
       <p>
         Your customers see emails from <strong>{from}</strong> and their replies go to <strong>{reply}</strong>.
       </p>
-      {!status.emails ? <div className="aicw-notice aicw-notice-warn">{status.emailsOffReason ?? "Emails aren't being sent right now."}</div> : null}
+      {!status.emails ? (
+        <div className="aicw-notice aicw-notice-warn" data-aicw-emails-off="">
+          {EMAILS_OFF_FOR_OWNER}
+          {showTechnical && status.emailsOffReason ? <span className="aicw-detail">{status.emailsOffReason}</span> : null}
+        </div>
+      ) : null}
       {status.scheduled.late > 0 ? <div className="aicw-notice aicw-notice-warn">{lateSentence(status.scheduled.late)}</div> : null}
       {status.scheduled.behind > 0 ? (
         <div className="aicw-notice aicw-notice-warn" data-aicw-behind="">
@@ -482,7 +492,15 @@ function EditTemplate({
 
 function DeliveryLog({ messages, locale }: { messages: readonly MessageWire[]; locale: string | undefined }) {
   if (messages.length === 0) {
-    return <p className="aicw-muted">Nothing has gone out yet. Messages appear here as they're sent.</p>;
+    return (
+      <div className="aicw-empty" data-aicw-empty="">
+        <p className="aicw-empty-title">Nothing has gone out yet</p>
+        <p className="aicw-muted">
+          Once you&apos;re using it, every email your customers get from you (quotes, confirmations, invoices, reminders) is listed here with
+          whether it arrived.
+        </p>
+      </div>
+    );
   }
   const what = (m: MessageWire) => (m.templateKey ? templateLabel(m.templateKey) : m.channel === "sms" ? "Text message" : "Email");
   const note = (m: MessageWire) => [m.note, m.blanks.length > 0 ? `Left blank: ${m.blanks.join(", ")}` : null].filter(Boolean).join(" · ");

@@ -36,6 +36,12 @@ export interface SetupChecklistProps extends ChromeProps, NounProps {
   initial?: ChecklistWire;
   /** Default "Finish setting up". */
   title?: string;
+  /**
+   * The dashboard's shape: the done items fold into one "3 done" line, the
+   * open ones keep their one sentence, and the spacing is tighter — so the
+   * list reads as "what's left", not as a wall of nine cards. Default false.
+   */
+  compact?: boolean;
 }
 
 export function SetupChecklist(props: SetupChecklistProps) {
@@ -140,6 +146,10 @@ export function SetupChecklist(props: SetupChecklistProps) {
   };
 
   const progressText = CHECKLIST.progress(data.done, data.total);
+  const compact = props.compact === true;
+  // Compact: what's left, in full; what's done (or skipped), folded away.
+  const shown = compact ? data.items.filter((item) => !item.done && !item.dismissed) : data.items;
+  const folded = compact ? data.items.filter((item) => item.done || item.dismissed) : [];
   const hideButton = (
     <button type="button" className="aitw-btn aitw-btn-secondary" disabled={busy !== null} onClick={() => void hide()}>
       {CHECKLIST.hide}
@@ -148,7 +158,7 @@ export function SetupChecklist(props: SetupChecklistProps) {
 
   return (
     <WidgetRoot {...chrome} data={{ "aitw-checklist": data.complete ? "complete" : "open" }}>
-      <section className="aitw-panel" aria-labelledby={headingId}>
+      <section className={compact ? "aitw-panel aitw-checklist-compact" : "aitw-panel"} aria-labelledby={headingId}>
         <div className="aitw-head">
           <h2 className="aitw-title" id={headingId}>
             {title}
@@ -163,7 +173,7 @@ export function SetupChecklist(props: SetupChecklistProps) {
           </progress>
         </div>
         <ul className="aitw-items">
-          {data.items.map((item) => (
+          {shown.map((item) => (
             <li key={item.key} className="aitw-item" data-item={item.key} data-done={item.done ? "" : undefined} data-dismissed={item.dismissed && !item.done ? "" : undefined}>
               <span className="aitw-item-icon">{item.done ? <CheckCircleIcon /> : <CircleIcon />}</span>
               <div className="aitw-item-main">
@@ -215,6 +225,30 @@ export function SetupChecklist(props: SetupChecklistProps) {
             </li>
           ))}
         </ul>
+        {folded.length > 0 ? (
+          <details className="aitw-more" data-aitw-folded="">
+            <summary>{folded.length === 1 ? "1 done or skipped" : `${folded.length} done or skipped`}</summary>
+            <ul className="aitw-folded">
+              {folded.map((item) => (
+                <li key={item.key} data-item={item.key} data-done={item.done ? "" : undefined} data-dismissed={item.dismissed && !item.done ? "" : undefined}>
+                  <span className="aitw-item-icon">{item.done ? <CheckCircleIcon /> : <CircleIcon />}</span>
+                  <span className="aitw-folded-title">{item.title}</span>
+                  {!item.done && item.dismissed ? (
+                    <button
+                      type="button"
+                      className="aitw-btn aitw-btn-link"
+                      disabled={busy !== null}
+                      onClick={() => void restore(item.key, item.title)}
+                    >
+                      {CHECKLIST.undo}
+                      <span className="aitw-sr">: {item.title}</span>
+                    </button>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </details>
+        ) : null}
         {data.complete ? (
           <div className="aitw-row">
             <p className="aitw-ok-text aitw-grow">{CHECKLIST.allSet}</p>

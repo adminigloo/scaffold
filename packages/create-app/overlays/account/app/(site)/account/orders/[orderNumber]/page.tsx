@@ -25,6 +25,7 @@ import {
 } from "@/server/account";
 import { readOrderForUser, type FulfilledOrderView } from "@/server/fulfilment";
 import { STOREFRONT_TENANT_ID } from "@/server/routers/checkout";
+import { OperatorOnly } from "@/components/OperatorOnly";
 
 /**
  * ONE ORDER, AND EVERYTHING IT DID. The page somebody opens after paying.
@@ -73,8 +74,11 @@ export default async function AccountOrderPage({
 
   if (!isDbConfigured(db)) {
     return (
-      <Notice tone="warn" title="DATABASE_URL is not set">
+      <Notice tone="info" title="This isn't available on this site yet">
+        <OperatorOnly>
+          DATABASE_URL isn&apos;t set.{" "}
         Orders live in Postgres and this deployment has no connection to one.
+        </OperatorOnly>
       </Notice>
     );
   }

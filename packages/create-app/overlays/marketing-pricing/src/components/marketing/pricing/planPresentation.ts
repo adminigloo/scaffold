@@ -31,7 +31,7 @@ import type { PlanCatalog, PlanFeature, PlanInterval, PlanTier } from "__SCOPE__
  *
  * Change it once, here, and the whole page moves with it.
  */
-export const PAGE_LOCALE = "en-GB";
+export const PAGE_LOCALE = "en-US";
 
 /** "Monthly", for a toggle. `once` is a lifetime purchase, not a cadence. */
 export function intervalName(interval: PlanInterval): string {
@@ -103,7 +103,7 @@ export function resolveCurrency(
   catalog: PlanCatalog,
 ): string {
   const match = catalog.currencies.find((currency) => currency === requested);
-  return match ?? catalog.currencies[0] ?? "usd";
+  return match ?? (catalog.currencies.includes("usd") ? "usd" : catalog.currencies[0]) ?? "usd";
 }
 
 /**

@@ -486,12 +486,15 @@ export function ProductEditor(props: ProductEditorProps) {
             <Field id={`${ids}-desc`} label="Description" optional hint="One or two sentences the customer sees under the name.">
               <textarea id={`${ids}-desc`} className="aiew-input" rows={2} maxLength={2000} value={form.description} aria-describedby={`${ids}-desc-hint`} onChange={(e) => set("description", e.target.value)} />
             </Field>
-            <Switch checked={form.showInEstimator} onChange={(v) => set("showInEstimator", v)} label="Show on your website" hint="Off: staff can still put it on an estimate." />
+            <Switch checked={form.showInEstimator} onChange={(v) => set("showInEstimator", v)} label="Show on your website" hint={{ on: "On: customers can pick it on your estimate page and your website.", off: "Off: only staff can put it on an estimate." }} />
             <Switch
               checked={form.isEstimatable}
               onChange={(v) => set("isEstimatable", v)}
               label="Give an instant price"
-              hint="Off: price by quote. The customer leaves their details and you call."
+              hint={{
+                on: "On: customers see a price range as soon as they answer the questions.",
+                off: "Off: priced by quote. The customer leaves their details and you call.",
+              }}
             />
           </Panel>
 
@@ -825,7 +828,7 @@ function RecipeSettings({ ids, recipe, config, onChange }: { ids: string; recipe
           <Check
             checked={c.usePhotoStepHeight !== false}
             onChange={(v) => onChange({ usePhotoStepHeight: v })}
-            label="Use the step height from the photo, kept between your From and To. Off: a photo fills in the count only."
+            label={c.usePhotoStepHeight !== false ? "Use the step height from the photo, kept between your From and To." : "Use the step height from the photo, kept between your From and To. Off: a photo fills in the count only."}
           />
         </div>
         <div className="aiew-grid3">

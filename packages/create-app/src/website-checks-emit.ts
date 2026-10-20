@@ -318,7 +318,7 @@ export const AI_MENTIONS_MODEL: string = DEFAULT_AEO_MODEL;
 
 /**
  * THE MONTH'S CHECKS — one answer to one question is one check${companies && plansEnforced(answers) ? `, unless the
- * ${noun}'s plan sets its own (src/plans.ts, "AI mention checks a month")` : ""}. Each
+ * ${noun}'s plan sets its own (src/plans.ts, "AI answer checks a month")` : ""}. Each
  * tracked question is asked about once a week (4–5 times a month), so 10
  * questions use about 44 automatically; the rest is room for Check now.
  */
@@ -724,7 +724,7 @@ export function renderCompanyWebsitePage(answers: Answers): string {
   const mentions = answers.includeAeo;
   const imports = [
     `import { CompanyGate } from "@/components/CompanyGate";`,
-    `import { PageHeader } from "@/components/ui";`,
+    `import { PageHeader, WORK_MAIN } from "@/components/ui";`,
     ...(mentions ? [`import { AiMentionsSection } from "@/components/AiMentionsSection";`] : []),
     ...(search ? [`import { SearchCheckSection } from "@/components/SearchCheckSection";`] : []),
     ...(visits ? [`import { WebsitePage } from "@/components/WebsitePage";`] : []),
@@ -763,7 +763,7 @@ export default async function CompanyWebsitePage() {
   return (
     <CompanyGate path="/app/website" permission="${websitePagePermission(answers)}">
       {({ company, can }) => (
-        <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
+        <main className={WORK_MAIN}>
           <PageHeader
             title="Website"
             description={\`${sentence.charAt(0).toUpperCase()}${sentence.slice(1)} — for \${company.name}.\`}

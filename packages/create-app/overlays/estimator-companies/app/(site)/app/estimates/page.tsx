@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { EstimatesQueue } from "__SCOPE__/estimator-widget/admin";
 import { CompanyGate } from "@/components/CompanyGate";
-import { PageHeader } from "@/components/ui";
+import { companyLinksFor } from "@/server/company-links";
+import { PageHeader, WORK_MAIN, buttonClass } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -23,19 +24,16 @@ export const dynamic = "force-dynamic";
 export default async function CompanyEstimatesPage() {
   return (
     <CompanyGate path="/app/estimates" permission="estimator.view">
-      {({ company, can }) => (
-        <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
+      {({ company, can, isStaff, locale }) => (
+        <main className={WORK_MAIN}>
           <PageHeader
             title="Estimates"
-            description="New leads from your estimate page and website, and the quotes you've sent. Open one to see the customer's photo, edit the lines and send the quote."
+            description="Requests from your estimate page and website, and the quotes you've sent. Open one to see the customer's answers and photo, adjust the lines and send the quote."
             actions={
-              <nav aria-label="Estimates" className="flex items-center gap-3 text-sm">
+              <nav aria-label="Estimates" className="flex flex-wrap items-center gap-2">
                 <Link href="/app/price-book" className="text-accent underline underline-offset-2">
                   Price book
                 </Link>
-                <span aria-hidden="true" className="text-ink-muted">
-                  ·
-                </span>
                 {/* "Estimate settings", not "Settings": the header's Settings is the
                     company's, and two links with one name go to two places
                     (review T2A-BO-14). */}
@@ -49,6 +47,10 @@ export default async function CompanyEstimatesPage() {
             baseUrl={`/api/app/${company.id}/estimator`}
             estimateHref="/app/estimates/{id}"
             canManage={can.includes("estimator.estimates.manage")}
+            estimatePageUrl={companyLinksFor(company.slug).estimate}
+            title={false}
+            showTechnical={isStaff}
+            locale={locale}
           />
         </main>
       )}

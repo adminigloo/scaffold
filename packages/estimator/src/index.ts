@@ -28,6 +28,7 @@ export * from "./permissions.js";
 export * from "./catalog.js";
 export * from "./sample.js";
 export * from "./price-product.js";
+export * from "./starting-prices.js";
 export * from "./events.js";
 export * from "./estimates.js";
 export * from "./quotes.js";

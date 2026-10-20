@@ -64,19 +64,27 @@ const CSS_TEXT = `
 .aibk-btn-danger-outline:hover:not(:disabled) { border-color: var(--aibk-danger); }
 .aibk-host-pick { max-width: 320px; }
 
-/* Finish setting up */
-.aibk-checklist {
-  display: grid; gap: 10px; padding: 14px 16px; border-radius: var(--aibk-radius);
-  background: var(--aibk-warn-soft); border: 1px solid var(--aibk-line);
-}
-.aibk-checklist-title { font-size: 15px; font-weight: 700; color: var(--aibk-warn); }
+/* Finish setting up: one calm card, "3 things to finish", collapsed until opened. */
+.aibk-checklist { border-radius: var(--aibk-radius); background: var(--aibk-surface); border: 1px solid var(--aibk-line); box-shadow: var(--aibk-shadow); }
+.aibk-checklist-head { display: flex; align-items: center; gap: 4px; padding: 4px 4px 4px 0; }
+.aibk-checklist-toggle { flex: 1 1 auto; display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 8px 14px; border: 0; background: transparent; cursor: pointer; text-align: left; color: var(--aibk-ink); font: inherit; }
+.aibk-checklist-toggle:hover .aibk-checklist-title { text-decoration: underline; text-underline-offset: 3px; }
+.aibk-checklist-count { display: inline-flex; align-items: center; justify-content: center; min-width: 26px; height: 26px; padding: 0 8px; border-radius: 999px; background: var(--aibk-accent-soft); color: var(--aibk-accent-ink); font-size: 13px; font-weight: 700; }
+.aibk-checklist-title { font-size: 15px; font-weight: 600; color: var(--aibk-ink); }
+.aibk-checklist-chevron { margin-left: auto; color: var(--aibk-muted); flex: none; }
+.aibk-checklist-dismiss { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border: 0; background: transparent; color: var(--aibk-muted); cursor: pointer; border-radius: var(--aibk-radius-sm); }
+.aibk-checklist-dismiss:hover { color: var(--aibk-ink); background: var(--aibk-ground); }
+.aibk-checklist-body { border-top: 1px solid var(--aibk-line); padding: 12px 16px 16px; display: grid; gap: 10px; }
+.aibk-checklist-body[hidden] { display: none; }
+.aibk-checklist-sub { font-size: 12.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--aibk-muted); }
 .aibk-checklist-items { list-style: none; display: grid; gap: 8px; }
 .aibk-checklist-item { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; color: var(--aibk-ink); }
 /* The dot sits on the text's first line however many lines it wraps to. */
 .aibk-checklist-line { flex: 1 1 260px; min-width: 0; display: flex; align-items: flex-start; gap: 12px; }
-.aibk-checklist-dot { flex: none; width: 8px; height: 8px; margin-top: .6em; border-radius: 50%; background: var(--aibk-warn); }
+.aibk-checklist-dot { flex: none; width: 6px; height: 6px; margin-top: .6em; border-radius: 50%; background: var(--aibk-line-strong); }
 .aibk-checklist-text { flex: 1 1 auto; min-width: 0; }
 .aibk-checklist-item > .aibk-btn { flex: 0 0 auto; }
+
 
 /* Bookings */
 .aibk-bookings { list-style: none; display: grid; gap: 12px; }

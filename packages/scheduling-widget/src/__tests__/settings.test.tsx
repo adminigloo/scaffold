@@ -91,7 +91,7 @@ describe("<SchedulingSettings>", () => {
     const fake = admin({ updateSettings: () => ok({ settings: settingsWire() }) });
     const { container, unmount } = await mount(<SchedulingSettings transport={fake.transport} sections={["booking"]} />);
     const booking = card(container, "booking");
-    expect(text(booking)).toContain("On: requests go straight onto the calendar. Off: you accept each one.");
+    expect(text(booking)).toContain("Off: you accept or decline each request.");
     await click(button(booking, "+ Add a service"));
     const names = booking.querySelectorAll<HTMLInputElement>("[data-service-row] input");
     await type([...names].filter((i) => i.id.endsWith("-name"))[1], "Gutter clean");

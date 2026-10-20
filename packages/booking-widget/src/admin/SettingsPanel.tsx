@@ -313,9 +313,11 @@ export function HostCard({
           <span>
             <strong>Confirm bookings automatically.</strong>{" "}
             <span className="aibk-hint">
-              {emails
-                ? "Off: each booking arrives as a request, the time is held, and the person hears back by email when you confirm it under Upcoming."
-                : "Off: each booking arrives as a request, the time is held, and the person's manage page shows it once you confirm it under Upcoming."}
+              {form.autoConfirm
+                ? "On: a booking is confirmed the moment it's made."
+                : emails
+                  ? "Off: each booking arrives as a request, the time is held, and the person hears back by email when you confirm it under Upcoming."
+                  : "Off: each booking arrives as a request, the time is held, and the person's manage page shows it once you confirm it under Upcoming."}
             </span>
           </span>
         </label>

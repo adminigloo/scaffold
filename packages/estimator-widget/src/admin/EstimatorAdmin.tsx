@@ -60,7 +60,7 @@ export function EstimatorAdmin(props: EstimatorAdminProps) {
   return (
     <AdminRoot chrome={chrome} brandColor={basics.settings?.brandColor ?? null} data={{ "aiew-admin": section }}>
       <div className="aiew-admin-inner">
-        {basics.status ? <AdminNotices notices={basics.status.notices} /> : null}
+        {basics.status ? <AdminNotices notices={basics.status.notices} showTechnical={props.showTechnical === true} /> : null}
         <div className="aiew-tabs" role="tablist" aria-label="Estimator">
           {sections.map((key, i) => (
             <button

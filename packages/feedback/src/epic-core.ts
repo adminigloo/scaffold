@@ -233,5 +233,5 @@ export function epicDayLabel(targetDate: string | null | undefined): string {
   if (!targetDate) return "";
   const n = dayNumber(targetDate);
   if (n === null) return targetDate;
-  return new Date(n * 86_400_000).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+  return new Date(n * 86_400_000).toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 }

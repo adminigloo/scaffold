@@ -469,6 +469,10 @@ textarea.aiew-input { min-height: 88px; resize: vertical; }
 }
 .aiew-empty { display: grid; gap: 8px; justify-items: center; text-align: center; padding: 24px 8px; color: var(--aiew-muted); }
 .aiew-empty-title { font-weight: 700; color: var(--aiew-ink); font-size: 16px; }
+.aiew-empty-card { padding: 32px 20px; background: var(--aiew-surface); border: 1px solid var(--aiew-line); border-radius: var(--aiew-radius); box-shadow: var(--aiew-shadow); }
+.aiew-empty-text { max-width: 58ch; font-size: 14.5px; color: var(--aiew-muted); }
+.aiew-empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 6px; }
+.aiew-empty-actions:empty { display: none; }
 
 /* Saved */
 .aiew-done { display: grid; gap: 16px; }

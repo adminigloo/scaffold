@@ -1,6 +1,6 @@
 import { InvoicesLedger } from "__SCOPE__/invoicing-widget/admin";
 import { CompanyGate } from "@/components/CompanyGate";
-import { PageHeader } from "@/components/ui";
+import { PageHeader, WORK_MAIN } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -22,13 +22,16 @@ export const dynamic = "force-dynamic";
 export default async function CompanyInvoicesPage() {
   return (
     <CompanyGate path="/app/invoices" permission="invoices.view">
-      {({ company, can }) => (
-        <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
-          <PageHeader title="Invoices" description="Raise an invoice, send it, and record what customers pay." />
+      {({ company, can, isStaff, locale }) => (
+        <main className={WORK_MAIN}>
+          <PageHeader title="Invoices" description="What's owed, what's overdue and what's paid. Send an invoice, and customers pay it from a link." />
           <InvoicesLedger
             baseUrl={`/api/app/${company.id}/invoices`}
             invoiceHref="/app/invoices/{id}"
             canManage={can.includes("invoices.manage")}
+            title={false}
+            showTechnical={isStaff}
+            locale={locale}
           />
         </main>
       )}

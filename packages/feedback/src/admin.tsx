@@ -697,7 +697,7 @@ export function KeysPanel(props: KeysPanelProps): ReactElement {
                   <li key={key.id} className="aib-admin-row">
                     <div className="aib-admin-line">
                       <strong>{key.label}</strong>
-                      <span className="aib-admin-sub">made {new Date(key.createdAt).toLocaleDateString()}</span>
+                      <span className="aib-admin-sub">made {new Date(key.createdAt).toLocaleDateString("en-US")}</span>
                       <div className="aib-admin-actions">
                         {switching === key.id ? (
                           <>

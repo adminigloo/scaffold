@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ScheduleCalendar } from "__SCOPE__/scheduling-widget/admin";
 import { CompanyGate } from "@/components/CompanyGate";
-import { PageHeader } from "@/components/ui";
+import { PageHeader, WORK_MAIN, buttonClass } from "@/components/ui";
 import { companyLinksFor } from "@/server/company-links";
 import { VISIT_FILES_HREF } from "@/server/visit-files";
 
@@ -45,13 +45,13 @@ export default async function CompanySchedulePage({
   const initialVisitId = typeof visit === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(visit) ? visit : undefined;
   return (
     <CompanyGate path="/app/schedule" permission="schedule.view">
-      {({ company, can }) => (
-        <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
+      {({ company, can, isStaff, locale }) => (
+        <main className={WORK_MAIN}>
           <PageHeader
             title="Schedule"
-            description="Every crew's visits, in your time zone. Online requests wait in Requests until you accept or decline them; drag a visit to move it."
+            description="Every crew's visits, in your time zone. Online requests wait in Requests for your answer; drag a visit to move it."
             actions={
-              <Link href="/app/schedule/settings" className="text-sm text-accent underline underline-offset-2">
+              <Link href="/app/schedule/settings" className={buttonClass("secondary")}>
                 Schedule settings
               </Link>
             }
@@ -63,6 +63,8 @@ export default async function CompanySchedulePage({
             initialVisitId={initialVisitId}
             visitFilesHref={VISIT_FILES_HREF}
             canManage={can.includes("schedule.manage")}
+            showTechnical={isStaff}
+            locale={locale}
           />
         </main>
       )}

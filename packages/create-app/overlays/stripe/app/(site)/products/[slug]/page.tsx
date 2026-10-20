@@ -22,6 +22,7 @@ import {
   type StorefrontVariant,
 } from "@/server/routers/checkout";
 import { api } from "@/trpc/server";
+import { OperatorOnly } from "@/components/OperatorOnly";
 
 /** Per request, for the same reason as the listing: a cached price is a lie. */
 export const dynamic = "force-dynamic";
@@ -45,9 +46,12 @@ export default async function ProductPage({
           title="This product cannot be loaded"
           description="The catalog lives in Postgres, and this deployment has no connection to one yet."
         />
-        <Notice tone="warn" title="DATABASE_URL is not set">
+        <Notice tone="info" title="This isn't available on this site yet">
+          <OperatorOnly>
+            DATABASE_URL isn&apos;t set.{" "}
           Add it to <code>.env.local</code> and restart. Until then no product
           page can render, because there is nothing to render from.
+          </OperatorOnly>
         </Notice>
       </main>
     );

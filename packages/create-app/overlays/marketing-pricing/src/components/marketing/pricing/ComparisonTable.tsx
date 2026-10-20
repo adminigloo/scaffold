@@ -48,7 +48,7 @@ export function ComparisonTable({
       <TBody>
         {catalog.features.map((heading) => (
           <TR key={heading.feature}>
-            <TD className="text-sm text-ink">{heading.label}</TD>
+            <TD className="text-sm text-ink">{heading.label.charAt(0).toUpperCase() + heading.label.slice(1)}</TD>
             {tiers.map((tier) => (
               <TD key={tier.key} className="text-sm tabular-nums">
                 <Cell tier={tier} feature={heading.feature} />

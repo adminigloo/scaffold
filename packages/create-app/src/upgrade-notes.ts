@@ -32,6 +32,46 @@ export function upgradeNotesFor(answers: Answers, fromVersion: string): string[]
   const companies = answers.tenantNoun !== "none";
   const noun = tenantLabel(answers).toLowerCase();
   const crossed = (version: string) => (compareVersions(fromVersion, version) ?? -1) < 0;
+  // 0.36.0 — the showroom: how every screen looks to an owner and their
+  // customers. No database change; the files carry it.
+  if (crossed("0.36.0")) {
+    notes.push(
+      "The showroom (0.36): one calm \"things to finish\" card per page instead of a stack of banners; owners read plain words and never a " +
+        "setting's name, a file path or a link to /setup (staff of the site still see the detail); every work page has the same width and header; " +
+        "empty lists say what the screen does once it's in use; buttons are 44px. No database change.",
+    );
+    if (answers.includeMarketing) {
+      notes.push(
+        "The landing page is rewritten for business owners, and every word of it is now in **src/marketing-copy.ts** — edit `TRADE` there first " +
+          "so it speaks your trade. Product screenshots appear by themselves once you save them in public/screenshots/ under the names " +
+          "`SCREENSHOTS` lists (dashboard.png first). If you had edited src/components/marketing/Features.tsx or SocialProof.tsx, move those " +
+          "words into src/marketing-copy.ts: the page no longer uses them.",
+      );
+    }
+    if (companies) {
+      notes.push(
+        `${noun.charAt(0).toUpperCase()}${noun.slice(1)} settings gain two sections: **Your public page** (a one-line tagline, where you work, ` +
+          `your hours — shown on /t/{web address} and given to search engines) and **Dates and money** (en-US unless a ${noun} picks another). ` +
+          `Each ${noun}'s /t/{web address} is now a small website: its name and tagline, one big button${answers.includeEstimator ? " (Get an instant estimate)" : ""}, ` +
+          `${answers.includeEstimator ? "its price book's website products with \"from $X\", " : ""}the other pages it offers customers, and how to reach it.`,
+        `The ${noun} dashboard shows the setup checklist (compact) until setup is done, then Today, New leads, Money owed and Paid this week ` +
+          "(src/server/dashboard.ts, generated for your features) — no more grid of links that repeats the sidebar.",
+      );
+    }
+    if (answers.businessModel !== "none") {
+      notes.push(
+        "Plans read in owner language: each plan's description is its one-line promise (src/plans.ts), the plans pages lead with " +
+          "\"Everything included\" and the few numbers in `HEADLINE_FEATURES` (src/plans.ts), and the rest sit under \"What's included\". " +
+          "The plans pages open on US dollars where the record prices in them (`DEFAULT_CURRENCY`). Run `pnpm db:seed:plans` if you changed the record.",
+      );
+    }
+    if (companies && answers.includeComms) {
+      notes.push(
+        `With no email provider set up, a ${noun}'s emails no longer use up its sending allowance (they are logged as skipped, never held or failed, ` +
+          "and raise no alerts): src/server/comms-senders.ts asks the allowance only when email can actually leave.",
+      );
+    }
+  }
   // 0.35.0 — the customer list (`create-app add customers`). A project made
   // before it has no customer list until it is added; one that has it gets the
   // tables and the backfill.

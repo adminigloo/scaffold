@@ -438,6 +438,7 @@ function renderCompanyStorePage(answers: Answers): string {
   const noun = tenantLabel(answers).toLowerCase();
   return `import { StoreAdmin } from "${answers.scope}/commerce/widget";
 import { CompanyGate } from "@/components/CompanyGate";
+import { PageHeader, WORK_MAIN } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -450,9 +451,18 @@ export const dynamic = "force-dynamic";
 export default async function CompanyStorePage() {
   return (
     <CompanyGate path="/app/store" permission="store.view">
-      {({ company }) => (
-        <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
-          <StoreAdmin baseUrl={\`/api/app/\${company.id}/store\`} storefrontUrl={\`\${company.publicPath}/store\`} />
+      {({ company, locale }) => (
+        <main className={WORK_MAIN}>
+          <PageHeader
+            title="Store"
+            description="Sell your own products online. Customers pay by card into your own Stripe account, and every order lands here."
+          />
+          <StoreAdmin
+            baseUrl={\`/api/app/\${company.id}/store\`}
+            storefrontUrl={\`\${company.publicPath}/store\`}
+            title={false}
+            locale={locale}
+          />
         </main>
       )}
     </CompanyGate>

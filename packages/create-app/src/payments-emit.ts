@@ -505,6 +505,7 @@ function renderPaymentsPage(answers: Answers): string {
   const store = answers.includeStore;
   return `${store ? `import { StoreAttention } from "${answers.scope}/commerce/widget";\n` : ""}import { CompanyGate } from "@/components/CompanyGate";
 ${invoicing ? `import { PaymentsAttention } from "@/components/PaymentsAttention";\n` : ""}import { PaymentsPanel } from "@/components/PaymentsPanel";
+import { PageHeader, WORK_MAIN } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -523,10 +524,16 @@ export default async function CompanyPaymentsPage({
   const query = await searchParams;
   return (
     <CompanyGate path="/app/payments" permission="payments.view">
-      {({ company }) => (
-        <main className="mx-auto max-w-3xl space-y-8 px-4 py-8 sm:px-6">
-          <PaymentsPanel baseUrl={\`/api/app/\${company.id}/payments\`} justConnected={query.connected === "1"} />
-${invoicing ? `          <PaymentsAttention baseUrl={\`/api/app/\${company.id}/invoices\`} />\n` : ""}${store ? `          <StoreAttention baseUrl={\`/api/app/\${company.id}/store\`} heading=${JSON.stringify(invoicing ? "Store payments that need your attention" : "Needs your attention")} />\n` : ""}        </main>
+      {({ company, isStaff, locale }) => (
+        <main className={WORK_MAIN}>
+          <PageHeader
+            title="Card payments"
+            description="${answers.includeInvoicing && answers.includeStore ? "Customers pay your invoices, deposits and store orders by card, into your own Stripe account." : answers.includeStore ? "Customers buy from your store by card, into your own Stripe account." : "Customers pay your invoices and deposits by card, into your own Stripe account."}"
+          />
+          <div className="max-w-3xl space-y-8">
+            <PaymentsPanel baseUrl={\`/api/app/\${company.id}/payments\`} justConnected={query.connected === "1"} staff={isStaff} />
+${invoicing ? `            <PaymentsAttention baseUrl={\`/api/app/\${company.id}/invoices\`} locale={locale} />\n` : ""}${store ? `            <StoreAttention baseUrl={\`/api/app/\${company.id}/store\`} heading=${JSON.stringify(invoicing ? "Store payments that need your attention" : "Needs your attention")} locale={locale} />\n` : ""}          </div>
+        </main>
       )}
     </CompanyGate>
   );
@@ -540,6 +547,7 @@ function renderPaymentsPanel(answers: Answers): string {
 
 import { useCallback, useEffect, useState } from "react";
 import type { PaymentsStatusWire } from "${answers.scope}/stripe";
+import { SetupNotices, buttonClass } from "@/components/ui";
 
 /** Countries a ${noun} can connect from (Stripe asks once; it can't change later). */
 const COUNTRIES: ReadonlyArray<readonly [code: string, name: string]> = [
@@ -559,7 +567,12 @@ const COUNTRIES: ReadonlyArray<readonly [code: string, name: string]> = [
  * country) and Disconnect (confirmed first). The server decides everything;
  * this screen only asks.
  */
-export function PaymentsPanel(props: { readonly baseUrl: string; readonly justConnected: boolean }) {
+export function PaymentsPanel(props: {
+  readonly baseUrl: string;
+  readonly justConnected: boolean;
+  /** Staff of the site: also read why card payments aren't switched on (the operator's job). */
+  readonly staff?: boolean;
+}) {
   const [status, setStatus] = useState<PaymentsStatusWire | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -607,17 +620,32 @@ export function PaymentsPanel(props: { readonly baseUrl: string; readonly justCo
 
   return (
     <section className="space-y-5">
-      <header>
-        <h1 className="text-2xl font-semibold">Card payments</h1>
-        <p className="mt-1 text-sm text-neutral-600">${answers.includeInvoicing && answers.includeStore ? "Let customers pay your invoices, deposits and store orders by card, into your own Stripe account." : answers.includeStore ? "Let customers buy from your store by card, into your own Stripe account." : "Let customers pay your invoices and deposits by card, into your own Stripe account."}</p>
-      </header>
-      {error ? <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-800">{error}</p> : null}
+      {error ? <p role="alert" className="rounded-control bg-danger-soft p-3 text-sm text-danger">{error}</p> : null}
+      {status && !status.configured ? (
+        // The operator's job (this site's own Stripe keys), not the owner's:
+        // one plain sentence, and the technical reason for staff only.
+        <SetupNotices
+          staff={props.staff === true}
+          items={[
+            {
+              key: "card-payments",
+              operator: true,
+              text: "Card payments aren't switched on for this site yet, so you can't connect Stripe here.",
+              ...(status.configuredReason ? { detail: status.configuredReason } : {}),
+            },
+          ]}
+        />
+      ) : null}
       {!status ? (
-        <p className="text-sm text-neutral-600">Loading…</p>
+        <p className="text-sm text-ink-muted">Loading…</p>
       ) : (
-        <div className="space-y-4 rounded-lg border border-neutral-200 p-5">
-          {!status.configured ? <p className="text-sm text-amber-800">{status.configuredReason}</p> : null}
-          <p className="text-base font-medium" data-payments-state={status.takingPayments ? "on" : status.connected ? "pending" : "off"}>
+        <div className="space-y-4 rounded-[--radius-card] border border-line bg-surface p-5 shadow-card">
+          {!status.connected && !status.disconnected ? (
+            <p className="text-sm leading-relaxed text-ink-muted">
+              ${answers.includeInvoicing ? "Once you're connected, every invoice you send has a Pay now button: customers pay the deposit or the balance by card, and the payment lands on the invoice by itself." : "Once you're connected, customers pay for their order by card and the money lands in your own Stripe account."}
+            </p>
+          ) : null}
+          <p className="text-base font-medium text-ink" data-payments-state={status.takingPayments ? "on" : status.connected ? "pending" : "off"}>
             {status.takingPayments
               ? "${answers.includeInvoicing && answers.includeStore ? "On: customers see Pay now on your invoices and can buy from your store." : answers.includeStore ? "On: customers can buy from your store." : "On: customers see Pay now on your invoices."}"
               : status.connected
@@ -628,19 +656,19 @@ export function PaymentsPanel(props: { readonly baseUrl: string; readonly justCo
                   ? "${answers.includeInvoicing ? "Off: you disconnected Stripe. Customers pay the ways your invoices describe." : "Off: you disconnected Stripe. Your store shows its products but takes no orders."}"
                   : "Off: connect your Stripe account to take card payments."}
           </p>
-          {accountLine ? <p className="text-sm text-neutral-700" data-payments-account="">Connected to {accountLine}</p> : null}
+          {accountLine ? <p className="text-sm text-ink-muted" data-payments-account="">Connected to {accountLine}</p> : null}
           {status.connected ? (
-            <ul className="text-sm text-neutral-700">
+            <ul className="text-sm text-ink-muted">
               <li>Taking payments: {status.chargesEnabled ? "yes" : "not yet"}</li>
               <li>Payouts to your bank: {status.payoutsEnabled ? "yes" : "not yet"}</li>
             </ul>
           ) : null}
-          <p className="text-sm text-neutral-700">{status.feeText}</p>
+          <p className="text-sm text-ink-muted">{status.feeText}</p>
           <div className="flex flex-wrap items-center gap-3">
             {!status.account && status.configured ? (
               <label className="text-sm">
                 Your business is in{" "}
-                <select value={country} onChange={(e) => setCountry(e.target.value)} className="rounded-md border border-neutral-300 px-2 py-1">
+                <select value={country} onChange={(e) => setCountry(e.target.value)} className="min-h-11 rounded-control border border-line bg-surface px-3 py-2 text-sm text-ink">
                   {COUNTRIES.map(([code, name]) => (
                     <option key={code} value={code}>
                       {name}
@@ -650,29 +678,29 @@ export function PaymentsPanel(props: { readonly baseUrl: string; readonly justCo
               </label>
             ) : null}
             {!status.connected || !status.chargesEnabled ? (
-              <button type="button" disabled={busy || !status.configured} onClick={() => void post("connect")} className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
+              <button type="button" disabled={busy || !status.configured} onClick={() => void post("connect")} className={buttonClass("primary")}>
                 {status.connected ? "Finish setting up in Stripe" : "Connect Stripe"}
               </button>
             ) : null}
             {status.account ? (
-              <a href={status.dashboardUrl} target="_blank" rel="noreferrer" className="rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium">
+              <a href={status.dashboardUrl} target="_blank" rel="noreferrer" className={buttonClass("secondary")}>
                 Payouts and refunds in Stripe
               </a>
             ) : null}
             {status.connected && !confirming ? (
-              <button type="button" disabled={busy} onClick={() => setConfirming(true)} className="rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium">
+              <button type="button" disabled={busy} onClick={() => setConfirming(true)} className={buttonClass("secondary")}>
                 Disconnect
               </button>
             ) : null}
           </div>
           {confirming ? (
-            <div role="group" aria-label="Disconnect Stripe?" className="space-y-2 rounded-md bg-amber-50 p-3 text-sm text-amber-900">
+            <div role="group" aria-label="Disconnect Stripe?" className="space-y-3 rounded-control border-l-2 border-warn bg-warn-soft/60 p-3 text-sm text-ink">
               <p>Disconnect Stripe? Customers can't pay by card until you connect again, and any payment page already open is closed. Payments you already took stay in your Stripe account.</p>
-              <div className="flex gap-3">
-                <button type="button" disabled={busy} onClick={() => void post("disconnect")} className="rounded-md bg-amber-900 px-3 py-1.5 font-medium text-white">
+              <div className="flex flex-wrap gap-2">
+                <button type="button" disabled={busy} onClick={() => void post("disconnect")} className={buttonClass("danger")}>
                   Yes, disconnect
                 </button>
-                <button type="button" onClick={() => setConfirming(false)} className="rounded-md border border-amber-900 px-3 py-1.5 font-medium">
+                <button type="button" onClick={() => setConfirming(false)} className={buttonClass("secondary")}>
                   Keep it connected
                 </button>
               </div>
@@ -958,6 +986,18 @@ function renderPaymentsAttention(answers: Answers): string {
 
 import { useCallback, useEffect, useState } from "react";
 import type { CardAlertsWire, CardAlertWire } from "${answers.scope}/invoicing-widget";
+import { buttonClass } from "@/components/ui";
+
+/** A date and time in the ${who}'s locale (default en-US), never the browser's. */
+function when(iso: string, locale = "en-US"): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  try {
+    return date.toLocaleString(locale, { dateStyle: "medium", timeStyle: "short" });
+  } catch {
+    return date.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" });
+  }
+}
 
 /**
  * NEEDS YOUR ATTENTION (getting paid, part 1): every card payment the ${who}
@@ -967,7 +1007,7 @@ import type { CardAlertsWire, CardAlertWire } from "${answers.scope}/invoicing-w
  * Kept by @adminigloo/invoicing whether or not this project has alerts, so the
  * owner is always told. Over ${companies ? "/api/app/{id}/invoices" : "/api/admin/invoices"}/v1/admin/attention.
  */
-export function PaymentsAttention(props: { readonly baseUrl: string }) {
+export function PaymentsAttention(props: { readonly baseUrl: string; readonly locale?: string }) {
   const [items, setItems] = useState<CardAlertsWire | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -1006,24 +1046,24 @@ export function PaymentsAttention(props: { readonly baseUrl: string }) {
       <h2 id="payments-attention" className="text-lg font-semibold">
         Needs your attention{items && items.open.length > 0 ? \` (\${items.open.length})\` : ""}
       </h2>
-      {error ? <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-800">{error}</p> : null}
+      {error ? <p role="alert" className="rounded-control bg-danger-soft p-3 text-sm text-danger">{error}</p> : null}
       {!items ? (
-        <p className="text-sm text-neutral-600">Loading…</p>
+        <p className="text-sm text-ink-muted">Loading…</p>
       ) : items.open.length === 0 ? (
-        <p className="text-sm text-neutral-600">Nothing needs your attention. Card payments that can't be recorded as they are, refunds and disputes show here.</p>
+        <p className="text-sm text-ink-muted">Nothing needs your attention. Card payments that can't be recorded as they are, refunds and disputes show here.</p>
       ) : (
         <ul className="space-y-2">
           {items.open.map((item) => (
-            <li key={item.id} className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950" data-attention-item={item.kind}>
+            <li key={item.id} className="rounded-control border-l-2 border-warn bg-warn-soft/60 p-3 text-sm text-ink" data-attention-item={item.kind}>
               <p>{item.message}</p>
               <p className="mt-2 flex flex-wrap items-center gap-3">
-                <span className="text-xs text-amber-800">{new Date(item.createdAt).toLocaleString()}</span>
+                <span className="text-xs text-ink-muted">{when(item.createdAt, props.locale)}</span>
                 {item.stripeUrl ? (
                   <a href={item.stripeUrl} target="_blank" rel="noreferrer" className="font-medium underline underline-offset-2">
                     Open it in Stripe
                   </a>
                 ) : null}
-                <button type="button" disabled={busy === item.id} onClick={() => void handled(item)} className="rounded-md border border-amber-900 px-2 py-1 font-medium">
+                <button type="button" disabled={busy === item.id} onClick={() => void handled(item)} className={buttonClass("secondary")}>
                   Mark as handled
                 </button>
               </p>

@@ -105,7 +105,8 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // glue imports @adminigloo/commerce/store and /widget, the route tables and
   // storePermissions, and the schema has store_checkouts and store_alerts.
   // None exist in 0.1.x.
-  commerce: "0.2.0",
+  // 0.3.0: title={false} and locale on the store screens (create-app 0.36, the showroom).
+  commerce: "0.3.0",
   // 0.2.0 for the typed plan record. `src/plans.ts` is emitted into every
   // project that sells something and calls `definePlans`, which does not exist
   // in 0.1.x — so a project resolving the old line fails to compile on a file
@@ -232,7 +233,8 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // file record and the private photo purpose. The alerts and files glue
   // imports all of them.
   // 0.5.1 (the customer list): its comms range moves to ^0.5.0 with comms 0.5 (onSent).
-  estimator: "0.5.1",
+  // 0.6.0: startingPrices, the "from $X" on a company's public page (create-app 0.36).
+  estimator: "0.6.0",
   // 0.2.0: the estimate page, the quote page and the four staff pages render
   // its components (EstimateTool, QuoteView, EstimatesQueue, EstimateEditor,
   // PriceBook, EstimatorSettings, EmbedKeys). It speaks 0.3's wire, so it
@@ -242,7 +244,8 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.4.0 (Tenancy 2b-1): who hears about new leads is handed to Alert
   // settings, so the old list isn't offered beside the new one.
   // 0.5.0 (getting paid, part 1): `depositHref`, the accepted quote's "Pay the deposit".
-  "estimator-widget": "0.5.0",
+  // 0.6.0: the setup card, title={false}, estimatePageUrl, showTechnical and on/off switch help (create-app 0.36).
+  "estimator-widget": "0.6.0",
   // 0.3.0: the emitted public procedures call findPublicSlots (PublicSlots only —
   // 0.2's slots route returned the previous customer's street address) and
   // requestPublicBooking with a requesterKey (server-derived times and crew,
@@ -279,7 +282,8 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // screen shows the company-owned fields read-only — none of it in 0.1.
   // 0.3.0 (Tenancy 2b-1): the calendar opens a visit from ?visit= and links
   // its photos and files, and today's route has a Photos button per stop.
-  "scheduling-widget": "0.3.0",
+  // 0.4.0: the setup card and showTechnical on the calendar and settings (create-app 0.36).
+  "scheduling-widget": "0.4.0",
   // Tenancy 1's screens (onboarding, the switcher, the team page, company
   // settings, the operator console). In the BASE set: the team page is in
   // every project, single-business ones included.
@@ -287,7 +291,8 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // company's public pages, and any role the server offers (Crew). 0.2.1
   // (Tenancy 2b-1): its tenancy peer is ^0.6.0 — pinned, so a project's
   // lockfile can't keep a 0.2.0 whose peer still names tenancy 0.5.
-  "tenancy-widget": "0.2.2",
+  // 0.3.0: <SetupChecklist compact> on the dashboard (create-app 0.36).
+  "tenancy-widget": "0.3.0",
   // 0.2.0 (sweep): line items after creation, atomic idempotent payments,
   // reversals, a status transition table and tenant-scoped reads — the emitted
   // admin page and router call addInvoiceItem/reversePayment/markInvoiceViewed
@@ -310,7 +315,8 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.2.0 (getting paid, part 1): Pay now on the customer's page, the deposit
   // and a payment's dispute/refund mark in the ledger, over invoicing 0.5's wire.
   // 0.2.1 (the customer list): its invoicing range moves to ^0.6.0 with invoicing 0.6.
-  "invoicing-widget": "0.2.1",
+  // 0.3.0: title={false} and showTechnical on the ledger (create-app 0.36).
+  "invoicing-widget": "0.3.0",
   // 0.2.0 (sweep): SMS compliance is required with an SMS sender, the queue is
   // bounded and cancellable, and the emitted router calls setTemplateActive and
   // requireEmailSubject — none exist in 0.1.x.
@@ -327,7 +333,8 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.1.1 (Tenancy 2b-1): its comms peer is ^0.4.0, and it names the team
   // alert email — pinned for the same lockfile reason.
   // 0.1.2 (the customer list): its comms range moves to ^0.5.0 with comms 0.5.
-  "comms-widget": "0.1.2",
+  // 0.2.0: showTechnical on the messages console (create-app 0.36).
+  "comms-widget": "0.2.0",
   // 0.2.0 (Tenancy 2b-4b): AI mentions per company — the handlers and route
   // table, the metered runner, the Anthropic engine (./anthropic), the screen.
   aeo: "0.2.0",
@@ -348,12 +355,14 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   booking: "0.2.0",
   // 0.2.0: the fetch adapter over booking 0.2's admin routes, the honeypot and
   // the "closed" sentence; pinned in step with the workspace.
-  "booking-widget": "0.2.0",
+  // 0.3.0: title={false} on the calls screen (create-app 0.36).
+  "booking-widget": "0.3.0",
   // First release (the customer list): one customer list per company —
   // find-or-create, the links every feature's glue writes, the timeline,
   // merge, CSV import and export, the directory seam, the backfill, the
   // handler and its route table, and the screens (./admin).
-  customers: "0.1.0",
+  // 0.2.0: title={false} and locale on the customer list (create-app 0.36).
+  customers: "0.2.0",
 };
 
 export class UnknownPackageVersionError extends Error {

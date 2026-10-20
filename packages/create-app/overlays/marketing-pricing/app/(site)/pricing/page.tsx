@@ -3,6 +3,8 @@ import Link from "next/link";
 import { plans as planTable } from "__SCOPE__/billing/schema";
 import { isDbConfigured } from "__SCOPE__/db";
 import { Notice } from "@/components/ui";
+import { currentPrincipal } from "@/server/auth";
+import { loadStaffPermissions } from "@/server/permissions";
 import { db } from "@/db";
 import { plans } from "@/plans";
 // From the `marketing` overlay, which is selected whenever this one is — the
@@ -22,8 +24,7 @@ import {
 
 export const metadata: Metadata = {
   title: "Pricing",
-  description:
-    "What each plan includes and what it costs. Every line comes from the same record the software enforces.",
+  description: "What each plan includes and what it costs. Every plan includes everything; they differ in how much.",
   alternates: { canonical: "/pricing" },
 };
 
@@ -105,21 +106,23 @@ export default async function PricingPage({
       ? []
       : expected.filter((row) => !purchasable.has(row.key));
 
+  // The "what isn't wired up yet" notes below are the OPERATOR's: they name a
+  // file, a setting and a script, so only the site's staff ever read them.
+  // A visitor reads the prices.
+  const principal = await currentPrincipal().catch(() => null);
+  const staff = principal ? (await loadStaffPermissions({ principal }).catch(() => null)) !== null : false;
+
   return (
     <>
-      <section className="mx-auto max-w-5xl px-6 pt-16 pb-4 sm:pt-20">
-        <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-ink-muted">
-          Pricing
-        </p>
+      <section className="mx-auto max-w-6xl px-4 pt-16 pb-4 sm:px-6 sm:pt-20">
+        <p className="text-sm font-semibold text-accent">Pricing</p>
 
-        <h1 className="mt-5 max-w-[16ch] text-[clamp(2rem,5.5vw,3rem)] leading-[1.05] font-semibold tracking-[-0.035em] text-balance">
-          Pick a plan. Change it whenever.
+        <h1 className="mt-4 max-w-[18ch] text-[clamp(2rem,5.5vw,3rem)] leading-[1.05] font-semibold tracking-[-0.035em] text-balance">
+          One price. Everything included.
         </h1>
 
-        <p className="mt-5 max-w-[52ch] text-[17px] leading-relaxed text-ink-muted">
-          Every allowance below is the one the software actually enforces &mdash;
-          the page and the code read the same record, so a plan cannot advertise
-          something your account does not get.
+        <p className="mt-5 max-w-[56ch] text-[17px] leading-relaxed text-ink-muted">
+          Every plan has every feature. Pick the one that fits the size of your business, and change it whenever you like.
         </p>
 
         <PricingControls
@@ -142,7 +145,7 @@ export default async function PricingPage({
           follows. This only appears in a state that is genuinely broken, and a
           broken state nobody can see is the one that reaches production.
         */}
-        {purchasable === null ? (
+        {!staff ? null : purchasable === null ? (
           <div className="mt-10">
             <Notice tone="info" title="Prices are real; subscribing is not wired up yet">
               These come from <code className="font-mono text-xs">src/plans.ts</code>,
@@ -189,25 +192,20 @@ export default async function PricingPage({
 
       <div className="mt-16">
         <Section label="Side by side">
-          <SectionHeading title="What each plan includes">
-            The same allowances, in one table. Every row is a feature the record
-            declares, so no plan can be missing one.
-          </SectionHeading>
+          <SectionHeading title="Compare the plans">Every allowance, side by side.</SectionHeading>
           <ComparisonTable catalog={plans} tiers={onSale} />
         </Section>
       </div>
 
       <Section label="Questions">
-        <SectionHeading title="About billing" />
+        <SectionHeading title="About plans and billing" />
         <dl className="flex flex-col gap-6">
           <div>
             <dt className="text-[15px] font-medium text-ink">
               Can I change plan later?
             </dt>
             <dd className="mt-1.5 max-w-[58ch] text-[15px] leading-relaxed text-ink-muted">
-              Yes, either way. What you have already used in the current period
-              stays used &mdash; moving from 500 exports to 5,000 having spent
-              400 leaves you with 400 spent, not with a reset counter.
+              Yes, up or down, whenever you like. What you&rsquo;ve already used this month stays counted on the new plan.
             </dd>
           </div>
           <div>
@@ -215,20 +213,7 @@ export default async function PricingPage({
               What happens when I reach a limit?
             </dt>
             <dd className="mt-1.5 max-w-[58ch] text-[15px] leading-relaxed text-ink-muted">
-              You are told which allowance you have reached and what it is on
-              your plan. Nothing is deleted and nothing is charged
-              automatically.
-            </dd>
-          </div>
-          <div>
-            <dt className="text-[15px] font-medium text-ink">
-              Do prices include tax?
-            </dt>
-            <dd className="mt-1.5 max-w-[58ch] text-[15px] leading-relaxed text-ink-muted">
-              <strong className="font-medium text-ink">Answer this one.</strong>{" "}
-              Whether the amounts above are inclusive of VAT or sales tax depends
-              on where you and your customer are, and getting it wrong is a
-              refund and a correction rather than an argument.
+              You&rsquo;re told which one and what your plan allows. Nothing is deleted and nothing extra is charged.
             </dd>
           </div>
         </dl>

@@ -114,9 +114,14 @@ describe("<MessagesConsole>", () => {
     });
     const { container, unmount } = await mount(<MessagesConsole transport={fake.transport} />);
     const how = text(section(container, "how"));
-    expect(how).toContain("This site doesn't send email yet.");
+    // An owner reads the operator's job in plain words; the server's reason is for staff.
+    expect(how).toContain("Email isn't switched on for this site yet");
+    expect(how).not.toContain("This site doesn't send email yet.");
     expect(how).toContain("3 scheduled messages are late: the daily job that sends them hasn't run.");
     await unmount();
+    const staff = await mount(<MessagesConsole transport={fake.transport} showTechnical />);
+    expect(text(section(staff.container, "how"))).toContain("This site doesn't send email yet.");
+    await staff.unmount();
   });
 
   it("warns when scheduled messages missed their run, and not otherwise (review SEC-2A-01)", async () => {

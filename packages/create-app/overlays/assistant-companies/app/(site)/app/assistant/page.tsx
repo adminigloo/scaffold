@@ -1,6 +1,6 @@
 import { AssistantSettings } from "__SCOPE__/assistant-widget/admin";
 import { CompanyGate } from "@/components/CompanyGate";
-import { PageHeader } from "@/components/ui";
+import { PageHeader, WORK_MAIN } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -20,7 +20,7 @@ export default async function CompanyAssistantPage() {
   return (
     <CompanyGate path="/app/assistant" permission="assistant.settings.manage">
       {({ company }) => (
-        <main className="mx-auto max-w-3xl px-4 py-8 sm:px-6">
+        <main className={WORK_MAIN}>
           <PageHeader
             title="Assistant"
             description={`What ${company.name}'s assistant knows about your business, in your words, and this month's AI use. Your team asks it from the button on every page; it asks before it changes anything.`}

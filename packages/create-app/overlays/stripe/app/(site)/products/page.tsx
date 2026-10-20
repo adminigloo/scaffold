@@ -12,6 +12,7 @@ import { type StorefrontProduct } from "@/server/routers/checkout";
 import { checkoutMode } from "@/server/checkout-mode";
 import { productHref } from "@/storefront";
 import { api } from "@/trpc/server";
+import { OperatorOnly } from "@/components/OperatorOnly";
 
 /**
  * The storefront listing. Public — no account, no tenant, no permission.
@@ -63,6 +64,8 @@ export default async function ProductsPage() {
         remove at launch.
       */}
       {checkoutMode().kind === "simulated" && products !== null && products.length > 0 && (
+        // The operator's note: a visitor never reads about keys and simulations.
+        <OperatorOnly>
         <Notice tone="info" title="Payments are not configured, so buying is simulated">
           There is no Stripe key on this deployment, so the checkout records the
           order and applies everything the product grants — an entitlement, a
@@ -70,10 +73,12 @@ export default async function ProductsPage() {
           function a real payment runs, and it is refused as soon as Stripe is
           configured.
         </Notice>
+        </OperatorOnly>
       )}
 
       {products === null ? (
-        <Notice tone="warn" title="The catalog cannot be read yet">
+        <Notice tone="info" title="The shop isn't open yet">
+          <OperatorOnly>
           This page lists rows from Postgres and <code>DATABASE_URL</code> is not
           set, so there is nothing to read. Add it to <code>.env.local</code> and
           restart —{" "}
@@ -81,6 +86,7 @@ export default async function ProductsPage() {
             /setup
           </Link>{" "}
           lists what else is outstanding.
+          </OperatorOnly>
         </Notice>
       ) : products.length === 0 ? (
         <EmptyState title="Nothing is published yet">

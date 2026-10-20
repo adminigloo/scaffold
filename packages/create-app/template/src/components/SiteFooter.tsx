@@ -2,6 +2,7 @@ import Link from "next/link";
 import { resolveAppEnv } from "__SCOPE__/env";
 import { FOOTER_LINKS, SITE_LINKS, type SiteLink } from "@/nav";
 import { SITE_NAME } from "@/seo";
+import { operatorView } from "@/server/operator";
 
 /**
  * The footer's links for THIS deployment: everything, minus the developer
@@ -13,11 +14,17 @@ import { SITE_NAME } from "@/seo";
  * customers read it, and a "Setup" link there reads as unfinished software
  * (CA-18). The page itself also refuses non-staff on production. A runtime
  * environment check over a generated list — not a feature `if`.
+ *
+ * AND ONLY FOR THE OPERATOR (create-app 0.36, the showroom): off production
+ * too, a business owner trying the site on a staging address must never meet
+ * a "Setup" link. `operator` is src/server/operator.ts's answer — staff of the
+ * site, or the developer on a machine with nothing configured yet. Without
+ * it (the 404 page), no developer link at all.
  */
-export function visibleFooterLinks(): readonly SiteLink[] {
+export function visibleFooterLinks(operator = false): readonly SiteLink[] {
   const production = resolveAppEnv() === "production";
   return [...SITE_LINKS, ...FOOTER_LINKS].filter(
-    (link) => !(production && link.audience === "developer"),
+    (link) => !(link.audience === "developer" && (production || !operator)),
   );
 }
 
@@ -45,14 +52,15 @@ export function visibleFooterLinks(): readonly SiteLink[] {
  * admin panel is not a destination to advertise to people who have no account.
  * The header carries it, in the branch that already knows there is a user.
  */
-export function SiteFooter() {
+export async function SiteFooter() {
+  const operator = await operatorView();
   return (
     <footer className="mt-16 border-t border-line">
-      <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-6 gap-y-3 px-6 py-6">
+      <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-3 px-4 py-6 sm:px-6">
         <p className="mr-auto text-sm font-semibold text-ink-muted">{SITE_NAME}</p>
 
         <nav aria-label="Footer" className="flex flex-wrap gap-x-5 gap-y-2">
-          {visibleFooterLinks().map((link) => (
+          {visibleFooterLinks(operator).map((link) => (
             <Link
               key={link.href}
               href={link.href}

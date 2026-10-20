@@ -36,6 +36,7 @@ import { listOrdersForUser, type FulfilledOrderView } from "@/server/fulfilment"
 import { loadTenantPermissions } from "@/server/permissions";
 import { STOREFRONT_TENANT_ID } from "@/server/routers/checkout";
 import { currentTenantFor } from "@/server/tenant";
+import { OperatorOnly } from "@/components/OperatorOnly";
 
 /**
  * WHAT THIS PERSON HAS. The page a customer opens after paying.
@@ -388,7 +389,9 @@ function SignedOut() {
 
 function NoDatabase() {
   return (
-    <Notice tone="warn" title="DATABASE_URL is not set">
+    <Notice tone="info" title="This isn't available on this site yet">
+      <OperatorOnly>
+        DATABASE_URL isn&apos;t set.{" "}
       Orders and everything they granted live in Postgres, and this deployment
       has no connection to one — so there is nothing to read back. Nobody has
       been charged.{" "}
@@ -396,6 +399,7 @@ function NoDatabase() {
         /setup
       </Link>{" "}
       lists what else is outstanding.
+      </OperatorOnly>
     </Notice>
   );
 }

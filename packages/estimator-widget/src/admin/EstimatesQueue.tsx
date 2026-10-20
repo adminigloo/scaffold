@@ -43,6 +43,13 @@ export interface EstimatesQueueProps extends AdminChromeProps {
    * `can.includes("estimator.estimates.manage")`.
    */
   canManage?: boolean;
+  /**
+   * The heading over the list. Default "Estimates"; `false` draws none, for a
+   * host page whose own header already says it (New estimate stays).
+   */
+  title?: string | false;
+  /** The company's public estimate page, for the empty list's "Open your estimate page". */
+  estimatePageUrl?: string;
 }
 
 const STATUS_ICON: Record<string, string> = { accent: "●", muted: "○", warn: "◔", ok: "✓", danger: "✕" };
@@ -133,8 +140,8 @@ export function EstimatesQueue(props: EstimatesQueueProps) {
 
   return (
     <AdminFrame chrome={props} basics={basics} data={{ "aiew-queue": rows ? "ready" : error ? "error" : "loading" }}>
-      <div className="aiew-admin-head">
-        <h2 className="aiew-admin-title">Estimates</h2>
+      <div className="aiew-admin-head" data-titled={props.title === false ? undefined : ""}>
+        {props.title === false ? null : <h2 className="aiew-admin-title">{props.title ?? "Estimates"}</h2>}
         {props.canManage !== false ? (
           <button type="button" className="aiew-btn aiew-btn-primary" onClick={() => void newEstimate()} disabled={creating} aria-busy={creating || undefined}>
             {creating ? "Starting…" : "New estimate"}
@@ -178,9 +185,33 @@ export function EstimatesQueue(props: EstimatesQueueProps) {
       {error ? <LoadError error={error} onRetry={() => setTick((n) => n + 1)} /> : null}
       {!rows && !error ? <Loading label="Loading estimates…" /> : null}
       {rows && rows.length === 0 ? (
-        <p className="aiew-empty" data-aiew-empty={filter}>
-          {emptyText}
-        </p>
+        !debounced && !source && (filter === "leads" || filter === "all") && counts !== null && counts.all === 0 ? (
+          // A new company's first look: what this list does once it's in use,
+          // and the one thing that puts a row here.
+          <div className="aiew-empty aiew-empty-card" data-aiew-empty={filter}>
+            <p className="aiew-empty-title">No estimate requests yet</p>
+            <p className="aiew-empty-text">
+              Once your estimate page is out there, customers price their own job in about a minute. Every request lands here with
+              their answers and photos, ready to turn into a quote you send with one click.
+            </p>
+            <div className="aiew-empty-actions">
+              {props.estimatePageUrl ? (
+                <a className="aiew-btn aiew-btn-primary" href={props.estimatePageUrl} target="_blank" rel="noreferrer">
+                  Open your estimate page
+                </a>
+              ) : null}
+              {props.canManage !== false ? (
+                <button type="button" className={`aiew-btn ${props.estimatePageUrl ? "aiew-btn-secondary" : "aiew-btn-primary"}`} onClick={() => void newEstimate()} disabled={creating}>
+                  Write one yourself
+                </button>
+              ) : null}
+            </div>
+          </div>
+        ) : (
+          <p className="aiew-empty" data-aiew-empty={filter}>
+            {emptyText}
+          </p>
+        )
       ) : null}
       {rows && rows.length > 0 ? (
         <ul className="aiew-rows" aria-label={`${FILTER_LABEL[filter]} estimates`}>

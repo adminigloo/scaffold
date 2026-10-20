@@ -254,7 +254,7 @@ describe("formatDay", () => {
   it("reads the date in UTC, not in the region that happened to be warm", () => {
     // A renewal date that reads 2 March from one serverless region and 3 March
     // from another is a support ticket about a charge on the wrong day.
-    expect(formatDay(new Date("2026-03-02T23:30:00.000Z"))).toBe("2 March 2026");
+    expect(formatDay(new Date("2026-03-02T23:30:00.000Z"))).toBe("March 2, 2026");
   });
 });
 

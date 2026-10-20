@@ -127,8 +127,8 @@ describe("companies: each company's own store", () => {
     expect(plans).toContain("products: 20,");
     expect(code(file(p, "src", "server", "plan-gate.ts"))).toContain('return planLimit(tenantId, "products");');
     const page = file(p, "app", "(site)", "app", "payments", "page.tsx");
-    expect(page).toContain("<PaymentsAttention baseUrl={`/api/app/${company.id}/invoices`} />");
-    expect(page).toContain('<StoreAttention baseUrl={`/api/app/${company.id}/store`} heading="Store payments that need your attention" />');
+    expect(page).toContain("<PaymentsAttention baseUrl={`/api/app/${company.id}/invoices`} locale={locale} />");
+    expect(page).toContain('<StoreAttention baseUrl={`/api/app/${company.id}/store`} heading="Store payments that need your attention" locale={locale} />');
     const badges = code(file(p, "src", "server", "nav-badges.ts"));
     expect(badges).toContain("open += await openStoreAlertCount(db, tenantId);");
     expect(badges).toContain("open += await openCardAlertCount(db, tenantId);");
@@ -247,14 +247,14 @@ describe("docs, versions and the upgrade notes", () => {
     expect(doc).toContain("stock is held for the 30 minutes");
   });
 
-  it("pins commerce 0.2 and stripe 0.4.1, and tells a 0.33 project what to run", () => {
-    expect(packageVersions()["commerce"]).toBe("0.2.0");
+  it("pins commerce 0.2 (0.3 since the showroom) and stripe 0.4.1, and tells a 0.33 project what to run", () => {
+    expect(packageVersions()["commerce"]).toBe("0.3.0");
     expect(packageVersions()["stripe"]).toBe("0.4.1");
     expect(packageVersions()["catalog"]).toBe("0.3.0");
     const notes = upgradeNotesFor(answers(COMPANIES), "0.33.0").join("\n");
     expect(notes).toContain("upgrade-0.1-to-0.2.sql");
     expect(notes).toContain("catalog/sql/upgrade-0.2-to-0.3.sql");
     expect(notes).toContain("/app/store");
-    expect(upgradeNotesFor(answers(COMPANIES), "0.35.0")).toEqual([]);
+    expect(upgradeNotesFor(answers(COMPANIES), "0.36.0")).toEqual([]);
   });
 });

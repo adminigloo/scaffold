@@ -33,7 +33,10 @@ export interface CustomersAdminProps {
   readonly recordHrefs?: Partial<Record<CustomerLinkKind, string>>;
   /** Can this person change things (customers.manage)? The server checks again. */
   readonly canManage?: boolean;
-  readonly title?: string;
+  /** The heading. Default "Customers"; `false` draws none (and no description), for a host page whose own header says it. */
+  readonly title?: string | false;
+  /** Dates in the company's locale. Default "en-US". */
+  readonly locale?: string;
 }
 
 export function CustomersStyles() {
@@ -89,10 +92,15 @@ export function recordHref(hrefs: CustomersAdminProps["recordHrefs"], entry: Pic
   return template ? template.replace("{id}", encodeURIComponent(entry.refId)) : null;
 }
 
-function when(iso: string | null): string {
+function when(iso: string | null, locale = "en-US"): string {
   if (!iso) return "";
   const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? "" : date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  if (Number.isNaN(date.getTime())) return "";
+  try {
+    return date.toLocaleString(locale, { dateStyle: "medium", timeStyle: "short" });
+  } catch {
+    return date.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" });
+  }
 }
 
 function customerHref(pageHref: string, id: string): string {
@@ -142,11 +150,13 @@ function CustomerList(props: CustomersAdminProps & { readonly canManage: boolean
   }, [q, load]);
   return (
     <>
-      <header className="aicu-row" style={{ justifyContent: "space-between" }}>
-        <div>
-          <h1 className="aicu-h1">{props.title ?? "Customers"}</h1>
-          <p className="aicu-muted">Everyone who has asked for a quote, booked, been invoiced or bought from you, each with everything that is theirs.</p>
-        </div>
+      <header className="aicu-row" style={{ justifyContent: props.title === false ? "flex-end" : "space-between" }}>
+        {props.title === false ? null : (
+          <div>
+            <h1 className="aicu-h1">{props.title ?? "Customers"}</h1>
+            <p className="aicu-muted">Everyone who has asked for a quote, booked, been invoiced or bought from you, each with everything that is theirs.</p>
+          </div>
+        )}
         {props.canManage ? (
           <div className="aicu-row">
             <button type="button" className="aicu-btn" onClick={() => setPanel(panel === "add" ? "none" : "add")}>
@@ -168,7 +178,29 @@ function CustomerList(props: CustomersAdminProps & { readonly canManage: boolean
         <input className="aicu-input" type="search" value={q} placeholder="Name, email, phone or address" onChange={(e: ChangeEvent<HTMLInputElement>) => setQ(e.target.value)} />
       </label>
       <ErrorNote message={error} />
-      {page && rows.length === 0 ? <p className="aicu-muted">{q ? "Nobody matches that." : "No customers yet. They appear here as quotes, visits, invoices, calls and orders come in — or add or import them."}</p> : null}
+      {page && rows.length === 0 ? (
+        q ? (
+          <p className="aicu-muted">Nobody matches that.</p>
+        ) : (
+          <div className="aicu-card aicu-empty" data-customers-empty="">
+            <p className="aicu-empty-title">No customers yet</p>
+            <p className="aicu-muted">
+              Once work comes in, everyone who asks for a quote, books, is invoiced or buys from you lands here by themselves, each with their
+              whole history in one place. Bring the ones you already have with Import.
+            </p>
+            {props.canManage ? (
+              <div className="aicu-row" style={{ justifyContent: "center" }}>
+                <button type="button" className="aicu-btn" onClick={() => setPanel("import")}>
+                  Import your customers
+                </button>
+                <button type="button" className="aicu-btn aicu-btn-quiet" onClick={() => setPanel("add")}>
+                  Add one
+                </button>
+              </div>
+            ) : null}
+          </div>
+        )
+      ) : null}
       {rows.length > 0 ? (
         // On a phone: one card per customer (name, email, phone), no wide table.
         <ul className="aicu-list aicu-cards" data-customer-cards="">
@@ -204,7 +236,7 @@ function CustomerList(props: CustomersAdminProps & { readonly canManage: boolean
                   </td>
                   <td>{row.email ?? ""}</td>
                   <td>{row.phone ?? ""}</td>
-                  <td className="aicu-when">{when(row.lastActivityAt ?? row.createdAt)}</td>
+                  <td className="aicu-when">{when(row.lastActivityAt ?? row.createdAt, props.locale)}</td>
                 </tr>
               ))}
             </tbody>
@@ -436,7 +468,7 @@ function CustomerDetail(props: CustomersAdminProps & { readonly customerId: stri
           {customer.notices.length > 0 ? <Notices baseUrl={props.baseUrl} base={base} customer={customer} pageHref={props.pageHref} canManage={props.canManage} onChange={setCustomer} /> : null}
           <Addresses base={base} customer={customer} canManage={props.canManage} onChange={setCustomer} />
           {/* Keyed on the customer's last change: after a merge the moved entries load. */}
-          <Timeline key={`${customer.id}:${customer.updatedAt}`} base={base} recordHrefs={props.recordHrefs} />
+          <Timeline key={`${customer.id}:${customer.updatedAt}`} base={base} recordHrefs={props.recordHrefs} locale={props.locale} />
           {props.canManage ? <MergePanel baseUrl={props.baseUrl} base={base} customer={customer} pageHref={props.pageHref} onMerged={setCustomer} /> : null}
         </>
       ) : null}
@@ -582,7 +614,7 @@ function Addresses(props: { readonly base: string; readonly customer: CustomerWi
   );
 }
 
-function Timeline(props: { readonly base: string; readonly recordHrefs: CustomersAdminProps["recordHrefs"] }) {
+function Timeline(props: { readonly base: string; readonly recordHrefs: CustomersAdminProps["recordHrefs"]; readonly locale?: string }) {
   const [entries, setEntries] = useState<TimelineEntryWire[]>([]);
   const [next, setNext] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -612,7 +644,7 @@ function Timeline(props: { readonly base: string; readonly recordHrefs: Customer
             <li key={entry.id} className="aicu-row">
               <span className="aicu-tag aicu-kind">{kindWords(entry.kind)}</span>
               {href ? <a href={href}>{entry.summary}</a> : <span>{entry.summary}</span>}
-              <span className="aicu-when">{when(entry.occurredAt)}</span>
+              <span className="aicu-when">{when(entry.occurredAt, props.locale)}</span>
             </li>
           );
         })}

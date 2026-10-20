@@ -1,6 +1,6 @@
 import { MessagesConsole } from "__SCOPE__/comms-widget/admin";
 import { CompanyGate } from "@/components/CompanyGate";
-import { PageHeader } from "@/components/ui";
+import { PageHeader, WORK_MAIN } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -19,13 +19,18 @@ export const dynamic = "force-dynamic";
 export default async function CompanyMessagesPage() {
   return (
     <CompanyGate path="/app/messages" permission="comms.view">
-      {({ company, can }) => (
-        <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
+      {({ company, can, isStaff, locale }) => (
+        <main className={WORK_MAIN}>
           <PageHeader
             title="Messages"
             description="The emails your customers get, what they say, and what went out."
           />
-          <MessagesConsole baseUrl={`/api/app/${company.id}/messages`} canManage={can.includes("comms.manage")} />
+          <MessagesConsole
+            baseUrl={`/api/app/${company.id}/messages`}
+            canManage={can.includes("comms.manage")}
+            showTechnical={isStaff}
+            locale={locale}
+          />
         </main>
       )}
     </CompanyGate>

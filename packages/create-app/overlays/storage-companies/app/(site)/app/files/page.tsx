@@ -1,6 +1,6 @@
 import { FilesManager } from "__SCOPE__/storage-widget/admin";
 import { CompanyGate } from "@/components/CompanyGate";
-import { PageHeader } from "@/components/ui";
+import { PageHeader, WORK_MAIN } from "@/components/ui";
 import { FILES_MORE_ROOM } from "@/server/files";
 
 export const dynamic = "force-dynamic";
@@ -24,15 +24,16 @@ export const dynamic = "force-dynamic";
 export default async function CompanyFilesPage() {
   return (
     <CompanyGate path="/app/files" permission="files.view">
-      {({ company }) => (
-        <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
-          <PageHeader title="Files" description={`The photos and files ${company.name} keeps.`} />
+      {({ company, locale }) => (
+        <main className={WORK_MAIN}>
+          <PageHeader title="Files" description={`Every photo and file ${company.name} keeps: before-and-after shots, signed paperwork, your logo.`} />
           <FilesManager
             baseUrl={`/api/app/${company.id}/files`}
             platformName={FILES_MORE_ROOM.platformName}
             supportEmail={FILES_MORE_ROOM.supportEmail}
             logoSettings="__TENANT_LABEL_LOWER__ settings"
             title={false}
+            locale={locale}
           />
         </main>
       )}

@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Badge, Button, Card, CardBody, CardHeader, Notice, cx } from "@/components/ui";
+import { Badge, Button, Card, CardBody, Notice, buttonClass, cx } from "@/components/ui";
 import type { CheckoutMode } from "@/server/checkout-mode";
 import { api } from "@/trpc/client";
 
@@ -44,7 +44,12 @@ export interface ChoosableTier {
    * plan — and is why the button says so rather than showing a zero.
    */
   readonly prices: Readonly<Record<string, string>>;
-  /** Rendered from the record's own vocabulary, one line per declared feature. */
+  /**
+   * The 3–4 numbers the plan leads with ("10 team members", "25 GB of photos
+   * and files"), from HEADLINE_FEATURES in src/plans.ts.
+   */
+  readonly headline: readonly string[];
+  /** Every allowance, one line each, for "What's included". */
   readonly features: readonly string[];
 }
 
@@ -60,6 +65,10 @@ export interface PlanChooserProps {
   readonly canManage: boolean;
   /** The tier they are already on, so it is marked rather than offered again. */
   readonly currentTierKey: string | null;
+  /** Where "Talk to us" goes for a plan with no price (a mailto:), or null. */
+  readonly contactHref: string | null;
+  /** Staff of the site: the "card payments aren't on" line also says why. */
+  readonly staff: boolean;
   /**
    * Does this __TENANT_LABEL_LOWER__ already pay through Stripe? Then picking a plan CHANGES
    * that subscription (with a price preview to confirm) instead of starting a
@@ -86,7 +95,8 @@ export function PlanChooser(props: PlanChooserProps) {
   const [interval, setInterval] = useState<"month" | "year">(
     props.intervals[0] ?? "month",
   );
-  const [currency, setCurrency] = useState<string>(props.currencies[0] ?? "usd");
+  // US dollars first when the plans are priced in them (the list is alphabetical).
+  const [currency, setCurrency] = useState<string>(props.currencies.includes("usd") ? "usd" : (props.currencies[0] ?? "usd"));
   // Held separately from `isPending`: the mutation resolves the instant Stripe
   // answers and the navigation to the hosted checkout takes another beat, and a
   // button that re-enables during that beat invites a second session.
@@ -155,7 +165,7 @@ export function PlanChooser(props: PlanChooserProps) {
                 aria-pressed={interval === option}
                 onClick={() => setInterval(option)}
                 className={cx(
-                  "rounded px-3 py-1 text-sm transition-colors",
+                  "min-h-11 rounded px-4 text-sm transition-colors",
                   interval === option
                     ? "bg-accent-soft text-ink"
                     : "text-ink-muted hover:text-ink",
@@ -173,7 +183,7 @@ export function PlanChooser(props: PlanChooserProps) {
             <select
               value={currency}
               onChange={(event) => setCurrency(event.target.value)}
-              className="rounded-md border border-line bg-transparent px-2 py-1 text-sm text-ink"
+              className="min-h-11 rounded-control border border-line bg-surface px-3 text-sm text-ink"
             >
               {props.currencies.map((option) => (
                 <option key={option} value={option}>
@@ -186,16 +196,18 @@ export function PlanChooser(props: PlanChooserProps) {
       </div>
 
       {simulated && (
-        <Notice tone="warn" title="No money will move">
-          Stripe is not configured on this deployment, so there is no checkout to
-          send you to. Subscribing here records the subscription and applies
-          everything the plan grants, through the same function a real Stripe
-          webhook runs — so the banner, the cancel button, the renewal date and
-          the entitlements can all be built and tested now.{" "}
-          <strong className="font-medium text-ink">
-            It disappears by itself the moment Stripe keys are added.
-          </strong>
-        </Notice>
+        // The operator's job (this site's Stripe keys), told to an owner in one
+        // plain sentence; staff also read what that means underneath.
+        <p className="max-w-[68ch] text-sm text-ink-muted" data-plans-simulated="">
+          Card payments for plans aren&apos;t switched on for this site yet, so choosing a plan starts it straight away, with
+          nothing charged.
+          {props.staff ? (
+            <span className="mt-1 block text-xs">
+              Stripe isn&apos;t configured here: a plan is recorded and everything it grants applied through the same function a
+              real Stripe webhook runs. This disappears once the Stripe keys are added.
+            </span>
+          ) : null}
+        </p>
       )}
 
       {error && (
@@ -246,95 +258,111 @@ export function PlanChooser(props: PlanChooserProps) {
         </Notice>
       )}
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {props.tiers.map((tier) => {
           const price = tier.prices[`${interval}:${currency}`];
           const current = tier.key === props.currentTierKey;
 
           return (
-            <Card key={tier.key}>
-              <CardHeader
-                title={tier.name}
-                hint={tier.description ?? undefined}
-                actions={
-                  current ? (
-                    <Badge tone="accent">Current</Badge>
+            <Card key={tier.key} className={cx("flex flex-col", tier.highlight && !current ? "ring-1 ring-accent" : undefined)}>
+              <CardBody className="flex flex-1 flex-col gap-4 p-5">
+                <div className="flex items-start justify-between gap-3">
+                  <h3 className="text-lg font-semibold tracking-tight text-ink">{tier.name}</h3>
+                  {current ? (
+                    <Badge tone="accent">Your plan</Badge>
                   ) : tier.highlight ? (
                     <Badge tone="accent">Most popular</Badge>
-                  ) : undefined
-                }
-              />
-              <CardBody className="flex flex-col gap-3">
-                <p className="text-lg font-semibold tabular-nums">
+                  ) : null}
+                </div>
+                {/* The plan's one-line promise. */}
+                {tier.description ? <p className="-mt-2 text-sm leading-relaxed text-ink-muted">{tier.description}</p> : null}
+
+                <p className="text-ink tabular-nums">
                   {price === undefined ? (
-                    <span className="text-base font-normal text-ink-muted">
-                      Talk to us
-                    </span>
+                    <span className="text-2xl font-semibold tracking-tight">Custom pricing</span>
                   ) : (
                     <>
-                      {price}
-                      <span className="text-sm font-normal text-ink-muted">
-                        {" "}
-                        per {interval}
-                      </span>
+                      <span className="text-3xl font-semibold tracking-tight">{price}</span>
+                      <span className="text-sm text-ink-muted"> a {interval}</span>
                     </>
                   )}
                 </p>
 
-                <ul className="flex flex-col gap-1 text-sm text-ink-muted">
-                  {tier.features.map((feature) => (
-                    <li key={feature}>{feature}</li>
-                  ))}
-                </ul>
+                <div className="flex flex-col gap-2 text-sm">
+                  <p className="flex items-center gap-2 font-medium text-ink">
+                    <CheckMark />
+                    Everything included
+                  </p>
+                  <ul className="flex flex-col gap-1.5 text-ink-muted">
+                    {tier.headline.map((line) => (
+                      <li key={line} className="flex items-start gap-2">
+                        <CheckMark />
+                        <span>{line}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
 
-                {price === undefined ? (
-                  // A tier with no price on this combination is not for sale
-                  // here, and a disabled button saying "Subscribe" would read
-                  // as a fault. The record calls this a real tier; the page
-                  // says what to do about it.
-                  <p className="text-sm text-ink-muted">
-                    This plan is not sold {interval}ly in {currency.toUpperCase()}.
-                  </p>
-                ) : current ? (
-                  <p className="text-sm text-ink-muted">
-                    This is the plan this __TENANT_LABEL_LOWER__ is on.
-                  </p>
-                ) : !props.canManage ? (
-                  <Button variant="secondary" disabled className="self-start">
-                    Subscribe
-                  </Button>
-                ) : (
-                  <Button
-                    variant={tier.highlight ? "primary" : "secondary"}
-                    disabled={busy}
-                    className="self-start"
-                    onClick={() =>
-                      changing
-                        ? previewChange.mutate({ tenantId: props.tenantId, tierKey: tier.key, interval, currency })
-                        : simulated
-                        ? simulate.mutate({
-                            tenantId: props.tenantId,
-                            tierKey: tier.key,
-                            interval,
-                            currency,
-                          })
-                        : subscribe.mutate({
-                            tenantId: props.tenantId,
-                            tierKey: tier.key,
-                            interval,
-                            currency,
-                          })
-                    }
-                  >
-                    {busy
-                      ? "Working…"
-                      : changing
-                        ? `Switch to ${tier.name}`
-                        : simulated
-                          ? `Simulate ${tier.name}`
-                          : `Subscribe to ${tier.name}`}
-                  </Button>
-                )}
+                {tier.features.length > tier.headline.length ? (
+                  <details className="group text-sm">
+                    <summary className="inline-flex min-h-11 cursor-pointer list-none items-center gap-1 font-medium text-accent [&::-webkit-details-marker]:hidden">
+                      What&apos;s included
+                      <span aria-hidden="true" className="text-ink-muted group-open:rotate-180">
+                        &#x25BE;
+                      </span>
+                    </summary>
+                    <ul className="mt-1 flex flex-col gap-1.5 text-ink-muted">
+                      {tier.features.map((feature) => (
+                        <li key={feature}>{feature}</li>
+                      ))}
+                    </ul>
+                  </details>
+                ) : null}
+
+                <div className="mt-auto pt-2">
+                  {price === undefined ? (
+                    // A plan with no price on this cadence isn't sold here: it's
+                    // a conversation, and the button starts one.
+                    props.contactHref ? (
+                      <a href={props.contactHref} className={buttonClass("secondary", "w-full")}>
+                        Talk to us
+                      </a>
+                    ) : (
+                      <p className="text-sm text-ink-muted">Talk to us about this plan.</p>
+                    )
+                  ) : current ? (
+                    <p className="text-sm text-ink-muted">You&apos;re on this plan.</p>
+                  ) : !props.canManage ? (
+                    <Button variant="secondary" disabled className="w-full">
+                      Choose {tier.name}
+                    </Button>
+                  ) : (
+                    <Button
+                      variant={tier.highlight ? "primary" : "secondary"}
+                      disabled={busy}
+                      className="w-full"
+                      onClick={() =>
+                        changing
+                          ? previewChange.mutate({ tenantId: props.tenantId, tierKey: tier.key, interval, currency })
+                          : simulated
+                          ? simulate.mutate({
+                              tenantId: props.tenantId,
+                              tierKey: tier.key,
+                              interval,
+                              currency,
+                            })
+                          : subscribe.mutate({
+                              tenantId: props.tenantId,
+                              tierKey: tier.key,
+                              interval,
+                              currency,
+                            })
+                      }
+                    >
+                      {busy ? "Working…" : changing ? `Switch to ${tier.name}` : `Choose ${tier.name}`}
+                    </Button>
+                  )}
+                </div>
               </CardBody>
             </Card>
           );
@@ -343,11 +371,18 @@ export function PlanChooser(props: PlanChooserProps) {
 
       {!props.canManage && (
         <p className="max-w-[62ch] text-sm text-ink-muted">
-          Committing this __TENANT_LABEL_LOWER__ to a recurring charge needs{" "}
-          <code className="font-mono">subscriptions.manage</code>, which normally
-          only its owner holds — it is the same permission as cancelling one.
+          Only the owner of this __TENANT_LABEL_LOWER__ can change its plan.
         </p>
       )}
     </div>
+  );
+}
+
+/** A small tick in the accent, for "Everything included" and the plan's numbers. */
+function CheckMark() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20" className="mt-0.5 size-4 shrink-0 text-accent" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M4.5 10.5l3.5 3.5 7.5-8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   );
 }

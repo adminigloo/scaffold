@@ -165,13 +165,13 @@ describe("who owns `/`", () => {
     const plan = await planEmit(TEMPLATE_DIR, "/out", answers({ includeMarketing: true }));
     const landing = plan.files.get(LANDING) ?? "";
 
-    for (const section of ["Hero", "Features", "SocialProof", "Faq", "CallToAction"]) {
+    for (const section of ["Hero", "Outcomes", "HowItWorks", "PlansTeaser", "Faq", "CallToAction"]) {
       expect(
         plan.files.has(join("src", "components", "marketing", `${section}.tsx`)),
         `${section}.tsx is not emitted`,
       ).toBe(true);
-      expect(landing, `the landing page does not compose ${section}`).toContain(
-        `<${section} />`,
+      expect(landing, `the landing page does not compose ${section}`).toMatch(
+        new RegExp(`<${section}[ />]`),
       );
     }
   });

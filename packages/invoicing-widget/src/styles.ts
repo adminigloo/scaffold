@@ -353,6 +353,30 @@ textarea.aiiw-input { min-height: 88px; resize: vertical; }
 `;
 
 const ADMIN_CSS_TEXT = `
+.aiiw-empty { display: grid; justify-items: center; gap: 8px; padding: 28px 12px; text-align: center; }
+.aiiw-empty-title { margin: 0; font-weight: 700; font-size: 16px; color: var(--aiiw-ink); }
+.aiiw-empty-text { margin: 0; max-width: 58ch; font-size: 14.5px; color: var(--aiiw-muted); }
+.aiiw-empty .aiiw-btn { margin-top: 6px; }
+/* The page's one setup card: "3 things to finish", collapsed until opened. */
+.aiiw-setup { background: var(--aiiw-surface); border: 1px solid var(--aiiw-line); border-radius: var(--aiiw-radius); box-shadow: var(--aiiw-shadow); }
+.aiiw-setup-head { display: flex; align-items: center; gap: 4px; padding: 4px 4px 4px 0; }
+.aiiw-setup-toggle { flex: 1 1 auto; display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 8px 14px; border: 0; background: transparent; cursor: pointer; text-align: left; color: var(--aiiw-ink); border-radius: var(--aiiw-radius-sm); font: inherit; }
+.aiiw-setup-toggle:hover .aiiw-setup-title { text-decoration: underline; text-underline-offset: 3px; }
+.aiiw-setup-count { display: inline-flex; align-items: center; justify-content: center; min-width: 26px; height: 26px; padding: 0 8px; border-radius: 999px; background: var(--aiiw-accent-soft); color: var(--aiiw-accent-ink); font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.aiiw-setup-title { font-weight: 600; font-size: 15px; }
+.aiiw-setup-chevron { margin-left: auto; color: var(--aiiw-muted); flex: none; }
+.aiiw-setup-dismiss { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border: 0; background: transparent; color: var(--aiiw-muted); cursor: pointer; border-radius: var(--aiiw-radius-sm); }
+.aiiw-setup-dismiss svg { width: 18px; height: 18px; }
+.aiiw-setup-dismiss:hover { color: var(--aiiw-ink); background: var(--aiiw-ground); }
+.aiiw-setup-body { border-top: 1px solid var(--aiiw-line); padding: 12px 18px 16px; display: grid; gap: 10px; }
+.aiiw-setup-body[hidden] { display: none; }
+.aiiw-setup-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; font-size: 14px; }
+.aiiw-setup-list li { position: relative; padding-left: 18px; overflow-wrap: anywhere; }
+.aiiw-setup-list li::before { content: ""; position: absolute; left: 2px; top: .6em; width: 6px; height: 6px; border-radius: 50%; background: var(--aiiw-line-strong); }
+.aiiw-setup-list a { font-weight: 600; }
+.aiiw-setup-sub { margin: 0; font-size: 12.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--aiiw-muted); padding-top: 4px; }
+.aiiw-setup-detail { display: block; margin-top: 2px; font-size: 13px; color: var(--aiiw-muted); }
+
 .aiiw-root.aiiw-admin { background: var(--aiiw-ground); font-size: 14.5px; }
 .aiiw-admin-inner { padding: 16px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 @media (max-width: 480px) { .aiiw-admin-inner { padding: 12px; gap: 12px; } }

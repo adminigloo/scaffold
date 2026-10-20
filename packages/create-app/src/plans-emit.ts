@@ -312,7 +312,7 @@ export async function assistantMessageLimit(tenantId: string): Promise<number | 
 
 /**
  * How many websites of its own a ${noun} may count, from its plan
- * (src/plans.ts, "websites of your own counted"; Tenancy 2b-4a). Checked when
+ * (src/plans.ts, "websites of your own, with visit counts"; Tenancy 2b-4a). Checked when
  * one is added (src/server/website.ts); its pages here are always counted.
  * A number: the limit; null: unlimited; undefined: the plan doesn't say.
  */

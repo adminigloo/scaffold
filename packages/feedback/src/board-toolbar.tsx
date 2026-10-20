@@ -358,7 +358,7 @@ export function filtersForRequest(filters: BoardFilters): BoardFilters {
 function dayLabel(day: string): string {
   const iso = localMidnight(day);
   if (!iso) return day;
-  return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  return new Date(iso).toLocaleDateString("en-US", { day: "numeric", month: "short" });
 }
 
 // ---------------------------------------------------------------------------

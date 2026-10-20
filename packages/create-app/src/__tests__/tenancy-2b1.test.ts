@@ -578,15 +578,15 @@ describe("what the project installs and says (17)", () => {
       ["storage", "^0.2.0"],
       ["storage-widget", "^0.1.0"],
       ["tenancy", "^0.7.0"],
-      ["tenancy-widget", "^0.2.2"],
+      ["tenancy-widget", "^0.3.0"],
       ["scheduling", "^0.6.1"],
-      ["scheduling-widget", "^0.3.0"],
-      ["estimator", "^0.5.1"],
-      ["estimator-widget", "^0.5.0"],
+      ["scheduling-widget", "^0.4.0"],
+      ["estimator", "^0.6.0"],
+      ["estimator-widget", "^0.6.0"],
       ["invoicing", "^0.6.0"],
-      ["invoicing-widget", "^0.2.1"],
+      ["invoicing-widget", "^0.3.0"],
       ["comms", "^0.5.0"],
-      ["comms-widget", "^0.1.2"],
+      ["comms-widget", "^0.2.0"],
     ] as const) {
       expect(versionRangeFor(`@adminigloo/${pkg}`), pkg).toBe(range);
     }

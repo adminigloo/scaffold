@@ -1,6 +1,7 @@
 import { CrewDay } from "__SCOPE__/scheduling-widget/admin";
 import { CompanyGate } from "@/components/CompanyGate";
 import { VISIT_FILES_HREF } from "@/server/visit-files";
+import { WORK_MAIN } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -21,9 +22,11 @@ export const dynamic = "force-dynamic";
 export default async function TodaysRoutePage() {
   return (
     <CompanyGate path="/app/schedule/today" permission="schedule.route">
-      {({ company }) => (
-        <main className="mx-auto max-w-2xl px-4 py-6 sm:px-6">
-          <CrewDay baseUrl={`/api/app/${company.id}/schedule`} filesHref={VISIT_FILES_HREF} />
+      {({ company, locale }) => (
+        <main className={WORK_MAIN}>
+          <div className="max-w-2xl">
+            <CrewDay baseUrl={`/api/app/${company.id}/schedule`} filesHref={VISIT_FILES_HREF} locale={locale} />
+          </div>
         </main>
       )}
     </CompanyGate>

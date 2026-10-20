@@ -44,12 +44,15 @@ export function BookingsPanel({
   types,
   locale,
   onChanged,
+  bookingPageUrl,
 }: {
   adapter: BookingAdminAdapter;
   scope: BookingScope;
   types: readonly AdminBookingType[];
   locale: string;
   onChanged?: () => void;
+  /** The public booking page, for the empty list's one action. */
+  bookingPageUrl?: string;
 }) {
   const list = useResource(() => adapter.listBookings({ scope }), scope);
   const reload = () => {
@@ -72,11 +75,16 @@ export function BookingsPanel({
     return (
       <div className="aibk-empty" data-aibk-empty={scope}>
         <span className="aibk-empty-title">{scope === "upcoming" ? "No upcoming calls" : "No past calls yet"}</span>
-        <span>
+        <span className="aibk-empty-text">
           {scope === "upcoming"
-            ? "Calls booked on your booking page appear here, with who booked, how you're meeting and anything they wrote."
+            ? "Once people book, every call lands here with who's coming, how you're meeting and anything they wrote, and it's held on your calendar."
             : "Calls move here once they end. Record how each went to keep a pipeline."}
         </span>
+        {scope === "upcoming" && bookingPageUrl ? (
+          <a className="aibk-btn aibk-btn-primary" href={bookingPageUrl} target="_blank" rel="noopener noreferrer">
+            Open your booking page
+          </a>
+        ) : null}
       </div>
     );
   }

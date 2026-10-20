@@ -58,6 +58,12 @@ import { AdminNotices, AdminRoot, Check, Outcome, Switch, useAdminStatus, useAdm
 export type SettingsSection = "business" | "booking" | "messages" | "crews" | "hours";
 
 export interface SchedulingSettingsProps extends ChromeProps {
+  /**
+   * Staff of the SITE (not the company's owner): the setup card also shows the
+   * technical detail of what only the site's operator can switch on. Default
+   * false — an owner reads one plain sentence per item.
+   */
+  showTechnical?: boolean;
   /** The mounted staff handlers, e.g. "/api/admin/schedule". Ignored when `transport` is given. */
   baseUrl?: string;
   transport?: SchedulingAdminTransport;
@@ -170,7 +176,7 @@ export function SchedulingSettings(props: SchedulingSettingsProps) {
           />
         ) : null}
         {!canManage ? <Notice tone="info">You can look, but not change these settings.</Notice> : null}
-        {status ? <AdminNotices notices={status.notices} /> : null}
+        {status ? <AdminNotices notices={status.notices} showTechnical={props.showTechnical === true} /> : null}
         {error ? (
           <Notice tone="error">
             {adminErrorText(error)}{" "}
@@ -658,14 +664,14 @@ function BookingCard({
             checked={draft.publicBookingEnabled}
             onChange={(v) => set("publicBookingEnabled", v)}
             label="Take bookings online"
-            hint="Off: the booking page says online booking is closed and gives your phone number."
+            hint={{ on: "On: customers can book a visit on your booking page.", off: "Off: the booking page says online booking is closed and gives your phone number." }}
             disabled={!canManage}
           />
           <Switch
             checked={draft.autoConfirm}
             onChange={(v) => set("autoConfirm", v)}
             label="Confirm requests automatically"
-            hint="On: requests go straight onto the calendar. Off: you accept each one."
+            hint={{ on: "On: requests go straight onto the calendar.", off: "Off: you accept or decline each request." }}
             disabled={!canManage}
           />
 
@@ -861,7 +867,7 @@ function BookingCard({
             checked={draft.requireAddress}
             onChange={(v) => set("requireAddress", v)}
             label="Address required"
-            hint="On: customers must give the address of the visit."
+            hint={{ on: "On: customers must give the address of the visit.", off: "Off: the address is optional." }}
             disabled={!canManage}
           />
         </fieldset>
@@ -1210,7 +1216,7 @@ function CrewsCard({
               checked={r.acceptsPublicBookings}
               onChange={(next) => void act(r.id, () => transport.updateResource(r.id, { acceptsPublicBookings: next }))}
               label="Takes online bookings"
-              hint="Off: customers can't book this crew online. Staff still can."
+              hint={{ on: "On: customers can book this crew online.", off: "Off: customers can't book this crew online. Staff still can." }}
               disabled={!canManage || busy === r.id}
             />
             {editing === r.id ? (

@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { ErrorScreen } from "@/components/ErrorScreen";
 
 /**
@@ -39,14 +38,7 @@ export default function SiteError({
         Something on this page failed while it was being built. The rest of the
         site is unaffected — the links above still work.
       </p>
-      <p className="mt-2">
-        On a new project this is usually a credential that has not been added
-        yet.{" "}
-        <Link href="/setup" className="text-accent underline underline-offset-2">
-          See what is configured
-        </Link>
-        .
-      </p>
+      <p className="mt-2">Try again in a moment. If it keeps happening, we&apos;ve been told and are looking into it.</p>
     </ErrorScreen>
   );
 }

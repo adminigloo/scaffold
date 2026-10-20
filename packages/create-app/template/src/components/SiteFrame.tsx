@@ -75,7 +75,7 @@ export function SiteFrame(props: {
     return (
       <div className="flex min-h-dvh flex-col">
         <header className="border-b border-line bg-surface">
-          <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-x-6 gap-y-2 px-4 py-3 sm:px-6">
+          <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-x-6 gap-y-2 px-4 py-3 sm:px-6">
             {/* The site's name, in words, as a link home: on every site ever
                 built it is, and a customer three pages into a storefront tries
                 it before they look for a Home link. */}

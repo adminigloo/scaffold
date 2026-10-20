@@ -119,6 +119,10 @@ export function declareTokens(tokens: Record<string, string>): string {
 }
 
 const CSS_TEXT = `
+.aicw-empty { display: grid; justify-items: center; gap: 6px; padding: 20px 8px; text-align: center; }
+.aicw-empty-title { margin: 0; font-weight: 700; font-size: 16px; color: var(--aicw-ink); }
+.aicw-empty .aicw-muted { max-width: 58ch; margin: 0; }
+.aicw-detail { display: block; margin-top: 4px; font-size: 13px; opacity: .85; }
 :where(.aicw-root) { ${declareTokens(LIGHT_TOKENS)} }
 @media (prefers-color-scheme: dark) {
   :where(.aicw-root:not([data-theme="light"])) { ${declareTokens(DARK_TOKENS)} }

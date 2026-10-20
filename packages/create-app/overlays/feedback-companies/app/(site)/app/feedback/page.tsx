@@ -1,6 +1,6 @@
 import { FeedbackWorkspace } from "__SCOPE__/feedback/board";
 import { CompanyGate } from "@/components/CompanyGate";
-import { PageHeader } from "@/components/ui";
+import { PageHeader, WORK_MAIN } from "@/components/ui";
 import { FEEDBACK_EMAILS_REPORTERS } from "@/server/feedback";
 
 export const dynamic = "force-dynamic";
@@ -28,7 +28,7 @@ export default async function CompanyFeedbackPage({
   return (
     <CompanyGate path="/app/feedback" permission="feedback.view">
       {({ company, can }) => (
-        <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
+        <main className={WORK_MAIN}>
           <PageHeader
             title="Feedback"
             description="What your customers sent you. Drag a ticket between columns; open it to read it and answer them."

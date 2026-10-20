@@ -104,7 +104,8 @@ describe("BO-04: the staff screens never offer an email that won't be sent", () 
   it("emails off: the banner says so; the Requests inbox, the visit panel and New visit offer no email", async () => {
     const fake = calendarAdmin(OFF);
     const { container, unmount } = await mount(<ScheduleCalendar transport={fake.transport} initialView="week" initialDate="2026-11-02" pollMs={0} />);
-    expect(text(container.querySelector("[data-aisw-notices]"))).toContain("Customer emails are off");
+    // An owner reads the operator's job in plain words, never the server's technical reason.
+    expect(text(container.querySelector("[data-aisw-notices]"))).toContain("Email isn't switched on for this site yet");
 
     await click(container.querySelector("[data-aisw-requests-button]"));
     const inbox = container.querySelector("[data-aisw-requests]")!;

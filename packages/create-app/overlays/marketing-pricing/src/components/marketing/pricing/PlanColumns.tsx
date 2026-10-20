@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { PlanInterval, PlanTier } from "__SCOPE__/billing";
 import { buttonClass, cx } from "@/components/ui";
+import { HEADLINE_FEATURES } from "@/plans";
 import {
   amountLabel,
   annualSavingPercent,
@@ -55,9 +56,9 @@ export function PlanColumns({
   readonly currency: string;
 }) {
   return (
-    <ul className="mt-12 grid list-none grid-cols-[repeat(auto-fit,minmax(13.5rem,1fr))] gap-x-8 gap-y-10 p-0">
+    <ul className="mt-12 grid list-none grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-6 p-0">
       {tiers.map((tier) => (
-        <li key={tier.key}>
+        <li key={tier.key} className="flex">
           <PlanColumn tier={tier} interval={interval} currency={currency} />
         </li>
       ))}
@@ -91,9 +92,12 @@ function PlanColumn({
   const bullets = Object.entries(tier.features)
     .map(([name, feature]) => ({ name, line: featureBullet(feature) }))
     .filter((entry): entry is { name: string; line: string } => entry.line !== null);
+  // The few numbers the plan leads with (HEADLINE_FEATURES in src/plans.ts);
+  // the rest are one click away, under "What's included".
+  const headline = HEADLINE_FEATURES.flatMap((key) => bullets.filter((entry) => entry.name === key));
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex w-full flex-col">
       {/*
         The badge sits ABOVE the rule rather than floating over the column, so
         the rule stays an unbroken line across the whole grid. A badge that
@@ -110,20 +114,19 @@ function PlanColumn({
         `highlight` is capped at one tier by `definePlans`, so this cannot
         appear twice and mean nothing.
       */}
-      <p className="h-4 font-mono text-[10px] leading-4 uppercase tracking-[0.14em] text-accent">
-        {tier.highlight ? "Most popular" : null}
-      </p>
+      <p className="h-5 text-xs leading-5 font-semibold text-accent">{tier.highlight ? "Most popular" : null}</p>
 
       <div
         className={cx(
-          "mt-1.5 border-t-2 pt-5",
+          "mt-1.5 flex flex-1 flex-col rounded-[--radius-card] border bg-surface p-6 shadow-card",
           tier.highlight ? "border-accent" : "border-line",
         )}
       >
-        <h2 className="text-[15px] font-semibold tracking-tight text-ink">
+        <h2 className="text-lg font-semibold tracking-tight text-ink">
           {tier.name}
         </h2>
 
+        {/* The plan's one-line promise. */}
         {tier.description !== null && (
           <p className="mt-1.5 text-sm leading-relaxed text-ink-muted">
             {tier.description}
@@ -144,19 +147,34 @@ function PlanColumn({
           <Action tier={tier} enquire={price.kind === "enquire"} />
         </div>
 
-        <ul className="mt-6 flex list-none flex-col gap-2 p-0">
-          {bullets.map((entry) => (
-            <li
-              key={entry.name}
-              className="flex gap-2 text-[13px] leading-snug text-ink-muted"
-            >
-              <span aria-hidden="true" className="text-accent">
-                &bull;
-              </span>
+        <p className="mt-6 flex items-center gap-2 text-sm font-medium text-ink">
+          <Tick />
+          Everything included
+        </p>
+        <ul className="mt-2 flex list-none flex-col gap-2 p-0">
+          {headline.map((entry) => (
+            <li key={entry.name} className="flex gap-2 text-sm leading-snug text-ink-muted">
+              <Tick />
               <span>{entry.line}</span>
             </li>
           ))}
         </ul>
+
+        {bullets.length > headline.length ? (
+          <details className="group mt-3 text-sm">
+            <summary className="inline-flex min-h-11 cursor-pointer list-none items-center gap-1 font-medium text-accent [&::-webkit-details-marker]:hidden">
+              What&rsquo;s included
+              <span aria-hidden="true" className="text-ink-muted group-open:rotate-180">
+                &#x25BE;
+              </span>
+            </summary>
+            <ul className="mt-1 flex list-none flex-col gap-1.5 p-0 text-[13px] leading-snug text-ink-muted">
+              {bullets.map((entry) => (
+                <li key={entry.name}>{entry.line}</li>
+              ))}
+            </ul>
+          </details>
+        ) : null}
       </div>
     </div>
   );
@@ -179,7 +197,7 @@ function Price({
   if (display.kind === "enquire") {
     return (
       <p className="text-[1.4rem] leading-none font-semibold tracking-[-0.02em] text-ink">
-        Let&rsquo;s talk
+        Custom pricing
       </p>
     );
   }
@@ -251,5 +269,14 @@ function Action({
     >
       Choose {tier.name}
     </Link>
+  );
+}
+
+/** A small tick in the accent, beside "Everything included" and each number. */
+function Tick() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20" className="mt-0.5 size-4 shrink-0 text-accent" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M4.5 10.5l3.5 3.5 7.5-8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   );
 }

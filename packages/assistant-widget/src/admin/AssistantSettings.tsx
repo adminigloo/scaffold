@@ -38,7 +38,7 @@ function centsWords(cents: string): string {
 
 function dateWords(day: string): string {
   const at = new Date(`${day}T12:00:00Z`);
-  return Number.isNaN(at.getTime()) ? day : at.toLocaleDateString(undefined, { month: "long", day: "numeric" });
+  return Number.isNaN(at.getTime()) ? day : at.toLocaleDateString("en-US", { month: "long", day: "numeric" });
 }
 
 function Usage({ usage, configured }: { usage: AssistantAllowanceWire | null; configured: boolean }) {
@@ -345,7 +345,7 @@ export function AssistantSettings({ baseUrl, transport: given, theme: themeChoic
             {changes.slice(0, 10).map((change) => (
               <li key={change.id} className="aia-item">
                 <div className="aia-item-body">{change.what}</div>
-                <span className="aia-card-help">{new Date(change.when).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
+                <span className="aia-card-help">{new Date(change.when).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
               </li>
             ))}
           </ul>

@@ -351,7 +351,10 @@ textarea.aitw-input { min-height: 92px; resize: vertical; }
 
 /* The setup checklist */
 .aitw-progress-row { display: grid; gap: 6px; }
-.aitw-progress { width: 100%; height: 10px; accent-color: var(--aitw-accent); }
+.aitw-progress { width: 100%; height: 8px; accent-color: var(--aitw-accent); appearance: none; -webkit-appearance: none; border: 0; border-radius: 999px; background: var(--aitw-line); overflow: hidden; }
+.aitw-progress::-webkit-progress-bar { background: var(--aitw-line); border-radius: 999px; }
+.aitw-progress::-webkit-progress-value { background: var(--aitw-accent); border-radius: 999px; }
+.aitw-progress::-moz-progress-bar { background: var(--aitw-accent); border-radius: 999px; }
 .aitw-items { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 .aitw-item {
   display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 4px 12px; padding: 12px 14px;
@@ -366,6 +369,18 @@ textarea.aitw-input { min-height: 92px; resize: vertical; }
 .aitw-item[data-dismissed] .aitw-item-title { text-decoration: line-through; color: var(--aitw-muted); }
 .aitw-item-desc { font-size: 14px; color: var(--aitw-muted); }
 .aitw-item-actions { grid-column: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+/* The dashboard's compact checklist: what's left, tight; what's done, folded. */
+.aitw-checklist-compact .aitw-items { gap: 8px; }
+.aitw-checklist-compact .aitw-item { padding: 10px 12px; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; }
+.aitw-checklist-compact .aitw-item-actions { grid-column: 3; grid-row: 1; justify-content: flex-end; }
+@media (max-width: 560px) { .aitw-checklist-compact .aitw-item { grid-template-columns: 24px minmax(0, 1fr); } .aitw-checklist-compact .aitw-item-actions { grid-column: 2; grid-row: auto; justify-content: flex-start; } }
+.aitw-checklist-compact .aitw-item-icon { width: 24px; height: 24px; }
+.aitw-folded { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px; }
+.aitw-folded li { display: flex; align-items: center; gap: 10px; color: var(--aitw-muted); font-size: 14px; }
+.aitw-folded li[data-done] .aitw-item-icon { color: var(--aitw-ok); }
+.aitw-folded .aitw-item-icon { width: 22px; height: 22px; }
+.aitw-folded .aitw-item-icon svg { width: 18px; height: 18px; }
+.aitw-folded-title { flex: 1 1 auto; min-width: 0; }
 .aitw-root details > summary { min-height: 44px; min-width: 44px; padding: 0 8px; display: inline-flex; align-items: center; cursor: pointer; font-weight: 600; color: var(--aitw-muted); }
 
 /* Tables: a real table from 640px, label-and-value cards below it. */

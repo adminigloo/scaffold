@@ -249,26 +249,105 @@ export function useAdminStatus(transport: SchedulingAdminTransport, reload = 0):
   return status;
 }
 
-/** The banner: one line per notice, warnings first as the server ordered them. Static, not announced on load. */
-export function AdminNotices({ notices }: { notices: readonly AdminNotice[] }) {
-  if (notices.length === 0) return null;
+/**
+ * The jobs a site's OPERATOR does, not the office's (the email service, the
+ * reminder schedule): an owner can't fix them, so they never get a link and
+ * never get the server's own wording (which may name a setting). The owner
+ * reads one plain consequence; staff (`showTechnical`) also read the detail.
+ */
+const OPERATOR_NOTICES: Readonly<Record<string, string>> = {
+  emails_off: "Email isn't switched on for this site yet, so your customers won't get emails about their visits. Call them yourself until it is.",
+  reminders_off: "Visit reminders aren't switched on for this site yet, so customers aren't reminded before a visit.",
+};
+
+/** Is this notice the operator's job? */
+export function isOperatorNotice(code: string): boolean {
+  return Object.prototype.hasOwnProperty.call(OPERATOR_NOTICES, code);
+}
+
+const SETUP_DISMISS_KEY = "aisw-setup-dismissed";
+
+function readDismissed(): string | null {
+  try {
+    return typeof localStorage === "undefined" ? null : localStorage.getItem(SETUP_DISMISS_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The page's ONE setup card (review: five yellow banners read as "broken"):
+ * "3 things to finish", calm, collapsed until opened, and dismissible — until
+ * the list changes, when it comes back. The office's jobs first, each with
+ * the server's words and where to fix it; then the operator's, in one plain
+ * sentence each. Static, not announced on load.
+ */
+export function AdminNotices({ notices, showTechnical = false }: { notices: readonly AdminNotice[]; showTechnical?: boolean }) {
+  const panelId = useId();
+  const [open, setOpen] = useState(false);
+  const signature = notices.map((notice) => notice.code).join(",");
+  const [dismissed, setDismissed] = useState<string | null>(null);
+  useEffect(() => setDismissed(readDismissed()), []);
+  if (notices.length === 0 || dismissed === signature) return null;
+  const owner = notices.filter((notice) => !isOperatorNotice(notice.code));
+  const operator = notices.filter((notice) => isOperatorNotice(notice.code));
+  const count = notices.length;
+  const dismiss = () => {
+    try {
+      localStorage.setItem(SETUP_DISMISS_KEY, signature);
+    } catch {
+      // Private mode: dismissed for this view only.
+    }
+    setDismissed(signature);
+  };
   return (
-    <div className="aisw-stack-sm" data-aisw-notices="">
-      {notices.map((notice) => (
-        <div key={`${notice.code}:${notice.message}`} className={`aisw-notice aisw-notice-${notice.tone}`} data-notice={notice.code}>
-          {notice.message}
-          {/* Where to fix it, when the server said (company settings, a crew picker). */}
-          {notice.link ? (
-            <>
-              {" "}
-              <a href={notice.link.href}>
-                {notice.link.label}
-              </a>
-            </>
-          ) : null}
-        </div>
-      ))}
-    </div>
+    <section className="aisw-setup" data-aisw-notices="" aria-label="Things to finish">
+      <div className="aisw-setup-head">
+        <button type="button" className="aisw-setup-toggle" aria-expanded={open} aria-controls={panelId} onClick={() => setOpen((value) => !value)}>
+          <span className="aisw-setup-count" aria-hidden="true">
+            {count}
+          </span>
+          <span className="aisw-setup-title">{count === 1 ? "1 thing to finish" : `${count} things to finish`}</span>
+          <svg className="aisw-setup-chevron" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d={open ? "M6 14.5l6-6 6 6" : "M6 9.5l6 6 6-6"} />
+          </svg>
+        </button>
+        <button type="button" className="aisw-setup-dismiss" aria-label="Dismiss until something changes" onClick={dismiss}>
+          <CrossIcon />
+        </button>
+      </div>
+      <div id={panelId} className="aisw-setup-body" hidden={!open}>
+        {owner.length > 0 ? (
+          <ul className="aisw-setup-list">
+            {owner.map((notice) => (
+              <li key={`${notice.code}:${notice.message}`} data-notice={notice.code}>
+                {notice.message}
+                {/* Where to fix it, when the server said (company settings, a crew picker). */}
+                {notice.link ? (
+                  <>
+                    {" "}
+                    <a href={notice.link.href}>{notice.link.label}</a>
+                  </>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {operator.length > 0 ? (
+          <>
+            <p className="aisw-setup-sub">Waiting on whoever runs this site</p>
+            <ul className="aisw-setup-list">
+              {operator.map((notice) => (
+                <li key={`${notice.code}:${notice.message}`} data-notice={notice.code} data-operator="">
+                  {OPERATOR_NOTICES[notice.code]}
+                  {showTechnical ? <span className="aisw-setup-detail">{notice.message}</span> : null}
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : null}
+      </div>
+    </section>
   );
 }
 
@@ -345,12 +424,18 @@ export function Switch({
   checked: boolean;
   onChange: (next: boolean) => void;
   label: string;
-  hint?: string;
+  /**
+   * One sentence of help — or one for each state, so the words under the
+   * switch always describe what is true NOW ("On: …" while it's on, "Off: …"
+   * while it's off), never the other state's consequence.
+   */
+  hint?: string | { readonly on: string; readonly off: string };
   disabled?: boolean;
   id?: string;
 }) {
   const auto = useId();
   const inputId = id ?? auto;
+  const help = typeof hint === "string" || hint === undefined ? hint : checked ? hint.on : hint.off;
   return (
     <label className="aisw-switch" htmlFor={inputId}>
       <input
@@ -359,14 +444,14 @@ export function Switch({
         role="switch"
         checked={checked}
         disabled={disabled}
-        aria-describedby={hint ? `${inputId}-hint` : undefined}
+        aria-describedby={help ? `${inputId}-hint` : undefined}
         onChange={(event) => onChange(event.target.checked)}
       />
       <span className="aisw-switch-text">
         <strong>{label}</strong>
-        {hint ? (
+        {help ? (
           <span className="aisw-hint" id={`${inputId}-hint`}>
-            {hint}
+            {help}
           </span>
         ) : null}
       </span>

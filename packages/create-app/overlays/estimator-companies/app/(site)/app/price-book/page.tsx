@@ -1,6 +1,6 @@
 import { PriceBook } from "__SCOPE__/estimator-widget/admin";
 import { CompanyGate } from "@/components/CompanyGate";
-import { PageHeader } from "@/components/ui";
+import { PageHeader, WORK_MAIN } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -22,13 +22,19 @@ export const dynamic = "force-dynamic";
 export default async function CompanyPriceBookPage() {
   return (
     <CompanyGate path="/app/price-book" permission="estimator.view">
-      {({ company, can }) => (
-        <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
+      {({ company, can, isStaff, locale }) => (
+        <main className={WORK_MAIN}>
           <PageHeader
             title="Price book"
             description="Your products, priced from your own supplies, labor and markup. Test a quote to see the price before a customer does."
           />
-          <PriceBook baseUrl={`/api/app/${company.id}/estimator`} canManage={can.includes("estimator.pricebook.manage")} />
+          <PriceBook
+            baseUrl={`/api/app/${company.id}/estimator`}
+            canManage={can.includes("estimator.pricebook.manage")}
+            title={false}
+            showTechnical={isStaff}
+            locale={locale}
+          />
         </main>
       )}
     </CompanyGate>

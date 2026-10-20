@@ -385,6 +385,8 @@ export interface ChecklistItem {
   text: string;
   /** The button that goes to the fix; absent when the fix is outside these screens. */
   action?: { label: string; tab: AdminTab; target: string };
+  /** The site operator's job (email), not the host's: grouped apart, no button. */
+  operator?: boolean;
 }
 
 /** Whether a type is offered by this host: an empty host list means every active host. */
@@ -444,8 +446,9 @@ export function setupChecklist(input: {
   if (!input.emailsEnabled) {
     items.push({
       key: "emails",
-      text:
-        "Emails aren't set up, so nobody hears from you: no confirmations, reminders or notices. People see their booking on screen only. Configure a mail provider on the server to turn them on.",
+      // The operator's job, not the host's: plain words, no button.
+      operator: true,
+      text: "Email isn't switched on for this site yet, so people who book get no confirmations or reminders. They see their booking on screen only.",
     });
   }
   return items;

@@ -16,6 +16,7 @@ import { currentPrincipal } from "@/server/auth";
 import { navBadges } from "@/server/nav-badges";
 import { loadStaffPermissions, loadTenantPermissions } from "@/server/permissions";
 import { tenancy } from "@/server/tenancy";
+import { OperatorOnly } from "@/components/OperatorOnly";
 
 /**
  * The site's chrome: the header with the public destinations and sign in /
@@ -71,10 +72,13 @@ export async function AuthHeader({
         work={null}
         account={
           <p className="text-sm text-ink-muted">
-            Sign-in is off until Clerk is configured &mdash;{" "}
-            <Link href="/setup" className="text-accent underline underline-offset-2">
-              /setup
-            </Link>
+            Sign-in isn&apos;t switched on yet
+            <OperatorOnly>
+              {" "}&mdash;{" "}
+              <Link href="/setup" className="text-accent underline underline-offset-2">
+                see setup
+              </Link>
+            </OperatorOnly>
           </p>
         }
       />

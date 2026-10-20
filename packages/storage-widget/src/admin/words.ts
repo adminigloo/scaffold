@@ -10,7 +10,7 @@ import type { FileWire, UsageWire } from "../types.js";
  * file-types.ts (`formatBytes`), never imported; change both or neither, so
  * a screen and the server's sentences say the same size the same way.
  */
-export function formatBytes(bytes: number, locale?: string): string {
+export function formatBytes(bytes: number, locale = "en-US"): string {
   const value = Number.isFinite(bytes) && bytes > 0 ? bytes : 0;
   const format = (n: number, digits: number) => {
     try {
@@ -29,7 +29,7 @@ export function formatBytes(bytes: number, locale?: string): string {
 }
 
 /** "Oct 13, 2:05 PM", in the viewer's own clock. Bad input → the raw text. */
-export function formatWhen(instant: string, locale?: string): string {
+export function formatWhen(instant: string, locale = "en-US"): string {
   const date = new Date(instant);
   if (Number.isNaN(date.getTime())) return instant;
   try {
@@ -140,6 +140,9 @@ export const WORDS = {
   notAvailable: "These files aren't available to you.",
   empty: "Nothing here yet.",
   filesEmpty: "No files yet. Photos and files added to visits, estimates and invoices show up here.",
+  filesEmptyTitle: "No photos or files yet",
+  filesEmptyText:
+    "Once you're using it, every photo and file your team adds to a visit, an estimate or an invoice lands here, so the before-and-after shots and the signed paperwork are never in someone's camera roll.",
   notYetAdded: "A photo hasn't been added yet.",
   uploading: "Sending…",
   making: "Making it smaller…",

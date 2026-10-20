@@ -7,6 +7,7 @@ import {
 } from "@/components/legal/LegalDocument";
 import { DATA_CATEGORIES, SUBPROCESSORS } from "@/legal";
 import { PUBLISHER } from "@/legal-publisher";
+import { OperatorOnly } from "@/components/OperatorOnly";
 
 /**
  * Its own canonical, and every page that has one sets it here rather than
@@ -159,9 +160,11 @@ export default function PrivacyPage() {
           <p>
             The rows marked <strong>optional</strong> are services this
             deployment can use and only does once they are switched on:{" "}
-            {optional.map((row) => row.name).join(", ")}. Check which are
-            configured here, and delete the rest of these rows from{" "}
-            <code className="font-mono text-xs">src/legal.ts</code>.
+            {optional.map((row) => row.name).join(", ")}.
+            <OperatorOnly>
+              {" "}Check which are configured here, and delete the rest of these rows from{" "}
+              <code className="font-mono text-xs">src/legal.ts</code>.
+            </OperatorOnly>
           </p>
         )}
       </Clause>

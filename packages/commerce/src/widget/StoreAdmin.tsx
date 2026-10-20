@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type ChangeEvent } from "react";
 import type { StoreOrderWire, StoreOrdersResponse, StoreProductWire, StoreProductsResponse, StoreSettingsWire, StoreStatusResponse } from "../store-wire.js";
 import { currencyDigits, formatMoney, moneyInputValue, parseMoneyInput } from "./money.js";
-import { ErrorNote, request, StoreStyles } from "./parts.js";
+import { ErrorNote, request, StoreStyles, whenText } from "./parts.js";
 import { StoreAttention } from "./StoreAttention.js";
 
 /**
@@ -18,12 +18,17 @@ export interface StoreAdminProps {
   readonly baseUrl: string;
   /** The public store page, for "See your store". */
   readonly storefrontUrl: string;
-  readonly title?: string;
+  /** The heading. Default "Store"; `false` draws none (and no description), for a host page whose own header says it. */
+  readonly title?: string | false;
   /** Can this person change things (store.manage)? The server checks again. */
   readonly canManage?: boolean;
+  /** Dates in the company's locale. Default "en-US". */
+  readonly locale?: string;
 }
 
 type Tab = "products" | "orders" | "settings" | "attention";
+
+
 
 export function StoreAdmin(props: StoreAdminProps) {
   const [tab, setTab] = useState<Tab>("products");
@@ -39,11 +44,13 @@ export function StoreAdmin(props: StoreAdminProps) {
   return (
     <section className="aics aics-stack" data-store-admin="">
       <StoreStyles />
-      <header className="aics-row" style={{ justifyContent: "space-between" }}>
-        <div>
-          <h1 className="aics-h1">{props.title ?? "Store"}</h1>
-          <p className="aics-muted">Sell your own products online. Customers pay by card into your own Stripe account.</p>
-        </div>
+      <header className="aics-row" style={{ justifyContent: props.title === false ? "flex-end" : "space-between" }}>
+        {props.title === false ? null : (
+          <div>
+            <h1 className="aics-h1">{props.title ?? "Store"}</h1>
+            <p className="aics-muted">Sell your own products online. Customers pay by card into your own Stripe account.</p>
+          </div>
+        )}
         <a className="aics-btn aics-btn-quiet" href={props.storefrontUrl} target="_blank" rel="noreferrer">
           See your store
         </a>
@@ -65,9 +72,9 @@ export function StoreAdmin(props: StoreAdminProps) {
         ))}
       </div>
       {tab === "products" ? <ProductsPanel baseUrl={props.baseUrl} status={status} canManage={canManage} /> : null}
-      {tab === "orders" ? <OrdersPanel baseUrl={props.baseUrl} canManage={canManage} /> : null}
+      {tab === "orders" ? <OrdersPanel baseUrl={props.baseUrl} canManage={canManage} locale={props.locale} /> : null}
       {tab === "settings" && status ? <SettingsPanel baseUrl={props.baseUrl} settings={status.settings} canManage={canManage} onSaved={loadStatus} /> : null}
-      {tab === "attention" ? <StoreAttention baseUrl={props.baseUrl} canManage={canManage} /> : null}
+      {tab === "attention" ? <StoreAttention baseUrl={props.baseUrl} canManage={canManage} locale={props.locale} /> : null}
     </section>
   );
 }
@@ -197,7 +204,18 @@ function ProductsPanel(props: { readonly baseUrl: string; readonly status: Store
       {!list ? (
         <p className="aics-muted">Loading…</p>
       ) : list.products.length === 0 ? (
-        <p className="aics-muted">No products yet. Add one and it shows on your store.</p>
+        <div className="aics-card aics-empty" data-store-empty="">
+          <p className="aics-empty-title">Nothing for sale yet</p>
+          <p className="aics-muted">
+            Once you add products, customers buy them on your own store page and pay by card. Every order lands here with what they bought
+            and where to send it, and you get an email.
+          </p>
+          {props.canManage ? (
+            <button type="button" className="aics-btn" disabled={editing === "new" || atLimit} onClick={() => setEditing("new")}>
+              Add your first product
+            </button>
+          ) : null}
+        </div>
       ) : (
         <ul className="aics-stack" style={{ listStyle: "none", padding: 0, margin: 0 }}>
           {list.products.map((product) =>
@@ -523,7 +541,7 @@ function addressLines(order: StoreOrderWire): string[] {
   return [a.name, a.line1, a.line2, [a.city, a.region, a.postalCode].filter(Boolean).join(" "), a.country].filter((part): part is string => Boolean(part));
 }
 
-function OrdersPanel(props: { readonly baseUrl: string; readonly canManage: boolean }) {
+function OrdersPanel(props: { readonly baseUrl: string; readonly canManage: boolean; readonly locale?: string }) {
   const [orders, setOrders] = useState<readonly StoreOrderWire[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -546,7 +564,14 @@ function OrdersPanel(props: { readonly baseUrl: string; readonly canManage: bool
     setBusy(null);
   };
   if (!orders) return <p className="aics-muted">Loading…</p>;
-  if (orders.length === 0) return <p className="aics-muted">No orders yet. When a customer pays, the order shows here and you get an email.</p>;
+  if (orders.length === 0) {
+    return (
+      <div className="aics-card aics-empty" data-store-orders-empty="">
+        <p className="aics-empty-title">No orders yet</p>
+        <p className="aics-muted">When a customer pays, the order lands here with what they bought and where to send it, and you get an email.</p>
+      </div>
+    );
+  }
   return (
     <div className="aics-stack" data-store-orders="">
       <ErrorNote message={error} />
@@ -569,7 +594,7 @@ function OrdersPanel(props: { readonly baseUrl: string; readonly canManage: bool
                 <td>
                   <strong>{order.orderNumber}</strong>
                   <br />
-                  <span className="aics-muted">{order.placedAt ? new Date(order.placedAt).toLocaleString() : ""}</span>
+                  <span className="aics-muted">{order.placedAt ? whenText(order.placedAt, props.locale) : ""}</span>
                 </td>
                 <td>
                   {order.email || <span className="aics-muted">No email given</span>}

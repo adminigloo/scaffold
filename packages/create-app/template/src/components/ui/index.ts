@@ -1,5 +1,5 @@
 /**
- * The whole design system. Eight files, no component-library dependency.
+ * The whole design system. A dozen files, no component-library dependency.
  *
  * Everything here reads its colour from a token declared in app/globals.css and
  * nothing here declares a colour of its own. That is the property that lets
@@ -9,6 +9,9 @@
 export { Button, buttonClass, type ButtonProps, type ButtonVariant } from "./Button";
 export { Card, CardBody, CardHeader } from "./Card";
 export { PageHeader } from "./PageHeader";
+export { WorkPage, WORK_MAIN } from "./WorkPage";
+export { SetupNotices, type SetupItem } from "./SetupNotices";
+export { StatCard } from "./StatCard";
 export { Table, THead, TBody, TR, TH, TD } from "./Table";
 export { Badge, type BadgeProps, type BadgeTone } from "./Badge";
 export { EmptyState } from "./EmptyState";

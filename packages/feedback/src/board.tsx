@@ -220,7 +220,7 @@ function toDate(value: Date | string): Date | null {
 
 /** The panel's default timestamp: the viewer's own locale and time zone. */
 function defaultFormatTime(date: Date): string {
-  return date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  return date.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" });
 }
 
 /** An unparseable date renders as written rather than crashing the panel (0.8.0 threw a RangeError). */

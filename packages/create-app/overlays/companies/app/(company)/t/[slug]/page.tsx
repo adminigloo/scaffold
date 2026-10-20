@@ -1,35 +1,44 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+import { CompanyHomeView } from "@/components/CompanyHome";
 import { PublicCompanyGate, publicCompanyMetadata } from "@/components/PublicCompanyGate";
-import { PUBLIC_COMPANY_PAGES } from "@/tenancy";
+import { companyHome } from "@/server/company-home";
 
 /**
- * A __TENANT_LABEL_LOWER__'s public home, /t/{web-address} (Tenancy 2a): its
- * name, logo and colour, how to reach it, and a button for each public page
- * this site gives every __TENANT_LABEL_LOWER__ — "Get an instant estimate",
- * "Book a visit" — from the generated PUBLIC_COMPANY_PAGES list in
- * src/tenancy.ts (a feature this project doesn't have contributes no button).
+ * A company's public home, /t/{web-address} (create-app 0.36, the mini
+ * website): the page the business's OWN customers land on, so it reads as the
+ * business's website, not as a list of buttons.
+ *
+ *   - Header: its logo and name, its phone, and the one big action.
+ *   - Hero: its name, its one-line tagline, where it works, and "Get an
+ *     instant estimate" (or "Book a visit" / "Book a call" — whichever this
+ *     project's first customer-facing page is, src/server/company-home.ts).
+ *   - Services: the price book's products marked "Show on your website",
+ *     each "from $X" — priced by the estimate page's own pricing for the
+ *     smallest job, never a number typed here.
+ *   - Booking and Shop: every other public page this project gives a company
+ *     (PUBLIC_COMPANY_PAGES, generated: a feature this project doesn't have
+ *     contributes no card), each with one line saying what it's for.
+ *   - Contact: phone, email, address and hours, from company settings.
+ *   - Feedback: a small link in the footer, never a headline button.
+ *
+ * Drawn by <CompanyHomeView> (src/components/CompanyHome.tsx). Its colour is
+ * the company's (brand colour on the big button). Everything it
+ * shows comes from the company's settings ("Your public page", "Business
+ * details") and price book, so it changes the moment the owner changes them.
  *
  * <PublicCompanyGate> does the rest: an unknown address is "not found", an
  * OLD address (the business renamed itself) redirects permanently to the
- * current one so printed links keep working, and a SUSPENDED
- * __TENANT_LABEL_LOWER__'s page says plainly it isn't taking requests online
- * right now, with how to reach it, and no buttons.
- *
- * Kept out of search (robots.txt disallows /t/ too) — unless the project was
- * made with --seo (Tenancy 2b-4a): then it is listed while the
- * __TENANT_LABEL_LOWER__ is taking requests, with its own canonical address and
- * the business's details, and only its token pages stay out.
+ * current one so printed links keep working, a SUSPENDED company's page says
+ * plainly it isn't taking requests online right now, and — with --seo — the
+ * page carries the business's LocalBusiness details for search and AI.
  */
 export const dynamic = "force-dynamic";
 
-/**
- * The tab title and link preview are the __TENANT_LABEL_LOWER__'s: "{name}" (review
- * T2A-BO-01), never this site's name; `path` is its canonical address (--seo).
- */
+/** The company's name and tagline in the tab and the link preview — never this site's. */
 export async function generateMetadata({ params }: { readonly params: Promise<{ readonly slug: string }> }): Promise<Metadata> {
   const { slug } = await params;
-  return publicCompanyMetadata(slug, null, { path: "" });
+  const home = await companyHome(slug);
+  return publicCompanyMetadata(slug, null, { path: "", ...(home?.tagline ? { description: home.tagline } : {}) });
 }
 
 export default async function CompanyPublicPage({
@@ -39,20 +48,8 @@ export default async function CompanyPublicPage({
 }) {
   const { slug } = await params;
   return (
-    <PublicCompanyGate slug={slug} path="">
-      {(company) => (
-        <nav aria-label={company.name} className="flex flex-col gap-3 sm:flex-row">
-          {PUBLIC_COMPANY_PAGES.map((page) => (
-            <Link
-              key={page.path}
-              href={`${company.publicPath}${page.path}`}
-              className="flex min-h-11 items-center justify-center rounded-[6px] border border-line bg-surface px-5 py-3 text-sm font-medium text-ink no-underline hover:bg-canvas"
-            >
-              {page.label}
-            </Link>
-          ))}
-        </nav>
-      )}
+    <PublicCompanyGate slug={slug} path="" layout="home">
+      {async (company) => <CompanyHomeView company={company} home={await companyHome(slug)} />}
     </PublicCompanyGate>
   );
 }

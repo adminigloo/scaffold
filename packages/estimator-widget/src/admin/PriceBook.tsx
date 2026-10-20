@@ -35,6 +35,8 @@ export interface PriceBookProps extends AdminChromeProps {
    * Default true.
    */
   canManage?: boolean;
+  /** The heading. Default "Price book"; `false` draws none, for a host page whose own header says it. */
+  title?: string | false;
 }
 
 /** What someone who may read the price book but not change it is told, once, at the top. */
@@ -182,9 +184,11 @@ export function PriceBook(props: PriceBookProps) {
         />
       ) : (
         <>
-          <div className="aiew-admin-head">
-            <h2 className="aiew-admin-title">Price book</h2>
-          </div>
+          {props.title === false ? null : (
+            <div className="aiew-admin-head" data-titled="">
+              <h2 className="aiew-admin-title">{props.title ?? "Price book"}</h2>
+            </div>
+          )}
           {canManage ? null : (
             <p className="aiew-muted" data-aiew-read-only="">
               {READ_ONLY_PRICE_BOOK}

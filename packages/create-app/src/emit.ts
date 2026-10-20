@@ -31,6 +31,9 @@ import {
   renderTenancyServer,
   renderTenantSettings,
 } from "./tenancy-emit.js";
+import { hasDashboard, renderDashboardNumbers } from "./dashboard-emit.js";
+import { hasCompanyHome, renderCompanyHome } from "./company-home-emit.js";
+import { renderMarketingCopy, renderPlansTeaser } from "./marketing-emit.js";
 import {
   renderProcedureScopesTest,
   renderInviteAcceptRouteTest,
@@ -575,6 +578,21 @@ export async function planEmit(
   files.set(join("src", "tenancy.ts"), renderTenancyConstants(answers));
   files.set(join("src", "server", "tenant-settings.ts"), renderTenantSettings(answers));
   files.set(join("src", "server", "setup-checklist.ts"), renderSetupChecklist(answers));
+  // The dashboard's numbers (create-app 0.36): Today, New leads, Money owed,
+  // Paid this week — from whichever of scheduling, the estimator and
+  // invoicing this project has. Companies only: the dashboard is theirs.
+  if (hasDashboard(answers)) files.set(join("src", "server", "dashboard.ts"), renderDashboardNumbers(answers));
+  // What a company's own public page shows (create-app 0.36, the mini
+  // website): its tagline, hours and services with "from $X" — the services
+  // and the big button differ by which features are installed.
+  if (hasCompanyHome(answers)) files.set(join("src", "server", "company-home.ts"), renderCompanyHome(answers));
+  // The landing page's words, for this project's features (create-app 0.36):
+  // the one file a project edits to speak its trade, and the plans teaser
+  // (src/plans.ts read, or nothing without a pricing page).
+  if (answers.includeMarketing) {
+    files.set(join("src", "marketing-copy.ts"), renderMarketingCopy(answers));
+    files.set(join("src", "components", "marketing", "PlansTeaser.tsx"), renderPlansTeaser(answers));
+  }
   files.set(join("src", "server", "tenancy.ts"), renderTenancyServer(answers));
   files.set(join("src", "server", "tenancy-handlers.ts"), renderTenancyHandlers(answers));
   files.set(join("src", "server", "tenancy-logo.ts"), renderTenancyLogo(answers));
@@ -3683,11 +3701,20 @@ function mailerFor(transport?: EmailTransport): EmailSender {
   });
 }
 
-function sendersOver(mailer: EmailSender): CommsSenders {
+/**
+ * The senders over one mailer. Exported so a test can hand it a mailer of its
+ * own (an unconfigured one, to prove nothing is held without a provider).
+ */
+export function sendersOver(mailer: EmailSender): CommsSenders {
   return {
     identity: companyIdentity,
-    // Each ${noun}'s sending allowance (above): asked before every email leaves.
-    allowance: companySendAllowance,${(onFailed + onSent).replace(/\n  /g, "\n    ")}
+    // Each ${noun}'s sending allowance (above): asked before every email
+    // leaves — and only when email CAN leave. With no provider set up every
+    // message is logged as skipped, so none may use up the allowance: a new
+    // ${noun} would otherwise "spend" its day on mail that never went, then
+    // see its next emails held, logged as failed and raised as alerts, all
+    // for something only the site's operator can switch on.
+    ...(mailer.configured ? { allowance: companySendAllowance } : {}),${(onFailed + onSent).replace(/\n  /g, "\n    ")}
     // The template is plain text; comms hands over \`html\` already converted
     // (escaped first, then paragraphs and links), so a customer's name can
     // never become markup. The ${noun}'s name and reply-to ride on each
@@ -7474,6 +7501,22 @@ function article(word: string): "a" | "an" {
   return /^[aeiou]/i.test(word) ? "an" : "a";
 }
 
+/** The 3–4 allowances a plan leads with: team, storage, estimate requests, then whatever else this project counts. */
+function headlineFeatures(
+  answers: Answers,
+  on: { readonly assistantQuota: boolean; readonly bookingHostsOn: boolean; readonly storeProductsOn: boolean },
+): readonly string[] {
+  const order = [
+    "seats",
+    ...(answers.includeStorage ? ["storage_gb"] : []),
+    ...(answers.includeEstimator ? ["estimates"] : []),
+    ...(on.bookingHostsOn ? ["booking_hosts"] : []),
+    ...(on.storeProductsOn ? ["products"] : []),
+    ...(on.assistantQuota ? ["assistant_messages"] : []),
+  ];
+  return order.slice(0, Math.max(3, Math.min(order.length, 3)));
+}
+
 export function renderPlanCatalog(answers: Answers): string {
   // Tenancy 2b-3: the assistant's questions a month, sold only where the gate
   // enforces it — a companies project that sells plans, with the chat (--ai).
@@ -7569,18 +7612,18 @@ export const plans = definePlans({
     assistant_messages: { kind: "quota", label: "AI assistant messages a month", labelOne: "AI assistant message a month" },` : ""}${websiteQuotaOn ? `
     // Checked when a company adds a website of its own to count (its pages
     // here are always counted and never use one up).
-    websites: { kind: "quota", label: "websites of your own counted", labelOne: "website of your own counted" },` : ""}${siteChecksOn ? `
+    websites: { kind: "quota", label: "websites of your own, with visit counts", labelOne: "website of your own, with visit counts" },` : ""}${siteChecksOn ? `
     // Checked when someone presses Check now (src/server/search-check.ts asks
     // src/server/plan-gate.ts). The weekly check is included and never counts:
     // reading a site is cheap.
-    site_checks: { kind: "quota", label: "Check now presses a month (a weekly search check is included)", labelOne: "Check now press a month (a weekly search check is included)" },` : ""}${mentionChecksOn ? `
+    site_checks: { kind: "quota", label: "on-demand search checks a month, on top of the weekly one", labelOne: "on-demand search check a month, on top of the weekly one" },` : ""}${mentionChecksOn ? `
     // Checked when a question is added (src/server/ai-mentions.ts); each one is
     // asked about once a week.
-    ai_questions: { kind: "quota", label: "questions tracked by AI mentions", labelOne: "question tracked by AI mentions" },
+    ai_questions: { kind: "quota", label: "questions tracked in AI answers", labelOne: "question tracked in AI answers" },
     // Checked before every AI answer (src/server/ai-mentions.ts): one answer to
     // one question is one check. Sized for every question weekly (about 4.35 a
     // month each) plus room for Check now.
-    ai_mention_checks: { kind: "quota", label: "AI mention checks a month", labelOne: "AI mention check a month" },` : ""}${bookingHostsOn ? `
+    ai_mention_checks: { kind: "quota", label: "AI answer checks a month", labelOne: "AI answer check a month" },` : ""}${bookingHostsOn ? `
     // Checked when someone is added to take calls, or switched back on
     // (src/server/booking.ts asks src/server/plan-gate.ts).
     booking_hosts: { kind: "quota", label: "people taking calls", labelOne: "person taking calls" },` : ""}${storeProductsOn ? `
@@ -7601,12 +7644,13 @@ export const plans = definePlans({
     {
       key: "starter",
       name: "Starter",
-      description: "For ${article(label)} ${label} just getting going.",
+      // The one-line promise each plan leads with, in an owner's words.
+      description: "Everything included, sized for ${article(label)} ${label} with a small crew.",
       prices: {
-        month: { gbp: 3900n, usd: 4900n },
+        month: { usd: 4900n, gbp: 3900n },
         // Two months free, which is why the yearly figure is ten times the
         // monthly one rather than twelve.
-        year: { gbp: 39000n, usd: 49000n },
+        year: { usd: 49000n, gbp: 39000n },
       },
       features: {
         seats: 3,${answers.includeStorage ? `
@@ -7624,13 +7668,13 @@ export const plans = definePlans({
     {
       key: "pro",
       name: "Pro",
-      description: "For a growing team.",
+      description: "For a busy team: more people, more requests and more room for photos.",
       // At most one tier may claim this. Two "most popular" badges on one page
       // is not a recommendation. It is also the plan the free trial tries.
       highlight: true,
       prices: {
-        month: { gbp: 7900n, usd: 9900n },
-        year: { gbp: 79000n, usd: 99000n },
+        month: { usd: 9900n, gbp: 7900n },
+        year: { usd: 99000n, gbp: 79000n },
       },
       features: {
         seats: 10,${answers.includeStorage ? `
@@ -7648,7 +7692,7 @@ export const plans = definePlans({
     {
       key: "enterprise",
       name: "Enterprise",
-      description: "Talk to us. Invoiced annually, with whatever you need on it.",
+      description: "For several crews or locations: no limits, set up with you and invoiced yearly.",
       // NO PRICES AT ALL, which is a real tier and not a missing one. It
       // projects no \`plans\` row, because there is nothing to charge and nothing
       // for Stripe to hold a price for — so a pricing page renders a "contact
@@ -7681,8 +7725,8 @@ export const plans = definePlans({
       // of, so the next plan change removes the lot.
       isActive: false,
       prices: {
-        month: { gbp: 2900n, usd: 3900n },
-        year: { gbp: 29000n, usd: 39000n },
+        month: { usd: 3900n, gbp: 2900n },
+        year: { usd: 39000n, gbp: 29000n },
       },
       features: {
         seats: 3,${answers.includeStorage ? `
@@ -7699,6 +7743,21 @@ export const plans = definePlans({
     },
   ],
 });
+
+/**
+ * The few numbers each plan leads with on the plans pages ("10 team members ·
+ * 25 GB of photos and files · 500 online estimate requests a month"); every
+ * other allowance is under "What's included". Feature keys from the
+ * vocabulary above, in this order.
+ */
+export const HEADLINE_FEATURES: readonly string[] = ${JSON.stringify(headlineFeatures(answers, { assistantQuota, bookingHostsOn, storeProductsOn }))};
+
+/**
+ * The currency the plans pages open on: US dollars when the record prices in
+ * them (\`plans.currencies\` is alphabetical, so "gbp" would otherwise come
+ * first for a US business), else the first one priced.
+ */
+export const DEFAULT_CURRENCY: string = plans.currencies.includes("usd") ? "usd" : (plans.currencies[0] ?? "usd");
 `;
 }
 

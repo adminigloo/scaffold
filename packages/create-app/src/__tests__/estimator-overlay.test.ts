@@ -369,12 +369,12 @@ describe("answers, packages and the CLI", () => {
     ).rejects.toThrow(IncompatibleAnswersError);
   });
 
-  it("installs the server package and the widget, at the 0.5 lines (getting paid, part 1: the deposit on an accepted quote)", () => {
+  it("installs the server package and the widget, at the 0.6 lines (the showroom: startingPrices and the setup card)", () => {
     const installed = packagesFor(answers());
     expect(installed).toContain("@adminigloo/estimator");
     expect(installed).toContain("@adminigloo/estimator-widget");
-    expect(versionRangeFor("@adminigloo/estimator")).toBe("^0.5.1");
-    expect(versionRangeFor("@adminigloo/estimator-widget")).toBe("^0.5.0");
+    expect(versionRangeFor("@adminigloo/estimator")).toBe("^0.6.0");
+    expect(versionRangeFor("@adminigloo/estimator-widget")).toBe("^0.6.0");
   });
 
   it("brings comms, storage and email with the estimator unless each is declined", async () => {

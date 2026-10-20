@@ -16,9 +16,12 @@ describe("the name people read", () => {
       projectName: "igloo-backoffice",
       includeMarketing: true,
     });
-    const hero = plan.files.get(join("src", "components", "marketing", "Hero.tsx"));
-    expect(hero).toContain("Igloo Backoffice keeps everything");
-    expect(hero).not.toContain("igloo-backoffice keeps");
+    // The landing page's words live in src/marketing-copy.ts (create-app 0.36),
+    // built from SITE_NAME, which is the name in words.
+    const copy = plan.files.get(join("src", "marketing-copy.ts"));
+    expect(copy).toContain("${SITE_NAME} runs the office side of your business");
+    expect(plan.files.get(join("src", "seo.ts"))).toContain('export const SITE_NAME = "Igloo Backoffice";');
+    expect(copy).not.toContain("igloo-backoffice");
     for (const [path, contents] of plan.files) {
       expect(contents, path).not.toContain("__DISPLAY_NAME__");
     }

@@ -432,7 +432,7 @@ export function primaryActionFor(
 /**
  * A date a customer can read, in UTC.
  *
- * `en-GB` and an explicit UTC zone rather than the host's locale, for the
+ * `en-US` ("March 2, 2026") and an explicit UTC zone rather than the host's locale, for the
  * reason `formatOrderNumber` gives about `utcDay`: this renders on whichever
  * serverless region happened to be warm, and a renewal date that reads 2 March
  * from one region and 3 March from another is a support ticket about a charge
@@ -440,7 +440,7 @@ export function primaryActionFor(
  * cannot be known on the server — which is precisely why it is not guessed.
  */
 export function formatDay(date: Date): string {
-  return new Intl.DateTimeFormat("en-GB", {
+  return new Intl.DateTimeFormat("en-US", {
     day: "numeric",
     month: "long",
     year: "numeric",

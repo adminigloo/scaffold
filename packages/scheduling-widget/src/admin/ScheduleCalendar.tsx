@@ -62,6 +62,12 @@ import { VisitPanel, type PanelChange } from "./VisitPanel.js";
  */
 
 export interface ScheduleCalendarProps extends ChromeProps {
+  /**
+   * Staff of the SITE (not the company's owner): the setup card also shows the
+   * technical detail of what only the site's operator can switch on. Default
+   * false — an owner reads one plain sentence per item.
+   */
+  showTechnical?: boolean;
   /** The mounted staff handlers, e.g. "/api/admin/schedule". Ignored when `transport` is given. */
   baseUrl?: string;
   transport?: SchedulingAdminTransport;
@@ -849,7 +855,7 @@ export function ScheduleCalendar(props: ScheduleCalendarProps) {
           </div>
         ) : null}
 
-        {status ? <AdminNotices notices={status.notices} /> : null}
+        {status ? <AdminNotices notices={status.notices} showTechnical={props.showTechnical === true} /> : null}
 
         {data ? (
           <p className="aisw-hint">
@@ -881,15 +887,27 @@ export function ScheduleCalendar(props: ScheduleCalendarProps) {
           <Notice tone="info">No crews yet. Add one under Schedule settings, then visits can be booked.</Notice>
         ) : null}
         {empty ? (
-          <p className="aisw-cal-empty" data-aisw-empty="">
-            {view === "week" ? "No visits this week yet." : "No visits on this day yet."}
-            {props.bookingPageUrl ? (
-              <>
-                {" "}
-                Customers book at <a href={props.bookingPageUrl}>{props.bookingPageUrl}</a>.
-              </>
+          <div className="aisw-cal-empty" data-aisw-empty="">
+            <p className="aisw-cal-empty-title">{view === "week" ? "No visits this week yet" : "No visits on this day yet"}</p>
+            <p className="aisw-cal-empty-text">
+              Once you&apos;re booking, every crew&apos;s day lives here: online requests wait for your yes, a drag moves a visit, and
+              the customer is told.
+            </p>
+            {canManage || props.bookingPageUrl ? (
+              <div className="aisw-cal-empty-actions">
+                {canManage && resources.length > 0 ? (
+                  <button type="button" className="aisw-btn aisw-btn-primary" onClick={() => setNewOpen(true)}>
+                    Book a visit
+                  </button>
+                ) : null}
+                {props.bookingPageUrl ? (
+                  <a className="aisw-btn aisw-btn-secondary" href={props.bookingPageUrl} target="_blank" rel="noreferrer">
+                    Open your booking page
+                  </a>
+                ) : null}
+              </div>
             ) : null}
-          </p>
+          </div>
         ) : null}
         {grid}
         {loading && data ? (

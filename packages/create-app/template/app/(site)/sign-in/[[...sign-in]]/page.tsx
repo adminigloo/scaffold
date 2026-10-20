@@ -4,6 +4,7 @@ import { env } from "@/env";
 import { safeReturnPath } from "@/redirect";
 import { AFTER_AUTH_PATH } from "@/tenancy";
 import { Card, CardBody, PageHeader } from "@/components/ui";
+import { OperatorOnly } from "@/components/OperatorOnly";
 
 /**
  * Clerk's hosted sign-in, mounted as a catch-all.
@@ -44,19 +45,21 @@ export default async function SignInPage({
       <main className="mx-auto flex min-h-[60vh] max-w-lg items-center px-6 py-12">
         <div className="w-full">
           <PageHeader
-            title="Sign-in is not configured yet"
-            description="Clerk holds the identities; without its keys there is nothing to sign in to."
+            title="Sign-in isn't switched on yet"
+            description="This site can't take sign-ins yet. Please try again a little later."
           />
-          <Card>
-            <CardBody className="text-sm text-ink-muted">
-              Add <Key>NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY</Key> and{" "}
-              <Key>CLERK_SECRET_KEY</Key> to <Key>.env.local</Key>, then restart.{" "}
-              <Link href="/setup" className="text-accent underline underline-offset-2">
-                /setup
-              </Link>{" "}
-              lists what is missing and where to get it.
-            </CardBody>
-          </Card>
+          <OperatorOnly>
+            <Card>
+              <CardBody className="text-sm text-ink-muted">
+                Add <Key>NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY</Key> and{" "}
+                <Key>CLERK_SECRET_KEY</Key> to <Key>.env.local</Key>, then restart.{" "}
+                <Link href="/setup" className="text-accent underline underline-offset-2">
+                  /setup
+                </Link>{" "}
+                lists what is missing and where to get it.
+              </CardBody>
+            </Card>
+          </OperatorOnly>
         </div>
       </main>
     );

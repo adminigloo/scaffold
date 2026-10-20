@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import type { ClientError, Result } from "../http.js";
-import { CrossIcon, Loading, Notice, resolveAccent, WidgetRoot, type ChromeProps } from "../parts.js";
+import { ChevronIcon, CrossIcon, Loading, Notice, resolveAccent, WidgetRoot, type ChromeProps } from "../parts.js";
 import { createEstimatorAdminClient, type EstimatorAdminTransport } from "./client.js";
 import { adminErrorText } from "./helpers.js";
 import { injectEstimatorAdminStyles } from "./styles.js";
@@ -57,6 +57,12 @@ export interface AdminChromeProps extends ChromeProps {
    * one of them stale after a save — read as "the save didn't work".
    */
   notices?: boolean;
+  /**
+   * Staff of the SITE (not the company's owner): the setup card also shows
+   * the technical detail of what only the site's operator can switch on.
+   * Default false — an owner reads one plain sentence per item.
+   */
+  showTechnical?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -164,7 +170,7 @@ export function AdminFrame({
   return (
     <AdminRoot chrome={chrome} brandColor={basics.settings?.brandColor ?? null} data={data}>
       <div className="aiew-admin-inner">
-        {basics.status && chrome.notices !== false ? <AdminNotices notices={basics.status.notices} /> : null}
+        {basics.status && chrome.notices !== false ? <AdminNotices notices={basics.status.notices} showTechnical={chrome.showTechnical === true} /> : null}
         {children}
       </div>
     </AdminRoot>
@@ -198,17 +204,106 @@ export function AdminRoot({
   );
 }
 
-/** The banner: one line per notice, in the server's order. Static, not announced on load. */
-export function AdminNotices({ notices }: { notices: ReadonlyArray<{ code: string; message: string }> }) {
-  if (notices.length === 0) return null;
+/**
+ * The jobs a site's OPERATOR does, not the owner (email provider, file
+ * storage, the AI key): an owner can't fix them, so they never get a link and
+ * never get the server's own wording (which may name a setting). The owner
+ * reads one plain consequence; staff (`showTechnical`) also read the detail.
+ */
+const OPERATOR_NOTICES: Readonly<Record<string, string>> = {
+  emails_off: "Email isn't switched on for this site yet, so your customers won't get emails from it.",
+  photos_no_store: "Photo storage isn't switched on for this site yet, so photos customers send aren't kept.",
+  reading_off: "Photo reading isn't switched on for this site yet, so customers count and measure themselves.",
+};
+
+/** Is this notice the operator's job? */
+export function isOperatorNotice(code: string): boolean {
+  return Object.prototype.hasOwnProperty.call(OPERATOR_NOTICES, code);
+}
+
+const SETUP_DISMISS_KEY = "aiew-setup-dismissed";
+
+function readDismissed(): string | null {
+  try {
+    return typeof localStorage === "undefined" ? null : localStorage.getItem(SETUP_DISMISS_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The page's ONE setup card (review: five yellow banners read as "broken"):
+ * "3 things to finish", calm, collapsed until opened, and dismissible — until
+ * the list changes, when it comes back. The owner's jobs first, each with the
+ * server's own words; then the operator's, in one plain sentence each.
+ * Static, not announced on load.
+ */
+export function AdminNotices({
+  notices,
+  showTechnical = false,
+}: {
+  notices: ReadonlyArray<{ code: string; message: string }>;
+  /** Staff of the site: also show the operator items' technical detail. */
+  showTechnical?: boolean;
+}) {
+  const panelId = useId();
+  const [open, setOpen] = useState(false);
+  const signature = notices.map((notice) => notice.code).join(",");
+  const [dismissed, setDismissed] = useState<string | null>(null);
+  useEffect(() => setDismissed(readDismissed()), []);
+  if (notices.length === 0 || dismissed === signature) return null;
+  const owner = notices.filter((notice) => !isOperatorNotice(notice.code));
+  const operator = notices.filter((notice) => isOperatorNotice(notice.code));
+  const count = notices.length;
+  const dismiss = () => {
+    try {
+      localStorage.setItem(SETUP_DISMISS_KEY, signature);
+    } catch {
+      // Private mode: dismissed for this view only.
+    }
+    setDismissed(signature);
+  };
   return (
-    <div className="aiew-stack-sm" data-aiew-notices="">
-      {notices.map((notice) => (
-        <div key={`${notice.code}:${notice.message}`} className="aiew-notice aiew-notice-warn" data-notice={notice.code}>
-          {notice.message}
-        </div>
-      ))}
-    </div>
+    <section className="aiew-setup" data-aiew-notices="" aria-label="Things to finish">
+      <div className="aiew-setup-head">
+        <button type="button" className="aiew-setup-toggle" aria-expanded={open} aria-controls={panelId} onClick={() => setOpen((value) => !value)}>
+          <span className="aiew-setup-count" aria-hidden="true">
+            {count}
+          </span>
+          <span className="aiew-setup-title">{count === 1 ? "1 thing to finish" : `${count} things to finish`}</span>
+          <span className="aiew-setup-chevron" aria-hidden="true">
+            <ChevronIcon direction={open ? "up" : "down"} />
+          </span>
+        </button>
+        <button type="button" className="aiew-setup-dismiss" aria-label="Dismiss until something changes" onClick={dismiss}>
+          <CrossIcon />
+        </button>
+      </div>
+      <div id={panelId} className="aiew-setup-body" hidden={!open}>
+        {owner.length > 0 ? (
+          <ul className="aiew-setup-list">
+            {owner.map((notice) => (
+              <li key={`${notice.code}:${notice.message}`} data-notice={notice.code}>
+                {notice.message}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {operator.length > 0 ? (
+          <>
+            <p className="aiew-setup-sub">Waiting on whoever runs this site</p>
+            <ul className="aiew-setup-list">
+              {operator.map((notice) => (
+                <li key={`${notice.code}:${notice.message}`} data-notice={notice.code} data-operator="">
+                  {OPERATOR_NOTICES[notice.code]}
+                  {showTechnical ? <span className="aiew-setup-detail">{notice.message}</span> : null}
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : null}
+      </div>
+    </section>
   );
 }
 
@@ -375,12 +470,18 @@ export function Switch({
   checked: boolean;
   onChange: (next: boolean) => void;
   label: string;
-  hint?: string;
+  /**
+   * One sentence of help — or one for each state, so the words under the
+   * switch always describe what is true NOW ("On: …" while it's on, "Off: …"
+   * while it's off), never the other state's consequence.
+   */
+  hint?: string | { readonly on: string; readonly off: string };
   disabled?: boolean;
   id?: string;
 }) {
   const auto = useId();
   const inputId = id ?? auto;
+  const help = typeof hint === "string" || hint === undefined ? hint : checked ? hint.on : hint.off;
   return (
     <label className="aiew-switch" htmlFor={inputId}>
       <input
@@ -389,14 +490,14 @@ export function Switch({
         role="switch"
         checked={checked}
         disabled={disabled}
-        aria-describedby={hint ? `${inputId}-hint` : undefined}
+        aria-describedby={help ? `${inputId}-hint` : undefined}
         onChange={(event) => onChange(event.target.checked)}
       />
       <span className="aiew-switch-text">
         <strong>{label}</strong>
-        {hint ? (
+        {help ? (
           <span className="aiew-hint" id={`${inputId}-hint`}>
-            {hint}
+            {help}
           </span>
         ) : null}
       </span>

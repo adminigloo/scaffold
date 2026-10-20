@@ -66,18 +66,14 @@ export function BillingPortalButton({ tenantId }: { readonly tenantId: string })
       </Button>
 
       {result?.status === "no_customer" && (
-        <Notice tone="info" title="There is nothing to manage yet" role="status">
-          Stripe holds no billing record for this account, which means nothing
-          has ever been charged to it. The portal appears here as soon as there
-          is a payment behind it.
+        <Notice tone="info" title="There's nothing to manage yet" role="status">
+          Nothing has been charged to this account yet. Billing opens here once there&apos;s a payment behind it.
         </Notice>
       )}
 
       {result?.status === "not_configured" && (
-        <Notice tone="warn" title="Payments are not configured here" role="status">
-          This deployment has no <code>STRIPE_SECRET_KEY</code>, so there is no
-          billing account to open. Nothing has been charged and nothing is
-          outstanding.
+        <Notice tone="info" title="Card billing isn't switched on for this site yet" role="status">
+          Nothing has been charged and nothing is outstanding.
         </Notice>
       )}
 

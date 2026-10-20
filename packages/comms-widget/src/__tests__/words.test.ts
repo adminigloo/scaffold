@@ -54,10 +54,14 @@ describe("the same names as the server's templateLabel (comms 0.4)", () => {
   });
 });
 
-describe("released with comms 0.4 (12.4)", () => {
-  it("declares @adminigloo/comms ^0.4.0 as an optional peer", () => {
+describe("released with comms", () => {
+  // The server's CURRENT minor, not the release in flight (a pinned ^0.4.0
+  // went red on main the day comms moved to 0.5).
+  it("names @adminigloo/comms at the server's current minor, as an optional peer", () => {
     const manifest = JSON.parse(readFileSync(resolve(here, "../../package.json"), "utf8")) as Record<string, any>;
-    expect(manifest.peerDependencies?.["@adminigloo/comms"]).toBe("^0.4.0");
+    const server = JSON.parse(readFileSync(resolve(here, "../../../comms/package.json"), "utf8")) as { version: string };
+    const [major, minor] = server.version.split(".");
+    expect(manifest.peerDependencies?.["@adminigloo/comms"]).toBe(`^${major}.${minor}.0`);
     expect(manifest.peerDependenciesMeta?.["@adminigloo/comms"]?.optional).toBe(true);
   });
 });

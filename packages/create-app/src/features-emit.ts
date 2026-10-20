@@ -552,6 +552,7 @@ export function renderPublicCompanyGate(answers: Answers): string {
     ...(seo ? [`import { graph, localBusiness, pageUrl, tryNode, webPage } from "${scope}/seo";`, `import { JsonLd } from "${scope}/seo/react";`] : []),
     ...(counted ? [`import { CompanyAnalytics } from "@/components/CompanyAnalytics";`] : []),
     ...(seo ? [`import { site } from "@/seo";`] : []),
+    ...(seo ? [`import { openingHoursOf, publicLine } from "@/server/tenant-settings";`] : []),
     ...(plans ? [`import { planStandingOf } from "@/server/plan-gate";`] : []),
     ...(counted ? [`import { recordCompanyCrawlerHit } from "@/server/website";`] : []),
   ];
@@ -567,7 +568,7 @@ ${extraImports.length ? `${extraImports.join("\n")}\n` : ""}import { tenancy } f
  * title (\`publicCompanyMetadata\`) and its body (\`PublicCompanyGate\`) both
  * ask, and React's \`cache\` makes the second ask free.
  */
-const findPublicCompany = cache((slug: string) => tenancy.resolvePublicCompany(slug));
+export const findPublicCompany = cache((slug: string) => tenancy.resolvePublicCompany(slug));
 
 /**
  * Is the ${noun} a web address names taking requests online? Not suspended${plans ? ` —
@@ -669,7 +670,13 @@ export async function PublicCompanyGate(props: {
   readonly path: string;
   /** The page's search params, kept across that redirect. */
   readonly query?: Readonly<Record<string, string | string[] | undefined>>;
-  readonly children: (company: PublicCompanyWire) => ReactNode;
+  /**
+   * "page" (default): the ${noun}'s bar over a centred column, for a widget
+   * page. "home": the whole width is the page's — the ${noun}'s home draws its
+   * own header, hero and sections (create-app 0.36, the mini website).
+   */
+  readonly layout?: "page" | "home";
+  readonly children: (company: PublicCompanyWire) => ReactNode | Promise<ReactNode>;
 }): Promise<ReactNode> {
   const found = await findPublicCompany(props.slug);
   if (!found) notFound();
@@ -703,11 +710,20 @@ export async function PublicCompanyGate(props: {
   // settings — the same page node, never this site's. Without an address yet
   // it is still named, just not offered as a local result.
   const details = props.path === "" && open ? await businessDetails(found.company.id) : null;` : ""}
+  if (props.layout === "home" && open) {
+    return (
+      <main className="min-h-dvh">${seo ? `
+        {details ? <JsonLd data={details} /> : null}` : ""}
+        {await props.children(company)}${counted ? `
+        <CompanyAnalytics slug={company.slug} />` : ""}
+      </main>
+    );
+  }
   return (
     <main className="mx-auto max-w-2xl px-4 py-8 sm:px-6 sm:py-12">${seo ? `
       {details ? <JsonLd data={details} /> : null}` : ""}
       <CompanyBrandBar company={company} />
-      <div className="mt-6">{open ? props.children(company) : <CompanyUnavailable company={company} />}</div>${counted ? `
+      <div className="mt-6">{open ? await props.children(company) : <CompanyUnavailable company={company} />}</div>${counted ? `
       {open ? <CompanyAnalytics slug={company.slug} /> : null}` : ""}
     </main>
   );
@@ -726,6 +742,12 @@ async function businessDetails(tenantId: string) {
   const url = pageUrl(site, profile.publicPath);
   const address = profile.address;
   const hasAddress = Boolean(address.line1 && (address.city || address.postalCode));
+  // From "Your public page" in company settings (create-app 0.36): the
+  // tagline, where it works, and the hours it wrote — the lines that read as
+  // days and times ("Mon–Fri 8am–5pm"); the rest stay on the page only.
+  const tagline = publicLine(profile.settings, "tagline");
+  const serviceArea = publicLine(profile.settings, "serviceArea");
+  const openingHours = openingHoursOf(publicLine(profile.settings, "hours"));
   const business = tryNode(() =>
     localBusiness(site, {
       id: \`\${url}#business\`,
@@ -734,6 +756,9 @@ async function businessDetails(tenantId: string) {
       ...(profile.contactPhone ? { telephone: profile.contactPhone } : {}),
       ...(profile.contactEmail ? { email: profile.contactEmail } : {}),
       ...(profile.logoUrl ? { logo: profile.logoUrl } : {}),
+      ...(tagline ? { description: tagline } : {}),
+      ...(serviceArea ? { areaServed: serviceArea } : {}),
+      ...(openingHours.length > 0 ? { openingHours } : {}),
       ...(hasAddress
         ? {
             address: {

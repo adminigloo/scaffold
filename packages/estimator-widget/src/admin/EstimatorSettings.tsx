@@ -753,7 +753,10 @@ function WebsiteSection({ settings, transport, onSaved }: SectionProps) {
           checked={form.draft.on}
           onChange={(next) => form.set("on", next)}
           label="Take instant estimates"
-          hint="Off: your estimate page and website embeds say instant estimates aren't available, and show your phone and email."
+          hint={{
+            on: "On: your estimate page and website embeds price jobs for customers straight away.",
+            off: "Off: your estimate page and website embeds say instant estimates aren't available, and show your phone and email.",
+          }}
         />
         <SaveRow dirty={form.dirty} busy={form.busy} saved={form.saved} error={form.error} problem={form.problem} />
       </Form>
@@ -802,7 +805,7 @@ function PhotosSection({ settings, transport, onSaved, basics }: SectionProps & 
           checked={draft.photos}
           onChange={(next) => set("photos", next)}
           label="Take photos"
-          hint="Off: no photo button, and nothing is read."
+          hint={{ on: "On: customers can add a photo of the job.", off: "Off: no photo button, and nothing is read." }}
         />
         <div className="aiew-grid2">
           <Field

@@ -1,6 +1,6 @@
 import { CompanySettings } from "__SCOPE__/tenancy-widget";
 import { CompanyGate } from "@/components/CompanyGate";
-import { PageHeader } from "@/components/ui";
+import { PageHeader, WORK_MAIN } from "@/components/ui";
 import { env } from "@/env";
 import { NOUN, NOUN_TITLE, PUBLIC_COMPANY_PREFIX, TENANCY_API } from "@/tenancy";
 
@@ -20,17 +20,19 @@ export default async function CompanySettingsPage() {
   return (
     <CompanyGate path="/settings/company" permission="tenant.view">
       {({ company }) => (
-        <main className="mx-auto max-w-4xl px-6 py-10">
+        <main className={WORK_MAIN}>
           <PageHeader
             title={`${NOUN_TITLE.singular} settings`}
-            description={`How ${company.name} appears, and how customers can reach you.`}
+            description={`How ${company.name} appears to customers, how to reach you, and what your public page says.`}
           />
-          <CompanySettings
-            baseUrl={TENANCY_API}
-            tenantId={company.id}
-            publicUrlPrefix={new URL(PUBLIC_COMPANY_PREFIX, env.NEXT_PUBLIC_APP_URL).toString()}
-            noun={NOUN}
-          />
+          <div className="max-w-4xl">
+            <CompanySettings
+              baseUrl={TENANCY_API}
+              tenantId={company.id}
+              publicUrlPrefix={new URL(PUBLIC_COMPANY_PREFIX, env.NEXT_PUBLIC_APP_URL).toString()}
+              noun={NOUN}
+            />
+          </div>
         </main>
       )}
     </CompanyGate>

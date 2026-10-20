@@ -7,6 +7,8 @@ import { setupChecklist, type AdminTab, type ChecklistItem } from "./helpers.js"
 import { HostCard, SettingsPanel } from "./SettingsPanel.js";
 import { injectAdminStyles } from "./styles.js";
 import type { AdminBlackout, AdminBookingType, AdminHost, BookingAdminAdapter } from "./types.js";
+
+const CHECKLIST_DISMISS_KEY = "aibk-setup-dismissed";
 import { useResource } from "./ui.js";
 
 /**
@@ -25,7 +27,8 @@ import { useResource } from "./ui.js";
 export interface BookingAdminProps {
   adapter: BookingAdminAdapter;
   /** The heading. Default "Calls". */
-  title?: string;
+  /** The heading. Default "Calls"; `false` draws none (and no description), for a host page whose own header says it. */
+  title?: string | false;
   /** Linked as "Open the booking page ↗" in the header. */
   bookingPageUrl?: string;
   /** The tab to open on. Default "upcoming". */
@@ -56,6 +59,15 @@ export function BookingAdmin(props: BookingAdminProps) {
   const { adapter } = props;
   const locale = props.locale ?? "en-US";
   const [tab, setTab] = useState<AdminTab>(props.initialTab ?? "upcoming");
+  const [checklistOpen, setChecklistOpen] = useState(false);
+  const [checklistDismissed, setChecklistDismissed] = useState<string | null>(null);
+  useEffect(() => {
+    try {
+      setChecklistDismissed(typeof localStorage === "undefined" ? null : localStorage.getItem(CHECKLIST_DISMISS_KEY));
+    } catch {
+      setChecklistDismissed(null);
+    }
+  }, []);
   const [hostId, setHostId] = useState<string | null>(null);
   const [focusTarget, setFocusTarget] = useState<string | null>(null);
   const [weekSavedFor, setWeekSavedFor] = useState<ReadonlySet<string>>(() => new Set());
@@ -177,6 +189,16 @@ export function BookingAdmin(props: BookingAdminProps) {
     tabRefs.current[next]?.focus();
   };
 
+  const checklistSignature = checklist.map((item) => item.key).join(",");
+  const dismissChecklist = () => {
+    try {
+      localStorage.setItem(CHECKLIST_DISMISS_KEY, checklistSignature);
+    } catch {
+      // Private mode: dismissed for this view only.
+    }
+    setChecklistDismissed(checklistSignature);
+  };
+
   const rootClass = `aibk-root aibk-admin${props.className ? ` ${props.className}` : ""}`;
   const theme = props.theme && props.theme !== "auto" ? props.theme : undefined;
 
@@ -184,12 +206,16 @@ export function BookingAdmin(props: BookingAdminProps) {
     <div className={rootClass} style={props.style} data-theme={theme} data-aibk-admin={tab} ref={rootRef}>
       <div className="aibk-admin-inner">
         <header className="aibk-admin-head">
-          <div className="aibk-head">
-            <h2 className="aibk-admin-title">{props.title ?? "Calls"}</h2>
-            <p className="aibk-sub">
-              Calls people book with you: who's coming and how, when you can be booked, and the calendar behind it.
-            </p>
-          </div>
+          {props.title === false ? (
+            <span />
+          ) : (
+            <div className="aibk-head">
+              <h2 className="aibk-admin-title">{props.title ?? "Calls"}</h2>
+              <p className="aibk-sub">
+                Calls people book with you: who's coming and how, when you can be booked, and the calendar behind it.
+              </p>
+            </div>
+          )}
           {props.bookingPageUrl ? (
             <a href={props.bookingPageUrl} target="_blank" rel="noopener noreferrer">
               Open the booking page ↗<span className="aibk-sr"> (opens in a new tab)</span>
@@ -221,26 +247,69 @@ export function BookingAdmin(props: BookingAdminProps) {
           </Notice>
         ) : null}
 
-        {checklist.length > 0 ? (
-          <section className="aibk-checklist" aria-labelledby="aibk-checklist-title" data-aibk-checklist="">
-            <h3 className="aibk-checklist-title" id="aibk-checklist-title">
-              Finish setting up
-            </h3>
-            <ul className="aibk-checklist-items">
-              {checklist.map((item) => (
-                <li key={item.key} className="aibk-checklist-item" data-aibk-check={item.key}>
-                  <span className="aibk-checklist-line">
-                    <span className="aibk-checklist-dot" aria-hidden="true" />
-                    <span className="aibk-checklist-text">{item.text}</span>
-                  </span>
-                  {item.action ? (
-                    <button type="button" className="aibk-btn aibk-btn-secondary" onClick={() => go(item)}>
-                      {item.action.label}
-                    </button>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
+        {checklist.length > 0 && checklistDismissed !== checklistSignature ? (
+          // ONE calm card, collapsed: "3 things to finish" (never a stack of banners).
+          <section className="aibk-checklist" aria-label="Things to finish" data-aibk-checklist="">
+            <div className="aibk-checklist-head">
+              <button
+                type="button"
+                className="aibk-checklist-toggle"
+                aria-expanded={checklistOpen}
+                aria-controls="aibk-checklist-body"
+                onClick={() => setChecklistOpen((open) => !open)}
+              >
+                <span className="aibk-checklist-count" aria-hidden="true">
+                  {checklist.length}
+                </span>
+                <span className="aibk-checklist-title">
+                  {checklist.length === 1 ? "1 thing to finish" : `${checklist.length} things to finish`}
+                </span>
+                <svg className="aibk-checklist-chevron" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d={checklistOpen ? "M6 14.5l6-6 6 6" : "M6 9.5l6 6 6-6"} />
+                </svg>
+              </button>
+              <button type="button" className="aibk-checklist-dismiss" aria-label="Dismiss until something changes" onClick={dismissChecklist}>
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" aria-hidden="true">
+                  <path d="M6 6l12 12M18 6L6 18" />
+                </svg>
+              </button>
+            </div>
+            <div id="aibk-checklist-body" className="aibk-checklist-body" hidden={!checklistOpen}>
+              <ul className="aibk-checklist-items">
+                {checklist
+                  .filter((item) => !item.operator)
+                  .map((item) => (
+                    <li key={item.key} className="aibk-checklist-item" data-aibk-check={item.key}>
+                      <span className="aibk-checklist-line">
+                        <span className="aibk-checklist-dot" aria-hidden="true" />
+                        <span className="aibk-checklist-text">{item.text}</span>
+                      </span>
+                      {item.action ? (
+                        <button type="button" className="aibk-btn aibk-btn-secondary" onClick={() => go(item)}>
+                          {item.action.label}
+                        </button>
+                      ) : null}
+                    </li>
+                  ))}
+              </ul>
+              {checklist.some((item) => item.operator) ? (
+                <>
+                  <p className="aibk-checklist-sub">Waiting on whoever runs this site</p>
+                  <ul className="aibk-checklist-items">
+                    {checklist
+                      .filter((item) => item.operator)
+                      .map((item) => (
+                        <li key={item.key} className="aibk-checklist-item" data-aibk-check={item.key} data-operator="">
+                          <span className="aibk-checklist-line">
+                            <span className="aibk-checklist-dot" aria-hidden="true" />
+                            <span className="aibk-checklist-text">{item.text}</span>
+                          </span>
+                        </li>
+                      ))}
+                  </ul>
+                </>
+              ) : null}
+            </div>
           </section>
         ) : null}
 
@@ -289,7 +358,7 @@ export function BookingAdmin(props: BookingAdminProps) {
 
             <div role="tabpanel" id={`aibk-panel-${tab}`} aria-labelledby={`aibk-tab-${tab}`} className="aibk-tabpanel">
               {tab === "upcoming" || tab === "past" ? (
-                <BookingsPanel key={tab} adapter={adapter} scope={tab} types={types} locale={locale} onChanged={overview.reload} />
+                <BookingsPanel key={tab} adapter={adapter} scope={tab} types={types} locale={locale} onChanged={overview.reload} bookingPageUrl={props.bookingPageUrl} />
               ) : null}
               {tab === "availability" ? (
                 <AvailabilityPanel

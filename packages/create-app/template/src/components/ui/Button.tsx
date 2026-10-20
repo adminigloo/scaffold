@@ -3,9 +3,14 @@ import { cx } from "./cx";
 
 export type ButtonVariant = "primary" | "secondary" | "danger";
 
+/**
+ * 44px tall (`min-h-11`), always: the smallest target a thumb hits on the first
+ * try (WCAG 2.5.5), and the one height every button in the product shares, so
+ * a toolbar of three never looks like three products.
+ */
 const BASE =
-  "inline-flex items-center justify-center gap-1.5 rounded-control " +
-  "px-3.5 py-2 text-sm font-medium no-underline transition-colors " +
+  "inline-flex min-h-11 items-center justify-center gap-1.5 rounded-control " +
+  "px-4 py-2 text-sm font-medium no-underline transition-colors " +
   "active:translate-y-px disabled:pointer-events-none disabled:opacity-50";
 
 /**

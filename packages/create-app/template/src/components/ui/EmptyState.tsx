@@ -1,12 +1,14 @@
 import type { ReactNode } from "react";
 
 /**
- * An empty table is a question, and "No data" answers none of it.
+ * An empty list is a sales page, and "No data" sells nothing.
  *
- * The two things a reader needs are what WOULD be here and what puts it here.
- * On a freshly generated project almost every list is empty, so these strings
- * are the first documentation anybody reads — `title` says what the list holds,
- * `children` says the concrete step that produces a row.
+ * On a freshly made company almost every list is empty, so this is the first
+ * thing a new owner reads on every screen. Three parts, in this order:
+ * `title` says what the list holds ("No invoices yet"), `children` says what
+ * the screen does once it's in use — one or two plain sentences, the outcome,
+ * not the mechanics — and `action` is the one thing that puts the first row
+ * here. No illustration and no stock art: the words carry it.
  */
 export function EmptyState({
   title,
@@ -18,10 +20,10 @@ export function EmptyState({
   readonly action?: ReactNode;
 }) {
   return (
-    <div className="rounded-[--radius-card] border border-dashed border-line-strong/60 bg-surface/50 px-4 py-10 text-center">
-      <p className="text-sm font-medium text-ink">{title}</p>
-      <div className="mx-auto mt-1 max-w-[58ch] text-sm text-ink-muted">{children}</div>
-      {action && <div className="mt-3 flex justify-center">{action}</div>}
+    <div className="rounded-[--radius-card] border border-line bg-surface px-6 py-12 text-center shadow-card">
+      <p className="text-base font-semibold text-ink">{title}</p>
+      <div className="mx-auto mt-2 max-w-[58ch] text-sm leading-relaxed text-ink-muted">{children}</div>
+      {action && <div className="mt-5 flex flex-wrap justify-center gap-2">{action}</div>}
     </div>
   );
 }

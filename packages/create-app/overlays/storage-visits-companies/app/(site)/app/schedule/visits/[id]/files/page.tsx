@@ -1,5 +1,6 @@
 import { RecordFiles } from "__SCOPE__/storage-widget/admin";
 import { CompanyGate } from "@/components/CompanyGate";
+import { WORK_MAIN } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +22,7 @@ export default async function VisitFilesPage({ params }: { readonly params: Prom
   return (
     <CompanyGate path={`/app/schedule/visits/${encodeURIComponent(id)}/files`}>
       {({ company, can }) => (
-        <main className="mx-auto max-w-2xl px-4 py-6 sm:px-6">
+        <main className={WORK_MAIN}>
           <RecordFiles
             baseUrl={`/api/app/${company.id}/files`}
             record={{ type: "scheduling.visit", id }}

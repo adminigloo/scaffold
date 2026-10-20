@@ -20,6 +20,7 @@ import { db } from "@/db";
 import { currentPrincipal } from "@/server/auth";
 import { ACCOUNT_ORDER_LIMIT, listOrdersForUser } from "@/server/fulfilment";
 import { STOREFRONT_TENANT_ID } from "@/server/routers/checkout";
+import { OperatorOnly } from "@/components/OperatorOnly";
 
 /**
  * Everything this person has ever bought, oldest at the bottom.
@@ -56,9 +57,12 @@ export default async function AccountOrdersPage() {
 
   if (!isDbConfigured(db)) {
     return (
-      <Notice tone="warn" title="DATABASE_URL is not set">
+      <Notice tone="info" title="This isn't available on this site yet">
+        <OperatorOnly>
+          DATABASE_URL isn&apos;t set.{" "}
         Orders live in Postgres and this deployment has no connection to one, so
         there is nothing to read back.
+        </OperatorOnly>
       </Notice>
     );
   }

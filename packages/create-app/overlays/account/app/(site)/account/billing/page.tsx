@@ -10,13 +10,15 @@ import {
   CardHeader,
   EmptyState,
   Notice,
+  SetupNotices,
   buttonClass,
 } from "@/components/ui";
 import { BillingPortalButton } from "@/components/account/BillingPortalButton";
 import { PlanChooser, type ChoosableTier } from "@/components/account/PlanChooser";
 import { SubscriptionActions } from "@/components/account/SubscriptionActions";
 import { db } from "@/db";
-import { plans } from "@/plans";
+import { env } from "@/env";
+import { HEADLINE_FEATURES, plans } from "@/plans";
 import { currentPrincipal } from "@/server/auth";
 import {
   describeSubscription,
@@ -35,7 +37,7 @@ import {
 // and one shape.
 import type { InvoiceList } from "@/server/routers/account";
 import { checkoutMode } from "@/server/checkout-mode";
-import { loadTenantPermissions } from "@/server/permissions";
+import { loadStaffPermissions, loadTenantPermissions } from "@/server/permissions";
 import { readPlanEntitlements } from "@/server/subscription";
 import { stripe } from "@/server/stripe";
 import { currentTenantFor } from "@/server/tenant";
@@ -96,9 +98,8 @@ export default async function AccountBillingPage() {
 
   if (!isDbConfigured(db)) {
     return (
-      <Notice tone="warn" title="DATABASE_URL is not set">
-        Subscriptions live in Postgres and this deployment has no connection to
-        one, so there is nothing to read back. Nothing is being charged.
+      <Notice tone="info" title="Billing isn't available on this site yet">
+        Nothing is being charged.
       </Notice>
     );
   }
@@ -106,10 +107,8 @@ export default async function AccountBillingPage() {
   const tenant = await currentTenantFor(principal.userId);
   if (!tenant) {
     return (
-      <Notice tone="warn" title="You are not a member of anything">
-        Billing belongs to a __TENANT_LABEL_LOWER__ and this account is in none.
-        Every account gets a personal workspace on first sign-in, so this is
-        usually a suspended membership rather than a missing one.
+      <Notice tone="info" title="You're not part of a __TENANT_LABEL_LOWER__ yet">
+        A plan belongs to a __TENANT_LABEL_LOWER__. Once you make one, or someone invites you to theirs, its billing is here.
       </Notice>
     );
   }
@@ -122,22 +121,17 @@ export default async function AccountBillingPage() {
 
   if (!canView) {
     return (
-      <Notice tone="info" title="Billing is not visible to your role">
+      <Notice tone="info" title="Only the owner and admins see billing">
         <p>
-          What <strong className="font-medium text-ink">{tenant.name}</strong>{" "}
-          pays, and when it renews, is shown to whoever holds{" "}
-          <code className="font-mono">subscriptions.view</code> in this
-          __TENANT_LABEL_LOWER__ — normally its owner and administrators. This is
-          the whole of what you are missing; nothing else on this page is hidden
-          from you.
+          What <strong className="font-medium text-ink">{tenant.name}</strong> pays, and when it renews, is shown to its owner and
+          admins. Ask them if you need it.
         </p>
         <p className="mt-2">
-          Anything you personally bought is on{" "}
+          Anything you bought yourself is on{" "}
           <Link href="/account" className="text-accent underline underline-offset-2">
             your overview
-          </Link>{" "}
-          regardless of this, because a purchase belongs to the person who made
-          it rather than to the __TENANT_LABEL_LOWER__.
+          </Link>
+          .
         </p>
       </Notice>
     );
@@ -177,6 +171,9 @@ export default async function AccountBillingPage() {
     : { status: "no_customer", invoices: [] };
 
   const mode = checkoutMode();
+  const staff = (await loadStaffPermissions({ principal })) !== null;
+  // "Talk to us" on a plan with no price: the site's own support address.
+  const contact = env.SUPPORT_EMAIL ?? env.BOOTSTRAP_ADMIN_EMAIL ?? null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -194,13 +191,10 @@ export default async function AccountBillingPage() {
 
       {meters.length > 0 && (
         <Card>
-          <CardHeader
-            title="What the plan grants"
-            hint="Read from the entitlements the subscription actually wrote, not from the plan's description of itself."
-          />
+          <CardHeader title="What your plan includes" hint="And how much of each you've used." />
           <CardBody className="flex flex-col gap-1">
             {meters.map((meter) => (
-              <Detail key={meter.feature} label={meter.feature}>
+              <Detail key={meter.feature} label={featureName(meter.feature)}>
                 {meter.resolved.unlimited
                   ? "Unlimited"
                   : `${meter.resolved.used} of ${meter.resolved.limit} used`}
@@ -217,7 +211,7 @@ export default async function AccountBillingPage() {
       <Card>
         <CardHeader
           title={subscription?.live === true ? "Change plan" : "Choose a plan"}
-          hint="Every tier and what it includes, from src/plans.ts — the same record the enforcement reads."
+          hint="Every plan includes everything. They differ in how much: people, storage and requests."
         />
         <CardBody>
           <PlanChooser
@@ -227,6 +221,8 @@ export default async function AccountBillingPage() {
             currencies={plans.currencies}
             mode={mode}
             canManage={canManage}
+            contactHref={contact ? `mailto:${contact}` : null}
+            staff={staff}
             currentTierKey={currentTier?.key ?? null}
             // A __TENANT_LABEL_LOWER__ that already pays through Stripe changes its plan in
             // place (billing 0.3), never through a second checkout.
@@ -236,15 +232,11 @@ export default async function AccountBillingPage() {
       </Card>
 
       <Card>
-        <CardHeader
-          title="Payment methods, invoices and cancellation"
-          hint="All of it is on Stripe, which is where the card details actually live."
-        />
+        <CardHeader title="Card, invoices and cancelling" hint="On Stripe's secure billing page, where your card details live." />
         <CardBody className="flex flex-col gap-3">
           <p className="max-w-[62ch] text-sm text-ink-muted">
-            Updating a card, downloading a past invoice, changing the billing
-            address or a VAT number — every one of those is in Stripe&rsquo;s own
-            portal. This application never sees a card number, which is the point.
+            Change your card, download a past invoice or update your billing address there. This site never sees your card
+            number.
           </p>
 
           {/* Three states, and each says something different. No Stripe key is
@@ -252,15 +244,19 @@ export default async function AccountBillingPage() {
               the ordinary case. Collapsing any two of them into one message
               would send somebody to fix the wrong thing. */}
           {!stripe ? (
-            <Notice tone="warn" title="Payments are not configured here">
-              <code>STRIPE_SECRET_KEY</code> is not set on this deployment, so
-              there is no billing account to open and nothing has ever been
-              charged.{" "}
-              <Link href="/setup" className="text-accent underline underline-offset-2">
-                /setup
-              </Link>{" "}
-              lists what is outstanding.
-            </Notice>
+            // The operator's job: one plain sentence for the owner, the
+            // technical reason for staff only.
+            <SetupNotices
+              staff={staff}
+              items={[
+                {
+                  key: "stripe-billing",
+                  operator: true,
+                  text: "Card billing isn't switched on for this site yet, so there's nothing to manage and nothing has been charged.",
+                  detail: "STRIPE_SECRET_KEY isn't set on this deployment. The setup page lists what is outstanding.",
+                },
+              ]}
+            />
           ) : canOpenPortal ? (
             <BillingPortalButton tenantId={tenant.id} />
           ) : (
@@ -276,10 +272,7 @@ export default async function AccountBillingPage() {
                 Manage billing
               </button>
               <p className="max-w-[62ch] text-sm text-ink-muted">
-                Opening the billing portal needs{" "}
-                <code className="font-mono">billing.portal.open</code>, which
-                normally only the owner of {tenant.name} holds — it is the same
-                permission as cancelling. Ask them, or have them grant it to you.
+                Only the owner of {tenant.name} can open billing. Ask them, or have them give you access.
               </p>
             </div>
           )}
@@ -329,7 +322,7 @@ function SubscriptionCard({
           hint={`${tenantName} · billed every ${subscription.interval}`}
           actions={
             <Badge tone={subscription.live ? "accent" : "neutral"}>
-              {subscription.status}
+              {STATUS_WORDS[subscription.status] ?? subscription.status}
             </Badge>
           }
         />
@@ -358,7 +351,7 @@ function SubscriptionCard({
                     object is either simulated or comped, and a screen that did
                     not say so would let a demo be mistaken for a paying
                     customer. */}
-                Not billed by Stripe — recorded locally
+                Not charged to a card
               </Detail>
             )}
           </div>
@@ -409,18 +402,13 @@ function Invoices({
 
   return (
     <Card>
-      <CardHeader
-        title="Invoices"
-        hint="Read live from Stripe. The PDF is the document your accountant wants."
-      />
+      <CardHeader title="Invoices" hint="Every invoice for your plan, with a PDF for your records." />
       <CardBody className="flex flex-col gap-2">
         {list.invoices.length === 0 ? (
           <p className="max-w-[62ch] text-sm text-ink-muted">
-            {list.status === "not_configured"
-              ? "This deployment has no Stripe key, so no invoice has ever been raised."
-              : list.status === "unavailable"
-                ? "Stripe did not answer just now. Nothing is wrong with the subscription above — it is read from this application's own records — and the billing portal has every invoice there has ever been."
-                : "Nothing has been invoiced to this __TENANT_LABEL_LOWER__ yet."}
+            {list.status === "unavailable"
+              ? "Your invoices couldn't be loaded just now. Your plan above is unaffected; try again in a moment."
+              : "No invoices yet."}
           </p>
         ) : (
           list.invoices.map((invoice) => (
@@ -462,9 +450,8 @@ function Invoices({
  */
 function NoSubscription({ tenantName }: { readonly tenantName: string }) {
   return (
-    <EmptyState title="No subscription on this __TENANT_LABEL_LOWER__">
-      Nothing recurring is being charged to {tenantName}. Choosing a plan below
-      starts one — and applies everything that plan grants, immediately.
+    <EmptyState title="You're not on a plan yet">
+      Nothing is being charged to {tenantName}. Choose a plan below and everything it includes switches on straight away.
     </EmptyState>
   );
 }
@@ -511,6 +498,7 @@ function choosableTiers(): readonly ChoosableTier[] {
       description: tier.description,
       highlight: tier.highlight,
       prices: pricesFor(tier),
+      headline: featureLines(tier, HEADLINE_FEATURES),
       features: featureLines(tier),
     }));
 }
@@ -539,13 +527,17 @@ function pricesFor(tier: PlanTier): Readonly<Record<string, string>> {
  * because the tuple is non-empty by construction — which is exactly why
  * `definePlans` types it that way.
  */
-function featureLines(tier: PlanTier): readonly string[] {
+function featureLines(tier: PlanTier, only?: readonly string[]): readonly string[] {
   const lines: string[] = [];
-  for (const heading of plans.features) {
+  const headings = only ? only.flatMap((key) => plans.features.filter((heading) => heading.feature === key)) : plans.features;
+  for (const heading of headings) {
     const feature = tier.features[heading.feature];
     if (feature === undefined) continue;
     if (feature.kind === "quota") {
-      lines.push(`${feature.limit === null ? "Unlimited" : feature.limit} ${feature.label}`);
+      // "1 website", never "1 websites": a limit of one reads the singular label.
+      if (feature.limit === null) lines.push(`Unlimited ${feature.label}`);
+      else if (feature.limit === 1 && feature.labelOne) lines.push(`1 ${feature.labelOne}`);
+      else lines.push(`${new Intl.NumberFormat("en-US").format(feature.limit)} ${feature.label}`);
     } else if (feature.kind === "flag") {
       lines.push(feature.included ? feature.label : `No ${feature.label.toLowerCase()}`);
     } else {
@@ -553,4 +545,25 @@ function featureLines(tier: PlanTier): readonly string[] {
     }
   }
   return lines;
+}
+
+/** A subscription's status, as an owner says it. */
+const STATUS_WORDS: Readonly<Record<string, string>> = {
+  trialing: "Free trial",
+  active: "Active",
+  past_due: "Payment due",
+  unpaid: "Unpaid",
+  canceled: "Ended",
+  incomplete: "Not started",
+  incomplete_expired: "Not started",
+  paused: "Paused",
+};
+
+/** A feature key ("seats") as the plan record names it ("team members"). */
+function featureName(key: string): string {
+  for (const tier of plans.tiers) {
+    const feature = tier.features[key];
+    if (feature && feature.label) return feature.label.charAt(0).toUpperCase() + feature.label.slice(1);
+  }
+  return key;
 }

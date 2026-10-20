@@ -178,14 +178,8 @@ export function StripeProvider({ clientSecret, children }: StripeProviderProps) 
 
   if (stripePromise === null) {
     return (
-      <Notice tone="warn" title="Card payments are switched off">
-        NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY is not set on this deployment, so
-        Stripe.js was never loaded and there is no form to fill in. Add it to{" "}
-        <code>.env.local</code> and restart —{" "}
-        <a href="/setup" className="text-accent underline">
-          /setup
-        </a>{" "}
-        lists what else is outstanding.
+      <Notice tone="info" title="Card payments aren't switched on for this site yet">
+        There&apos;s no card form to fill in yet. Nothing has been charged.
       </Notice>
     );
   }

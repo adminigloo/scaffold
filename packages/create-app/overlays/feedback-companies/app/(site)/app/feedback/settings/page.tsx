@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { FeedbackSettingsPanel } from "__SCOPE__/feedback/admin";
 import { CompanyGate } from "@/components/CompanyGate";
-import { PageHeader } from "@/components/ui";
+import { PageHeader, WORK_MAIN } from "@/components/ui";
 import { env } from "@/env";
 import { companyLinksFor } from "@/server/company-links";
 
@@ -27,7 +27,7 @@ export default async function CompanyFeedbackSettingsPage() {
   return (
     <CompanyGate path="/app/feedback/settings" permission="feedback.view">
       {({ company, can }) => (
-        <main className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
+        <main className={WORK_MAIN}>
           <PageHeader
             title="Feedback settings"
             description="Your board's columns, the categories customers choose from, and feedback on your own website."

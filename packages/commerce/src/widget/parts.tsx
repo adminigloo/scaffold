@@ -33,3 +33,14 @@ export function ErrorNote(props: { readonly message: string | null }) {
     </p>
   ) : null;
 }
+
+/** A date and time in the company's locale (default en-US), never the browser's. */
+export function whenText(iso: string, locale = "en-US"): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  try {
+    return date.toLocaleString(locale, { dateStyle: "medium", timeStyle: "short" });
+  } catch {
+    return date.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" });
+  }
+}

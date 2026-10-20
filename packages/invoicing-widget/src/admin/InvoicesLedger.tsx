@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useState, type FormEvent } from "react";
 import type { ClientError } from "../http.js";
 import { DEFAULT_FORMAT, formatDate, formatMoney, parseDollars, parsePercent, parseQuantity, STATUS_TONE, STATUS_WORDS } from "../money.js";
 import type { CreateInvoiceBody, InvoiceStatusWire, InvoiceSummaryWire, InvoicingStatusWire, MoneyFormatWire } from "../types.js";
-import { Field, fieldAria, Loading, Root, type ChromeProps } from "../ui.js";
+import { Field, fieldAria, Loading, Root, SetupCard, type ChromeProps } from "../ui.js";
 import type { InvoicingTransport } from "./client.js";
 import { InvoiceEditor } from "./InvoiceEditor.js";
 import { errorSentence, hrefFor, issueAt, navigate, safely, useAlive, useInvoicingTransport } from "./shared.js";
@@ -32,6 +32,10 @@ export interface InvoicesLedgerProps extends ChromeProps {
    * `can.includes("invoices.manage")`.
    */
   canManage?: boolean;
+  /** The heading. Default "Invoices"; `false` draws none, for a host page whose own header says it (New invoice stays). */
+  title?: string | false;
+  /** Staff of the SITE: the setup card also shows the technical detail of what only the operator can switch on. */
+  showTechnical?: boolean;
 }
 
 const FILTERS: readonly { label: string; status: InvoiceStatusWire | null }[] = [
@@ -56,7 +60,7 @@ function openedHere(): string | null {
 }
 
 export function InvoicesLedger(props: InvoicesLedgerProps) {
-  const { baseUrl, transport: given, invoiceHref, locale, canManage: _canManage, ...chrome } = props;
+  const { baseUrl, transport: given, invoiceHref, locale, canManage: _canManage, title: _title, showTechnical: _showTechnical, ...chrome } = props;
   const transport = useInvoicingTransport(given, baseUrl);
   // With the default href, an invoice opened from this page shows here.
   const [inline] = useState<string | null>(() => (invoiceHref === undefined ? openedHere() : null));
@@ -70,7 +74,7 @@ export function InvoicesLedger(props: InvoicesLedgerProps) {
 type ListState = { state: "loading" } | { state: "ready"; rows: InvoiceSummaryWire[]; next: string | null; format: MoneyFormatWire } | { state: "error"; error: ClientError };
 
 function Ledger(props: InvoicesLedgerProps & { transport: InvoicingTransport }) {
-  const { transport, invoiceHref = "?invoice={id}", locale, baseUrl: _baseUrl, canManage = true, ...chrome } = props;
+  const { transport, invoiceHref = "?invoice={id}", locale, baseUrl: _baseUrl, canManage = true, title, showTechnical = false, ...chrome } = props;
   const alive = useAlive();
   const [status, setStatus] = useState<InvoicingStatusWire | null>(null);
   const [filter, setFilter] = useState<InvoiceStatusWire | null>(null);
@@ -111,8 +115,8 @@ function Ledger(props: InvoicesLedgerProps & { transport: InvoicingTransport }) 
   return (
     <Root {...chrome} admin data={{ "aiiw-ledger": "" }}>
       <div className="aiiw-admin-inner">
-        <div className="aiiw-spread">
-          <h2 className="aiiw-title">Invoices</h2>
+        <div className="aiiw-spread" data-titled={title === false ? undefined : ""}>
+          {title === false ? <span /> : <h2 className="aiiw-title">{title ?? "Invoices"}</h2>}
           {canManage && !creating ? (
             <button type="button" className="aiiw-btn aiiw-btn-primary" onClick={() => setCreating(true)}>
               New invoice
@@ -120,19 +124,18 @@ function Ledger(props: InvoicesLedgerProps & { transport: InvoicingTransport }) 
           ) : null}
         </div>
 
-        {status && !status.detailsComplete ? (
-          <div className="aiiw-notice aiiw-notice-warn" data-aiiw-notice="details">
-            {status.detailsHref ? (
-              <a href={status.detailsHref}>Add how customers pay you, so every invoice says it.</a>
-            ) : (
-              "Add how customers pay you, so every invoice says it."
-            )}
-          </div>
-        ) : null}
-        {status && !status.emails && status.emailsOffReason ? (
-          <div className="aiiw-notice aiiw-notice-info" data-aiiw-notice="email">
-            {status.emailsOffReason}
-          </div>
+        {/* One setup card, never a stack of banners: how customers pay (the
+            owner's job, with where to fill it in) and email (the operator's). */}
+        {status ? (
+          <SetupCard
+            showTechnical={showTechnical}
+            items={[
+              ...(!status.detailsComplete ? [{ code: "details", text: "Add how customers pay you, so every invoice says it.", href: status.detailsHref }] : []),
+              ...(!status.emails
+                ? [{ code: "email", operator: true, text: "Email isn't switched on for this site yet, so invoices aren't emailed. Send one and copy its link to the customer.", detail: status.emailsOffReason }]
+                : []),
+            ]}
+          />
         ) : null}
 
         {creating ? (
@@ -165,7 +168,22 @@ function Ledger(props: InvoicesLedgerProps & { transport: InvoicingTransport }) 
               </button>
             </div>
           ) : list.rows.length === 0 ? (
-            <p className="aiiw-muted">{filter ? "No invoices here." : canManage ? "No invoices yet. Raise your first with New invoice." : "No invoices yet."}</p>
+            filter ? (
+              <p className="aiiw-muted">No invoices here.</p>
+            ) : (
+              <div className="aiiw-empty" data-aiiw-empty="">
+                <p className="aiiw-empty-title">No invoices yet</p>
+                <p className="aiiw-empty-text">
+                  Once you&apos;re invoicing, every bill lives here with what&apos;s owed and what&apos;s overdue. Customers open theirs from a
+                  link and pay by card, and the payment lands on the invoice by itself.
+                </p>
+                {canManage ? (
+                  <button type="button" className="aiiw-btn aiiw-btn-primary" onClick={() => setCreating(true)}>
+                    Raise your first invoice
+                  </button>
+                ) : null}
+              </div>
+            )
           ) : (
             <>
               <table className="aiiw-table aiiw-wide">

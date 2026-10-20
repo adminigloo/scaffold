@@ -240,7 +240,10 @@ export function FilesManager(props: FilesManagerProps) {
           </label>
         </div>
         {data.files.length === 0 ? (
-          <p className="aifw-notice aifw-notice-info">{WORDS.filesEmpty}</p>
+          <div className="aifw-empty" data-aifw-empty="">
+            <p className="aifw-empty-title">{WORDS.filesEmptyTitle}</p>
+            <p className="aifw-empty-text">{WORDS.filesEmptyText}</p>
+          </div>
         ) : (
           <>
             <table className="aifw-table">

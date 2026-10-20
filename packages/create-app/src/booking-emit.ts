@@ -691,12 +691,20 @@ import { BookingAdmin, createBookingAdminFetchAdapter } from "${answers.scope}/b
  * the call types — the package's screen over the routes it is given, so a
  * fix reaches this project with \`pnpm update\`.
  */
-export function CallsAdmin(props: { readonly baseUrl: string; readonly bookingPageUrl: string; readonly emailsEnabled: boolean }) {
+export function CallsAdmin(props: {
+  readonly baseUrl: string;
+  readonly bookingPageUrl: string;
+  readonly emailsEnabled: boolean;
+  /** The screen's own heading; \`false\` when the page's header already says it. */
+  readonly title?: string | false;
+  /** Dates and times in the ${companiesMode(answers) ? "company's" : "business's"} locale. */
+  readonly locale?: string;
+}) {
   const adapter = useMemo(
     () => createBookingAdminFetchAdapter({ baseUrl: props.baseUrl, emailsEnabled: props.emailsEnabled }),
     [props.baseUrl, props.emailsEnabled],
   );
-  return <BookingAdmin adapter={adapter} bookingPageUrl={props.bookingPageUrl} title="Calls" />;
+  return <BookingAdmin adapter={adapter} bookingPageUrl={props.bookingPageUrl} title={props.title ?? "Calls"} locale={props.locale ?? "en-US"} />;
 }
 `;
 }
@@ -705,6 +713,7 @@ function renderCompanyCallsPage(answers: Answers): string {
   const noun = tenantLabel(answers).toLowerCase();
   return `import { CallsAdmin } from "@/components/CallsAdmin";
 import { CompanyGate } from "@/components/CompanyGate";
+import { PageHeader, WORK_MAIN } from "@/components/ui";
 import { bookingEmailsConfigured } from "@/server/booking";
 
 export const dynamic = "force-dynamic";
@@ -718,9 +727,19 @@ export const dynamic = "force-dynamic";
 export default async function CompanyCallsPage() {
   return (
     <CompanyGate path="/app/calls" permission="booking.calls.view">
-      {({ company }) => (
-        <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
-          <CallsAdmin baseUrl={\`/api/app/\${company.id}/calls\`} bookingPageUrl={\`\${company.publicPath}/book\`} emailsEnabled={bookingEmailsConfigured} />
+      {({ company, locale }) => (
+        <main className={WORK_MAIN}>
+          <PageHeader
+            title="Calls"
+            description="Calls people book with you: who's coming and how, when you can be booked, and the calendar behind it."
+          />
+          <CallsAdmin
+            baseUrl={\`/api/app/\${company.id}/calls\`}
+            bookingPageUrl={\`\${company.publicPath}/book\`}
+            emailsEnabled={bookingEmailsConfigured}
+            title={false}
+            locale={locale}
+          />
         </main>
       )}
     </CompanyGate>

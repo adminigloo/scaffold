@@ -1,6 +1,6 @@
 import { SchedulingSettings } from "__SCOPE__/scheduling-widget/admin";
 import { CompanyGate } from "@/components/CompanyGate";
-import { PageHeader } from "@/components/ui";
+import { PageHeader, WORK_MAIN } from "@/components/ui";
 import { companyLinksFor } from "@/server/company-links";
 
 export const dynamic = "force-dynamic";
@@ -29,18 +29,22 @@ export const dynamic = "force-dynamic";
 export default async function CompanyScheduleSettingsPage() {
   return (
     <CompanyGate path="/app/schedule/settings" permission="schedule.view">
-      {({ company, can }) => (
-        <main className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
+      {({ company, can, isStaff, locale }) => (
+        <main className={WORK_MAIN}>
           <PageHeader
             title="Schedule settings"
             description="Online booking, customer messages, crews and hours. Changes apply as soon as you save."
           />
-          <SchedulingSettings
-            baseUrl={`/api/app/${company.id}/schedule`}
-            bookingPageUrl={companyLinksFor(company.slug).bookVisit()}
-            inviteHref="/settings/team"
-            canManage={can.includes("schedule.resources.manage")}
-          />
+          <div className="max-w-4xl">
+            <SchedulingSettings
+              baseUrl={`/api/app/${company.id}/schedule`}
+              bookingPageUrl={companyLinksFor(company.slug).bookVisit()}
+              inviteHref="/settings/team"
+              canManage={can.includes("schedule.resources.manage")}
+              showTechnical={isStaff}
+              locale={locale}
+            />
+          </div>
         </main>
       )}
     </CompanyGate>

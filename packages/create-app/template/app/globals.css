@@ -78,8 +78,10 @@
   --color-black: #000000;
 
   /* Three radii and no more. Containers, controls, pills. A fourth radius is
-     how a product starts looking like four products. */
-  --radius-card: 10px;
+     how a product starts looking like four products — and the packages'
+     screens are handed the same three below, so a card drawn by the estimator
+     and a card drawn by this app are the same card. */
+  --radius-card: 12px;
   --radius-control: 8px;
   --radius-pill: 999px;
 
@@ -156,6 +158,41 @@
     --shadow-overlay: 0 24px 64px rgb(0 0 0 / 0.65), 0 4px 16px rgb(0 0 0 / 0.5);
 
 }
+}
+
+/* ---------------------------------------------------------------------------
+   THE PACKAGES' SCREENS, IN THIS APP'S SHAPE.
+
+   Every @adminigloo widget draws with its own prefixed tokens (`--aiew-*` for
+   the estimator, `--aisw-*` for the schedule …), declared at zero specificity
+   so a host can restyle it without a fight. This hands each of them the
+   app's radii and shadow, so the schedule's cards and the dashboard's cards
+   are one card. Colour is deliberately NOT bridged: each widget's palette is
+   contrast-checked against itself (and follows the company's own brand
+   colour), and both palettes are the same glacial teal on the same grounds.
+   --------------------------------------------------------------------------- */
+.aiew-root, .aisw-root, .aiiw-root, .aibk-root, .aicw-root, .aifw-root, .aitw-root, .ainw-root, .aia-root {
+  --aiew-radius: var(--radius-card); --aiew-radius-sm: var(--radius-control); --aiew-shadow: var(--shadow-card);
+  --aisw-radius: var(--radius-card); --aisw-radius-sm: var(--radius-control); --aisw-shadow: var(--shadow-card);
+  --aiiw-radius: var(--radius-card); --aiiw-radius-sm: var(--radius-control); --aiiw-shadow: var(--shadow-card);
+  --aibk-radius: var(--radius-card); --aibk-radius-sm: var(--radius-control); --aibk-shadow: var(--shadow-card);
+  --aicw-radius: var(--radius-card); --aicw-radius-sm: var(--radius-control); --aicw-shadow: var(--shadow-card);
+  --aifw-radius: var(--radius-card); --aifw-radius-sm: var(--radius-control); --aifw-shadow: var(--shadow-card);
+  --aitw-radius: var(--radius-card); --aitw-radius-sm: var(--radius-control); --aitw-shadow: var(--shadow-card);
+  --ainw-radius: var(--radius-card); --ainw-radius-sm: var(--radius-control); --ainw-shadow: var(--shadow-card);
+  --aia-radius: var(--radius-card); --aia-radius-sm: var(--radius-control); --aia-shadow: var(--shadow-card);
+}
+
+/* Inside a work page the page owns the gutters: a package screen's own inset
+   would push its first line 16px in from the page header above it. */
+main .aiew-root.aiew-admin > .aiew-admin-inner,
+main .aisw-root .aisw-admin-inner,
+main .aiiw-root .aiiw-admin-inner,
+main .aibk-root .aibk-admin-inner,
+main .aicw-root .aicw-inner {
+  padding-left: 0;
+  padding-right: 0;
+  padding-top: 0;
 }
 
 @layer base {

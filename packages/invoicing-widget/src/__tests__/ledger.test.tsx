@@ -93,7 +93,9 @@ describe("<InvoicesLedger>", () => {
     const details = container.querySelector('[data-aiiw-notice="details"] a')!;
     expect(text(details)).toBe("Add how customers pay you, so every invoice says it.");
     expect(details.getAttribute("href")).toBe("/settings/company#invoicing");
-    expect(text(container.querySelector('[data-aiiw-notice="email"]'))).toBe("This site doesn't email invoices yet.");
+    // One setup card; email is the operator's job, so the owner reads plain words, not the server's reason.
+    expect(container.querySelectorAll("[data-aiiw-setup]")).toHaveLength(1);
+    expect(text(container.querySelector('[data-aiiw-notice="email"]'))).toBe("Email isn't switched on for this site yet, so invoices aren't emailed. Send one and copy its link to the customer.");
     await unmount();
   });
 
@@ -189,7 +191,8 @@ describe("<InvoicesLedger>", () => {
     await unmount();
     const empty = ledger({ list: () => ok({ invoices: [], nextCursor: null, format: FORMAT }) });
     const none = await mount(<InvoicesLedger transport={empty.transport} canManage={false} />);
-    expect(text(none.container)).toContain("No invoices yet.");
+    expect(text(none.container)).toContain("No invoices yet");
+    expect(button(none.container, "Raise your first invoice")).toBeNull();
     expect(text(none.container)).not.toContain("New invoice");
     await none.unmount();
   });

@@ -132,8 +132,9 @@ describe("which cadences the toggle offers", () => {
     // RangeError on anything that is not three letters — a 500 on the one page
     // that must never be down, triggered by a crawler following a mistyped link.
     expect(resolveCurrency("usd", catalog)).toBe("usd");
-    expect(resolveCurrency("XXXXX", catalog)).toBe("gbp");
-    expect(resolveCurrency(undefined, catalog)).toBe("gbp");
+    // The fallback is US dollars where the catalog prices in them (create-app 0.36).
+    expect(resolveCurrency("XXXXX", catalog)).toBe("usd");
+    expect(resolveCurrency(undefined, catalog)).toBe("usd");
   });
 });
 
@@ -191,7 +192,8 @@ describe("what a tier costs", () => {
   it("formats in one pinned locale, so two build agents agree", () => {
     // Not the machine's ICU default. The same commit built on two runners would
     // otherwise produce two differently punctuated pricing pages.
-    expect(amountLabel(2900n, "usd")).toBe("US$29.00");
+    // en-US (create-app 0.36): a US business reads "$29.00", never "US$29.00".
+    expect(amountLabel(2900n, "usd")).toBe("$29.00");
   });
 });
 

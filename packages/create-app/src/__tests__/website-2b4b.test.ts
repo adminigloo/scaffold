@@ -128,7 +128,7 @@ describe("companies mode", () => {
     expect(glue).toContain("visits.has(website.id) ? {} : { pending: \"We'll check this site once your visits line is working.\" }");
     expect(glue).toContain("const deadline = Date.now() + CRON_BUDGET_MS;");
     expect(glue).toContain("timeBudgetMs: Math.max(0, left() - CRON_CHECK_MS)");
-    expect(file(p, "src", "plans.ts")).toContain("a weekly search check is included");
+    expect(file(p, "src", "plans.ts")).toContain("on top of the weekly one");
   });
 
   it("without --ai: questions are kept, nothing is ever asked, and no plan sells AI checks", async () => {
@@ -229,6 +229,6 @@ describe("the README and the upgrade notes", () => {
     expect(notes).toContain("sql/upgrade-0.1-to-0.2.sql");
     expect(notes).toContain("node_modules/@adminigloo/aeo/sql/upgrade-0.1-to-0.2.sql");
     expect(notes).toContain("tenant_id = 'primary'");
-    expect(upgradeNotesFor(answers({ ...COMPANIES, ...AI }), "0.31.0")).toEqual([]);
+    expect(upgradeNotesFor(answers({ ...COMPANIES, ...AI }), "0.36.0")).toEqual([]);
   });
 });

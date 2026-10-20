@@ -1,6 +1,6 @@
 import { FeedbackEpics } from "__SCOPE__/feedback/epics";
 import { CompanyGate } from "@/components/CompanyGate";
-import { PageHeader } from "@/components/ui";
+import { PageHeader, WORK_MAIN } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +19,7 @@ export default async function CompanyEpicsPage() {
   return (
     <CompanyGate path="/app/feedback/epics" permission="feedback.view">
       {({ company, can }) => (
-        <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
+        <main className={WORK_MAIN}>
           <PageHeader title="Epics" description="Bigger pieces of work, each with the feedback tickets that belong to it." />
           <FeedbackEpics
             baseUrl={`/api/app/${company.id}/feedback`}

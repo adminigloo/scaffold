@@ -130,3 +130,29 @@ describe("<SetupChecklist>", () => {
     await unmount();
   });
 });
+
+describe("<SetupChecklist compact> (the dashboard's, create-app 0.36)", () => {
+  it("lists what's left in full and folds what's done into one line", async () => {
+    const f = fakeTenancy({});
+    const initial = checklist({ done: 1, items: checklist().items.map((i, n) => (n === 0 ? { ...i, done: true } : i)) });
+    const { container, unmount } = await mount(<SetupChecklist transport={f.transport} tenantId={T} initial={initial} compact />);
+    const open = container.querySelectorAll(".aitw-items > [data-item]");
+    expect(open).toHaveLength(2);
+    expect(container.querySelector('.aitw-items > [data-item="company.details"]')).toBeNull();
+    const folded = container.querySelector("[data-aitw-folded]")!;
+    expect(text(folded.querySelector("summary"))).toBe("1 done or skipped");
+    expect(folded.querySelector('[data-item="company.details"]')).not.toBeNull();
+    await unmount();
+  });
+});
+
+describe("helpForState", () => {
+  it("shows only the half of an On/Off help that is true now", async () => {
+    const { helpForState } = await import("../CompanySettings.js");
+    const help = "Off: they pay the deposit, then the whole balance. On: they can choose how much to pay each time.";
+    expect(helpForState(help, true)).toBe("On: they can choose how much to pay each time.");
+    expect(helpForState(help, false)).toBe("Off: they pay the deposit, then the whole balance.");
+    // Negative control: help without both halves is shown as written.
+    expect(helpForState("Shown on every invoice.", true)).toBe("Shown on every invoice.");
+  });
+});

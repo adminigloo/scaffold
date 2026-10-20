@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { Notice } from "@/components/ui";
 import type { LegalClause } from "@/legal";
 import { PUBLISHER } from "@/legal-publisher";
+import { OperatorOnly } from "@/components/OperatorOnly";
 
 /**
  * The chrome both legal documents share: a heading, when it took effect, the
@@ -67,7 +68,8 @@ export function LegalDocument({
         the point: it is one line, and it is a decision somebody has to make on
         purpose.
       */}
-      <div className="mt-8">
+      <OperatorOnly>
+        <div className="mt-8">
         <Notice tone="warn" title="This is a starting point, not legal advice">
           It is accurate about how this software works and says nothing about
           whether what you do with it is lawful where you operate. Fill in{" "}
@@ -75,6 +77,7 @@ export function LegalDocument({
           a lawyer read both documents, then delete this notice.
         </Notice>
       </div>
+      </OperatorOnly>
 
       <div className="mt-10 flex flex-col gap-9">{children}</div>
 

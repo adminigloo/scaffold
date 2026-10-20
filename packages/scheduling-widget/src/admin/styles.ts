@@ -13,6 +13,25 @@ import { injectStyleTag, type InjectStylesOptions } from "../styles.js";
 const STYLE_ID = "aisw-admin-styles";
 
 const CSS_TEXT = `
+/* The page's one setup card: "3 things to finish", collapsed until opened. */
+.aisw-setup { background: var(--aisw-surface); border: 1px solid var(--aisw-line); border-radius: var(--aisw-radius); box-shadow: var(--aisw-shadow); }
+.aisw-setup-head { display: flex; align-items: center; gap: 4px; padding: 4px 4px 4px 0; }
+.aisw-setup-toggle { flex: 1 1 auto; display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 8px 14px; border: 0; background: transparent; cursor: pointer; text-align: left; color: var(--aisw-ink); border-radius: var(--aisw-radius-sm); }
+.aisw-setup-toggle:hover .aisw-setup-title { text-decoration: underline; text-underline-offset: 3px; }
+.aisw-setup-count { display: inline-flex; align-items: center; justify-content: center; min-width: 26px; height: 26px; padding: 0 8px; border-radius: 999px; background: var(--aisw-accent-soft); color: var(--aisw-accent-ink); font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.aisw-setup-title { font-weight: 600; font-size: 15px; }
+.aisw-setup-chevron { margin-left: auto; color: var(--aisw-muted); flex: none; }
+.aisw-setup-dismiss { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border: 0; background: transparent; color: var(--aisw-muted); cursor: pointer; border-radius: var(--aisw-radius-sm); }
+.aisw-setup-dismiss svg { width: 18px; height: 18px; }
+.aisw-setup-dismiss:hover { color: var(--aisw-ink); background: var(--aisw-ground); }
+.aisw-setup-body { border-top: 1px solid var(--aisw-line); padding: 12px 18px 16px; display: grid; gap: 10px; }
+.aisw-setup-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; font-size: 14px; }
+.aisw-setup-list li { position: relative; padding-left: 18px; overflow-wrap: anywhere; }
+.aisw-setup-list li::before { content: ""; position: absolute; left: 2px; top: .6em; width: 6px; height: 6px; border-radius: 50%; background: var(--aisw-line-strong); }
+.aisw-setup-list a { font-weight: 600; }
+.aisw-setup-sub { font-size: 12.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--aisw-muted); padding-top: 4px; }
+.aisw-setup-detail { display: block; margin-top: 2px; font-size: 13px; color: var(--aisw-muted); }
+
 .aisw-root.aisw-admin { background: var(--aisw-ground); box-shadow: none; font-size: 14.5px; }
 .aisw-admin-inner { padding: 16px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
 @media (max-width: 480px) { .aisw-admin-inner { padding: 12px; gap: 12px; } }
@@ -123,7 +142,10 @@ const CSS_TEXT = `
 .aisw-chip[data-fixed] { cursor: not-allowed; touch-action: auto; }
 .aisw-chip[data-dragging] { z-index: 6; opacity: .92; box-shadow: var(--aisw-shadow); }
 
-.aisw-cal-empty { padding: 16px; text-align: center; color: var(--aisw-muted); }
+.aisw-cal-empty { display: grid; justify-items: center; gap: 6px; padding: 28px 16px; text-align: center; background: var(--aisw-surface); border: 1px solid var(--aisw-line); border-radius: var(--aisw-radius); }
+.aisw-cal-empty-title { font-weight: 700; font-size: 16px; color: var(--aisw-ink); }
+.aisw-cal-empty-text { max-width: 56ch; color: var(--aisw-muted); font-size: 14px; }
+.aisw-cal-empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 8px; }
 
 /* Dialogs and the visit drawer */
 .aisw-backdrop { position: fixed; inset: 0; z-index: 2147483000; background: var(--aisw-scrim); display: flex; align-items: center; justify-content: center; padding: 16px; }

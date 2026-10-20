@@ -22,6 +22,7 @@ import {
 // third opinion in the browser.
 import { checkoutMode } from "@/server/checkout-mode";
 import { api } from "@/trpc/server";
+import { OperatorOnly } from "@/components/OperatorOnly";
 
 /** Reads searchParams and a live price. Nothing here is cacheable. */
 export const dynamic = "force-dynamic";
@@ -73,7 +74,9 @@ export default async function CheckoutPage({
   if (!isDbConfigured(db)) {
     return (
       <Shell title="Checkout is unavailable">
-        <Notice tone="warn" title="DATABASE_URL is not set">
+        <Notice tone="info" title="This isn't available on this site yet">
+          <OperatorOnly>
+            DATABASE_URL isn&apos;t set.{" "}
           The checkout reads the price from Postgres and this deployment has no
           connection to one, so there is no amount it could honestly charge. Add
           the variable to <code>.env.local</code> and restart —{" "}
@@ -81,6 +84,7 @@ export default async function CheckoutPage({
             /setup
           </Link>{" "}
           lists what else is outstanding.
+          </OperatorOnly>
         </Notice>
       </Shell>
     );
@@ -178,13 +182,15 @@ export default async function CheckoutPage({
           interval={variant.interval}
           buyer={principalId === null ? "guest" : "account"}
         />
-        <p className="text-xs text-ink-muted">
-          To take real payments, add <code>STRIPE_SECRET_KEY</code>,{" "}
-          <code>NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY</code> and{" "}
-          <code>STRIPE_WEBHOOK_SECRET</code> to <code>.env.local</code> and
-          restart. Nothing else changes — this page becomes the card form and the
-          order is written by the same function it is written by now.
-        </p>
+        <OperatorOnly>
+          <p className="text-xs text-ink-muted">
+            To take real payments, add <code>STRIPE_SECRET_KEY</code>,{" "}
+            <code>NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY</code> and{" "}
+            <code>STRIPE_WEBHOOK_SECRET</code> to <code>.env.local</code> and
+            restart. Nothing else changes — this page becomes the card form and the
+            order is written by the same function it is written by now.
+          </p>
+        </OperatorOnly>
       </Shell>
     );
   }
@@ -199,12 +205,13 @@ export default async function CheckoutPage({
   // to /sign-in would hide it behind a page that cannot sign anybody in either.
   if (!env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) {
     return (
-      <Shell title="Checkout needs sign-in, and sign-in is not configured">
-        <Notice tone="warn" title="Clerk is not set up on this deployment">
-          A payment has to be attributable to an account, so the checkout
-          requires a signed-in user. Add{" "}
-          <code>NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY</code> and{" "}
-          <code>CLERK_SECRET_KEY</code> to <code>.env.local</code>, then restart.
+      <Shell title="Checkout isn't available yet">
+        <Notice tone="info" title="Buying online isn't switched on for this site yet">
+          <OperatorOnly>
+            Clerk isn&apos;t set up: a payment has to belong to an account, so the checkout needs sign-in. Add{" "}
+            <code>NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY</code> and <code>CLERK_SECRET_KEY</code> to <code>.env.local</code>, then
+            restart.
+          </OperatorOnly>
         </Notice>
       </Shell>
     );
@@ -224,9 +231,10 @@ export default async function CheckoutPage({
   // would grant products for free on a deployment that is trying to charge.
   if (!env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY) {
     return (
-      <Shell title="Payments are half-configured">
+      <Shell title="Checkout isn't available yet">
         <LineItem product={product} variant={variant} quantity={quantity} />
-        <Notice tone="danger" title="No Stripe publishable key on this deployment">
+        <Notice tone="info" title="Card payments aren't switched on for this site yet">
+          <OperatorOnly>
           Everything about this order resolves correctly — the item, the option
           and the total above are real. What is missing is{" "}
           <code>NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY</code>, without which Stripe.js
@@ -235,6 +243,7 @@ export default async function CheckoutPage({
           <code>STRIPE_SECRET_KEY</code> is set and this deployment is therefore
           meant to be charging. Add the publishable key to{" "}
           <code>.env.local</code> and restart.
+          </OperatorOnly>
         </Notice>
       </Shell>
     );

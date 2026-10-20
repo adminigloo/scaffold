@@ -4506,11 +4506,11 @@ export function renderCompanyEmailTest(answers: Answers): string {
     `import { and, eq } from "drizzle-orm";`,
     `import { users } from "${scope}/auth/schema";`,
     `import { commsMessages, sendNow, upsertTemplate } from "${scope}/comms";`,
-    `import type { EmailTransport } from "${scope}/email";`,
+    `import { createEmailSender, type EmailTransport } from "${scope}/email";`,
     ...(scheduling ? [`import { bookVisit, expirePendingRequests } from "${scope}/scheduling";`] : []),
     `import { db } from "@/db";`,
     `import { seedPermissions } from "@/permissions/seed";`,
-    `import { buildCommsSenders, COMMS_SEND_ALLOWANCE, companySendAllowance } from "@/server/comms-senders";`,
+    `import { buildCommsSenders, COMMS_SEND_ALLOWANCE, companySendAllowance, sendersOver } from "@/server/comms-senders";`,
     `import { ensureCompanySetup } from "@/server/company-setup";`,
     ...(officeByAlerts ? [`import { alerts } from "@/server/alerts";`] : []),
     ...(scheduling ? [`import { onSchedulingEvent } from "@/server/scheduling-notify";`] : []),
@@ -4761,6 +4761,23 @@ describe("each ${noun}'s email goes out as the ${noun}", () => {
     expect(row.status).toBe("failed");
     expect(row.error).toMatch(/^held:/);
     expect(outbox.length).toBe(before);
+  });
+
+  it("with no email provider, nothing uses up the allowance and nothing is held (create-app 0.36)", async () => {
+    // A mailer with no key and no transport: what a site with no email provider has.
+    const unconfigured = createEmailSender({ apiKey: undefined, from: "messages@example.invalid" });
+    expect(unconfigured.configured).toBe(false);
+    const quiet = sendersOver(unconfigured);
+    const fresh = await company("ext-mail-quiet", "quinn@quiet-owner.test", "Quiet Ramps", null);
+    // Well past the new-${noun} hourly cap: every one is skipped, none held, none failed.
+    for (let i = 0; i < COMMS_SEND_ALLOWANCE.newCompany.hour + 5; i++) {
+      const row = await sendNow(db, { tenantId: fresh.tenantId, to: "customer@echo.test", templateKey: "identity_probe" }, quiet);
+      expect(row.status, \`email \${i + 1}\`).toBe("skipped");
+    }
+    // And its allowance is untouched: once a provider is switched on it starts full.
+    expect(await companySendAllowance({ tenantId: fresh.tenantId })).toBe(true);
+    // Negative control: with a provider, the same ${noun}'s allowance is counted.
+    expect((await sendNow(db, { tenantId: fresh.tenantId, to: "customer@echo.test", templateKey: "identity_probe" }, senders)).status).toBe("sent");
   });
 
   it("records in the delivery log who each email went out as, and where replies go", async () => {

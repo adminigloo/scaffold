@@ -1,6 +1,6 @@
 import { EmbedKeys, EstimatorSettings } from "__SCOPE__/estimator-widget/admin";
 import { CompanyGate } from "@/components/CompanyGate";
-import { PageHeader } from "@/components/ui";
+import { PageHeader, WORK_MAIN } from "@/components/ui";
 import { companyLinksFor } from "@/server/company-links";
 
 export const dynamic = "force-dynamic";
@@ -24,26 +24,34 @@ export const dynamic = "force-dynamic";
 export default async function CompanyEstimateSettingsPage() {
   return (
     <CompanyGate path="/app/estimates/settings" permission="estimator.view">
-      {({ company, can }) => (
-        <main className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
+      {({ company, can, isStaff, locale }) => (
+        <main className={WORK_MAIN}>
           <PageHeader
             title="Estimate settings"
             description="Tax, quote rules, who hears about new leads, photo reading and its budget, and the estimate on your own website."
           />
-          <EstimatorSettings baseUrl={`/api/app/${company.id}/estimator`} canManage={can.includes("estimator.settings.manage")} />
-          <div className="mt-8">
-            {/* Your website (review T2A-BO-02): a button and a page frame any
-                site takes — Wix, Squarespace, WordPress — pointing at the
-                company's own estimate page, in its colour; the keyed React
-                snippet folded under "For developers". The notices are shown
-                once, by the settings above (T2A-BO-06). */}
-            <EmbedKeys
+          <div className="max-w-4xl">
+            <EstimatorSettings
               baseUrl={`/api/app/${company.id}/estimator`}
               canManage={can.includes("estimator.settings.manage")}
-              publicPageUrl={companyLinksFor(company.slug).estimate}
-              buttonColor={company.brandColor}
-              notices={false}
+              showTechnical={isStaff}
+              locale={locale}
             />
+            <div className="mt-8">
+              {/* Your website (review T2A-BO-02): a button and a page frame any
+                  site takes — Wix, Squarespace, WordPress — pointing at the
+                  company's own estimate page, in its colour; the keyed React
+                  snippet folded under "For developers". The notices are shown
+                  once, by the settings above (T2A-BO-06). */}
+              <EmbedKeys
+                baseUrl={`/api/app/${company.id}/estimator`}
+                canManage={can.includes("estimator.settings.manage")}
+                publicPageUrl={companyLinksFor(company.slug).estimate}
+                buttonColor={company.brandColor}
+                notices={false}
+                locale={locale}
+              />
+            </div>
           </div>
         </main>
       )}

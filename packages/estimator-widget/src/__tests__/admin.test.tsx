@@ -228,7 +228,7 @@ describe("<EstimatorAdmin>", () => {
     await click(button(container, "New estimate"));
     expect(text(container)).toContain("EST-0001");
     await click(button(container, "Back to estimates"));
-    expect(text(container)).toContain("No leads yet.");
+    expect(text(container)).toContain("No estimate requests yet");
     // Arrow keys move between tabs.
     const first = container.querySelector<HTMLButtonElement>('[data-tab="estimates"]')!;
     first.focus();

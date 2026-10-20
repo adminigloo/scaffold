@@ -219,7 +219,7 @@ export function websiteSection(answers: ProjectManifest["answers"]): string[] {
     if (companies) {
       lines.push(
         `- **Each ${noun}'s own numbers** at /app/website: visits to its pages here (/t/{web address}) and to its own website, where they came from (search engines, AI assistants by name, other sites), the pages read and the AI crawlers that read its pages — with its own team left out of its numbers.`,
-        `- **Its own website**: the ${noun} adds it at /app/website and pastes one line before </head> on every page. A visit counts only from that website's own addresses${plansAnswer(answers) ? `; how many websites it may add is on its plan (src/plans.ts, "websites of your own counted")` : ""}.`,
+        `- **Its own website**: the ${noun} adds it at /app/website and pastes one line before </head> on every page. A visit counts only from that website's own addresses${plansAnswer(answers) ? `; how many websites it may add is on its plan (src/plans.ts, "websites of your own, with visit counts")` : ""}.`,
         `- **Who is left out** (owners and admins): its team, automatically; a team member's email, everyone at an email domain, an office internet connection or a monitoring tool it adds (found only among its own members and invitations), cleaned out of past numbers at once and put back exactly when removed; and "leave this device out" links for the phones and computers it looks at its website on.`,
       );
     }
@@ -320,7 +320,7 @@ export function websiteReportsSection(answers: ProjectManifest["answers"]): stri
         ? "- **This site's own** at /admin/aeo (staff.aeo.view)."
         : "- **This site's own** over /api/admin/ai-mentions.",
       answers.includeAi
-        ? `- **What it costs**: each check asks Claude Haiku 4.5 with web search; the cost is estimated — see /admin/aeo for the measured average. Every answer is held against the month (src/server/ai-mentions.ts${companies && plans ? ', or its plan\'s "AI mention checks a month" and "questions tracked by AI mentions"' : ""}), AI mentions' own day (AI_MENTIONS_DAILY_CENTS, at most half the site's) and the site's day (AI_SITE_DAILY_CENTS) before it's asked, and recorded in ai_usage — web searches priced in. Code, not the model, decides whether the business was named. Each question is asked again weekly by /api/cron/ai-mentions (it needs CRON_SECRET).`
+        ? `- **What it costs**: each check asks Claude Haiku 4.5 with web search; the cost is estimated — see /admin/aeo for the measured average. Every answer is held against the month (src/server/ai-mentions.ts${companies && plans ? ', or its plan\'s "AI answer checks a month" and "questions tracked in AI answers"' : ""}), AI mentions' own day (AI_MENTIONS_DAILY_CENTS, at most half the site's) and the site's day (AI_SITE_DAILY_CENTS) before it's asked, and recorded in ai_usage — web searches priced in. Code, not the model, decides whether the business was named. Each question is asked again weekly by /api/cron/ai-mentions (it needs CRON_SECRET).`
         : "- **No answers are asked yet**: this project has no AI (`create-app add ai`). Questions and who the business is can be kept; Check now says checking isn't switched on.",
       "",
     );

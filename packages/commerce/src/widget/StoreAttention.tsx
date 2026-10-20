@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { StoreAlertWire, StoreAlertsResponse } from "../store-wire.js";
-import { ErrorNote, request, StoreStyles } from "./parts.js";
+import { ErrorNote, request, StoreStyles, whenText } from "./parts.js";
 
 /**
  * NEEDS YOUR ATTENTION, FOR THE STORE (commerce 0.2): every store payment the
@@ -9,7 +9,7 @@ import { ErrorNote, request, StoreStyles } from "./parts.js";
  * after it ran out — each in plain words, with a link to it in Stripe and
  * "Mark as handled". Over `{baseUrl}/v1/admin/attention`.
  */
-export function StoreAttention(props: { readonly baseUrl: string; readonly canManage?: boolean; readonly heading?: string }) {
+export function StoreAttention(props: { readonly baseUrl: string; readonly canManage?: boolean; readonly heading?: string; readonly locale?: string }) {
   const [items, setItems] = useState<StoreAlertsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -51,7 +51,7 @@ export function StoreAttention(props: { readonly baseUrl: string; readonly canMa
             <li key={item.id} className="aics-note" data-attention-item={item.kind}>
               <p style={{ margin: 0 }}>{item.message}</p>
               <p className="aics-row" style={{ margin: ".5rem 0 0" }}>
-                <span className="aics-muted">{new Date(item.createdAt).toLocaleString()}</span>
+                <span className="aics-muted">{whenText(item.createdAt, props.locale)}</span>
                 {item.stripeUrl ? (
                   <a href={item.stripeUrl} target="_blank" rel="noreferrer">
                     Open it in Stripe

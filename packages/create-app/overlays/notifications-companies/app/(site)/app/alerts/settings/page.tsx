@@ -1,6 +1,6 @@
 import { AlertSettings } from "__SCOPE__/notifications-widget/admin";
 import { CompanyGate } from "@/components/CompanyGate";
-import { PageHeader } from "@/components/ui";
+import { PageHeader, WORK_MAIN } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -28,7 +28,7 @@ export default async function CompanyAlertSettingsPage() {
   return (
     <CompanyGate path="/app/alerts/settings" permission="alerts.view">
       {({ company }) => (
-        <main className="mx-auto max-w-3xl px-4 py-8 sm:px-6">
+        <main className={WORK_MAIN}>
           <PageHeader title="Alert settings" description={`How you hear about what happens at ${company.name}.`} />
           <AlertSettings baseUrl={`/api/app/${company.id}/alerts`} hideTitle businessEmailSettings="__TENANT_LABEL_LOWER__ settings" />
         </main>

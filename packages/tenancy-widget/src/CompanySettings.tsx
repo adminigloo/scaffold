@@ -947,6 +947,20 @@ function RegistrySection({
   );
 }
 
+
+/**
+ * A toggle's help that describes BOTH states ("Off: … On: …") shows only the
+ * one that is true now, so the words under a ticked box never describe what
+ * happens when it's unticked. Help without both markers shows as written.
+ */
+export function helpForState(help: string, on: boolean): string {
+  const parts = help.split(/(?=\b(?:On|Off): )/).map((part) => part.trim()).filter(Boolean);
+  const onPart = parts.find((part) => part.startsWith("On: "));
+  const offPart = parts.find((part) => part.startsWith("Off: "));
+  if (!onPart || !offPart) return help;
+  return on ? onPart : offPart;
+}
+
 function SettingsInput({
   id,
   field,
@@ -976,15 +990,16 @@ function SettingsInput({
   } as const;
 
   if (field.kind === "toggle") {
+    const toggleHelp = field.help ? helpForState(field.help, value === true) : null;
     return (
       <div className="aitw-field" data-width={field.width} data-field={field.key}>
         <label className="aitw-check" htmlFor={id}>
           <input {...common} type="checkbox" checked={value === true} disabled={readOnly} onChange={(event) => onChange(event.target.checked)} />
           <span className="aitw-label">{field.label}</span>
         </label>
-        {field.help ? (
+        {toggleHelp ? (
           <span className="aitw-hint" id={`${id}-hint`}>
-            {field.help}
+            {toggleHelp}
           </span>
         ) : null}
         {error ? (

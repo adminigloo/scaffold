@@ -1,32 +1,30 @@
 import type { Metadata } from "next";
 import { CallToAction } from "@/components/marketing/CallToAction";
 import { Faq } from "@/components/marketing/Faq";
-import { Features } from "@/components/marketing/Features";
 import { Hero } from "@/components/marketing/Hero";
-import { SocialProof } from "@/components/marketing/SocialProof";
+import { HowItWorks } from "@/components/marketing/HowItWorks";
+import { Outcomes } from "@/components/marketing/Outcomes";
+import { PlansTeaser } from "@/components/marketing/PlansTeaser";
+import { isSignedIn } from "@/components/marketing/viewer";
 
 /**
- * The landing page.
+ * The landing page, for business owners (create-app 0.36): what it does for
+ * them, three outcomes, how it works in three steps, the plans, and the
+ * questions they ask before signing up.
  *
- * FIVE IMPORTS AND NOTHING ELSE, deliberately. Every client rewrites the copy
- * and about half of them delete two of these sections outright, so the page is
- * the running order and nothing more — reordering it is moving a line, and
- * dropping the social proof is deleting one. A single file with all five
- * sections inlined would make both of those a merge conflict with whatever the
- * scaffold ships next.
+ * THE RUNNING ORDER AND NOTHING ELSE. Every word is in src/marketing-copy.ts
+ * — the one file a project edits to speak its trade — and each section is its
+ * own file, so reordering the page is moving a line and dropping a section is
+ * deleting one. Product screenshots appear by themselves once they're saved
+ * in public/screenshots/ (SCREENSHOTS in src/marketing-copy.ts names them).
  *
  * WHERE THE ORIENTATION PAGE WENT. In a project generated without a marketing
- * site, `/` is the developer's file map — the health check and the list of
- * files to start editing. This page takes `/` instead, and the generator writes
- * that one to `/setup/start`, beside the other developer surface. It is in
- * `FOOTER_LINKS`, so it is still one click away from everywhere.
+ * site, `/` is the developer's file map. This page takes `/` instead, and the
+ * generator writes that one to `/setup/start`, beside the other developer
+ * surface.
  *
- * STATIC. Nothing here reads a session, a database or a request, so the whole
- * page is rendered once at build and served from the edge — which is what a
- * landing page should be, and what the pricing page deliberately is not.
- *
- * It renders no header or footer of its own: `app/(site)/layout.tsx` mounts
- * both, so this page inherits the same chrome as every other public route.
+ * Someone already signed in is offered "Go to your dashboard", not "Get
+ * started" — the header's sign-in check, asked once more here.
  */
 export const metadata: Metadata = {
   // Its own canonical, set here rather than inherited. Metadata merges field by
@@ -35,14 +33,16 @@ export const metadata: Metadata = {
   alternates: { canonical: "/" },
 };
 
-export default function Home() {
+export default async function Home() {
+  const signedIn = await isSignedIn();
   return (
     <>
-      <Hero />
-      <Features />
-      <SocialProof />
+      <Hero signedIn={signedIn} />
+      <Outcomes />
+      <HowItWorks />
+      <PlansTeaser />
       <Faq />
-      <CallToAction />
+      <CallToAction signedIn={signedIn} />
     </>
   );
 }

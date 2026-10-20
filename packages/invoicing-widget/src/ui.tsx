@@ -3,6 +3,7 @@ import {
   useEffect,
   useId,
   useRef,
+  useState,
   type CSSProperties,
   type KeyboardEvent,
   type ReactNode,
@@ -214,4 +215,82 @@ export function fieldAria(id: string, error: string | null | undefined, hint?: b
     ...(error ? { "aria-invalid": true as const } : {}),
     ...(described ? { "aria-describedby": described } : {}),
   };
+}
+
+/** One thing left to finish, for <SetupCard>. */
+export interface SetupItem {
+  readonly code: string;
+  /** What an owner reads. */
+  readonly text: string;
+  /** Where to fix it (owner items only). */
+  readonly href?: string | null;
+  /** The site operator's job (email, file storage): no link, grouped apart. */
+  readonly operator?: boolean;
+  /** The technical detail, shown only with `showTechnical` (staff of the site). */
+  readonly detail?: string | null;
+}
+
+const SETUP_DISMISS_KEY = "aiiw-setup-dismissed";
+
+/**
+ * The page's ONE setup card: "2 things to finish", collapsed until opened,
+ * dismissible until the list changes. Owner jobs first with where to fix
+ * them; the operator's after, in plain words.
+ */
+export function SetupCard({ items, showTechnical = false }: { items: readonly SetupItem[]; showTechnical?: boolean }) {
+  const panelId = useId();
+  const [open, setOpen] = useState(false);
+  const signature = items.map((item) => item.code).join(",");
+  const [dismissed, setDismissed] = useState<string | null>(null);
+  useEffect(() => {
+    try {
+      setDismissed(typeof localStorage === "undefined" ? null : localStorage.getItem(SETUP_DISMISS_KEY));
+    } catch {
+      setDismissed(null);
+    }
+  }, []);
+  if (items.length === 0 || dismissed === signature) return null;
+  const owner = items.filter((item) => !item.operator);
+  const operator = items.filter((item) => item.operator);
+  const dismiss = () => {
+    try {
+      localStorage.setItem(SETUP_DISMISS_KEY, signature);
+    } catch {
+      // Private mode: dismissed for this view only.
+    }
+    setDismissed(signature);
+  };
+  const row = (item: SetupItem) => (
+    <li key={item.code} data-aiiw-notice={item.code} data-operator={item.operator ? "" : undefined}>
+      {item.href && !item.operator ? <a href={item.href}>{item.text}</a> : item.text}
+      {showTechnical && item.detail ? <span className="aiiw-setup-detail">{item.detail}</span> : null}
+    </li>
+  );
+  return (
+    <section className="aiiw-setup" data-aiiw-setup="" aria-label="Things to finish">
+      <div className="aiiw-setup-head">
+        <button type="button" className="aiiw-setup-toggle" aria-expanded={open} aria-controls={panelId} onClick={() => setOpen((value) => !value)}>
+          <span className="aiiw-setup-count" aria-hidden="true">
+            {items.length}
+          </span>
+          <span className="aiiw-setup-title">{items.length === 1 ? "1 thing to finish" : `${items.length} things to finish`}</span>
+          <svg className="aiiw-setup-chevron" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d={open ? "M6 14.5l6-6 6 6" : "M6 9.5l6 6 6-6"} />
+          </svg>
+        </button>
+        <button type="button" className="aiiw-setup-dismiss" aria-label="Dismiss until something changes" onClick={dismiss}>
+          <CrossIcon />
+        </button>
+      </div>
+      <div id={panelId} className="aiiw-setup-body" hidden={!open}>
+        {owner.length > 0 ? <ul className="aiiw-setup-list">{owner.map(row)}</ul> : null}
+        {operator.length > 0 ? (
+          <>
+            <p className="aiiw-setup-sub">Waiting on whoever runs this site</p>
+            <ul className="aiiw-setup-list">{operator.map(row)}</ul>
+          </>
+        ) : null}
+      </div>
+    </section>
+  );
 }

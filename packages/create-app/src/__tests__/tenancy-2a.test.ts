@@ -531,13 +531,17 @@ describe("the company modules (11.5)", () => {
     expect(gate).toContain("await findPublicCompany(props.slug)");
     expect(gate).toContain("if (!found) notFound();");
     expect(gate).toContain("permanentRedirect(");
-    expect(gate).toContain("open ? props.children(company) : <CompanyUnavailable company={company} />");
+    expect(gate).toContain("open ? await props.children(company) : <CompanyUnavailable company={company} />");
     // Shut when suspended (the status) — the plan's standing joins it where plans are sold (website-2b4a.test.ts).
     expect(gate).toContain('if (!found || found.status !== "active") return false;');
     expect(gate).toContain("<CompanyBrandBar company={company} />");
     // The company's home lists the public pages this project has, and nothing else.
     const home = code(file(await plan(COMPANY_FULL), "app", "(company)", "t", "[slug]", "page.tsx"));
-    expect(home).toContain("PUBLIC_COMPANY_PAGES.map(");
+    // The mini website (create-app 0.36): every public page but the hero's
+    // button and feedback becomes a card; feedback is a footer link.
+    expect(home).toContain('layout="home"');
+    const view = code(file(await plan(COMPANY_FULL), "src", "components", "CompanyHome.tsx"));
+    expect(view).toContain("PUBLIC_COMPANY_PAGES.filter(");
     const constants = file(await plan(COMPANY_FULL), "src", "tenancy.ts");
     expect(constants).toContain('{ path: "/estimate", label: "Get an instant estimate" },');
     expect(constants).toContain('{ path: "/book-visit", label: "Book a visit" },');
@@ -988,7 +992,12 @@ describe("the header and the company links (11.11)", () => {
     const dashboard = code(file(p, "app", "(site)", "dashboard", "page.tsx"));
     expect(dashboard).toContain('<CompanyGate path="/dashboard">');
     expect(dashboard).not.toContain('permission="tenant.view"');
-    expect(dashboard).toContain("(link.permission === undefined || can.includes(link.permission))");
+    // The numbers are filtered by the same permissions (create-app 0.36): no
+    // "Money owed" for someone who can't open Invoices.
+    expect(dashboard).toContain("dashboardNumbers(company.id, can, locale)");
+    const numbers = code(file(p, "src", "server", "dashboard.ts"));
+    expect(numbers).toContain('if (can.includes("invoices.view")) {');
+    expect(numbers).toContain('if (can.includes("schedule.view")) {');
   });
 
   it("takes the platform's own booking and estimate pages out of a companies project's public face", async () => {
@@ -1158,17 +1167,17 @@ describe("what the project claims and documents (11.13)", () => {
     expect(pkgs).toContain("@adminigloo/comms-widget");
     const manifest = JSON.parse(file(await plan(COMPANY_FULL), "package.json")) as { dependencies: Record<string, string> };
     for (const [pkg, range] of [
-      // Tenancy 2b-1 moved every line it changed (versions.ts says why).
+      // Tenancy 2b-1 moved every line it changed (versions.ts says why); the showroom (0.36) moved the widgets again.
       ["tenancy", "^0.7.0"],
-      ["tenancy-widget", "^0.2.2"],
+      ["tenancy-widget", "^0.3.0"],
       ["scheduling", "^0.6.1"],
-      ["scheduling-widget", "^0.3.0"],
-      ["estimator", "^0.5.1"],
-      ["estimator-widget", "^0.5.0"],
+      ["scheduling-widget", "^0.4.0"],
+      ["estimator", "^0.6.0"],
+      ["estimator-widget", "^0.6.0"],
       ["invoicing", "^0.6.0"],
-      ["invoicing-widget", "^0.2.1"],
+      ["invoicing-widget", "^0.3.0"],
       ["comms", "^0.5.0"],
-      ["comms-widget", "^0.1.2"],
+      ["comms-widget", "^0.2.0"],
       ["email", "^0.3.0"],
       ["storage", "^0.2.0"],
       ["storage-widget", "^0.1.0"],
@@ -1264,7 +1273,9 @@ describe("Tenancy 2a review: what the generated project does now", () => {
 
   it("SEC-2A-03: each company's email is held to a sending allowance, and only in a companies project", async () => {
     const senders = code(file(await plan(COMPANY_FULL), "src", "server", "comms-senders.ts"));
-    expect(senders).toContain("allowance: companySendAllowance,");
+    // Asked only where email can leave (create-app 0.36): with no provider every
+    // message is skipped and none may use up the allowance.
+    expect(senders).toContain("...(mailer.configured ? { allowance: companySendAllowance } : {}),");
     expect(senders).toContain("established: { hour: 100, day: 500 },");
     expect(senders).toContain("newCompany: { hour: 20, day: 100 },");
     // Tenancy 2b-1 (review BO-10): the team's own emails count in their own bucket.

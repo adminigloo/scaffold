@@ -14,6 +14,7 @@ import {
 } from "@/server/fulfilment";
 import { STOREFRONT_TENANT_ID } from "@/server/routers/checkout";
 import { stripe } from "@/server/stripe";
+import { OperatorOnly } from "@/components/OperatorOnly";
 
 /** Reads a live PaymentIntent and a just-written order. Never cacheable. */
 export const dynamic = "force-dynamic";
@@ -99,9 +100,12 @@ async function SimulatedReturn({ reference }: { readonly reference: string }) {
   if (!isDbConfigured(db)) {
     return (
       <Shell>
-        <Notice tone="warn" title="DATABASE_URL is not set">
+        <Notice tone="info" title="This isn't available on this site yet">
+          <OperatorOnly>
+            DATABASE_URL isn&apos;t set.{" "}
           Orders live in Postgres and this deployment has no connection to one,
           so there is nothing to read back.
+          </OperatorOnly>
         </Notice>
       </Shell>
     );
@@ -159,10 +163,11 @@ async function StripeReturn({ params }: { readonly params: SuccessParams }) {
   if (!stripe) {
     return (
       <Shell>
-        <Notice tone="warn" title="Payments are not configured here">
-          This page reads a payment from Stripe and{" "}
-          <code>STRIPE_SECRET_KEY</code> is not set on this deployment, so there
-          is nothing to read. Nobody has been charged.
+        <Notice tone="info" title="Card payments aren't switched on for this site yet">
+          Nobody has been charged.
+          <OperatorOnly>
+            {" "}This page reads a payment from Stripe and <code>STRIPE_SECRET_KEY</code> isn&apos;t set on this deployment.
+          </OperatorOnly>
         </Notice>
       </Shell>
     );

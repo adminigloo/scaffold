@@ -331,7 +331,9 @@ textarea.aibk-input { min-height: 92px; resize: vertical; }
   .aibk-spinner { animation-duration: 2.4s; }
   .aibk-root * { transition: none !important; }
 }
-.aibk-empty { display: grid; gap: 8px; justify-items: center; text-align: center; padding: 24px 8px; color: var(--aibk-muted); }
+.aibk-empty { display: grid; gap: 8px; justify-items: center; text-align: center; padding: 28px 12px; color: var(--aibk-muted); }
+.aibk-empty-text { max-width: 58ch; }
+.aibk-empty .aibk-btn { margin-top: 6px; }
 .aibk-empty-title { font-weight: 700; color: var(--aibk-ink); }
 
 /* Confirmation / manage summary */

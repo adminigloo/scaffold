@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { AlertsInbox } from "__SCOPE__/notifications-widget/admin";
 import { CompanyGate } from "@/components/CompanyGate";
-import { PageHeader } from "@/components/ui";
+import { PageHeader, WORK_MAIN, buttonClass } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -24,12 +24,12 @@ export default async function CompanyAlertsPage() {
   return (
     <CompanyGate path="/app/alerts" permission="alerts.view">
       {({ company }) => (
-        <main className="mx-auto max-w-3xl px-4 py-8 sm:px-6">
+        <main className={WORK_MAIN}>
           <PageHeader
             title="Alerts"
             description={`What happened at ${company.name} that you asked to hear about.`}
             actions={
-              <Link href="/app/alerts/settings" className="text-sm text-accent underline underline-offset-2">
+              <Link href="/app/alerts/settings" className={buttonClass("secondary")}>
                 Alert settings
               </Link>
             }

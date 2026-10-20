@@ -2,6 +2,7 @@ import { EstimateEditor } from "__SCOPE__/estimator-widget/admin";
 import { CompanyGate } from "@/components/CompanyGate";
 import { CustomerLinkSlot } from "@/components/CustomerLinkSlot";
 import { RecordFilesSlot } from "@/components/RecordFilesSlot";
+import { WORK_MAIN } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -37,8 +38,8 @@ export default async function CompanyEstimatePage({ params }: { readonly params:
   const { id } = await params;
   return (
     <CompanyGate path={`/app/estimates/${encodeURIComponent(id)}`} permission="estimator.view">
-      {({ company, can }) => (
-        <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
+      {({ company, can, isStaff, locale }) => (
+        <main className={WORK_MAIN}>
           <CustomerLinkSlot tenantId={company.id} kind="estimate" refId={id} />
           <EstimateEditor
             baseUrl={`/api/app/${company.id}/estimator`}
@@ -46,6 +47,8 @@ export default async function CompanyEstimatePage({ params }: { readonly params:
             backHref="/app/estimates"
             estimateHref="/app/estimates/{id}"
             canManage={can.includes("estimator.estimates.manage")}
+            showTechnical={isStaff}
+            locale={locale}
           />
           <div className="mt-8">
             <RecordFilesSlot

@@ -280,7 +280,10 @@ describe("<ScheduleCalendar> day view", () => {
     const { container, unmount } = await mount(<ScheduleCalendar transport={fake.transport} initialView="week" pollMs={0} bookingPageUrl="https://acme.test/book" />);
     const asked = fake.of("calendar").map((c) => c.args[0] as { from: string; to: string });
     expect(asked[asked.length - 1]).toEqual({ from: "2026-11-02", to: "2026-11-08" });
-    expect(text(container.querySelector("[data-aisw-empty]"))).toBe("No visits this week yet. Customers book at https://acme.test/book.");
+    const empty = container.querySelector("[data-aisw-empty]");
+    expect(text(empty)).toContain("No visits this week yet");
+    expect(text(empty)).toContain("every crew's day lives here");
+    expect(empty?.querySelector("a")?.getAttribute("href")).toBe("https://acme.test/book");
     await unmount();
   });
 });

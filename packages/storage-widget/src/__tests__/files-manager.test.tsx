@@ -142,7 +142,8 @@ describe("FilesManager", () => {
   it("empty: says where files come from", async () => {
     const { transport } = fakeTransport({ files: () => ok(list()) });
     const m = await mount(<FilesManager transport={transport} />);
-    expect(text(m.container)).toContain("No files yet. Photos and files added to visits, estimates and invoices show up here.");
+    expect(text(m.container)).toContain("No photos or files yet");
+    expect(text(m.container)).toContain("adds to a visit, an estimate or an invoice lands here");
     await m.unmount();
   });
 });

@@ -144,7 +144,7 @@ export function lateSentence(late: number): string {
 }
 
 /** A log time, in the viewer's own clock: "Oct 13, 2:05 PM". Bad input → the raw text. */
-export function formatWhen(instant: string, locale?: string): string {
+export function formatWhen(instant: string, locale = "en-US"): string {
   const date = new Date(instant);
   if (Number.isNaN(date.getTime())) return instant;
   try {

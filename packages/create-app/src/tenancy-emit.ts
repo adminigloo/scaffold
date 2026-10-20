@@ -163,14 +163,172 @@ export function renderTenantSettings(answers: Answers): string {
   // own. Scheduling's and the estimator's settings are lists (services, crews,
   // the price book's rules) with their own screens. Companies only: a single
   // business has no company settings page to show it on.
-  const invoicing = companiesMode(answers) && answers.includeInvoicing;
-  const imports = invoicing
-    ? `import { companySettings, defineSettingsFragment, defineTenantSettings } from "${answers.scope}/tenancy";
-import { invoicingSettingsFragment } from "${answers.scope}/invoicing";`
-    : `import { companySettings, defineTenantSettings } from "${answers.scope}/tenancy";`;
-  const sections = invoicing ? "companySettings, defineSettingsFragment(invoicingSettingsFragment)" : "companySettings";
-  return `${imports}
+  const companies = companiesMode(answers);
+  const invoicing = companies && answers.includeInvoicing;
+  const imports = [
+    companies ? `import { z } from "zod";` : null,
+    companies
+      ? `import { companySettings, defineSettingsFragment, defineTenantSettings } from "${answers.scope}/tenancy";`
+      : `import { companySettings, defineTenantSettings } from "${answers.scope}/tenancy";`,
+    invoicing ? `import { invoicingSettingsFragment } from "${answers.scope}/invoicing";` : null,
+  ]
+    .filter((line): line is string => line !== null)
+    .join("\n");
+  const sections = [
+    "companySettings",
+    ...(companies ? ["formatSettings", "publicPageSettings"] : []),
+    ...(invoicing ? ["defineSettingsFragment(invoicingSettingsFragment)"] : []),
+  ].join(", ");
+  // The showroom (create-app 0.36): how dates and money read, and the lines a
+  // company's own public page needs — a tagline, where it works and when.
+  const fragments = companies
+    ? `
+/** "" or whitespace → null, so a cleared field reads as "not set". */
+const blank = (value: unknown): unknown => (typeof value === "string" && value.trim() === "" ? null : value);
+const optional = (max: number) =>
+  z.preprocess(blank, z.string().trim().max(max, \`Keep it to \${max} characters or fewer.\`).nullable()).default(null);
 
+/** The formats a ${noun}'s dates and money can read in. */
+export const LOCALES = [
+  { value: "en-US", label: "United States (Oct 20, 2026 · $1,250.00)" },
+  { value: "en-CA", label: "Canada (Oct 20, 2026 · $1,250.00)" },
+  { value: "en-GB", label: "United Kingdom (20 Oct 2026 · £1,250.00)" },
+  { value: "en-AU", label: "Australia (20 Oct 2026 · $1,250.00)" },
+] as const;
+export const DEFAULT_LOCALE = "en-US";
+
+/**
+ * How the ${noun}'s dates and money read, on every screen its people and its
+ * customers see. US by default: a date is "Oct 20, 2026", never "20 Oct".
+ */
+export const formatSettings = defineSettingsFragment({
+  key: "formats",
+  label: "Dates and money",
+  description: "How dates and amounts read on your screens, your page, your quotes and your invoices.",
+  order: 12,
+  schema: z.object({
+    locale: z.enum(["en-US", "en-CA", "en-GB", "en-AU"]).default("en-US"),
+  }),
+  fields: [{ key: "locale", kind: "select", label: "Show dates and money as", options: LOCALES.map((one) => ({ ...one })) }],
+});
+
+/**
+ * What the ${noun}'s own public page says about it (/t/{web address}): one
+ * line about what it does, where it works and when it's open. The name,
+ * phone, email and address come from Business details.
+ */
+export const publicPageSettings = defineSettingsFragment({
+  key: "public-page",
+  label: "Your public page",
+  description: "What your customers read on your page: one line about what you do, where you work and when you're open.",
+  order: 15,
+  schema: z.object({
+    tagline: optional(140),
+    serviceArea: optional(160),
+    hours: optional(400),
+  }),
+  fields: [
+    {
+      key: "tagline",
+      kind: "text",
+      label: "One line about what you do",
+      placeholder: "Ramps, stair lifts and bathroom safety, installed in a week",
+    },
+    { key: "serviceArea", kind: "text", label: "Where you work", placeholder: "Denver and the Front Range" },
+    {
+      key: "hours",
+      kind: "textarea",
+      label: "When you're open",
+      placeholder: "Mon–Fri 8am–5pm\\nSat 9am–1pm",
+      help: "One line per day or range, as you'd say it on the phone.",
+    },
+  ],
+});
+`
+    : "";
+  const localeHelpers = `
+/** A ${noun}'s settings, as read back (\`profile.settings\`). */
+type ReadSettings = Readonly<Record<string, Readonly<Record<string, unknown>> | undefined>>;
+
+/** The locale a ${noun}'s dates and money read in: its own choice, else en-US. */
+export function localeOf(settings: ReadSettings | null | undefined): string {
+  const value = settings?.["formats"]?.["locale"];
+  return typeof value === "string" && value.trim() !== "" ? value : "en-US";
+}
+
+/** One saved line from the public page section, or null. */
+export function publicLine(settings: ReadSettings | null | undefined, key: "tagline" | "serviceArea" | "hours"): string | null {
+  const value = settings?.["public-page"]?.[key];
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
+}
+
+const WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] as const;
+type WeekDay = (typeof WEEK)[number];
+const SHORT = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+
+/** "8am", "8:30 pm", "17:00" → "08:00" / "20:30" / "17:00"; null for anything else. */
+function clockOf(text: string): { readonly at: string; readonly meridiem: boolean } | null {
+  const match = /^([0-9]{1,2})(?::([0-9]{2}))? *(am|pm|a|p)?$/i.exec(text.trim().replace(/[.]/g, ""));
+  if (!match) return null;
+  let hour = Number(match[1]);
+  const minute = Number(match[2] ?? "0");
+  const meridiem = (match[3] ?? "").toLowerCase();
+  if (meridiem.startsWith("p") && hour < 12) hour += 12;
+  if (meridiem.startsWith("a") && hour === 12) hour = 0;
+  if (hour > 23 || minute > 59) return null;
+  return { at: \`\${String(hour).padStart(2, "0")}:\${String(minute).padStart(2, "0")}\`, meridiem: meridiem !== "" };
+}
+
+/** "Mon-Fri", "Sat", "Mon, Wed", "Weekdays", "Daily" → the days; [] when it isn't days. */
+function daysOf(text: string): WeekDay[] {
+  const words = text.toLowerCase().trim();
+  if (words === "") return [];
+  if (/^(daily|every ?day|7 days)/.test(words)) return [...WEEK];
+  if (/^weekdays?/.test(words)) return WEEK.slice(0, 5);
+  if (/^weekends?/.test(words)) return WEEK.slice(5);
+  const days = new Set<WeekDay>();
+  for (const part of words.split(/,|&| and /)) {
+    const [from, to] = part.split("-").map((one) => SHORT.indexOf(one.trim().slice(0, 3)));
+    if (from === undefined || from < 0) return [];
+    const last = to === undefined ? from : to;
+    if (last < 0) return [];
+    for (let day = from; ; day = (day + 1) % 7) {
+      days.add(WEEK[day]!);
+      if (day === last) break;
+    }
+  }
+  return WEEK.filter((day) => days.has(day));
+}
+
+/**
+ * The owner's hours, as written ("Mon–Fri 8am–5pm", one line per day or
+ * range), read into opening-hours specs for search engines. A line that isn't
+ * days and two times ("Sun closed", "By appointment") is left out — it still
+ * shows on the page as written; it just isn't claimed to Google.
+ */
+export function openingHoursOf(text: string | null | undefined): { readonly days: WeekDay[]; readonly opens: string; readonly closes: string }[] {
+  const out: { days: WeekDay[]; opens: string; closes: string }[] = [];
+  for (const raw of (text ?? "").split(/[\\n;]/)) {
+    const line = raw.replace(/[–—]/g, "-").replace(/:\\s/, " ").trim();
+    const firstDigit = line.search(/[0-9]/);
+    if (firstDigit <= 0) continue;
+    const days = daysOf(line.slice(0, firstDigit).replace(/[:]$/, ""));
+    const times = line.slice(firstDigit).split(/ *(?:-| to ) */i);
+    if (days.length === 0 || times.length !== 2) continue;
+    const opens = clockOf(times[0]!);
+    const closes = clockOf(times[1]!);
+    if (!opens || !closes) continue;
+    let close = closes.at;
+    // "8-5" with no am/pm: the close is in the afternoon.
+    if (!closes.meridiem && close <= opens.at) close = \`\${String(Number(close.slice(0, 2)) + 12).padStart(2, "0")}\${close.slice(2)}\`;
+    if (close <= opens.at || close > "23:59") continue;
+    out.push({ days, opens: opens.at, closes: close });
+  }
+  return out;
+}
+`;
+  return `${imports}
+${fragments}
 /**
  * Every settings section a ${noun} has — the TYPED registry other packages add
  * sections to, all shown on the ${noun} settings page and filled in once.
@@ -179,6 +337,12 @@ import { invoicingSettingsFragment } from "${answers.scope}/invoicing";`
  *              feature READS these — the schedule, the estimate page, the
  *              invoices and every email show the ${noun}'s own details — so
  *              nothing is typed twice and nothing drifts (Tenancy 2a, D5).${
+    companies
+      ? `
+ *   formats    how dates and money read (en-US unless the ${noun} chose otherwise).
+ *   public-page  the tagline, service area and hours its public page shows.`
+      : ""
+  }${
     invoicing
       ? `
  *   invoicing  "How customers pay you", how many days until an invoice is
@@ -192,7 +356,7 @@ import { invoicingSettingsFragment } from "${answers.scope}/invoicing";`
  * package it can't see is exactly what the generator refuses to write.
  */
 export const tenantSettings = defineTenantSettings([${sections}]);
-`;
+${localeHelpers}`;
 }
 
 export function renderSetupChecklist(answers: Answers): string {
@@ -672,6 +836,7 @@ import { env } from "@/env";
 import { currentPrincipal } from "@/server/auth";
 import { loadStaffPermissions, loadTenantPermissions } from "@/server/permissions";
 import { tenancy } from "@/server/tenancy";
+import { localeOf } from "@/server/tenant-settings";
 import { NOUN, ONBOARDING_HREF, STAFF_HOME, TENANCY_API } from "@/tenancy";
 
 /** What a page inside the gate gets: who, which ${tenantLabel(answers).toLowerCase()}, and what they may do there. */
@@ -679,6 +844,14 @@ export interface CompanyGateContext {
   readonly principal: Principal;
   readonly company: CompanyWire;
   readonly can: readonly string[];
+  /**
+   * Is this person STAFF of the site (the platform's own people)? Only staff
+   * read the technical detail behind a "things to finish" item — which
+   * setting, which key. An owner reads one plain sentence.
+   */
+  readonly isStaff: boolean;
+  /** How this ${tenantLabel(answers).toLowerCase()}'s dates and money read: its own choice, else en-US. */
+  readonly locale: string;
 }
 
 /**
@@ -706,7 +879,8 @@ export async function CompanyGate(props: {
   readonly path: string;
   /** The tenant permission the page needs, e.g. "tenant.view". */
   readonly permission?: string;
-  readonly children: (ctx: CompanyGateContext) => ReactNode;
+  /** The page, given the context. May be async: a page that reads data first awaits it here. */
+  readonly children: (ctx: CompanyGateContext) => ReactNode | Promise<ReactNode>;
 }): Promise<ReactNode> {
   const principal = await currentPrincipal();
   if (!principal) redirect(\`/sign-in?redirect_url=\${encodeURIComponent(props.path)}\`);
@@ -733,7 +907,14 @@ export async function CompanyGate(props: {
   }
 
   const company = companyToWire(session.company);
-  const can = (await loadTenantPermissions({ principal, tenantId: company.id }))?.toArray() ?? [];
+  const [permissions, staff, profile] = await Promise.all([
+    loadTenantPermissions({ principal, tenantId: company.id }),
+    loadStaffPermissions({ principal }),
+    tenancy.companyProfile(company.id),
+  ]);
+  const can = permissions?.toArray() ?? [];
+  const isStaff = staff !== null;
+  const locale = localeOf(profile?.settings);
   if (props.permission !== undefined && !can.includes(props.permission)) {
     return (
       <main className="mx-auto max-w-2xl px-6 py-10">
@@ -744,7 +925,7 @@ export async function CompanyGate(props: {
     );
   }
 
-  return props.children({ principal, company, can });
+  return props.children({ principal, company, can, isStaff, locale });
 }
 `;
 }
