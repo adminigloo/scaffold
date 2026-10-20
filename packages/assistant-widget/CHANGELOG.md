@@ -1,5 +1,11 @@
 # @adminigloo/assistant-widget
 
+## 0.3.1
+
+### Patch Changes
+
+- 3c427cc: Dates read in en-US, never in the browser's locale.
+
 ## 0.3.0
 
 ### Minor Changes

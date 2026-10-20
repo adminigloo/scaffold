@@ -1,5 +1,11 @@
 # @adminigloo/booking-widget
 
+## 0.3.0
+
+### Minor Changes
+
+- 3c427cc: The showroom: "Finish setting up" is one collapsed, dismissible "N things to finish" card; email being off is the operator's job, said plainly with no button. `title={false}` for a host page with its own header. "Confirm bookings automatically" describes the state it's in. An empty calls list offers the booking page.
+
 ## 0.2.0
 
 ### Minor Changes

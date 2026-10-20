@@ -485,10 +485,22 @@ describe("ADV-4: readings in progress count against the day's budget", () => {
       return answer;
     };
     const runs: Array<Promise<unknown>> = [];
+    let settled = 0;
     for (let i = 0; i < 20; i += 1) {
-      runs.push(runPhotoTakeoff(t.db, { tenantId, productId: id("Modular aluminum ramp"), ...photo(`burst-${i}`), requesterKey: `ip:10.0.0.${i}`, now: NOW }, { model }));
-      // Let this one reach the model before the next starts.
-      await new Promise((resolve) => setTimeout(resolve, 15));
+      runs.push(
+        runPhotoTakeoff(t.db, { tenantId, productId: id("Modular aluminum ramp"), ...photo(`burst-${i}`), requesterKey: `ip:10.0.0.${i}`, now: NOW }, { model }).finally(() => {
+          settled += 1;
+        }),
+      );
+    }
+    // Hold every reading until ALL 20 have passed the budget check: each one
+    // is either refused (settled) or waiting in the model. Releasing earlier —
+    // the old 15 ms spacing, on a busy CI machine — let a late request see the
+    // first readings already corrected from their ceiling to their real cost,
+    // which honestly leaves room for a 4th call within the same 1 cent.
+    for (let waited = 0; settled + model.calls.length < 20; waited += 10) {
+      if (waited > 20_000) throw new Error(`only ${settled + model.calls.length} of 20 requests reached the budget check`);
+      await new Promise((resolve) => setTimeout(resolve, 10));
     }
     release();
     const answers = (await Promise.all(runs)) as Array<{ status: string }>;

@@ -56,7 +56,9 @@ describe("package.json", () => {
     for (const peer of Object.keys(pkg.peerDependencies)) expect(pkg.peerDependenciesMeta[peer]).toEqual({ optional: true });
     expect(pkg.files).toEqual(["dist", "README.md", "CHANGELOG.md"]);
     expect(pkg.publishConfig).toEqual({ registry: "https://npm.pkg.github.com", access: "public" });
-    expect(pkg.version).toBe("0.1.0");
+    // A real version, set by `changeset version` (pinning one exact number here
+    // went red the day 0.2.0 shipped).
+    expect(pkg.version).toMatch(/^\d+\.\d+\.\d+$/);
   });
 });
 

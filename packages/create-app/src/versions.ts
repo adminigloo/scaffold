@@ -148,7 +148,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   storage: "0.2.0",
   // First release (Tenancy 2b-1): photos and files on a record, the Files
   // screen and the usage meter, over storage 0.2's wire.
-  "storage-widget": "0.1.0",
+  "storage-widget": "0.1.1",
   // 0.2.0 was the answering engine (loop, registry, chat handler, conversations
   // + page-doc + pending-action tables); 0.2.1-0.2.2 hardened it; 0.3.x knowledge retrieval; 0.4.0 write-action confirm flow; 0.5.0 retention + erasure; 0.6.0 eval loop; 0.7.0 embeddings+RRF — valid history
   // replay for tool-using turns, type-based abort detection, neutral provider
@@ -165,7 +165,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   assistant: "0.9.1",
   // 0.3.0: the launcher, history, Stop, starters and the "ask before acting"
   // card, and the settings screen (./admin) the company pages mount.
-  "assistant-widget": "0.3.0",
+  "assistant-widget": "0.3.1",
   // 0.6.0 for the onEvent producer hook (optional, so the emitted route
   // needs no change); 0.5.0 was the column editor and unread marks. The emitted router imports
   // `createStatus`, `deleteStatus`, `markTicketRead` and friends; none exist
@@ -190,7 +190,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.12.0: epics. The emitted epics pages import the new ./epics entry, the
   // boards pass `epicsHref`, and the isolation proof plants an epic (createEpic,
   // setEpicTickets) for the epic routes — none of which exist in 0.11.
-  feedback: "0.12.0",
+  feedback: "0.12.1",
   // 0.2.1 — 0.2.0 brought the "My reports" view the thread endpoints exist
   // to serve; the patch is the glacier re-skin with the widget's own dark
   // theme, which a caret would cover anyway. Pinned at the workspace version

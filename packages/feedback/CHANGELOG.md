@@ -1,5 +1,11 @@
 # @adminigloo/feedback
 
+## 0.12.1
+
+### Patch Changes
+
+- 3c427cc: Dates on the board read in en-US, never in the browser's locale.
+
 ## 0.12.0
 
 ### Minor Changes

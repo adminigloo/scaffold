@@ -1,5 +1,11 @@
 # @adminigloo/storage-widget
 
+## 0.1.1
+
+### Patch Changes
+
+- 3c427cc: The showroom: an empty file list says what it will hold; sizes and dates default to en-US.
+
 ## 0.1.0
 
 ### Minor Changes

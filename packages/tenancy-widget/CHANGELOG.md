@@ -1,5 +1,11 @@
 # @adminigloo/tenancy-widget
 
+## 0.3.0
+
+### Minor Changes
+
+- 3c427cc: `<SetupChecklist compact>`: what's left in full and what's done folded into one line, for a dashboard. A company-settings toggle whose help describes both states ("Off: … On: …") shows only the half that is true now.
+
 ## 0.2.2
 
 ### Patch Changes

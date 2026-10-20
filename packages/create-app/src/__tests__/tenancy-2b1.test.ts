@@ -588,7 +588,7 @@ describe("what the project installs and says (17)", () => {
       ["comms", "^0.5.0"],
       ["comms-widget", "^0.2.0"],
     ] as const) {
-      expect(versionRangeFor(`@adminigloo/${pkg}`), pkg).toBe(range);
+      expectSameLine(versionRangeFor(`@adminigloo/${pkg}`), range, pkg);
     }
     const manifest = JSON.parse(file(await plan(C.companyAll), "package.json")) as { dependencies: Record<string, string> };
     expect(manifest.dependencies["@vercel/blob"]).toBe("^2.8.0");
@@ -686,3 +686,14 @@ describe("what the terminal says after generating (Tenancy 2b-1)", () => {
     expect(company).toContain("Customers' photos are kept privately with their estimate");
   });
 });
+
+/**
+ * The same release line, at that patch or later: a patch release moving a pin
+ * forward (0.1.0 to 0.1.1) mustn't turn this red; a new line (0.2.0) must.
+ */
+function expectSameLine(actual: string | undefined, range: string, label: string): void {
+  const [, wantMinor, wantPatch] = /^\^(\d+\.\d+)\.(\d+)$/.exec(range) ?? [];
+  const [, gotMinor, gotPatch] = /^\^(\d+\.\d+)\.(\d+)$/.exec(actual ?? "") ?? [];
+  expect(gotMinor, label).toBe(wantMinor);
+  expect(Number(gotPatch), label).toBeGreaterThanOrEqual(Number(wantPatch));
+}

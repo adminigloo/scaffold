@@ -1182,8 +1182,8 @@ describe("what the project claims and documents (11.13)", () => {
       ["storage", "^0.2.0"],
       ["storage-widget", "^0.1.0"],
     ] as const) {
-      expect(versionRangeFor(`@adminigloo/${pkg}`), pkg).toBe(range);
-      expect(manifest.dependencies[`@adminigloo/${pkg}`], pkg).toBe(range);
+      expectSameLine(versionRangeFor(`@adminigloo/${pkg}`), range, pkg);
+      expectSameLine(manifest.dependencies[`@adminigloo/${pkg}`], range, pkg);
     }
   });
 
@@ -1392,3 +1392,14 @@ describe("Tenancy 2a review: what the generated project does now", () => {
     expect(crons).toContain("they take turns (review SEC-2A-01)");
   });
 });
+
+/**
+ * The same release line, at that patch or later: a patch release moving a pin
+ * forward (0.1.0 to 0.1.1) mustn't turn this red; a new line (0.2.0) must.
+ */
+function expectSameLine(actual: string | undefined, range: string, label: string): void {
+  const [, wantMinor, wantPatch] = /^\^(\d+\.\d+)\.(\d+)$/.exec(range) ?? [];
+  const [, gotMinor, gotPatch] = /^\^(\d+\.\d+)\.(\d+)$/.exec(actual ?? "") ?? [];
+  expect(gotMinor, label).toBe(wantMinor);
+  expect(Number(gotPatch), label).toBeGreaterThanOrEqual(Number(wantPatch));
+}
