@@ -260,6 +260,8 @@ export function invoicingAlertsFor(
   event: InvoicingEvent,
   options: { readonly hrefs: { readonly invoice: string } },
 ): readonly InvoicingAlertDraft[] {
+  // 0.7: a past record staff entered is history, not news.
+  if (event.enteredLater) return [];
   const invoice = event.data.invoice;
   const format = event.data.format;
   const number = oneLine(invoice.number, 40) || "without a number";

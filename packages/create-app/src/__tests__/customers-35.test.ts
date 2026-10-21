@@ -81,9 +81,10 @@ describe("the answer", () => {
   it("installs @adminigloo/customers and pins it, with invoicing 0.6 and comms 0.5", () => {
     expect(packagesFor(answers(COMPANIES))).toContain("@adminigloo/customers");
     expect(packagesFor(answers({ ...COMPANIES, includeCustomers: false }))).not.toContain("@adminigloo/customers");
-    expect(packageVersions()["customers"]).toBe("0.2.0");
-    expect(packageVersions()["invoicing"]).toBe("0.6.0");
-    expect(packageVersions()["comms"]).toBe("0.5.0");
+    // The release line (0.3 adds forgetTenant).
+    expect(packageVersions()["customers"]).toMatch(/^0\.3\.\d+$/);
+    expect(packageVersions()["invoicing"]).toMatch(/^0\.7\.\d+$/);
+    expect(packageVersions()["comms"]).toMatch(/^0\.6\.\d+$/);
   });
 });
 
@@ -109,7 +110,7 @@ describe("companies: each company's own customer list", () => {
     expect(page).toContain('canManage={can.includes("customers.manage")}');
     expect(page).toContain('estimate: "/app/estimates/{id}"');
     const manifest = JSON.parse(file(p, "package.json")) as { dependencies: Record<string, string>; scripts: Record<string, string> };
-    expect(manifest.dependencies["@adminigloo/customers"]).toBe("^0.2.0");
+    expect(manifest.dependencies["@adminigloo/customers"]).toMatch(/^\^0\.3\.\d+$/);
     expect(manifest.scripts["customers:backfill"]).toBe("tsx scripts/customers-backfill.ts");
     expect(file(p, "src", "db", "schema.ts")).toContain("@adminigloo/customers/schema");
   });
@@ -231,6 +232,6 @@ describe("upgrading", () => {
     expect(withList).toContain("pnpm customers:backfill");
     const without = upgradeNotesFor(answers({ ...COMPANIES, includeCustomers: false }), "0.34.0").join("\n");
     expect(without).toContain("add customers");
-    expect(upgradeNotesFor(answers(COMPANIES), "0.36.1")).toEqual([]);
+    expect(upgradeNotesFor(answers(COMPANIES), "0.36.1").join("\n")).not.toContain("customers:backfill");
   });
 });

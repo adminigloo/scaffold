@@ -406,6 +406,8 @@ export async function schedulingAlertsFor(
   event: SchedulingEvent,
   options: SchedulingAlertsForOptions,
 ): Promise<readonly SchedulingAlertDraft[]> {
+  // 0.7: a past record staff entered is history, not news.
+  if (event.enteredLater) return [];
   const spec = schedulingOfficeNotice(event);
   if (!spec) return [];
   const locale = options.locale ?? "en-US";

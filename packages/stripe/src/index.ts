@@ -95,3 +95,6 @@ export type { ConnectAuthorizeResult, CreateConnectAdminHandlersOptions, Payment
 export { CONNECT_COUNTRIES } from "./connect-handlers.js";
 export { STRIPE_CONNECT_ADMIN_ROUTES, STRIPE_CONNECT_ADMIN_ROUTE_PERMISSIONS, stripeConnectPermissions } from "./connect-routes.js";
 export type { StripeConnectAdminRouteKind, StripeConnectRoute } from "./connect-routes.js";
+
+// Delete a company (create-app 0.37): every row of one company, children first.
+export { forgetTenant } from "./forget.js";

@@ -85,6 +85,13 @@ export interface SchedulingEvent {
      */
     addressUnverified?: boolean;
   };
+  /**
+   * 0.7, past records: staff entered this from the business's records, so
+   * `occurredAt` is the day it really happened. History, not news: no alert
+   * is raised and the customer is never told; the customer list files it on
+   * that day.
+   */
+  enteredLater?: true;
 }
 
 export type SchedulingEventListener = (event: SchedulingEvent) => void | Promise<void>;
@@ -110,6 +117,8 @@ export interface EventSpec {
   previous?: BookingRow;
   reason?: string | null;
   addressUnverified?: boolean;
+  /** 0.7: a past record (see SchedulingEvent.enteredLater). */
+  enteredLater?: boolean;
 }
 
 export interface EmitContext {
@@ -196,6 +205,7 @@ export async function buildEvents(
       occurredAt: context.now.toISOString(),
       actor: { type: spec.actor.type, id: spec.actor.id ?? null },
       data,
+      ...(spec.enteredLater ? { enteredLater: true as const } : {}),
     };
   });
 }

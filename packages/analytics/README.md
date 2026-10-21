@@ -54,7 +54,7 @@ Say these out loud before anyone assumes otherwise:
 - **No first- or last-touch attribution, funnels across sign-up, or sign-up sources.** The source is the visit's first touch. Analytics 0.3 adds the rest.
 - **No Google Search Console, AEO citation tracking or SEO audit.** Those are separate packages (Search Console is not built yet). The audit's own crawler is recorded, and left out of the crawler reports by default.
 - **No Google AI Overviews or AI Mode attribution.** Those visits arrive as `google.com` and count as Search; a referrer cannot tell them apart.
-- **No routes and no cron.** You mount the handlers in your own routes and call `runMaintenance` from your own job. Migrations: generate them with drizzle-kit, or run the plain SQL this package ships (`sql/analytics-0.3.0.sql`, `sql/upgrade-0.2-to-0.3.sql`).
+- **No routes and no cron.** You mount the handlers in your own routes and call `runMaintenance` from your own job. Migrations: generate them with drizzle-kit, or run the plain SQL this package ships (`sql/analytics-0.4.0.sql`, `sql/upgrade-0.3-to-0.4.sql`, `sql/upgrade-0.2-to-0.3.sql`).
 - **No rollups.** Every report reads raw rows (13 months by default). That is why a newly excluded person disappears from history at once.
 - **No crawler history kept forever by default.** Crawler rows are deleted after `limits.retentionDays` (395) like every other row. Raise it to keep them longer.
 - **No MySQL.** Postgres only (Neon, any Postgres; the tests run on PGlite).
@@ -81,6 +81,40 @@ A vendored tarball works the same way (`"@adminigloo/analytics": "file:vendor/ad
 
 Peer dependencies are `drizzle-orm ^0.45` and `zod ^3.25 || ^4`; `./client` and `./dashboard` also need `react ^18 || ^19`. `@adminigloo/audience` is an **optional** peer (`^0.2` since analytics 0.3: a website filter on the excluded line needs its `IS NULL` row filter), never a dependency: pass its instance in, and analytics uses it by shape. That shape is checked strictly, so an audience release whose API no longer fits fails to compile instead of failing at runtime. CommonJS consumers get the `.d.cts` types, and ESM consumers the `.d.ts`.
 
+## Past visits brought in from records (0.4)
+
+A business moving here from another tool brings its visit history, so its
+numbers don't start at zero. Server-side only — no route takes it; call it
+from a staff-only import job:
+
+```ts
+const out = await analytics.importVisits({
+  tenantId,
+  visits: [
+    { key: "ga-row-1", at: "2026-06-14T15:00:00Z", path: "/pricing", source: "https://www.google.com/", visitor: "ga-client-123" },
+    { key: "ga-row-2", at: "2026-06-15T09:00:00Z", path: "/", source: { utmSource: "newsletter", utmMedium: "email" }, visitor: "ga-client-456", userId: "u_42" },
+  ],
+});
+// { imported: 2, alreadyImported: 0, refused: [], trackingSince: 2026-06-14T15:00:00.000Z }
+```
+
+- **Once per key.** `key` is the importer's own id for the visit, unique per
+  company: the same file imported twice brings each visit in once.
+- **The audience still decides what counts.** The old tool's visitor id is
+  hashed with the company before it is stored (never kept as given), so the
+  same id is the same visitor, and every report leaves an imported visit out
+  exactly as it would a live one. With `userId`, the audience's rules about
+  people (the company's own team) are applied to it.
+- **Tracking since** moves back to the earliest visit brought in, never
+  forward.
+- **Refused per visit, in words:** a date in the future, before 2000, or older
+  than `limits.retentionDays` (the daily maintenance would delete it), a
+  website that isn't the company's, a missing key, visitor or page. At most
+  1000 visits a call.
+
+Upgrading from 0.3: run `sql/upgrade-0.3-to-0.4.sql` (one nullable column and
+its index; safe twice), or `pnpm db:generate` in a create-app project.
+
 ## Upgrading from 0.2
 
 **Code: nothing has to change.** A handler built with `tenantId` and `allowedHosts` works as before; every report takes the same query, and a query without `siteId` reads every website of the tenant.
@@ -93,7 +127,7 @@ CREATE INDEX IF NOT EXISTS "analytics_sessions_tenant_site_idx" ON "analytics_se
 CREATE TABLE IF NOT EXISTS "analytics_websites" ( … );   -- the site register, see the file
 ```
 
-Existing sessions keep `site_id` null, meaning "the tenant's own pages here" — exactly what 0.2 recorded — so every number is the same after the upgrade. Under another prefix, replace `analytics_` in the file. A fresh install without drizzle-kit runs `sql/analytics-0.3.0.sql`.
+Existing sessions keep `site_id` null, meaning "the tenant's own pages here" — exactly what 0.2 recorded — so every number is the same after the upgrade. Under another prefix, replace `analytics_` in the file. A fresh install without drizzle-kit runs `sql/analytics-0.4.0.sql`.
 
 **What behaves differently:**
 

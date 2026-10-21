@@ -65,7 +65,8 @@ describe("company detail and suspension", () => {
     await h.tenancy.deprovisionUser({ userId: w.olivia });
     d = await h.tenancy.getCompanyDetail({ actorUserId: w.ava, tenantId: w.summit });
     expect(d.company.ownerDeleted).toBe(true);
-    expect(d.can).toEqual({ suspend: true, assignOwner: true, releaseAddresses: true });
+    expect(d.can).toEqual({ suspend: true, assignOwner: true, releaseAddresses: true, delete: false });
+    expect(d.deletion).toEqual({ available: false, stillPaying: null });
   });
 
   it("suspend: audits; the gate says suspended; slug lookups and accepts stop; the session is 'suspended'; idempotent; reactivate restores", async () => {

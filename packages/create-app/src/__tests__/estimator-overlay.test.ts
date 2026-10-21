@@ -373,7 +373,8 @@ describe("answers, packages and the CLI", () => {
     const installed = packagesFor(answers());
     expect(installed).toContain("@adminigloo/estimator");
     expect(installed).toContain("@adminigloo/estimator-widget");
-    expect(versionRangeFor("@adminigloo/estimator")).toBe("^0.6.0");
+    // The release line (0.7: forgetTenant and past records' dates).
+    expect(versionRangeFor("@adminigloo/estimator")).toMatch(/^\^0\.7\.\d+$/);
     expect(versionRangeFor("@adminigloo/estimator-widget")).toBe("^0.6.0");
   });
 

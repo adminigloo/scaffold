@@ -155,7 +155,8 @@ describe("the isolation proof drives the epic routes", () => {
 
 describe("the release", () => {
   it("pins the feedback 0.12 line, whose ./epics entry the pages import", () => {
-    expect(packageVersions()["feedback"] ?? "").toMatch(/^\^?0\.12\.\d+$/);
+    // 0.12 brought ./epics; 0.13 (forgetTenant) keeps it.
+    expect(packageVersions()["feedback"] ?? "").toMatch(/^\^?0\.13\.\d+$/);
   });
 
   it("the README says what the epics do and what isn't included; DEPLOYMENT says how to get there from 0.27", async () => {

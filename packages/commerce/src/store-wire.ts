@@ -88,7 +88,12 @@ export interface StoreOrderLineWire {
   readonly quantity: number;
   readonly unitPriceMinor: number;
   readonly totalMinor: number;
+  /** commerce 0.4, a sale by hand: the catalog price and why staff charged another, when they did. */
+  readonly priceChanged?: { readonly listPriceMinor: number; readonly reason: string } | null;
 }
+
+/** commerce 0.4: how a sale recorded by hand was paid. */
+export type StoreSaleMethod = "cash" | "check" | "card_terminal" | "other";
 
 /** One order on the owner's orders list. */
 export interface StoreOrderWire {
@@ -111,6 +116,18 @@ export interface StoreOrderWire {
   readonly lines: readonly StoreOrderLineWire[];
   /** The payment in the business's Stripe dashboard (refund it there). */
   readonly stripeUrl: string | null;
+  /** commerce 0.4: "card" online through Stripe, or how a sale recorded by hand was paid. */
+  readonly paidBy: "card" | StoreSaleMethod;
+  /** commerce 0.4: the check number or terminal slip of a sale by hand. */
+  readonly paymentReference: string | null;
+  /** commerce 0.4: a sale recorded by hand (in person), not bought online. */
+  readonly inPerson: boolean;
+  /**
+   * commerce 0.4: who bought a sale recorded by hand, when staff knew (their
+   * name and phone). Null on an online order: its buyer is `email` and
+   * `shipTo`. Never a place to send anything.
+   */
+  readonly buyer: { readonly name: string | null; readonly phone: string | null } | null;
 }
 
 export interface StoreAddressWire {

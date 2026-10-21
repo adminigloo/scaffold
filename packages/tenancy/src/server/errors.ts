@@ -38,6 +38,7 @@ export const TENANCY_ERROR_STATUS: Readonly<Record<TenancyErrorCode, number>> = 
   logo_invalid: 422,
   rate_limited: 429,
   internal: 500,
+  still_paying: 409,
 };
 
 /**
@@ -123,6 +124,8 @@ export function defaultMessage(code: TenancyErrorCode, noun: Noun): string {
       return "That's a lot of requests. Wait a minute and try again.";
     case "internal":
       return "Something went wrong on our side. Try again in a moment.";
+    case "still_paying":
+      return `This ${n} is still paying for a plan. Cancel it first, or delete anyway and say why.`;
   }
 }
 

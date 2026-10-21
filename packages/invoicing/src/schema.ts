@@ -61,6 +61,15 @@ export const invoices = pgTable(
     paidAt: timestamp("paid_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
+    /**
+     * 0.7, past records: when and by whom an invoice issued on an EARLIER day
+     * (`issuedAt`) was typed in. Its own dates say when it was issued and
+     * paid; these say it was entered later. Null on one made the day it was.
+     * (A payment's own `paid_at` vs `created_at` and `recorded_by` say the
+     * same for money.)
+     */
+    enteredAt: timestamp("entered_at", { withTimezone: true }),
+    enteredBy: text("entered_by"),
   },
   (t) => [
     index("invoices_tenant_idx").on(t.tenantId, t.status),

@@ -64,6 +64,12 @@ export interface InvoicingEvent {
   readonly occurredAt: string;
   /** "customer" for a view (the link has no account), "staff" for a recorded payment (the person `authorize` named). */
   readonly actor: { readonly type: "customer" | "staff"; readonly id: string | null };
+  /**
+   * 0.7, past records: staff entered this from the business's records, so
+   * `occurredAt` is the day it really happened. It's history, not news: no
+   * alert is raised for it, and the customer list files it on that day.
+   */
+  readonly enteredLater?: true;
   /** `format`: how to show this business's money and dates (its `business` seam, 2a 10.4). */
   readonly data: { readonly invoice: InvoiceEventSnapshot; readonly format: MoneyFormatWire };
 }
@@ -102,6 +108,8 @@ export async function emitInvoicingEvent(
     readonly actor: InvoicingEvent["actor"];
     readonly format: () => Promise<MoneyFormatWire>;
     readonly now: Date;
+    /** 0.7: `now` is a past day staff entered from records. */
+    readonly enteredLater?: boolean;
   },
   options: InvoicingEventOptions & { readonly report: (error: unknown) => void },
 ): Promise<void> {
@@ -122,6 +130,7 @@ export async function emitInvoicingEvent(
       invoiceId: row.id,
       occurredAt: spec.now.toISOString(),
       actor: { type: spec.actor.type, id: spec.actor.id ?? null },
+      ...(spec.enteredLater ? { enteredLater: true as const } : {}),
       data: {
         invoice: {
           id: row.id,

@@ -391,6 +391,9 @@ export interface EstimateDetail extends Omit<EstimateSnapshot, "lines"> {
   sendWarnings: string[];                // before "Send quote": each line still showing a range, and what it is priced at
   links: { bookVisitUrl: string | null; visits: LinkedVisit[]; invoice: LinkedInvoice | null };
   timeline: Array<{ at: Instant; label: string }>;   // "Lead received", "Quote sent", "Viewed", "Accepted by Pat Lee", …
+  // 0.7, past records: when and by whom an estimate made on an earlier day
+  // was typed in (null when made the day it happened).
+  enteredAt: Instant | null; enteredBy: string | null;
 }
 export interface EstimateListRow {
   id: string; number: string; status: EstimateStatus; source: EstimateSource;

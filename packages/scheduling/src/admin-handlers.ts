@@ -13,6 +13,7 @@ import { resourceNames, type SchedulingActor, type SchedulingEvent, type Schedul
 import { expirePendingRequests } from "./expiry.js";
 import {
   createThrottle,
+  HISTORY_FORBIDDEN_MESSAGE,
   HttpError,
   isCrossSiteRequest,
   NOT_FOUND_MESSAGE,
@@ -298,10 +299,18 @@ const createVisitBodySchema = z.object({
   estimateId: z.string().max(200).optional(),
   status: z.enum(["pending", "confirmed"]).optional(),
   notify,
+  /** 0.7, past records: the day it was really booked (nobody is told, its slot isn't checked). */
+  bookedAt: z.string().max(40).optional(),
 });
 const acceptBodySchema = z.object({ notify });
 const declineBodySchema = z.object({ reason: z.string().trim().max(500).optional(), notify });
-const statusBodySchema = z.object({ status: z.enum(STAFF_SETTABLE_STATUSES), reason: z.string().trim().max(500).optional(), notify });
+const statusBodySchema = z.object({
+  status: z.enum(STAFF_SETTABLE_STATUSES),
+  reason: z.string().trim().max(500).optional(),
+  notify,
+  /** 0.7, past records: the day it really happened (done, cancelled…): nobody is told. */
+  occurredAt: z.string().max(40).optional(),
+});
 const rescheduleBodySchema = z.object({
   date: dateString,
   startTime: timeOfDaySchema,
@@ -478,12 +487,25 @@ export function createSchedulingAdminHandlers(options: CreateSchedulingAdminHand
     // that omits it passes nothing, and each event takes its own default:
     // true for everything a customer hears about, false for started and
     // completed — so marking a visit in progress never emails the customer.
-    const statusMove = async (status: (typeof STAFF_SETTABLE_STATUSES)[number], reason: string | undefined, notifyCustomer: boolean | undefined) => {
+    const statusMove = async (
+      status: (typeof STAFF_SETTABLE_STATUSES)[number],
+      reason: string | undefined,
+      notifyCustomer: boolean | undefined,
+      occurredAt?: string,
+    ) => {
       const ok = await setBookingStatus(
         db,
         tenantId,
         { id, status, ...(reason !== undefined ? { reason } : {}) },
-        { maps, now, settings, actor, ...events, ...(notifyCustomer !== undefined ? { notify: notifyCustomer } : {}) },
+        {
+          maps,
+          now,
+          settings,
+          actor,
+          ...events,
+          ...(notifyCustomer !== undefined ? { notify: notifyCustomer } : {}),
+          ...(occurredAt !== undefined ? { occurredAt } : {}),
+        },
       );
       if (!ok) throw notFound();
       const row = await getBookingRow(db, tenantId, id);
@@ -611,6 +633,8 @@ export function createSchedulingAdminHandlers(options: CreateSchedulingAdminHand
       }
       case "visit-create": {
         const body = createVisitBodySchema.parse(await readJsonBody(req));
+        // 0.7: a past date rides on its own key, never on booking visits.
+        if (body.bookedAt !== undefined && !(await may("schedule.history"))) throw new HttpError("forbidden", HISTORY_FORBIDDEN_MESSAGE);
         const service = body.service ? findService(settings.services, body.service) : null;
         if (body.service && !service) throw new BookingNotBookableError("No such service.", "unknown_service");
         let endTime = body.endTime;
@@ -641,7 +665,15 @@ export function createSchedulingAdminHandlers(options: CreateSchedulingAdminHand
             notes: body.notes ?? null,
             status: body.status ?? "confirmed",
           },
-          { maps, now, settings, actor, ...events, ...(body.notify !== undefined ? { notify: body.notify } : {}) },
+          {
+            maps,
+            now,
+            settings,
+            actor,
+            ...events,
+            ...(body.notify !== undefined ? { notify: body.notify } : {}),
+            ...(body.bookedAt !== undefined ? { bookedAt: body.bookedAt } : {}),
+          },
         );
         const response: VisitMutationResponse = {
           visit: await snapshotOf(tenantId, settings, result.visit),
@@ -664,7 +696,8 @@ export function createSchedulingAdminHandlers(options: CreateSchedulingAdminHand
       }
       case "status": {
         const body = statusBodySchema.parse(await readJsonBody(req));
-        return statusMove(body.status, body.reason, body.notify);
+        if (body.occurredAt !== undefined && !(await may("schedule.history"))) throw new HttpError("forbidden", HISTORY_FORBIDDEN_MESSAGE);
+        return statusMove(body.status, body.reason, body.notify, body.occurredAt);
       }
       case "reschedule": {
         const body = rescheduleBodySchema.parse(await readJsonBody(req));

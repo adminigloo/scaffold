@@ -148,6 +148,15 @@ export const orders = pgTable(
      */
     receiptSentAt: timestamp("receipt_sent_at", { withTimezone: true }),
     noticeSentAt: timestamp("notice_sent_at", { withTimezone: true }),
+    /**
+     * commerce 0.4, a sale recorded by hand (in person): how it was paid —
+     * "cash", "check", "card_terminal" or "other" — the check number or
+     * terminal slip when given, and the staff member who recorded it. NULL on
+     * an online order (paid by card through Stripe).
+     */
+    paymentMethod: text("payment_method"),
+    paymentReference: text("payment_reference"),
+    recordedBy: text("recorded_by"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

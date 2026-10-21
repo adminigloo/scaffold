@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   bigserial,
   boolean,
@@ -143,6 +144,13 @@ export function defineAnalyticsTables(options: DefineAnalyticsTablesOptions = {}
        * read still starts from `tenant_id`.
        */
       siteId: text("site_id"),
+      // ---- 0.4: additive and nullable — one ALTER and one index.
+      /**
+       * A visit brought in from the business's past records (`importVisits`):
+       * the importer's own key for it, so importing the same file twice brings
+       * each visit in once. Null for every visit the beacon counted.
+       */
+      importKey: text("import_key"),
     },
     (table) => [
       index(name("sessions_tenant_started_idx")).on(table.tenantId, table.startedAt),
@@ -153,6 +161,8 @@ export function defineAnalyticsTables(options: DefineAnalyticsTablesOptions = {}
       index(name("sessions_started_idx")).on(table.startedAt),
       // 0.3: one website's visits in a range (the dashboard's website filter).
       index(name("sessions_tenant_site_idx")).on(table.tenantId, table.siteId, table.startedAt),
+      // 0.4: an imported visit is brought in once per key, per tenant.
+      uniqueIndex(name("sessions_tenant_import_idx")).on(table.tenantId, table.importKey).where(sql`import_key is not null`),
     ],
   );
 

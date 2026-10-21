@@ -8,7 +8,16 @@
  *   <Storefront baseUrl />                 the store page and its cart
  *   <StoreThanks baseUrl checkoutId />     the thank-you page
  */
-export { StoreAdmin, draftOf, orderStatusWords, productBody, stockWords, type ProductDraft, type StoreAdminProps } from "./widget/StoreAdmin.js";
+export {
+  StoreAdmin,
+  draftOf,
+  orderStatusWords,
+  paidInPersonWords,
+  productBody,
+  stockWords,
+  type ProductDraft,
+  type StoreAdminProps,
+} from "./widget/StoreAdmin.js";
 export { StoreAttention } from "./widget/StoreAttention.js";
 export { Storefront, StoreThanks, cartTotal, type StorefrontProps } from "./widget/Storefront.js";
 export { emptyCart, loadCart, saveCart, clearCart, withQuantity, type Cart, type CartLine } from "./widget/cart.js";

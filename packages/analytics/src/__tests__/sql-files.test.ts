@@ -24,16 +24,33 @@ async function shapeOf(db: PGlite): Promise<string[]> {
   return [...columns.rows.map((r) => `${r.t}.${r.c} ${r.ty} ${r.n} ${r.d ?? ""}`), ...indexes.rows.map((r) => r.def)];
 }
 
-describe("sql/analytics-0.3.0.sql", () => {
+describe("sql/analytics-0.4.0.sql", () => {
   it("builds the same tables as the schema, and runs twice", async () => {
     const fromFile = new PGlite();
-    await fromFile.exec(read("analytics-0.3.0.sql"));
-    await fromFile.exec(read("analytics-0.3.0.sql"));
+    await fromFile.exec(read("analytics-0.4.0.sql"));
+    await fromFile.exec(read("analytics-0.4.0.sql"));
     const fromSchema = new PGlite();
     for (const statement of analyticsDdl(defineAnalyticsTables())) await fromSchema.exec(statement);
     expect(await shapeOf(fromFile)).toEqual(await shapeOf(fromSchema));
     await fromFile.close();
     await fromSchema.close();
+  });
+});
+
+describe("sql/upgrade-0.3-to-0.4.sql", () => {
+  it("adds import_key and its index to a 0.3 database, keeps every row, and runs twice", async () => {
+    const db = new PGlite();
+    await db.exec(read("analytics-0.3.0.sql"));
+    await db.exec(`insert into analytics_sessions (id, tenant_id, visitor_key, landing_path, source_bucket) values ('s1', 'site', 'k1', '/', 'direct')`);
+    await db.exec(read("upgrade-0.3-to-0.4.sql"));
+    await db.exec(read("upgrade-0.3-to-0.4.sql"));
+    const fresh = new PGlite();
+    await fresh.exec(read("analytics-0.4.0.sql"));
+    expect(await shapeOf(db)).toEqual(await shapeOf(fresh));
+    const rows = await db.query<{ id: string; import_key: string | null }>(`select id, import_key from analytics_sessions`);
+    expect(rows.rows).toEqual([{ id: "s1", import_key: null }]);
+    await db.close();
+    await fresh.close();
   });
 });
 

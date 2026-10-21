@@ -119,3 +119,6 @@ export async function companyStripeCustomer(db: BillingDb, tenantId: string): Pr
     .limit(20);
   return rows.find((r) => r.customer !== null)?.customer ?? null;
 }
+
+// Delete a company (create-app 0.37): every row of one company, and whether it is still paying.
+export { forgetTenant, livePaidSubscription } from "./forget.js";

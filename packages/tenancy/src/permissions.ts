@@ -102,6 +102,7 @@ export const TENANCY_STAFF_PERMISSION_KEYS = [
   "staff.tenants.view",
   "staff.tenants.suspend",
   "staff.tenants.transfer",
+  "staff.tenants.delete",
   "staff.people.view",
   "staff.roles.view",
   "staff.roles.manage",

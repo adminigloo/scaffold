@@ -12,6 +12,7 @@ import { emitInvoicingEvent, type InvoicingEventOptions } from "./events.js";
 import {
   CROSS_SITE_MESSAGE,
   FORBIDDEN_MESSAGE,
+  HISTORY_FORBIDDEN_MESSAGE,
   INVOICE_NOT_HERE,
   InvoicingHttpError,
   failure,
@@ -40,6 +41,7 @@ import {
   type InvoiceRow,
   type InvoicingDb,
 } from "./index.js";
+import { parseHistoryDate } from "./history.js";
 import { INVOICE_LIST_STATUSES, PAYMENT_METHODS } from "./constants.js";
 import {
   depositRuleOf,
@@ -202,6 +204,8 @@ const createBodySchema = z.object({
   ),
   notes: optionalText(2000),
   items: z.array(lineSchema).min(1, "Add at least one line.").max(200, "Up to 200 lines."),
+  /** 0.7, past records: the day it was really issued (saved as sent that day, emailing nobody). */
+  issuedAt: z.string().max(40).optional(),
 });
 const itemPatchSchema = z
   .object({
@@ -218,6 +222,8 @@ const paymentBodySchema = z.object({
   amount: z.number().int("Use whole cents.").min(1, "Enter an amount.").max(1_000_000_000_00),
   method: z.enum(PAYMENT_METHODS),
   reference: optionalText(200),
+  /** 0.7, past records: the day the money was really paid. */
+  paidAt: z.string().max(40).optional(),
 });
 const depositBodySchema = z.discriminatedUnion("rule", [
   z.object({ rule: z.literal("default") }),
@@ -263,6 +269,14 @@ function summaryWire(row: InvoiceRow, now: Date): InvoiceSummaryWire {
 
 const FLAGS: readonly string[] = ["disputed", "dispute_lost"];
 
+/**
+ * A payment counts as entered later when it was recorded more than an hour
+ * after the moment it says it was paid: money taken today is recorded on the
+ * same clock (the two are equal), and an hour is far past any gap between the
+ * database's clock and this process's on rows from before 0.7.
+ */
+const ENTERED_LATER_AFTER_MS = 60 * 60 * 1000;
+
 function detailWire(detail: InvoiceDetail, can: InvoiceDetailWire["can"], now: Date, business: Pick<ResolvedInvoicingBusiness, "depositPercent" | "currency">): InvoiceDetailWire {
   const inv = detail.invoice;
   const defaultDepositPercent = business.depositPercent;
@@ -284,6 +298,9 @@ function detailWire(detail: InvoiceDetail, can: InvoiceDetailWire["can"], now: D
     reason: p.reason ?? null,
     flag: p.flag && FLAGS.includes(p.flag) ? (p.flag as PaymentFlagWire) : null,
     reversedAmount: p.reversesPaymentId ? 0 : (reversedBy.get(p.id) ?? 0),
+    // 0.7: recorded well after it was paid (a past record): said so beside it.
+    enteredLater:
+      p.createdAt.getTime() - p.paidAt.getTime() > ENTERED_LATER_AFTER_MS ? { at: p.createdAt.toISOString(), by: p.recordedBy ?? null } : null,
   }));
   const rule = depositRuleOf(inv);
   return {
@@ -318,6 +335,7 @@ function detailWire(detail: InvoiceDetail, can: InvoiceDetailWire["can"], now: D
       total: item.total,
     })),
     payments,
+    enteredLater: inv.enteredAt ? { at: inv.enteredAt.toISOString(), by: inv.enteredBy ?? null } : null,
     editable: isInvoiceEditable(inv.status),
     nextStatuses: [...nextInvoiceStatuses(inv.status)] as SettableInvoiceStatusWire[],
     can,
@@ -366,6 +384,8 @@ export function createInvoicingAdminHandlers(options: CreateInvoicingAdminHandle
   }
   const clock = () => options.now?.() ?? new Date();
   const notFound = () => new InvoicingHttpError("not_found", 404, INVOICE_NOT_HERE);
+  // 0.7: a past date rides on its own key (invoices.history), never on raising or recording.
+  const historyForbidden = () => new InvoicingHttpError("forbidden", 403, HISTORY_FORBIDDEN_MESSAGE);
   const report = (error: unknown, tenantId: string | null, kind: string) => {
     try {
       options.onError?.(error, { tenantId, route: kind });
@@ -467,7 +487,11 @@ export function createInvoicingAdminHandlers(options: CreateInvoicingAdminHandle
       }
       case "create": {
         const body = createBodySchema.parse(await readJsonBody(req));
+        if (body.issuedAt !== undefined && !(await may("invoices.history"))) throw historyForbidden();
         const b = await biz();
+        // 0.7: a past record is issued on its own day, and due from that day.
+        // A day ("2025-06-14") is that day in the business's zone.
+        const issuedAt = body.issuedAt !== undefined ? parseHistoryDate(body.issuedAt, now, "issuedAt", null, b.timeZone) : null;
         const created = await createInvoice(
           db,
           {
@@ -480,17 +504,26 @@ export function createInvoicingAdminHandlers(options: CreateInvoicingAdminHandle
             discount: body.discount ?? 0,
             // Code does the maths (10.5): the end of the chosen day in the
             // business's zone, or today there plus its usual days.
-            dueDate: invoiceDueInstant(body.dueDate ?? null, b, now),
+            dueDate: invoiceDueInstant(body.dueDate ?? null, b, issuedAt ?? now),
             notes: body.notes ?? null,
             items: body.items,
           },
           userId ?? undefined,
+          { now, ...(issuedAt ? { issuedAt, timeZone: b.timeZone } : {}) },
         );
         // 0.6: `invoice.created` (the customer list links the invoice to its
         // customer). After commit, awaited, contained, like the others.
         await emitInvoicingEvent(
           db,
-          { type: "invoice.created", tenantId, invoiceId: created.id, actor: { type: "staff", id: userId }, format: async () => moneyFormatOf(b), now },
+          {
+            type: "invoice.created",
+            tenantId,
+            invoiceId: created.id,
+            actor: { type: "staff", id: userId },
+            format: async () => moneyFormatOf(b),
+            now: issuedAt ?? now,
+            enteredLater: issuedAt !== null,
+          },
           { onEvent: options.onEvent, onEventError: options.onEventError, report: (error) => report(error, tenantId, matched.kind) },
         );
         return respond(created.id, 201);
@@ -606,12 +639,25 @@ export function createInvoicingAdminHandlers(options: CreateInvoicingAdminHandle
       }
       case "payment-record": {
         const body = paymentBodySchema.parse(await readJsonBody(req));
+        if (body.paidAt !== undefined && !(await may("invoices.history"))) throw historyForbidden();
         const recorded = await recordPayment(
           db,
           { tenantId, invoiceId: id, amount: body.amount, method: body.method, reference: body.reference ?? null },
           userId ?? undefined,
+          // The ledger keeps its own clock for money taken today; a past
+          // payment is checked against the handler's, as a day in the business's zone.
+          body.paidAt !== undefined ? { now, paidAt: body.paidAt, timeZone: (await biz()).timeZone } : {},
         );
         if (!recorded) throw notFound();
+        // The day the ledger saved (a day is clamped into the invoice's life), for the event.
+        const paidOn =
+          body.paidAt !== undefined && !recorded.duplicate
+            ? (((await db
+                .select({ paidAt: invoicePayments.paidAt })
+                .from(invoicePayments)
+                .where(eq(invoicePayments.id, recorded.paymentId))
+                .limit(1)) as Array<{ paidAt: Date }>)[0]?.paidAt ?? now)
+            : now;
         // Tenancy 2b-1 (11.1): `invoice.paid` when THIS payment settled it.
         // recordPayment refuses a payment on an invoice already paid, so
         // "paid now" means "not paid before"; a payment whose reference was
@@ -626,7 +672,9 @@ export function createInvoicingAdminHandlers(options: CreateInvoicingAdminHandle
               invoiceId: id,
               actor: { type: "staff", id: userId },
               format: async () => moneyFormatOf(await biz()),
-              now,
+              // 0.7: a past payment's event carries its own day, and alerts nobody.
+              now: paidOn,
+              enteredLater: body.paidAt !== undefined,
             },
             { onEvent: options.onEvent, onEventError: options.onEventError, report: (error) => report(error, tenantId, matched.kind) },
           );

@@ -63,6 +63,9 @@ export class InvoicingHttpError extends Error {
 export const INTERNAL_MESSAGE = "Something went wrong. Please try again.";
 export const CROSS_SITE_MESSAGE = "This request came from another site, so it was refused.";
 export const FORBIDDEN_MESSAGE = "You don't have permission to do that.";
+/** 0.7: a past date without `invoices.history`. */
+export const HISTORY_FORBIDDEN_MESSAGE =
+  "Giving a past date needs the “Enter past records” permission. Leave the date out to record it as today, or ask the owner.";
 export const INVOICE_NOT_HERE = "That invoice isn't here.";
 export const PUBLIC_NOT_FOUND = "This invoice isn't available. It may have been replaced; contact the business.";
 

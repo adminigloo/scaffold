@@ -38,10 +38,11 @@ describe("every read of visitor rows applies the counted predicate", () => {
         "src/ingest.ts": "the writer: it reads a visit only to append to it (live session, conversion) and to purge by age",
         "src/health.ts": "liveness: 'is anything arriving?' — a staff page view proves the pipeline as well as anyone's",
         "src/reclassify.ts": "rewrites every session's source bucket; it counts nobody, so who is internal is irrelevant",
+        "src/import.ts": "the importer (0.4): it reads only which of its own keys are already in, to bring each visit in once; it counts nobody",
       },
-      expectReaders: ["src/reports.ts", "src/ingest.ts", "src/health.ts", "src/reclassify.ts"],
+      expectReaders: ["src/reports.ts", "src/ingest.ts", "src/health.ts", "src/reclassify.ts", "src/import.ts"],
     });
-    expect(found.readers).toEqual(["src/health.ts", "src/ingest.ts", "src/reclassify.ts", "src/reports.ts"]);
+    expect(found.readers).toEqual(["src/health.ts", "src/import.ts", "src/ingest.ts", "src/reclassify.ts", "src/reports.ts"]);
   });
 
   it("per function, in every source file that is not exempt", () => {
@@ -100,7 +101,7 @@ describe("every read of visitor rows applies the counted predicate", () => {
 });
 
 /** Files whose reads are exempt in the per-file guard above (same reasons). */
-const EXEMPT_FILES = new Set(["ingest.ts", "health.ts", "reclassify.ts"]);
+const EXEMPT_FILES = new Set(["ingest.ts", "health.ts", "reclassify.ts", "import.ts"]);
 
 /** The helpers that apply the audience's predicate — and are the predicate, so they are not themselves checked. */
 const PREDICATE_HELPERS = ["countedSessions", "countedThroughSession", "sessionWindow"];

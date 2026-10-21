@@ -47,6 +47,8 @@ export interface VisitSnapshot {
   completedAt: Instant | null;
   createdAt: Instant;
   updatedAt: Instant;
+  /** scheduling 0.7: a visit typed in later from past records — when, and by whom (a user id). */
+  enteredLater?: { at: Instant; by: string | null } | null;
 }
 
 export interface CalendarResource {

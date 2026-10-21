@@ -71,6 +71,7 @@ export function toVisitSnapshot(
     completedAt: iso(row.completedAt),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+    enteredLater: row.enteredAt ? { at: row.enteredAt.toISOString(), by: row.enteredBy ?? null } : null,
   };
 }
 

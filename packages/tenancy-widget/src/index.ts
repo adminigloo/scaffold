@@ -121,6 +121,8 @@ export type {
   StaffRoleBody,
   StaffRoleWire,
   SuspendBody,
+  DeleteCompanyBody,
+  DeletedCompanyWire,
   TeamWire,
   TenancyErrorCode,
   TransferBody,

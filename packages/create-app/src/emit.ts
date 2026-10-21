@@ -75,6 +75,7 @@ import { bookingFiles, bookingHostsQuota } from "./booking-emit.js";
 import { cardPaymentsOn, cardPaymentsSetup, paymentsFiles, renderNavBadges } from "./payments-emit.js";
 import { storeFiles, storeProductsQuota } from "./store-emit.js";
 import { customersFiles, customersListener, customersListenerImport, hasCustomerLinkPages, renderCustomerLinkSlot } from "./customers-emit.js";
+import { renderForgetCompany, renderForgetCompanyTest } from "./forget-company-emit.js";
 import {
   aiMentionChecksQuota,
   hasCompanyWebsitePage,
@@ -594,6 +595,12 @@ export async function planEmit(
     files.set(join("src", "components", "marketing", "PlansTeaser.tsx"), renderPlansTeaser(answers));
   }
   files.set(join("src", "server", "tenancy.ts"), renderTenancyServer(answers));
+  // DELETE A COMPANY (create-app 0.37), in every project: what each installed
+  // package forgets when staff delete one, and the proof that every table with
+  // a company column is forgotten (the kept ones apart) and nothing of
+  // another company is. See forget-company-emit.ts.
+  files.set(join("src", "server", "forget-company.ts"), renderForgetCompany(answers));
+  files.set(join("src", "server", "__tests__", "forget-company.test.ts"), renderForgetCompanyTest(answers));
   files.set(join("src", "server", "tenancy-handlers.ts"), renderTenancyHandlers(answers));
   files.set(join("src", "server", "tenancy-logo.ts"), renderTenancyLogo(answers));
   files.set(join("src", "components", "CompanySwitcherSlot.tsx"), renderCompanySwitcherSlot(answers));
@@ -3042,6 +3049,14 @@ const appStaffPermissions = {
     category: "${plural}",
     defaultFor: ["admin"],
   },
+  // Delete a company for good (tenancy 0.8). Admin only, like the two above:
+  // nothing a company kept comes back.
+  "staff.tenants.delete": {
+    label: "Delete ${plural.toLowerCase()} for good",
+    description: "Removes one and everything it keeps. Asks for its web address typed again, and a reason if it is still paying for a plan.",
+    category: "${plural}",
+    defaultFor: ["admin"],
+  },
   "staff.tenants.transfer": {
     label: "Give a ${label.toLowerCase()} a new owner",
     description: "For one whose owner closed their account: hand it to one of its active members.",
@@ -5230,8 +5245,11 @@ export type AppRouter = typeof appRouter;
  * covers base and app tables together. Copying a base table's definition here
  * instead would fork its migrations silently.
  */
-export function renderSchemaModule(answers: Answers): string {
-  const scope = answers.scope;
+/**
+ * Every installed package that owns a table, in the order src/db/schema.ts
+ * lists them. Also what src/server/forget-company.ts forgets a company from.
+ */
+export function schemaOwners(answers: Answers): string[] {
   // EVERY installed package that owns a table must appear here. drizzle.config
   // points drizzle-kit at this one file, so a package omitted from this list
   // has its tables silently excluded from every migration — the code compiles,
@@ -5272,6 +5290,12 @@ export function renderSchemaModule(answers: Answers): string {
   if (answers.includeBooking) owners.push("booking");
   // The customer list (create-app 0.35): customers, their addresses, links and merges.
   if (answers.includeCustomers) owners.push("customers");
+  return owners;
+}
+
+export function renderSchemaModule(answers: Answers): string {
+  const scope = answers.scope;
+  const owners = schemaOwners(answers);
 
   /**
    * `@scope/auth/schema` -> `authSchema`; `seo-reports` -> `seoReportsSchema`.

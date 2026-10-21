@@ -290,6 +290,38 @@ implement the three methods.
   refund is a reversal; a part refund or a dispute flags the payment.
   `INVOICE_CARD_EVENT_TYPES` is the event list to enable.
 
+## Past records with their real dates (0.7)
+
+A business moving its old invoices in gives each the days they really
+happened, on the staff side only (no customer route takes a date):
+
+- `createInvoice(db, input, createdBy, { issuedAt })` and
+  `POST v1/admin/invoices` with `issuedAt`: saved as issued (sent) that day,
+  emailing nobody, numbered that year and due from that day.
+- `recordPayment(db, input, recordedBy, { paidAt })` and
+  `POST v1/admin/invoices/{id}/payments` with `paidAt`: the payment's
+  `paid_at` is that day; its `created_at` and `recorded_by` say when and by
+  whom it was entered.
+
+A date in the future, before 2000, or a payment before its invoice is
+refused (400 `invalid`, naming the field). Their events carry the real day
+and `enteredLater`, and raise no alert. `invoices.entered_at` /
+`entered_by` say when and by whom a past invoice was typed in.
+
+A date alone ("2025-06-14") is that calendar day where the business is
+(its time zone): it is saved as noon there, so every screen in that zone
+shows the 14th, and "today" is today there. A full timestamp
+("2025-06-14T15:00:00Z") is the instant it names. Giving a past date on the
+staff routes needs its own permission, `invoices.history` ("Enter past records",
+owner and admin by default); without it the route answers 403.
+The invoice detail's `enteredLater` (on the invoice and on each payment
+recorded well after it was paid) says when and by whom it was entered.
+
+## Upgrading from 0.6
+
+Run `sql/upgrade-0.6-to-0.7.sql` (safe twice), or `pnpm db:generate` in a
+create-app project: two nullable columns on `invoices`.
+
 ## Upgrading from 0.4
 
 Run `sql/upgrade-0.4-to-0.5.sql` before deploying (safe twice): the deposit

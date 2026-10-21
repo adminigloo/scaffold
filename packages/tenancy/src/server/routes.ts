@@ -78,6 +78,7 @@ export type TenancyOperatorRouteKind =
   | "admin-reactivate"
   | "admin-assign-owner"
   | "admin-release-addresses"
+  | "admin-delete"
   | "admin-people"
   | "admin-staff-roles"
   | "admin-staff-role-set";
@@ -130,6 +131,7 @@ export const TENANCY_OPERATOR_ROUTES: readonly TenancyRoute<TenancyOperatorRoute
   { kind: "admin-reactivate", method: "POST", path: "v1/admin/companies/:tenantId/reactivate", scope: "staff", permission: "staff.tenants.suspend", bucket: "operator-write" },
   { kind: "admin-assign-owner", method: "POST", path: "v1/admin/companies/:tenantId/owner", scope: "staff", permission: "staff.tenants.transfer", bucket: "operator-write" },
   { kind: "admin-release-addresses", method: "POST", path: "v1/admin/companies/:tenantId/release-addresses", scope: "staff", permission: "staff.tenants.suspend", bucket: "operator-write" },
+  { kind: "admin-delete", method: "POST", path: "v1/admin/companies/:tenantId/delete", scope: "staff", permission: "staff.tenants.delete", bucket: "operator-write" },
   { kind: "admin-people", method: "GET", path: "v1/admin/people", scope: "staff", permission: "staff.people.view", bucket: null },
   { kind: "admin-staff-roles", method: "GET", path: "v1/admin/staff-roles", scope: "staff", permission: "staff.roles.view", bucket: null },
   { kind: "admin-staff-role-set", method: "POST", path: "v1/admin/people/:userId/staff-role", scope: "staff", permission: "staff.roles.manage", bucket: "operator-write" },

@@ -214,3 +214,103 @@ describe("per-company coverage: every package has one status", () => {
   });
 });
 
+/**
+ * DELETE A COMPANY (create-app 0.37): how each per-company package's rows go
+ * when staff delete a company. Every per-company package declares one:
+ *
+ *   - "forgetTenant": it keeps company rows, exports `forgetTenant` (found in
+ *     its source), and the emitted src/server/forget-company.ts calls it;
+ *   - "own:<how>": it forgets them itself (tenancy's deleteCompany);
+ *   - "none:<why>": it keeps no table with a company column — checked: no
+ *     `text("tenant_id")` anywhere in its source.
+ *
+ * So a new package that keeps company rows can't be added without saying how
+ * they are forgotten, and can't say "none" while it keeps some.
+ */
+export const FORGET_COVERAGE: Readonly<Record<string, string>> = {
+  tenancy: "own:deleteCompany forgets the team, invitations and address history, and keeps the emptied company row",
+  "tenancy-widget": "none:screens only",
+  permissions: "forgetTenant",
+  trpc: "none:the app's data calls, no tables",
+  auth: "none:people's accounts are a person's; tenancy clears a current company pointing at a deleted one",
+  testing: "none:test helpers, no tables",
+  estimator: "forgetTenant",
+  "estimator-widget": "none:screens only",
+  scheduling: "forgetTenant",
+  "scheduling-widget": "none:screens only",
+  invoicing: "forgetTenant",
+  "invoicing-widget": "none:screens only",
+  comms: "forgetTenant",
+  "comms-widget": "none:screens only",
+  email: "forgetTenant",
+  notifications: "forgetTenant",
+  "notifications-widget": "none:screens only",
+  storage: "forgetTenant",
+  "storage-widget": "none:screens only",
+  feedback: "forgetTenant",
+  "feedback-widget": "none:screens only",
+  assistant: "forgetTenant",
+  "assistant-widget": "none:screens only",
+  ai: "forgetTenant",
+  billing: "forgetTenant",
+  analytics: "forgetTenant",
+  audience: "forgetTenant",
+  seo: "none:keeps its words in the company's settings, which tenancy empties",
+  "seo-reports": "forgetTenant",
+  aeo: "forgetTenant",
+  booking: "forgetTenant",
+  "booking-widget": "none:screens only",
+  stripe: "forgetTenant",
+  commerce: "forgetTenant",
+  catalog: "forgetTenant",
+  customers: "forgetTenant",
+};
+
+let sellingPlan: Promise<EmitPlan> | null = null;
+
+describe("per-company coverage: every per-company package says how a deleted company's rows go", () => {
+  const perCompany = Object.entries(PER_COMPANY_COVERAGE)
+    .filter(([, status]) => status === "per-company")
+    .map(([pkg]) => pkg)
+    .sort();
+
+  it("names every per-company package, and nothing else", () => {
+    expect(Object.keys(FORGET_COVERAGE).sort()).toEqual(perCompany);
+    for (const [pkg, how] of Object.entries(FORGET_COVERAGE)) {
+      expect(how === "forgetTenant" || /^own:\S.{5,}$/.test(how) || /^none:\S.{5,}$/.test(how), `${pkg}: "${how}"`).toBe(true);
+    }
+  });
+
+  it.each(perCompany)("%s: keeps company rows only if it declares how they're forgotten", (pkg) => {
+    const how = FORGET_COVERAGE[pkg]!;
+    const sources = sourceFiles(join(PACKAGES_DIR, pkg, "src")).map((path) => code(readFileSync(path, "utf8")));
+    const keepsRows = sources.some((source) => source.includes('text("tenant_id")'));
+    if (how.startsWith("none:")) expect(keepsRows, `${pkg} says it keeps no company rows, but a table of its has tenant_id`).toBe(false);
+    if (how === "forgetTenant") {
+      expect(keepsRows, `${pkg} declares forgetTenant but keeps no company rows`).toBe(true);
+      expect(
+        sources.some((source) => /export async function forgetTenant\(/.test(source)),
+        `${pkg} exports forgetTenant(db, tenantId)`,
+      ).toBe(true);
+    }
+  });
+
+  it.each(Object.entries(FORGET_COVERAGE).filter(([, how]) => how === "forgetTenant").map(([pkg]) => pkg))(
+    "%s's forgetTenant is called by the emitted src/server/forget-company.ts of a companies project with every feature",
+    async (pkg) => {
+      // Every feature AND plans for sale, so billing is installed too.
+      sellingPlan ??= planEmit(TEMPLATE_DIR, "/out", { ...COMPANY_EVERYTHING, businessModel: "subscription" });
+      const p = await sellingPlan;
+      const file = p.files.get(join("src", "server", "forget-company.ts"));
+      expect(file, "a companies project has src/server/forget-company.ts").toBeDefined();
+      const body = code(file!);
+      const imported = [...body.matchAll(/^import \{([^}]*)\} from "@adminigloo\/([a-z-]+)(?:\/([a-z]+))?";$/gm)].find(
+        (m) => m[2] === pkg && /\bforgetTenant as (\w+)/.test(m[1]!),
+      );
+      expect(imported, `forget-company.ts imports forgetTenant from @adminigloo/${pkg}`).toBeDefined();
+      const alias = /\bforgetTenant as (\w+)/.exec(imported![1]!)![1]!;
+      expect(body, `forget-company.ts calls ${alias}(tx, tenantId…)`).toMatch(new RegExp(`\\b${alias}\\(tx, tenantId\\b`));
+    },
+  );
+});
+

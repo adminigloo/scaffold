@@ -121,6 +121,9 @@ export class HttpError extends Error {
 }
 
 export const NOT_FOUND_MESSAGE = "Not found.";
+/** 0.7: a past date without `estimator.history`. */
+export const HISTORY_FORBIDDEN_MESSAGE =
+  "Giving a past date needs the “Enter past records” permission. Leave the date out to record it as today, or ask the owner.";
 export const INTERNAL_MESSAGE = "Something went wrong. Please try again.";
 
 /**

@@ -139,6 +139,12 @@ export interface VisitSnapshot {
   completedAt: Instant | null;
   createdAt: Instant;
   updatedAt: Instant;
+  /**
+   * 0.7, past records: a visit typed in later (`bookedAt`) — when, and by
+   * whom (the user id). Its own dates say when it was booked and done.
+   * Absent or null on a visit booked the day it was.
+   */
+  enteredLater?: { at: Instant; by: string | null } | null;
 }
 
 export interface CalendarResource {

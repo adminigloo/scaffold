@@ -182,6 +182,8 @@ const MIGRATION_0025_PLUS_0_2 = [
       "classifier_version integer",
       // ---- 0.3, additive and nullable (one ADD COLUMN, one index):
       "site_id text",
+      // ---- 0.4, additive and nullable (one ADD COLUMN, one partial unique index):
+      "import_key text",
     ],
     primaryKeys: [],
     foreignKeys: [],
@@ -193,6 +195,8 @@ const MIGRATION_0025_PLUS_0_2 = [
       "analytics_sessions_started_idx (started_at)",
       // ---- 0.3:
       "analytics_sessions_tenant_site_idx (tenant_id, site_id, started_at)",
+      // ---- 0.4:
+      "UNIQUE analytics_sessions_tenant_import_idx (tenant_id, import_key) WHERE import_key is not null",
     ],
   },
   {
@@ -228,9 +232,9 @@ describe("the default prefix reproduces 0.1's migration exactly", () => {
     expect(describeAll(defineAnalyticsTables({ prefix: "analytics_" }))).toEqual(MIGRATION_0025_PLUS_0_2);
   });
 
-  it("the 0.2 and 0.3 session columns are nullable with no default, so each upgrade only ADDs COLUMNs and touches no row", () => {
-    const columns = getTableConfig(analyticsTables.sessions).columns.filter((c) => ["internal_reason", "actor_key", "classifier_version", "site_id"].includes(c.name));
-    expect(columns).toHaveLength(4);
+  it("the 0.2, 0.3 and 0.4 session columns are nullable with no default, so each upgrade only ADDs COLUMNs and touches no row", () => {
+    const columns = getTableConfig(analyticsTables.sessions).columns.filter((c) => ["internal_reason", "actor_key", "classifier_version", "site_id", "import_key"].includes(c.name));
+    expect(columns).toHaveLength(5);
     for (const column of columns) {
       expect(column.notNull).toBe(false);
       expect(column.default).toBeUndefined();

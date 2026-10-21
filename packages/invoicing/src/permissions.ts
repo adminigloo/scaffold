@@ -53,6 +53,16 @@ export const invoicingPermissions = {
     category: "Invoices",
     defaultFor: ["owner", "admin"],
   },
+  "invoices.history": {
+    label: "Enter past records",
+    description:
+      "When moving old records in: give an invoice or a payment the day it really happened, not today. Nobody is emailed about it, and it shows as entered later.",
+    category: "Invoices",
+    // Not member. A past date decides which month's books a record lands
+    // in, and nobody is told about it, so it belongs with the people who
+    // answer for the books — the same as reversing a payment.
+    defaultFor: ["owner", "admin"],
+  },
 } as const satisfies Record<string, InvoicingPermissionDefinition>;
 
 export type InvoicingPermission = keyof typeof invoicingPermissions;

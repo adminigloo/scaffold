@@ -1298,7 +1298,8 @@ export const INVOICING_TENANT = "primary";
  *
  *   staff.invoices.view      the ledger and every invoice
  *   staff.invoices.manage    raise, edit, send and void invoices, and record
- *                            and reverse payments
+ *                            and reverse payments — and give one a past
+ *                            date when moving old records in
  *
  * Declared in src/permissions/catalog.ts with the roles that hold them.
  */
@@ -1307,6 +1308,7 @@ export const INVOICING_STAFF_KEYS: Readonly<Record<InvoicingPermission, string>>
   "invoices.manage": "staff.invoices.manage",
   "invoices.payments.record": "staff.invoices.manage",
   "invoices.payments.reverse": "staff.invoices.manage",
+  "invoices.history": "staff.invoices.manage",
 };
 
 /**

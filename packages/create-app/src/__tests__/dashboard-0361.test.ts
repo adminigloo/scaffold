@@ -201,7 +201,7 @@ describe("upgrading to 0.36.1", () => {
     expect(notes).toContain("`dashboardOverview`");
     expect(notes).toContain("@adminigloo/tenancy-widget 0.4");
     expect(upgradeNotesFor(answers({ tenantNoun: "Company" }), "0.36.0").join("\n")).not.toContain("Under the numbers");
-    expect(upgradeNotesFor(answers({ ...EVERYTHING, tenantNoun: "none" }), "0.36.0")).toEqual([]);
-    expect(upgradeNotesFor(answers(EVERYTHING), "0.36.1")).toEqual([]);
+    expect(upgradeNotesFor(answers({ ...EVERYTHING, tenantNoun: "none" }), "0.36.0").join("\n")).not.toContain("dashboard");
+    expect(upgradeNotesFor(answers(EVERYTHING), "0.36.1").join("\n")).not.toContain("2 things left to set up");
   });
 });

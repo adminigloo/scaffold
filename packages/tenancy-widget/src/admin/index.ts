@@ -53,6 +53,8 @@ export type {
   StaffRoleBody,
   StaffRoleWire,
   SuspendBody,
+  DeleteCompanyBody,
+  DeletedCompanyWire,
   TenancyErrorCode,
   WireErrorBody,
   WireIssue,

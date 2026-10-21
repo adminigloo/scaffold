@@ -1,14 +1,14 @@
-// Writes the 0.3 DDL the test database is built from, in the shipped file's
-// style — the helper that keeps sql/analytics-0.3.0.sql from drifting from
-// ./schema (not a suite): `pnpm tsx src/__tests__/print-ddl.ts > sql/analytics-0.3.0.sql`.
+// Writes the 0.4 DDL the test database is built from, in the shipped file's
+// style — the helper that keeps sql/analytics-0.4.0.sql from drifting from
+// ./schema (not a suite): `pnpm tsx src/__tests__/print-ddl.ts > sql/analytics-0.4.0.sql`.
 // The SQL test checks the shipped file still builds the same tables.
 import { defineAnalyticsTables } from "../schema.js";
 import { analyticsDdl } from "./pglite.js";
 
-const header = `-- @adminigloo/analytics 0.3.0: every table, under the default prefix (analytics_),
+const header = `-- @adminigloo/analytics 0.4.0: every table, under the default prefix (analytics_),
 -- for a host that doesn't run drizzle-kit. A project made with create-app
 -- doesn't need this: its migrations come from the schema.
--- Upgrading from 0.2? Run upgrade-0.2-to-0.3.sql instead.
+-- Upgrading from 0.3? Run upgrade-0.3-to-0.4.sql instead (from 0.2, upgrade-0.2-to-0.3.sql first).
 --
 -- Every row carries its company in tenant_id ('*' is the site's own numbers).
 -- No IP address, user agent or cookie is stored anywhere.

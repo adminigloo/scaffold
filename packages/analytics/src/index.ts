@@ -166,3 +166,10 @@ export {
   runAnalyticsMaintenance,
 } from "./legacy.js";
 export type { AnalyticsHandlerOptions } from "./legacy.js";
+
+// Delete a company (create-app 0.37): every row of one company, children first.
+export { forgetTenant } from "./forget.js";
+
+// Past visits brought in from records (0.4): the shapes importVisits takes and answers.
+export { importedVisitorKey, MAX_IMPORT_VISITS } from "./import.js";
+export type { ImportVisitInput, ImportVisitsInput, ImportVisitsResult } from "./import.js";

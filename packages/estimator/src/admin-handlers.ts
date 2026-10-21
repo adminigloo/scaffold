@@ -50,6 +50,7 @@ import {
 import { emitEvents, loadSnapshots, type EstimatorActor, type EstimatorEvent, type EstimatorEventListener } from "./events.js";
 import {
   createThrottle,
+  HISTORY_FORBIDDEN_MESSAGE,
   HttpError,
   isCrossSiteRequest,
   MAX_PHOTO_BODY_BYTES,
@@ -526,11 +527,20 @@ function route(method: string, pathname: string): AdminRoute | null {
 
 // --- Bodies (the wire's names) ----------------------------------------------------------
 
-const statusBodySchema = z.object({
-  status: z.enum(["approved", "rejected", "draft"], { message: "Pick yes, no or reopen." }),
-  note: z.string().trim().max(1000).nullish(),
-  notify: z.boolean().optional(),
-});
+const statusBodySchema = z
+  .object({
+    // "sent" only for a past record (with occurredAt): it says the quote went
+    // out on that day, and emails nobody. Sending today is "quote-send".
+    status: z.enum(["approved", "rejected", "draft", "sent"], { message: "Pick yes, no or reopen." }),
+    note: z.string().trim().max(1000).nullish(),
+    notify: z.boolean().optional(),
+    /** 0.7, past records: the day it really happened. */
+    occurredAt: z.string().max(40).optional(),
+  })
+  .refine((v) => v.status !== "sent" || v.occurredAt !== undefined, {
+    message: "To send the quote, use Send quote. To record that it was sent before, give the date.",
+    path: ["status"],
+  });
 const reorderBodySchema = z.object({ ids: z.array(z.string().min(1).max(200)).max(500) });
 const attachBodySchema = z.object({
   supplyId: z.string().min(1).max(200),
@@ -654,6 +664,22 @@ export function createEstimatorAdminHandlers(options: CreateEstimatorAdminHandle
    * What the caller may do with invoices (SEC-2A-02), asked at most once per
    * request: an estimate's page and the convert route both read it.
    */
+  /**
+   * 0.7: a past date rides on its own key (`estimator.history`), never on
+   * working estimates: it decides when a quote counts as sent or won, and
+   * nobody is emailed about it.
+   */
+  async function requireHistory(req: Request, tenantId: string): Promise<void> {
+    let answer: unknown = false;
+    try {
+      answer = await options.authorize(req, "estimator.history", tenantId);
+    } catch {
+      answer = false;
+    }
+    const yes = answer === true || (typeof answer === "object" && answer !== null && !(answer instanceof Response));
+    if (!yes) throw new HttpError("forbidden", HISTORY_FORBIDDEN_MESSAGE);
+  }
+
   const invoiceRightsMemo = new WeakMap<Request, Promise<{ view: boolean; manage: boolean; refusal: Response | null }>>();
   function invoiceRights(req: Request, tenantId: string): Promise<{ view: boolean; manage: boolean; refusal: Response | null }> {
     const access = options.invoiceAccess;
@@ -1218,6 +1244,7 @@ export function createEstimatorAdminHandlers(options: CreateEstimatorAdminHandle
       }
       case "estimate-create": {
         const raw = (await body()) as Record<string, unknown>;
+        if (raw["occurredAt"] !== undefined) await requireHistory(req, tenantId);
         const created = await createEstimate(
           db,
           {
@@ -1234,7 +1261,9 @@ export function createEstimatorAdminHandlers(options: CreateEstimatorAdminHandle
             source: "staff",
           },
           userId ?? undefined,
-          { now, settings },
+          // 0.7, past records: the day it was really made (a staff route; the
+          // public submit takes no date).
+          { now, settings, ...(raw["occurredAt"] !== undefined ? { occurredAt: raw["occurredAt"] as string } : {}) },
         );
         return mutation(created.id, [], 201);
       }
@@ -1298,9 +1327,10 @@ export function createEstimatorAdminHandlers(options: CreateEstimatorAdminHandle
       }
       case "estimate-status": {
         const parsed = statusBodySchema.parse(await body());
+        if (parsed.occurredAt !== undefined) await requireHistory(req, tenantId);
         const row = await getEstimateRow(db, tenantId, id);
         if (!row) throw notFound();
-        if (parsed.status === "draft" && (row.status === "sent" || row.status === "viewed")) {
+        if (parsed.status === "draft" && parsed.occurredAt === undefined && (row.status === "sent" || row.status === "viewed")) {
           // Taking a sent quote back is a revision: it withdraws the follow-up
           // and the link says "updating" (quote.revised), which a bare status
           // move would not.
@@ -1311,7 +1341,7 @@ export function createEstimatorAdminHandlers(options: CreateEstimatorAdminHandle
           db,
           tenantId,
           { id, status: parsed.status, ...(parsed.note !== undefined ? { note: parsed.note } : {}) },
-          { ...events, notify: parsed.notify ?? false },
+          { ...events, notify: parsed.notify ?? false, ...(parsed.occurredAt !== undefined ? { occurredAt: parsed.occurredAt } : {}) },
         );
         if (!moved) {
           throw new HttpError("transition_not_allowed", "That can't be done from the quote's current state. Refresh and try again.");

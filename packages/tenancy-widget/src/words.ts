@@ -115,6 +115,8 @@ export function codeFallback(code: TenancyErrorCode | "network" | "bad_response"
       return "Use a PNG, JPG or WebP image under 1 MB.";
     case "rate_limited":
       return "That's a lot of requests. Wait a minute and try again.";
+    case "still_paying":
+      return `This ${n} is still paying for a plan. Cancel it first, or delete anyway and say why.`;
     default:
       return BAD_RESPONSE_MESSAGE;
   }
@@ -508,6 +510,20 @@ export const DETAIL = {
   reactivated: (name: string) => `${name} is active again.`,
   someone: "someone",
   loading: (noun: Noun) => `Loading the ${noun.singular}…`,
+  // Delete a company (tenancy 0.8).
+  deleteHeading: (noun: Noun) => `Delete this ${noun.singular}`,
+  deleteIntro: (name: string) =>
+    `Removes ${name} and everything it keeps here for good: its team, customers, quotes, visits, invoices, files and settings. It can't be undone. Its web address stays reserved, so old links never reach another business.`,
+  deleteStillPaying: (name: string, plan: string) => `${name} is still paying for ${plan}. Cancel it in Stripe first — deleting doesn't stop the charges.`,
+  deleteButton: (noun: Noun) => `Delete ${noun.singular}…`,
+  deleteTitle: (name: string) => `Delete ${name} for good?`,
+  deleteType: (slug: string) => `To confirm, type its web address: ${slug}`,
+  deleteTypeLabel: "Web address",
+  deleteForce: "Delete it anyway, even though it's still paying",
+  deleteForceReason: "Why it's being deleted anyway (only staff see this)",
+  deleteConfirm: "Delete for good",
+  deleteMismatch: (slug: string) => `Type the web address exactly: ${slug}`,
+  deleted: (name: string, rows: number) => `${name} was deleted: ${rows} record${rows === 1 ? "" : "s"} removed.`,
 } as const;
 
 export const PEOPLE = {

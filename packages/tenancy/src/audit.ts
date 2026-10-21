@@ -21,6 +21,7 @@ export const tenancyAuditedActions = {
   "company.suspended": { label: "Suspended a company" },
   "company.reactivated": { label: "Reactivated a company" },
   "company.addresses.released": { label: "Released a company's old web addresses" },
+  "company.deleted": { label: "Deleted a company and everything it kept", sensitive: true },
   "member.role.changed": { label: "Changed a member's role", sensitive: true },
   "member.removed": { label: "Removed a member" },
   "member.left": { label: "Left the company" },
@@ -161,6 +162,16 @@ export function describeTenancyAuditEntry(action: string, metadata: unknown): st
     case "company.reactivated": {
       const reason = text(m["suspendedReason"]);
       return reason === null ? null : `Had been suspended for: ${reason}`;
+    }
+    case "company.deleted": {
+      // Tenancy 0.8: what went, in words; the reason when staff deleted one still paying.
+      const name = text(m["name"]);
+      if (name === null) return null;
+      const slug = text(m["slug"]);
+      const rows = typeof m["rows"] === "number" && Number.isFinite(m["rows"]) ? (m["rows"] as number) : null;
+      const what = `${name}${slug === null ? "" : ` (/${slug})`}${rows === null ? "" : `: ${rows} record${rows === 1 ? "" : "s"} removed`}`;
+      const reason = text(m["reason"]);
+      return m["forced"] === true && reason !== null ? `${what}. Deleted while still paying: ${reason}` : what;
     }
     case "company.addresses.released": {
       const slugs = Array.isArray(m["slugs"]) ? m["slugs"].filter((s): s is string => typeof s === "string") : [];

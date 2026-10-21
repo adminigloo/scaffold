@@ -24,6 +24,8 @@ import type {
   AdminPersonWire,
   AssignOwnerBody,
   AuditLineWire,
+  DeleteCompanyBody,
+  DeletedCompanyWire,
   PersonRefWire,
   StaffRoleBody,
   StaffRoleWire,
@@ -51,6 +53,8 @@ export interface TenancyAdminTransport {
   assignOwner(tenantId: string, body: AssignOwnerBody): Promise<Result<AdminCompanyDetailWire>>;
   /** Free the company's old web addresses (review T1-07). */
   releaseAddresses(tenantId: string): Promise<Result<AdminCompanyDetailWire>>;
+  /** Delete the company for good (tenancy 0.8): its web address typed again; `force` with a reason when it's still paying. */
+  deleteCompany(tenantId: string, body: DeleteCompanyBody): Promise<Result<DeletedCompanyWire>>;
   people(q: { q?: string; staffOnly?: boolean; page?: number; pageSize?: number }): Promise<Result<AdminPeopleWire>>;
   staffRoles(): Promise<Result<{ roles: StaffRoleWire[] }>>;
   setStaffRole(userId: string, body: StaffRoleBody): Promise<Result<{ person: AdminPersonWire }>>;
@@ -151,8 +155,21 @@ export function parseAdminCompanyDetail(body: unknown): AdminCompanyDetailWire |
       suspend: isObject(body.can) && isTrue(body.can.suspend),
       assignOwner: isObject(body.can) && isTrue(body.can.assignOwner),
       releaseAddresses: isObject(body.can) && isTrue(body.can.releaseAddresses),
+      delete: isObject(body.can) && isTrue(body.can.delete),
+    },
+    deletion: {
+      available: isObject(body.deletion) && isTrue(body.deletion.available),
+      stillPaying: isObject(body.deletion) ? strOrNull(body.deletion.stillPaying) : null,
     },
   };
+}
+
+export function parseDeletedCompany(body: unknown): DeletedCompanyWire | null {
+  const d = isObject(body) ? body.deleted : null;
+  if (!isObject(d) || !isId(d.id) || !isString(d.name)) return null;
+  const counts: Record<string, number> = {};
+  if (isObject(d.counts)) for (const [k, v] of Object.entries(d.counts)) if (typeof v === "number" && Number.isFinite(v)) counts[k] = v;
+  return { id: d.id, name: d.name, slug: str(d.slug), deletedAt: str(d.deletedAt), rows: num(d.rows, 0), counts, forced: isTrue(d.forced) };
 }
 
 export function parseStaffRole(raw: unknown): StaffRoleWire | null {
@@ -204,6 +221,7 @@ export function createTenancyAdminClient(options: TransportOptions): TenancyAdmi
     reactivate: (tenantId) => http.post(companyPath(tenantId, "/reactivate"), {}, parseAdminCompanyDetail),
     assignOwner: (tenantId, body) => http.post(companyPath(tenantId, "/owner"), body, parseAdminCompanyDetail),
     releaseAddresses: (tenantId) => http.post(companyPath(tenantId, "/release-addresses"), {}, parseAdminCompanyDetail),
+    deleteCompany: (tenantId, body) => http.post(companyPath(tenantId, "/delete"), body, parseDeletedCompany),
     people: (q) =>
       http.get(
         `/v1/admin/people${queryString({ q: q.q, staffOnly: q.staffOnly ? "true" : undefined, page: q.page, pageSize: q.pageSize })}`,

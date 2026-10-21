@@ -17,6 +17,7 @@ import { asRoleKey, q, str, strOrNull, type CompanyRow } from "./db.js";
 import { failWith, type TenancyError } from "./errors.js";
 import { tenancyMembershipGate } from "./gate.js";
 import type {
+  CompanyDeletion,
   LogoStore,
   RequestFacts,
   SeatLimitSource,
@@ -49,6 +50,8 @@ export interface Ctx {
   readonly roles: TenantRoleSet;
   readonly seats: SeatLimitSource | undefined;
   readonly logos: LogoStore | undefined;
+  /** Delete a company (0.8): the project's forget step; undefined → no deleting. */
+  readonly deletion: CompanyDeletion | undefined;
   readonly reserved: ReadonlySet<string>;
   readonly invitationExpiryHours: number | undefined;
   readonly requireMatchingEmail: boolean;
@@ -91,6 +94,7 @@ export function createCtx(options: {
   roles?: TenantRoleSet;
   seats?: SeatLimitSource;
   logos?: LogoStore;
+  deletion?: CompanyDeletion;
   reservedSlugs?: Iterable<string>;
   invitations?: { readonly expiresInHours?: number; readonly requireMatchingEmail?: boolean };
   companiesPerAccount?: number | null;
@@ -127,6 +131,7 @@ export function createCtx(options: {
     roles,
     seats: options.seats,
     logos: options.logos,
+    deletion: options.deletion,
     reserved,
     invitationExpiryHours: options.invitations?.expiresInHours,
     requireMatchingEmail: options.invitations?.requireMatchingEmail ?? true,

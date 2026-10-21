@@ -11,7 +11,7 @@ const source = (file: string) => readFileSync(resolve(here, file), "utf8");
 const wireTypes = [...source("../types.ts").matchAll(/^export (?:type|interface) (\w+)/gm)].map((m) => m[1]!);
 const OPERATOR_TYPES = new Set([
   "PersonRefWire", "AdminCompanyRowWire", "AdminCompanyListWire", "AdminMemberWire", "AuditLineWire",
-  "AdminCompanyDetailWire", "SuspendBody", "StaffRoleWire", "AdminPersonWire", "AdminPeopleWire", "StaffRoleBody",
+  "AdminCompanyDetailWire", "SuspendBody", "DeleteCompanyBody", "DeletedCompanyWire", "StaffRoleWire", "AdminPersonWire", "AdminPeopleWire", "StaffRoleBody",
 ]);
 
 /**
