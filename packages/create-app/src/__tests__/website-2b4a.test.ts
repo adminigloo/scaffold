@@ -61,7 +61,10 @@ describe("packages, overlays, versions and capabilities", () => {
     expect(packagesFor(answers({ includeSeo: true }))).toContain("@adminigloo/seo");
     expect(packagesFor(answers()).filter((name) => /\/(analytics|audience|seo)$/.test(name))).toEqual([]);
     const versions = packageVersions();
-    expect([versions.analytics, versions.audience, versions.seo]).toEqual(["0.3.0", "0.2.0", "0.2.0"]);
+    // The release lines (analytics 0.4: importVisits and forgetTenant; audience 0.3: forgetTenant).
+    expect(versions.analytics).toMatch(/^0\.4\.\d+$/);
+    expect(versions.audience).toMatch(/^0\.3\.\d+$/);
+    expect(versions.seo).toMatch(/^0\.2\.\d+$/);
   });
 
   it("selects the analytics overlays by their conditions", () => {

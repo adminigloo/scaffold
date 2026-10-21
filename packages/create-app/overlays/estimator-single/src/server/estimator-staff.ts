@@ -46,7 +46,8 @@ export const ESTIMATOR_TENANT = "primary";
  *                              everybody who quotes a customer
  *   staff.estimates.pricebook  change what every customer is quoted
  *   staff.estimates.settings   tax, quote rules, lead alerts, the AI budget,
- *                              website keys
+ *                              website keys — and giving an estimate a past
+ *                              date when moving old records in
  *
  * Declared in src/permissions/catalog.ts (with the roles that hold them by
  * default) and granted to the seeded staff roles the first time the estimator
@@ -58,6 +59,7 @@ export const ESTIMATOR_STAFF_KEYS: Readonly<Record<EstimatorPermission, string>>
   "estimator.costs.view": "staff.estimates.costs",
   "estimator.pricebook.manage": "staff.estimates.pricebook",
   "estimator.settings.manage": "staff.estimates.settings",
+  "estimator.history": "staff.estimates.settings",
 };
 
 /** Every estimator staff key, once each. */

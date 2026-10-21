@@ -1171,20 +1171,21 @@ describe("what the project claims and documents (11.13)", () => {
     const manifest = JSON.parse(file(await plan(COMPANY_FULL), "package.json")) as { dependencies: Record<string, string> };
     for (const [pkg, range] of [
       // Tenancy 2b-1 moved every line it changed (versions.ts says why); the showroom (0.36) moved the widgets again,
-      // and its second round (0.36.1) the tenancy widget (the collapsible setup card).
-      ["tenancy", "^0.7.0"],
-      ["tenancy-widget", "^0.4.0"],
-      ["scheduling", "^0.6.1"],
-      // polish 3 (0.36.2) moved the widgets that hand their buttons to the page header.
+      // and its second round (0.36.1) the tenancy widget (the collapsible setup card); polish 3 (0.36.2) the widgets
+      // that hand their buttons to the page header; 0.37 (deleting a company, past records' dates) every package
+      // that keeps company rows.
+      ["tenancy", "^0.8.0"],
+      ["tenancy-widget", "^0.5.0"],
+      ["scheduling", "^0.7.0"],
       ["scheduling-widget", "^0.5.0"],
-      ["estimator", "^0.6.0"],
+      ["estimator", "^0.7.0"],
       ["estimator-widget", "^0.7.0"],
-      ["invoicing", "^0.6.0"],
+      ["invoicing", "^0.7.0"],
       ["invoicing-widget", "^0.4.0"],
-      ["comms", "^0.5.0"],
+      ["comms", "^0.6.0"],
       ["comms-widget", "^0.2.0"],
-      ["email", "^0.3.0"],
-      ["storage", "^0.2.0"],
+      ["email", "^0.4.0"],
+      ["storage", "^0.3.0"],
       ["storage-widget", "^0.1.0"],
     ] as const) {
       expectSameLine(versionRangeFor(`@adminigloo/${pkg}`), range, pkg);

@@ -53,3 +53,6 @@ export type {
   EmailStatus,
   NewEmailEvent,
 } from "./schema.js";
+
+// Delete a company (create-app 0.37): every row of one company, children first.
+export { forgetTenant } from "./forget.js";

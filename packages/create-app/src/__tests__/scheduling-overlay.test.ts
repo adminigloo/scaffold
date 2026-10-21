@@ -268,9 +268,9 @@ describe("what the project installs and declares", () => {
     expect(pkgs).toContain("@adminigloo/scheduling");
     expect(pkgs).toContain("@adminigloo/scheduling-widget");
     const manifest = JSON.parse(file(await plan(), "package.json")) as { dependencies: Record<string, string> };
-    expect(manifest.dependencies["@adminigloo/scheduling"]).toBe("^0.6.1");
-    // 0.5 (polish 3): <ScheduleCalendarActions>. The line, not the patch.
-    expect(manifest.dependencies["@adminigloo/scheduling-widget"]).toMatch(/^\^0\.5\.\d+$/);
+    // The release lines: scheduling 0.7 (forgetTenant, past records' dates), scheduling-widget 0.5 (polish 3: <ScheduleCalendarActions>).
+    expect(manifest.dependencies["@adminigloo/scheduling"]).toMatch(/^^0.7.d+$/);
+    expect(manifest.dependencies["@adminigloo/scheduling-widget"]).toMatch(/^^0.5.d+$/);
   });
 
   it("declares the maps key and the starting zone as optional, and validates the zone at boot", async () => {

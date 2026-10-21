@@ -287,7 +287,9 @@ CREATE TABLE "scheduling_bookings" (
   "started_at" timestamp with time zone,
   "completed_at" timestamp with time zone,
   "created_at" timestamp with time zone NOT NULL DEFAULT now(),
-  "updated_at" timestamp with time zone NOT NULL DEFAULT now()
+  "updated_at" timestamp with time zone NOT NULL DEFAULT now(),
+  "entered_at" timestamp with time zone,
+  "entered_by" text
 );
 CREATE INDEX "scheduling_bookings_tenant_date_idx" ON "scheduling_bookings" ("tenant_id", "scheduled_date");
 CREATE INDEX "scheduling_bookings_resource_date_idx" ON "scheduling_bookings" ("resource_id", "scheduled_date");
@@ -1678,6 +1680,44 @@ const listener = createSchedulingCommsListener({
 - **Checking an address before it gets a company's alert emails.** The owner
   adds up to five per group; the company's team sending allowance bounds what
   they get.
+
+## Past records with their real dates (0.7)
+
+A business moving its old visits in gives each one the days they really
+happened, on the staff side only (no public route takes a date):
+
+- `bookVisit(db, input, { bookedAt })` and `POST v1/admin/visits` with
+  `bookedAt`: the visit was booked that day. Its own date and times may be in
+  the past, as before; a past record (a visit that is over) isn't held to
+  today's hours.
+- `setBookingStatus(db, tenantId, { id, status }, { occurredAt })` and
+  `POST v1/admin/visits/{id}/status` with `occurredAt`: done, cancelled or
+  started on that day.
+
+For a visit that is over, nobody is emailed and nobody is alerted (the events
+say `enteredLater`); the customer list files them on their own days. Done,
+started or no-show is never dated before the visit starts. A date in the future, before
+2000, or before the visit was booked is refused (400 `invalid`, naming the
+field). `entered_at` / `entered_by` say when and by whom it was typed in.
+
+A booked-on date makes a visit a past record only when the visit itself is
+over. A visit still to come is a real booking whenever it was made: its
+slot, hours and crew are checked and the customer is told as usual.
+A date alone ("2025-06-14") is that calendar day where the business is
+(its time zone): it is saved as noon there, so every screen in that zone
+shows the 14th, and "today" is today there. A full timestamp
+("2025-06-14T15:00:00Z") is the instant it names. Giving a past date on the
+staff routes needs its own permission, `schedule.history` ("Enter past records",
+owner and admin by default); without it the route answers 403.
+
+## Upgrading from 0.6
+
+Run your migration generator, or:
+
+```sql
+ALTER TABLE "scheduling_bookings" ADD COLUMN IF NOT EXISTS "entered_at" timestamp with time zone;
+ALTER TABLE "scheduling_bookings" ADD COLUMN IF NOT EXISTS "entered_by" text;
+```
 
 ## Upgrading from 0.3
 

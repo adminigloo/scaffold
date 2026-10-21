@@ -157,7 +157,8 @@ describe("the isolation proof drives the epic routes", () => {
 });
 
 describe("the release", () => {
-  it("pins the feedback 0.13 line, whose ./epics entry (with FeedbackEpicsActions, polish 3) the pages import", () => {
+  it("pins the feedback 0.13 line, whose ./epics entry (with FeedbackEpicsActions) the pages import", () => {
+    // 0.12 brought ./epics; 0.13 adds FeedbackEpicsActions (polish 3) and forgetTenant.
     expect(packageVersions()["feedback"] ?? "").toMatch(/^\^?0\.13\.\d+$/);
   });
 

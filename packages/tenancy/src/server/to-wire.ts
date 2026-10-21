@@ -7,6 +7,7 @@ import type {
   AuditLineWire,
   CompanyChoiceWire,
   CompanyWire,
+  DeletedCompanyWire,
   InvitationPreviewWire,
   InvitationWire,
   IssuedWire,
@@ -25,6 +26,7 @@ import type {
   AdminPerson,
   CompanyChoice,
   CompanyView,
+  DeletedCompany,
   InvitationPreview,
   InvitationView,
   IssuedInvitation,
@@ -242,7 +244,12 @@ export function adminCompanyDetailToWire(d: AdminCompanyDetail, activity: readon
     retiredAddresses: [...d.retiredAddresses],
     activity: activity ? activity.map((a) => ({ ...a })) : null,
     can: { ...d.can },
+    deletion: { ...d.deletion },
   };
+}
+
+export function deletedCompanyToWire(d: DeletedCompany): DeletedCompanyWire {
+  return { id: d.id, name: d.name, slug: d.slug, deletedAt: iso(d.deletedAt), rows: d.rows, counts: { ...d.counts }, forced: d.forced };
 }
 
 export function adminPersonToWire(p: AdminPerson): AdminPersonWire {

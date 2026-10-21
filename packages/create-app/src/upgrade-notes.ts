@@ -1,4 +1,4 @@
-import { tenantLabel, type Answers } from "./answers.js";
+import { tenantLabel, tenantLabelPlural, type Answers } from "./answers.js";
 import { cardPaymentsSetup } from "./payments-emit.js";
 
 /** "1.2.3" → [1, 2, 3]; anything else → null. */
@@ -32,6 +32,33 @@ export function upgradeNotesFor(answers: Answers, fromVersion: string): string[]
   const companies = answers.tenantNoun !== "none";
   const noun = tenantLabel(answers).toLowerCase();
   const crossed = (version: string) => (compareVersions(fromVersion, version) ?? -1) < 0;
+  // 0.37.0 — history and housekeeping: deleting a company, past records with
+  // their real dates, past visits brought in, and sales recorded by hand. New
+  // nullable columns only; the files carry the rest.
+  if (crossed("0.37.0")) {
+    const columns = [
+      ...(answers.includeEstimator ? ["estimator_estimates.entered_at/entered_by"] : []),
+      ...(answers.includeInvoicing ? ["invoices.entered_at/entered_by"] : []),
+      ...(answers.includeScheduling ? ["scheduling_bookings.entered_at/entered_by"] : []),
+      ...(answers.includeAnalytics ? ["analytics_sessions.import_key (and its index)"] : []),
+      ...(answers.includeStore || answers.businessModel !== "none" ? ["orders.payment_method/payment_reference/recorded_by"] : []),
+    ];
+    notes.push(
+      `Delete a ${noun} for good from its page under /admin/companies (staff with "Delete ${tenantLabelPlural(answers).toLowerCase()} for good" — ` +
+        "administrators by default — typing its web address again; one still paying for a plan needs \"delete it anyway\" and a reason). " +
+        "**src/server/forget-company.ts** is new: it runs every installed package's `forgetTenant` on the deletion's transaction and deletes the " +
+        `${noun}'s files after it commits; **src/server/tenancy.ts** hands it to the tenancy service as \`deletion\`. If you added a package that keeps ` +
+        `${noun} rows, add its forget there — src/server/__tests__/forget-company.test.ts plants a row in every table with a ${noun} column and fails, ` +
+        "naming the table, until you do. Run `pnpm db:seed` so administrators get the new staff key.",
+    );
+    if (columns.length > 0) {
+      notes.push(
+        `Run \`pnpm db:generate\` and \`pnpm db:migrate\`: new nullable columns only (${columns.join(", ")}), every existing row unchanged. ` +
+          "They hold past records' real dates (staff entering a business's old quotes, invoices, payments and visits give the day each happened; " +
+          "when and by whom it was typed in is kept beside it)" +
+          (answers.includeAnalytics ? ", past visits brought in with `importVisits`" : "") +
+          (answers.includeStore ? ", and how a sale recorded by hand was paid" : "") +
+          ".",
   // 0.36.2 — polish 3: Stripe's refusals are reported and worded, primary
   // actions sit in the page header, and "See all" opens the same list.
   if (crossed("0.36.2")) {

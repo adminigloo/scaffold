@@ -1,7 +1,8 @@
+import { parseHistoryDate } from "./history.js";
 import { and, asc, eq, gte, lte } from "drizzle-orm";
 import { z } from "zod";
 import { emitEvents, type EventSpec, type SchedulingActor } from "./events.js";
-import { earliest, labelDate, labelOf, visitInstants } from "./instants.js";
+import { earliest, instantsOf, labelDate, labelOf, visitInstants } from "./instants.js";
 import {
   assertZone,
   driveTimesBeforeLock,
@@ -101,6 +102,20 @@ export interface CreateBookingOptions extends SchedulingWriteOptions {
    * direct path.
    */
   skipValidation?: boolean;
+  /**
+   * 0.7, past records (staff and server paths only): the day this visit was
+   * really booked — not in the future, not before 2000, a day in the
+   * business's zone. Saved as booked that day (`entered_at`/`entered_by`
+   * record that it was typed in now).
+   *
+   * HISTORY ONLY WHEN THE VISIT IS OVER. A visit that ended before it was
+   * typed in is a record of what happened: its event carries the booked day,
+   * nobody is told or alerted, and its slot isn't checked against today's
+   * hours. A visit still to come is a real booking whenever it was made: its
+   * slot, hours and crew are checked and the customer is told as usual — a
+   * booked-on date never lets a second visit into a taken slot.
+   */
+  bookedAt?: Date | string;
 }
 
 /**
@@ -133,7 +148,10 @@ export async function bookVisit(
 ): Promise<{ visit: BookingRow; warnings: string[] }> {
   const parsed = createBookingSchema.parse(input);
   const settings = await settingsFor(db, parsed.tenantId, options);
-  const now = options.now ?? new Date();
+  const enteredAt = options.now ?? new Date();
+  const backdated = options.bookedAt !== undefined;
+  // A day ("2025-05-02") is that day in the business's zone.
+  const bookedOn = backdated ? parseHistoryDate(options.bookedAt, enteredAt, "bookedAt", null, settings.timeZone) : enteredAt;
   const maps = options.maps ?? createHaversineMapsProvider();
   const warnings: string[] = [];
 
@@ -154,6 +172,10 @@ export async function bookVisit(
   const date = labelOf(parsed.scheduledDate);
   const span = timeToMinutes(parsed.endTime) - timeToMinutes(parsed.startTime);
   const { startsAt, endsAt } = visitInstants(date, parsed.startTime, parsed.endTime, settings.timeZone);
+  // A past record only when the visit itself is over; one still to come is
+  // checked and announced like any booking, and `now` is the real clock.
+  const history = backdated && endsAt.getTime() <= enteredAt.getTime();
+  const now = history ? bookedOn : enteredAt;
   const values = {
     ...parsed,
     lat,
@@ -163,7 +185,8 @@ export async function bookVisit(
     startsAt,
     endsAt,
     origin: "staff",
-    pendingExpiresAt: parsed.status === "pending" ? pendingDeadline(settings, now, startsAt) : null,
+    pendingExpiresAt: parsed.status === "pending" && !history ? pendingDeadline(settings, enteredAt, startsAt) : null,
+    ...(backdated ? { createdAt: bookedOn, updatedAt: history ? bookedOn : enteredAt, enteredAt, enteredBy: options.actor?.id ?? null } : {}),
   };
   const insert = async (handle: SchedulingDb): Promise<BookingRow> => {
     const [row] = await handle.insert(schedulingBookings).values(values).returning();
@@ -174,7 +197,7 @@ export async function bookVisit(
   // Only an ASSIGNED booking can be validated — an unassigned request has no
   // resource whose availability to check.
   const resourceId = values.resourceId;
-  if (!resourceId || options.skipValidation) {
+  if (!resourceId || options.skipValidation || history) {
     // Unvalidated, but still behind the time-zone fence: its instants are
     // this request's zone, which a settings save must not change under it.
     visit = await db.transaction(async (tx) => {
@@ -226,7 +249,7 @@ export async function bookVisit(
         row: visit,
         actor: options.actor ?? STAFF,
         via: "staff",
-        ...(options.notify !== undefined ? { notify: options.notify } : {}),
+        ...(history ? { notify: false, enteredLater: true } : options.notify !== undefined ? { notify: options.notify } : {}),
       },
     ],
     { settings, now, onEvent: options.onEvent, onEventError: options.onEventError },
@@ -281,15 +304,34 @@ export const setBookingStatusSchema = z.object({
 });
 export type SetBookingStatusInput = z.input<typeof setBookingStatusSchema>;
 
-export type SetBookingStatusOptions = SchedulingWriteOptions;
+export interface SetBookingStatusOptions extends SchedulingWriteOptions {
+  /**
+   * 0.7, past records (staff and server paths only): the day this really
+   * happened — not in the future, not before 2000, not before the visit was
+   * booked, and for started, done or no-show not before the visit starts. A
+   * day in the business's zone. Its stamp (completed_at, cancelled_at…)
+   * carries that day.
+   *
+   * HISTORY ONLY WHEN THE VISIT IS OVER: then its event carries that day,
+   * nobody is told or alerted, and the slot is not re-checked. On a visit
+   * still to come the move is checked and announced as usual (putting a
+   * cancelled visit back on the calendar re-claims its slot either way).
+   */
+  occurredAt?: Date | string;
+}
+
+/** Statuses that say the visit began: a past date for them is never before it starts. */
+const STARTED_STATUSES: readonly string[] = ["in_progress", "completed", "no_show"];
 
 /** The field changes a status move makes, besides the status itself. */
 function statusEffects(
   current: BookingRow,
   to: string,
-  context: { now: Date; actor: SchedulingActor; reason: string | null; settings: SchedulingSettings },
+  context: { now: Date; actor: SchedulingActor; reason: string | null; settings: SchedulingSettings; clock?: Date },
 ): Partial<BookingRow> {
   const { now } = context;
+  // A request's new deadline runs from the real clock, never a past record's day.
+  const clock = context.clock ?? now;
   const set: Partial<BookingRow> = { status: to, updatedAt: now };
   const restoring = isRevivingMove(current.status, to);
   if (to === "confirmed") {
@@ -303,7 +345,7 @@ function statusEffects(
     set.sequence = current.sequence + 1;
     if (to === "pending") {
       const { startsAt } = visitInstants(labelOf(current.scheduledDate), current.startTime, current.endTime, context.settings.timeZone);
-      set.pendingExpiresAt = pendingDeadline(context.settings, now, current.startsAt ?? startsAt);
+      set.pendingExpiresAt = pendingDeadline(context.settings, clock, current.startsAt ?? startsAt);
     }
   }
   if (to === "declined" || to === "cancelled") {
@@ -367,14 +409,27 @@ export async function setBookingStatus(
   const parsed = setBookingStatusSchema.parse(input);
   const found = await getBookingRow(db, tenantId, parsed.id);
   if (!found) return false;
-  const now = options.now ?? new Date();
   const settings = await settingsFor(db, tenantId, options);
+  const enteredAt = options.now ?? new Date();
+  const backdated = options.occurredAt !== undefined;
+  const span = instantsOf(found, settings.timeZone);
+  // Started, done or a no-show can't have happened before the visit began.
+  const notBefore =
+    STARTED_STATUSES.includes(parsed.status) && span.startsAt.getTime() > found.createdAt.getTime()
+      ? { at: span.startsAt, what: "the visit starts" }
+      : { at: found.createdAt, what: "the visit was booked" };
+  // `stampAt`: when it happened (completed_at, cancelled_at…).
+  const stampAt = backdated ? parseHistoryDate(options.occurredAt, enteredAt, "occurredAt", notBefore, settings.timeZone) : enteredAt;
+  // A past record only when the visit is over; otherwise checked and told as usual.
+  const history = backdated && span.endsAt.getTime() <= enteredAt.getTime();
+  const now = history ? stampAt : enteredAt;
   const actor = options.actor ?? STAFF;
 
   const needsCheck = (row: BookingRow): boolean =>
+    !history &&
     row.resourceId !== null &&
     (isRevivingMove(row.status, parsed.status) ||
-      (row.status === "pending" && isActiveBookingStatus(parsed.status) && isOverdue(row, now)));
+      (row.status === "pending" && isActiveBookingStatus(parsed.status) && isOverdue(row, enteredAt)));
   const drives =
     needsCheck(found) && found.resourceId
       ? await driveTimesBeforeLock(db, options.maps ?? createHaversineMapsProvider(), {
@@ -383,7 +438,7 @@ export async function setBookingStatus(
           date: found.scheduledDate,
           job: found.lat != null && found.lng != null ? { lat: found.lat, lng: found.lng } : null,
           excludeBookingId: found.id,
-          now,
+          now: enteredAt,
         })
       : createHaversineMapsProvider();
 
@@ -408,7 +463,7 @@ export async function setBookingStatus(
           lat: current.lat,
           lng: current.lng,
           excludeBookingId: current.id,
-          now,
+          now: enteredAt,
         },
         drives,
       );
@@ -417,7 +472,7 @@ export async function setBookingStatus(
         throw new BookingNotBookableError(`${what}: ${check.reason ?? "its time is no longer free"}.`, check.code);
       }
     }
-    const set = statusEffects(current, parsed.status, { now, actor, reason: parsed.reason ?? null, settings });
+    const set = statusEffects(current, parsed.status, { now: stampAt, clock: enteredAt, actor, reason: parsed.reason ?? null, settings });
     const [after] = (await tx
       .update(schedulingBookings)
       .set(set)
@@ -434,9 +489,11 @@ export async function setBookingStatus(
         ...event,
         row: result.after,
         actor,
-        ...(options.notify !== undefined && event.type !== "visit.started" && event.type !== "visit.completed"
-          ? { notify: options.notify }
-          : {}),
+        ...(history
+          ? { notify: false, enteredLater: true }
+          : options.notify !== undefined && event.type !== "visit.started" && event.type !== "visit.completed"
+            ? { notify: options.notify }
+            : {}),
       };
       if (event.type === "visit.declined" || event.type === "visit.cancelled") spec.reason = parsed.reason ?? null;
       await emitEvents(db, tenantId, [spec], {

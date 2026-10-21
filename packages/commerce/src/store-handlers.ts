@@ -20,6 +20,9 @@ import {
   storeProductExists,
   updateStoreProduct,
   createStoreProduct,
+  recordStoreSale,
+  type StoreEventOptions,
+  type StoreSaleInput,
   type StoreCardPayments,
   type StoreDb,
 } from "./store.js";
@@ -228,6 +231,14 @@ export interface CreateStoreAdminHandlersOptions {
   readonly notTakingOrders?: string;
   /** Your limit on photo uploads, per business: false → 429. Default: none. */
   readonly photoRateLimit?: (tenantId: string) => boolean | Promise<boolean>;
+  /**
+   * commerce 0.4, a sale recorded by hand: the store's `onOrder` (the
+   * customer's timeline and the receipt), told once after the sale commits —
+   * the same one the webhook's orders use.
+   */
+  readonly onOrder?: StoreEventOptions["onOrder"];
+  /** The order number's prefix (1–8 letters or digits). Default "ORD": the webhook's own. */
+  readonly orderPrefix?: string;
   readonly onError?: (error: unknown, context: { tenantId: string | null; route: string }) => void;
 }
 
@@ -251,6 +262,7 @@ function adminRoute(method: string, pathname: string): { kind: StoreAdminRouteKi
   if (n === 3 && a === "products" && c === "release") return { kind: "product-release", id: b! };
   if (n === 1 && a === "settings") return { kind: "settings-save", id: null };
   if (n === 3 && a === "orders" && c === "sent") return { kind: "order-sent", id: b! };
+  if (n === 1 && a === "sales") return { kind: "sale-record", id: null };
   if (n === 3 && a === "attention" && c === "resolve") return { kind: "attention-resolve", id: b! };
   void d;
   return null;
@@ -375,6 +387,16 @@ export function createStoreAdminHandlers(options: CreateStoreAdminHandlersOption
           const row = await resolveStoreAlert(options.db, scoped, id, userId);
           if (!row) throw notFound();
           return json({ alert: storeAlertWire(row) });
+        }
+        case "sale-record": {
+          const body = (await readJson(req)) as Record<string, unknown>;
+          const sale = await recordStoreSale(options.db, scoped, body as unknown as StoreSaleInput, {
+            recordedBy: userId,
+            ...(options.onOrder ? { onOrder: options.onOrder } : {}),
+            ...(options.orderPrefix ? { orderPrefix: options.orderPrefix } : {}),
+            report: reportFor,
+          });
+          return json(sale, sale.duplicate ? 200 : 201);
         }
       }
     } catch (error) {

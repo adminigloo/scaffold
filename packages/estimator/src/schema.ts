@@ -392,6 +392,14 @@ export const estimatorEstimates = pgTable(
     createdBy: text("created_by"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
+    /**
+     * 0.7, past records: when and by whom an estimate made on an EARLIER day
+     * (`occurredAt`) was typed in. Its own dates (created, sent, accepted…)
+     * say when things happened; these say it was entered later. Null on an
+     * estimate made the day it happened.
+     */
+    enteredAt: instant("entered_at"),
+    enteredBy: text("entered_by"),
   },
   (t) => [
     index("estimator_estimates_tenant_idx").on(t.tenantId, t.status),

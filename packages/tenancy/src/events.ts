@@ -64,6 +64,8 @@ export type TenancyEvent = Stamped &
       }
     | { readonly type: "ownership.transferred"; readonly tenantId: string; readonly from: string; readonly to: string }
     | { readonly type: "company.suspended" | "company.reactivated"; readonly tenantId: string; readonly by: string }
+    /** Tenancy 0.8: deleted for good by staff. Nothing of it is left to read; a listener only tidies what's outside the database. */
+    | { readonly type: "company.deleted"; readonly tenantId: string; readonly by: string }
     | { readonly type: "invitation.sent"; readonly tenantId: string; readonly invitationId: string; readonly by: string }
     /**
      * Tenancy 2a: a settings section saved (`changed`: the same field list as

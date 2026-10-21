@@ -25,6 +25,7 @@
  */
 
 import { tenantLabel, tenantLabelPlural, type Answers } from "./answers.js";
+import { tenancyDeletionOption } from "./forget-company-emit.js";
 
 /** True for every noun except `none`: the customer is a company somebody names. */
 export function companiesMode(answers: Answers): boolean {
@@ -543,7 +544,7 @@ export const tenancy = createTenancyService({
   // The platform's own name is not a customer's web address (review T1-07).
   reservedSlugs: ${JSON.stringify(reserved)},
   invitations: { expiresInHours: INVITATION_EXPIRY_HOURS },
-  audit: auditSink,${companyOptions}
+  audit: auditSink,${companyOptions}${tenancyDeletionOption(answers)}
   onEventError: (error, event) => {
     log.error({ err: error, event: event.type }, "a tenancy event listener failed");
   },

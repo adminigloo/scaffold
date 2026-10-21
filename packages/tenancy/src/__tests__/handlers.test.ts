@@ -122,16 +122,18 @@ describe("every route answers its documented 200 shape (the table, read back)", 
   });
 
   it("operator routes", async () => {
-    h = await harness();
+    // Delete a company (0.8) needs the project's forget step; nothing else to forget here.
+    h = await harness({ deletion: { forget: async () => ({ counts: {} }) } });
     const w = await world();
     const { operator } = handlersFor(h);
     const shapes: Record<string, string[]> = {
       "admin-companies": ["companies", "total", "page", "pageSize"],
-      "admin-company": ["company", "members", "pendingInvitations", "invitations", "retiredAddresses", "activity", "can"],
-      "admin-suspend": ["company", "members", "pendingInvitations", "invitations", "retiredAddresses", "activity", "can"],
-      "admin-reactivate": ["company", "members", "pendingInvitations", "invitations", "retiredAddresses", "activity", "can"],
-      "admin-assign-owner": ["company", "members", "pendingInvitations", "invitations", "retiredAddresses", "activity", "can"],
-      "admin-release-addresses": ["company", "members", "pendingInvitations", "invitations", "retiredAddresses", "activity", "can"],
+      "admin-company": ["company", "members", "pendingInvitations", "invitations", "retiredAddresses", "activity", "can", "deletion"],
+      "admin-suspend": ["company", "members", "pendingInvitations", "invitations", "retiredAddresses", "activity", "can", "deletion"],
+      "admin-reactivate": ["company", "members", "pendingInvitations", "invitations", "retiredAddresses", "activity", "can", "deletion"],
+      "admin-assign-owner": ["company", "members", "pendingInvitations", "invitations", "retiredAddresses", "activity", "can", "deletion"],
+      "admin-release-addresses": ["company", "members", "pendingInvitations", "invitations", "retiredAddresses", "activity", "can", "deletion"],
+      "admin-delete": ["deleted"],
       "admin-people": ["people", "total", "page", "pageSize", "roles", "you"],
       "admin-staff-roles": ["roles"],
       "admin-staff-role-set": ["person"],
@@ -143,6 +145,8 @@ describe("every route answers its documented 200 shape (the table, read back)", 
       "admin-release-addresses": {},
       "admin-staff-role-set": { templateKey: "cs_agent" },
     };
+    // The delete route is answered last among the company routes (it leaves nothing to suspend).
+    bodies["admin-delete"] = { confirmSlug: (await h.tenancy.getCompanyDetail({ actorUserId: w.ava, tenantId: w.A })).company.slug };
     for (const route of TENANCY_OPERATOR_ROUTES) {
       const path = route.path.replace(":tenantId", w.A).replace(":userId", w.b);
       const res = await operator.handle(

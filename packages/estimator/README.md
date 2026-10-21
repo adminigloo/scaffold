@@ -374,7 +374,9 @@ CREATE TABLE "estimator_estimates" (
   "response_note" text,
   "created_by" text,
   "created_at" timestamp with time zone NOT NULL DEFAULT now(),
-  "updated_at" timestamp with time zone NOT NULL DEFAULT now()
+  "updated_at" timestamp with time zone NOT NULL DEFAULT now(),
+  "entered_at" timestamp with time zone,
+  "entered_by" text
 );
 CREATE INDEX "estimator_estimates_tenant_idx" ON "estimator_estimates" ("tenant_id", "status");
 CREATE UNIQUE INDEX "estimator_estimates_tenant_number_uniq" ON "estimator_estimates" ("tenant_id", "estimate_number");
@@ -1209,6 +1211,38 @@ leads.
 - **Checking an address before it gets a company's alert emails.** The owner
   adds up to five per group; the company's team sending allowance bounds what
   they get.
+
+## Past records with their real dates (0.7)
+
+A business moving its old quotes in gives each one the day it really
+happened, on the staff side only (no public route takes a date):
+
+- `createEstimate(db, input, createdBy, { occurredAt })` and
+  `POST v1/admin/estimates` with `occurredAt`: the estimate is made on that
+  day (its number is that year's).
+- `setEstimateStatus(db, tenantId, { id, status }, { occurredAt })` and
+  `POST v1/admin/estimates/{id}/status` with `occurredAt`: sent, accepted,
+  declined or reopened on that day. `"sent"` with a date records that the
+  quote went out then and emails nobody; the customer is never told.
+
+A date in the future, before 2000, or before the estimate was made is
+refused (400 `invalid`, naming `occurredAt`). The estimate keeps the real
+day in its usual columns, and `entered_at` / `entered_by` say when and by
+whom it was typed in; the staff detail shows "Entered from past records".
+A past quote whose time ran out before it was typed in expires without
+telling anyone: no "your quote has expired" email about last year's quote.
+A date alone ("2025-06-14") is that calendar day where the business is
+(its time zone): it is saved as noon there, so every screen in that zone
+shows the 14th, and "today" is today there. A full timestamp
+("2025-06-14T15:00:00Z") is the instant it names. Giving a past date on the
+staff routes needs its own permission, `estimator.history` ("Enter past records",
+owner and admin by default); without it the route answers 403.
+Upgrading from 0.6: run your migration generator, or
+
+```sql
+ALTER TABLE "estimator_estimates" ADD COLUMN IF NOT EXISTS "entered_at" timestamp with time zone;
+ALTER TABLE "estimator_estimates" ADD COLUMN IF NOT EXISTS "entered_by" text;
+```
 
 ## Upgrading from 0.2
 

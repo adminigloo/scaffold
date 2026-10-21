@@ -26,6 +26,7 @@ import {
   settledStatus,
   type StoredInvoiceStatus,
 } from "./status.js";
+import { parseHistoryDate } from "./history.js";
 import { invoiceItems, invoicePayments, invoices } from "./schema.js";
 import { INVOICE_LIST_STATUSES, PAYMENT_METHODS, type InvoiceListStatus } from "./constants.js";
 
@@ -305,8 +306,26 @@ export async function createInvoice(
   db: InvoicingDb,
   input: CreateInvoiceInput,
   createdBy?: string,
+  options: {
+    /** Default the process clock. */
+    readonly now?: Date;
+    /**
+     * 0.7, past records (staff and server paths only): the day this invoice
+     * was really issued — not in the future, not before 2000. It is saved as
+     * issued (sent) that day, without emailing anyone; its number is that
+     * year's; `entered_at`/`entered_by` record that it was typed in now.
+     */
+    readonly issuedAt?: Date | string;
+    /**
+     * The business's zone (IANA, default UTC): an `issuedAt` day
+     * ("2025-06-14") is that day there, and "today" is today there.
+     */
+    readonly timeZone?: string | null;
+  } = {},
 ): Promise<CreatedInvoice> {
   const parsed = createInvoiceSchema.parse(input);
+  const enteredAt = options.now ?? new Date();
+  const issuedAt = options.issuedAt !== undefined ? parseHistoryDate(options.issuedAt, enteredAt, "issuedAt", null, options.timeZone) : null;
   const priced = parsed.items.map((item) => ({
     ...item,
     total: item.unitPrice * item.quantity,
@@ -329,7 +348,7 @@ export async function createInvoice(
         // so a row's number and its created_at can never land in different
         // years (the DB's now() and this process's clock can disagree across
         // midnight on Dec 31) — and it's millisecond-exact for the list cursor.
-        const createdAt = new Date();
+        const createdAt = issuedAt ?? options.now ?? new Date();
         const invoiceNumber = await nextInvoiceNumber(tx, parsed.tenantId, createdAt);
         lastNumber = invoiceNumber;
         const [invoice] = await tx
@@ -337,7 +356,8 @@ export async function createInvoice(
           .values({
             tenantId: parsed.tenantId,
             invoiceNumber,
-            status: "draft",
+            status: issuedAt ? "sent" : "draft",
+            ...(issuedAt ? { sentAt: issuedAt, enteredAt, enteredBy: createdBy ?? null } : {}),
             customerName: parsed.customerName ?? null,
             customerEmail: parsed.customerEmail ?? null,
             customerPhone: parsed.customerPhone ?? null,
@@ -943,6 +963,21 @@ export interface RecordPaymentOptions {
    * much to give back.
    */
   allowOverpayment?: boolean;
+  /** Default the process clock. */
+  now?: Date;
+  /**
+   * 0.7, past records (staff and server paths only): the day the money was
+   * really paid — not in the future, not before 2000, not before the invoice
+   * was issued. The payment's `paid_at` is that day (its `created_at` and
+   * `recorded_by` say when and by whom it was entered), and so is the
+   * invoice's when this payment settles it.
+   */
+  paidAt?: Date | string;
+  /**
+   * The business's zone (IANA, default UTC): a `paidAt` day ("2025-06-20")
+   * is that day there, and "today" is today there.
+   */
+  timeZone?: string | null;
 }
 
 export interface PaymentOutcome {
@@ -1013,7 +1048,11 @@ export async function recordPayment(
     // nothing; money taken against it is an overpayment for no work.
     if (!(await hasLiveLines(tx, inv.id))) throw new InvoiceHasNoLinesError("pay");
 
-    const now = new Date();
+    const enteredAt = options.now ?? new Date();
+    const now =
+      options.paidAt !== undefined
+        ? parseHistoryDate(options.paidAt, enteredAt, "paidAt", { at: inv.createdAt, what: "the invoice was issued" }, options.timeZone)
+        : enteredAt;
     const [payment] = (await tx
       .insert(invoicePayments)
       .values({
@@ -1024,6 +1063,7 @@ export async function recordPayment(
         externalRef: parsed.externalRef ?? null,
         paidAt: now,
         recordedBy: recordedBy ?? null,
+        createdAt: enteredAt,
       })
       .returning({ id: invoicePayments.id })) as Array<{ id: string }>;
 
@@ -1036,7 +1076,7 @@ export async function recordPayment(
         status,
         paidAt,
         ...(inv.status === "draft" && !inv.sentAt ? { sentAt: now } : {}),
-        updatedAt: now,
+        updatedAt: enteredAt,
       })
       .where(eq(invoices.id, inv.id));
 
@@ -1202,3 +1242,9 @@ export async function setInvoiceStatus(
     return true;
   });
 }
+
+// Delete a company (create-app 0.37): every row of one company, children first.
+export { forgetTenant } from "./forget.js";
+
+// Past records (0.7): the date rules for entering history with its real dates.
+export { HISTORY_EARLIEST, historyDateSchema, parseHistoryDate } from "./history.js";

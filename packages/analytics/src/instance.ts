@@ -47,6 +47,7 @@ import {
   type UpdateWebsiteInput,
   type Website,
 } from "./websites.js";
+import { importVisitsIn, type ImportVisitsInput, type ImportVisitsResult } from "./import.js";
 import * as reports from "./reports.js";
 import { analyticsTables, type AnalyticsTables } from "./schema.js";
 import { createCrawlerVerifier, type CrawlerVerifier } from "./verify.js";
@@ -227,6 +228,13 @@ export function createAnalytics(options: CreateAnalyticsOptions) {
      * hours (and the rest of today) stop counting. Needs an audience.
      */
     markVisitorInternal: (input: MarkVisitorInternalInput): Promise<MarkVisitorInternalResult> => markVisitorInternalIn(ctx, input),
+    /**
+     * Past visits brought in from another tool (0.4), server-side only: no
+     * route takes them. Idempotent by each visit's `key`; the audience still
+     * decides what counts; tracking-since moves back to the earliest. See
+     * import.ts.
+     */
+    importVisits: (input: ImportVisitsInput): Promise<ImportVisitsResult> => importVisitsIn(ctx, input),
 
     // ------------------------------------------------------------ reports
     getTrackingSince: gated(reports.getTrackingSince),

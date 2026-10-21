@@ -292,6 +292,9 @@ export function buildStoreAdminHandlers(overrides: FeatureHandlerOverrides = {})
     productLimit: (tenantId) => storeProductLimit(tenantId),` : ""}
     currency: () => DEFAULT_CURRENCY,
     notTakingOrders: "Customers can see your store but can't pay yet: connect Stripe at Card payments.",
+    // A sale staff record by hand (commerce 0.4): the same order hook as the
+    // webhook's orders — the buyer's timeline, and the receipt when asked.
+    onOrder: (order, owed) => storeEventOptions(order.tenantId).onOrder?.(order, owed),
     onError: reportStoreError,
   });
 }
@@ -370,6 +373,9 @@ export function buildStoreAdminHandlers() {
     photoRateLimit: storePhotoRateLimit,` : ""}
     currency: () => "usd",
     notTakingOrders: "Customers can see your store but can't pay yet: set STRIPE_SECRET_KEY and the payments webhook's secret (see DEPLOYMENT.md, Taking card payments).",
+    // A sale staff record by hand (commerce 0.4): the same order hook as the
+    // webhook's orders — the buyer's timeline, and the receipt when asked.
+    onOrder: (order, owed) => storeEventOptions(order.tenantId).onOrder?.(order, owed),
     onError: reportStoreError,
   });
 }

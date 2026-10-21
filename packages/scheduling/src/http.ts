@@ -93,6 +93,10 @@ export const WIRE_ERROR_STATUS: Record<WireErrorCode, number> = {
 };
 
 /** An error a handler answers as is: code, message, and `issues` for a form. */
+/** 0.7: a past date without `schedule.history`. */
+export const HISTORY_FORBIDDEN_MESSAGE =
+  "Giving a past date needs the “Enter past records” permission. Leave the date out to record it as today, or ask the owner.";
+
 export class HttpError extends Error {
   readonly name = "HttpError";
   constructor(

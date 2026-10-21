@@ -134,3 +134,6 @@ export function createAudiences<TUser extends AudienceUser = AudienceUser>(optio
 
 export type Audiences<TUser extends AudienceUser = AudienceUser> = ReturnType<typeof createAudiences<TUser>>;
 export type { RuleDraftInput, RuleDraftIssue, RuleDraftParseResult, RuleDraftSchema } from "./draft.js";
+
+// Delete a company (create-app 0.37): every row of one company, children first.
+export { forgetTenant } from "./forget.js";

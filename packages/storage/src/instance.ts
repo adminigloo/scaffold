@@ -6,6 +6,7 @@ import { grantFor, readerFor } from "./grant.js";
 import { FILE_TYPES, formatBytes, imageSize, sniffFileType, typesInWords } from "./file-types.js";
 import { isLegacyKey, newPrivateKey, newPublicKey, PUBLIC_SEGMENT_PATTERN, sha256Hex, base64url, fromBase64url } from "./keys.js";
 import { runMoveToPrivate } from "./move.js";
+import type { StoredObjectRef } from "./forget.js";
 import { purposeMap, STORAGE_BUILT_IN_PURPOSES, type StoragePurpose } from "./purposes.js";
 import { recordMap, type StorageRecordType } from "./records.js";
 import type { StorageTables, StoredFilesTable } from "./schema.js";
@@ -221,6 +222,15 @@ export interface Storage {
   /** The public handler's two lookups (6.8). */
   resolveLink(token: string): Promise<StoredFile | null>;
   publicFile(randomPart: string): Promise<StoredFile | null>;
+  /**
+   * A forgotten company's bytes (create-app's "delete a company"): deletes
+   * each object from the store it is in, once the deletion's transaction has
+   * committed and no row points at them (`listTenantObjects` read them on
+   * that transaction). Never throws: a delete that fails is reported (step
+   * "forget-object") and counted, and the object stays in a store nothing
+   * reads (its key is unguessable and no row names it).
+   */
+  deleteObjects(objects: readonly StoredObjectRef[]): Promise<{ readonly deleted: number; readonly failed: number }>;
   /** The files cron (D13). */
   purgeDeleted(options?: { readonly limit?: number; readonly timeBudgetMs?: number }): Promise<{ readonly purged: number; readonly failed: number; readonly gaveUp: number }>;
   /**
@@ -851,6 +861,22 @@ export function createStorage(options: CreateStorageOptions): Storage {
     resolveLink,
     publicFile,
     purgeDeleted,
+    async deleteObjects(objects) {
+      let deleted = 0;
+      let failed = 0;
+      for (const object of objects ?? []) {
+        const source = stores[object?.access === "public" ? "public" : "private"];
+        try {
+          if (!source) throw new Error(`No ${object?.access === "public" ? "public" : "private"} store is configured, so a forgotten company's file can't be deleted.`);
+          await source.delete(object.pathname);
+          deleted += 1;
+        } catch (error) {
+          failed += 1;
+          report(error, null, "forget-object");
+        }
+      }
+      return { deleted, failed };
+    },
     moveToPrivate: (moveOptions) =>
       runMoveToPrivate(
         { db, files: f, stores, purposes, now: clock, report },

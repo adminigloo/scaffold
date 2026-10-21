@@ -14,7 +14,7 @@ import {
 } from "../parts.js";
 import { isUnconnected, useAnnouncer, useLoaded } from "../transport.js";
 import { zoneLabel } from "../timezones.js";
-import type { PersonRefWire } from "../types.js";
+import type { DeletedCompanyWire, PersonRefWire } from "../types.js";
 import { DETAIL, errorText, nounOf, NOT_CONNECTED_MESSAGE, TEAM, W } from "../words.js";
 import type { TenancyAdminTransport } from "./client.js";
 import { AdminRoot, useAdminTransport } from "./ui.js";
@@ -38,6 +38,11 @@ export interface CompanyDetailProps extends ChromeProps, NounProps {
   tenantId: string;
   /** Default "/admin/companies". */
   backHref?: string;
+  /**
+   * After a deletion (tenancy 0.8). Default: the page says what was removed
+   * and offers the way back to the list.
+   */
+  onDeleted?: (deleted: DeletedCompanyWire) => void;
 }
 
 const REASON_MIN = 3;
@@ -54,7 +59,17 @@ export function CompanyDetail(props: CompanyDetailProps) {
   const unconnected = isUnconnected(props.transport, props.baseUrl);
   const detail = useLoaded(() => transport.company(tenantId), undefined, unconnected ? null : tenantId);
   const { status, alert, announce, fail } = useAnnouncer();
-  const [dialog, setDialog] = useState<"suspend" | "reactivate" | "owner" | "release" | null>(null);
+  const [dialog, setDialog] = useState<"suspend" | "reactivate" | "owner" | "release" | "delete" | null>(null);
+  const [typedSlug, setTypedSlug] = useState("");
+  const [typedError, setTypedError] = useState<string | null>(null);
+  const [forceDelete, setForceDelete] = useState(false);
+  const [forceReason, setForceReason] = useState("");
+  const [forceError, setForceError] = useState<string | null>(null);
+  const [deleted, setDeleted] = useState<DeletedCompanyWire | null>(null);
+  const typedId = useId();
+  const forceId = useId();
+  const forceReasonId = useId();
+  const deleteWarningId = useId();
   const [newOwner, setNewOwner] = useState("");
   const ownerSelectId = useId();
   const [reason, setReason] = useState("");
@@ -76,6 +91,19 @@ export function CompanyDetail(props: CompanyDetailProps) {
     );
   }
   const data = detail.data;
+  if (deleted) {
+    return (
+      <AdminRoot {...chrome} data={{ "aitw-deleted": deleted.id }}>
+        <div className="aitw-panel">
+          <Notice tone="ok">{DETAIL.deleted(deleted.name, deleted.rows)}</Notice>
+          <a href={backHref} className="aitw-btn aitw-btn-link aitw-back" data-aitw-back="">
+            {DETAIL.back(noun)}
+          </a>
+          <LiveRegion status={status} alert={alert} />
+        </div>
+      </AdminRoot>
+    );
+  }
   // A button-shaped link: 44px tall, the way every target is below 640px
   // (contract 8.13; the plain link was 22px, review T1-15).
   const back = (
@@ -163,6 +191,39 @@ export function CompanyDetail(props: CompanyDetailProps) {
       setDialog(null);
       announce(DETAIL.released);
     } else setDialogError(errorText(res.error, noun));
+  };
+
+  const stillPaying = data.deletion.stillPaying;
+  const removeCompany = async (event: FormEvent) => {
+    event.preventDefault();
+    if (busy) return;
+    if (typedSlug.trim().toLowerCase() !== company.slug) {
+      setTypedError(DETAIL.deleteMismatch(company.slug));
+      return;
+    }
+    const why = forceReason.trim();
+    if (forceDelete && (why.length < REASON_MIN || why.length > REASON_MAX)) {
+      setForceError(DETAIL.reasonShort);
+      return;
+    }
+    setTypedError(null);
+    setForceError(null);
+    setDialogError(null);
+    setBusy(true);
+    const res = await transport.deleteCompany(tenantId, { confirmSlug: typedSlug.trim(), ...(forceDelete ? { force: { reason: why } } : {}) });
+    setBusy(false);
+    if (res.ok) {
+      setDialog(null);
+      announce(DETAIL.deleted(res.data.name, res.data.rows));
+      if (props.onDeleted) props.onDeleted(res.data);
+      else setDeleted(res.data);
+      return;
+    }
+    const typedIssue = res.error.issues?.find((i) => i.path[0] === "confirmSlug");
+    const forceIssue = res.error.issues?.find((i) => i.path[0] === "force");
+    if (typedIssue) setTypedError(typedIssue.message);
+    else if (forceIssue && forceDelete) setForceError(forceIssue.message);
+    else setDialogError(errorText(res.error, noun));
   };
 
   const owner = company.owner;
@@ -380,9 +441,104 @@ export function CompanyDetail(props: CompanyDetailProps) {
             </ul>
           )}
         </section>
+        {data.can.delete ? (
+          <section className="aitw-panel" aria-labelledby={`${headingId}-delete`} data-aitw-delete-section="">
+            <h2 className="aitw-title" id={`${headingId}-delete`}>
+              {DETAIL.deleteHeading(noun)}
+            </h2>
+            <p className="aitw-sub">{DETAIL.deleteIntro(company.name)}</p>
+            {stillPaying ? (
+              <Notice tone="warn">
+                <span data-aitw-still-paying="">{DETAIL.deleteStillPaying(company.name, stillPaying)}</span>
+              </Notice>
+            ) : null}
+            <div className="aitw-actions">
+              <button
+                type="button"
+                className="aitw-btn aitw-btn-danger-outline"
+                onClick={() => {
+                  setDialogError(null);
+                  setTypedError(null);
+                  setForceError(null);
+                  setTypedSlug("");
+                  setForceDelete(false);
+                  setForceReason("");
+                  setDialog("delete");
+                }}
+              >
+                {DETAIL.deleteButton(noun)}
+              </button>
+            </div>
+          </section>
+        ) : null}
         <LiveRegion status={status} alert={alert} />
       </div>
 
+      {dialog === "delete" ? (
+        <Dialog title={DETAIL.deleteTitle(company.name)} onClose={() => setDialog(null)} describedBy={deleteWarningId} data={{ "aitw-delete": "" }}>
+          <form className="aitw-form" onSubmit={(event) => void removeCompany(event)} noValidate>
+            <p id={deleteWarningId}>{DETAIL.deleteIntro(company.name)}</p>
+            {stillPaying ? <p className="aitw-danger-text">{DETAIL.deleteStillPaying(company.name, stillPaying)}</p> : null}
+            <Field id={typedId} label={DETAIL.deleteTypeLabel} hint={DETAIL.deleteType(company.slug)} error={typedError}>
+              <input
+                id={typedId}
+                className="aitw-input"
+                autoComplete="off"
+                spellCheck={false}
+                value={typedSlug}
+                aria-invalid={typedError ? true : undefined}
+                aria-describedby={describedBy(typedId, true, typedError)}
+                onChange={(event) => {
+                  setTypedSlug(event.target.value);
+                  if (typedError) setTypedError(null);
+                }}
+              />
+            </Field>
+            {stillPaying ? (
+              <>
+                <label className="aitw-row" htmlFor={forceId}>
+                  <input id={forceId} type="checkbox" checked={forceDelete} onChange={(event) => setForceDelete(event.target.checked)} />
+                  <span>{DETAIL.deleteForce}</span>
+                </label>
+                {forceDelete ? (
+                  <Field id={forceReasonId} label={DETAIL.deleteForceReason} hint={DETAIL.reasonHint} error={forceError}>
+                    <textarea
+                      id={forceReasonId}
+                      className="aitw-input"
+                      maxLength={REASON_MAX}
+                      value={forceReason}
+                      aria-invalid={forceError ? true : undefined}
+                      aria-describedby={describedBy(forceReasonId, true, forceError)}
+                      onChange={(event) => {
+                        setForceReason(event.target.value);
+                        if (forceError) setForceError(null);
+                      }}
+                    />
+                  </Field>
+                ) : null}
+              </>
+            ) : null}
+            {dialogError ? (
+              <p className="aitw-danger-text" role="alert">
+                {dialogError}
+              </p>
+            ) : null}
+            <div className="aitw-dialog-actions">
+              <button type="button" className="aitw-btn aitw-btn-secondary" onClick={() => setDialog(null)}>
+                {W.cancel}
+              </button>
+              <button
+                type="submit"
+                className="aitw-btn aitw-btn-danger"
+                disabled={busy || (stillPaying !== null && !forceDelete)}
+                aria-busy={busy || undefined}
+              >
+                {DETAIL.deleteConfirm}
+              </button>
+            </div>
+          </form>
+        </Dialog>
+      ) : null}
       {dialog === "suspend" ? (
         <Dialog title={DETAIL.suspendTitle(company.name)} onClose={() => setDialog(null)} describedBy={warningId} data={{ "aitw-suspend": "" }}>
           <form className="aitw-form" onSubmit={(event) => void suspend(event)} noValidate>

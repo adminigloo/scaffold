@@ -80,3 +80,9 @@ export {
   type EstimatorFileRecordType,
   type EstimatorFileRecordsOptions,
 } from "./files.js";
+
+// Delete a company (create-app 0.37): every row of one company, children first.
+export { forgetTenant } from "./forget.js";
+
+// Past records (0.7): the date rules for entering history with its real dates.
+export { HISTORY_EARLIEST, historyDateSchema, parseHistoryDate } from "./history.js";

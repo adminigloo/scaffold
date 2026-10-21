@@ -63,3 +63,31 @@ project's isolation test.
 | `license` | Shared | checks the site's own licence key with the seller; one per site, not per business |
 | `observability` | Shared | the site owner's error log and health checks, across every business |
 | `create-app` | Shared | the generator itself; it writes the project and is never installed into it |
+
+## When a company is deleted
+
+Staff delete a company from its page in the operator console (typing its web
+address again; one still paying for a plan needs "delete it anyway" and a
+reason). Everything it kept goes in one transaction, and one audit row records
+who, when, its name and what went. Every per-company package says how its
+rows go — `FORGET_COVERAGE` in the same test file checks it:
+
+- **Its own `forgetTenant`**: every package above that keeps a table with a
+  company column — `permissions`, `estimator`, `scheduling`, `invoicing`,
+  `comms`, `email`, `notifications`, `storage` (and the files' bytes, after the
+  transaction), `feedback`, `assistant`, `ai`, `billing`, `analytics`,
+  `audience`, `seo-reports`, `aeo`, `booking`, `stripe`, `commerce`, `catalog`
+  and `customers`. A generated project's `src/server/forget-company.ts` calls
+  each one it installed, and its `forget-company.test.ts` plants a row in every
+  table with a company column (read from the database) and fails, naming the
+  table, when one is missed — or when another company's rows go too.
+- **Tenancy itself**: the team, invitations and address history. The company's
+  row stays, emptied, and so do its old web addresses, so they are never given
+  to another business.
+- **Nothing to forget**: the screens (`*-widget`), `trpc`, `testing`, `auth`
+  (a person's account is theirs; a current company pointing at a deleted one is
+  cleared) and `seo` (its words live in the company's settings, which are
+  emptied).
+
+Kept on purpose: the site's audit log (the deletion is one of its rows) and
+its error log.

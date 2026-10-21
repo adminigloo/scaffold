@@ -188,7 +188,7 @@ describe("<CompanyDetail>", () => {
   });
 
   it("without the permission the words don't promise a control that isn't there", async () => {
-    const f = fakeAdmin({ company: () => ok(adminDetail({ can: { suspend: true, assignOwner: false, releaseAddresses: false } }, { ownerDeleted: true })) });
+    const f = fakeAdmin({ company: () => ok(adminDetail({ can: { suspend: true, assignOwner: false, releaseAddresses: false, delete: false } }, { ownerDeleted: true })) });
     const { container, unmount } = await mount(<CompanyDetail transport={f.transport} tenantId="t-summit" />);
     expect(button(container, "Change owner")).toBeNull();
     expect(text(container.querySelector("[data-aitw-owner]"))).not.toContain("Use Change owner");
@@ -246,8 +246,58 @@ describe("<CompanyDetail>", () => {
     await unmount();
   });
 
+  it("delete (tenancy 0.8): offered only with the permission; the web address must be typed; then the page says what was removed", async () => {
+    const none = fakeAdmin({ company: () => ok(adminDetail()) });
+    const a = await mount(<CompanyDetail transport={none.transport} tenantId="t-summit" />);
+    expect(a.container.querySelector("[data-aitw-delete-section]")).toBeNull();
+    await a.unmount();
+
+    const deleted = { id: "t-summit", name: "Summit Window Co.", slug: "summit-window-co", deletedAt: "2026-10-20T09:30:00.000Z", rows: 42, counts: { customers: 12 }, forced: false };
+    const f = fakeAdmin({
+      company: () => ok(adminDetail({ can: { suspend: true, assignOwner: true, releaseAddresses: true, delete: true } })),
+      deleteCompany: () => ok(deleted),
+    });
+    const { container, unmount } = await mount(<CompanyDetail transport={f.transport} tenantId="t-summit" />);
+    expect(text(container.querySelector("[data-aitw-delete-section]"))).toContain("It can't be undone.");
+    await click(button(container, "Delete company…"));
+    const d = dialog()!;
+    expect(text(d.querySelector("h2"))).toBe("Delete Summit Window Co. for good?");
+    await type(labelled(d, "Web address"), "summit");
+    await submit(d.querySelector("form"));
+    expect(f.of("deleteCompany")).toHaveLength(0);
+    expect(text(dialog()!)).toContain("Type the web address exactly: summit-window-co");
+    await type(labelled(dialog()!, "Web address"), "summit-window-co");
+    await submit(dialog()!.querySelector("form"));
+    expect(f.of("deleteCompany").map((c) => c.args)).toEqual([["t-summit", { confirmSlug: "summit-window-co" }]]);
+    expect(text(container)).toContain("Summit Window Co. was deleted: 42 records removed.");
+    expect(link(container, "Back to companies")).not.toBeNull();
+    await unmount();
+  });
+
+  it("delete: a company still paying is named before anything is typed; Delete waits for 'anyway' and a reason", async () => {
+    const f = fakeAdmin({
+      company: () =>
+        ok(adminDetail({ can: { suspend: true, assignOwner: true, releaseAddresses: true, delete: true }, deletion: { available: true, stillPaying: "Pro, active" } })),
+      deleteCompany: () => ok({ id: "t-summit", name: "Summit Window Co.", slug: "summit-window-co", deletedAt: "2026-10-20T09:30:00.000Z", rows: 3, counts: {}, forced: true }),
+    });
+    const { container, unmount } = await mount(<CompanyDetail transport={f.transport} tenantId="t-summit" />);
+    expect(text(container.querySelector("[data-aitw-still-paying]"))).toBe(
+      "Summit Window Co. is still paying for Pro, active. Cancel it in Stripe first — deleting doesn't stop the charges.",
+    );
+    await click(button(container, "Delete company…"));
+    await type(labelled(dialog()!, "Web address"), "summit-window-co");
+    expect((button(dialog()!, "Delete for good") as HTMLButtonElement).disabled).toBe(true);
+    await check(labelled(dialog()!, "Delete it anyway"), true);
+    await submit(dialog()!.querySelector("form"));
+    expect(f.of("deleteCompany")).toHaveLength(0);
+    await type(labelled(dialog()!, "Why it's being deleted anyway"), "Refunded by phone");
+    await submit(dialog()!.querySelector("form"));
+    expect(f.of("deleteCompany").map((c) => c.args)).toEqual([["t-summit", { confirmSlug: "summit-window-co", force: { reason: "Refunded by phone" } }]]);
+    await unmount();
+  });
+
   it("staff without the suspend permission see no lever; a non-staff caller gets the plain refusal", async () => {
-    const f = fakeAdmin({ company: () => ok(adminDetail({ can: { suspend: false, assignOwner: false, releaseAddresses: false } })) });
+    const f = fakeAdmin({ company: () => ok(adminDetail({ can: { suspend: false, assignOwner: false, releaseAddresses: false, delete: false } })) });
     const a = await mount(<CompanyDetail transport={f.transport} tenantId="t-summit" />);
     expect(button(a.container, "Suspend company")).toBeNull();
     await a.unmount();

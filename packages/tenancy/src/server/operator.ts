@@ -35,6 +35,7 @@ import type {
   AdminMember,
   AdminPeople,
   AdminPerson,
+  DeletedCompany,
   PersonRef,
   RequestFacts,
   StaffRoleView,
@@ -236,6 +237,13 @@ async function detailOf(ctx: Ctx, db: TenancyDb, company: CompanyRow, can: Reado
       suspend: can.has("staff.tenants.suspend"),
       assignOwner: can.has("staff.tenants.transfer"),
       releaseAddresses: can.has("staff.tenants.suspend"),
+      delete: can.has("staff.tenants.delete") && ctx.deletion !== undefined && company.id !== "*",
+    },
+    deletion: {
+      available: ctx.deletion !== undefined && company.id !== "*",
+      // Read only for someone who may delete: it is what the Delete box warns about.
+      stillPaying:
+        ctx.deletion?.livePaidSubscription && can.has("staff.tenants.delete") ? await ctx.deletion.livePaidSubscription(db, company.id) : null,
     },
   };
 }
@@ -408,6 +416,111 @@ export async function releaseRetiredAddresses(ctx: Ctx, input: OperatorMutation)
     }
     return detailOf(ctx, tx, company, can);
   });
+}
+
+/** Every table tenancy forgets for a deleted company (its row and old web addresses stay: see deleteCompany). */
+const TENANCY_FORGOTTEN = ["tenant_invitations", "tenant_members", "tenant_slug_changes"] as const;
+
+/**
+ * DELETE A COMPANY FOR GOOD (staff.tenants.delete; tenancy 0.8). Suspending
+ * keeps everything; this keeps nothing a business would call its own.
+ *
+ * The guards, in order: staff with the key; never the site's own records
+ * ("*"); a live company (a deleted one is not found); its web address typed
+ * again, exactly (`confirmation_mismatch` otherwise, which shows the address
+ * to type); and a company still paying for a plan is refused
+ * (`still_paying`) unless staff `force` it with a reason (3 to 500
+ * characters, kept in the audit row) — deleting it does not stop Stripe
+ * charging, so the person doing it must have decided that on purpose.
+ *
+ * Then, in ONE transaction under the company's lock: the project's forget
+ * step (`deletion.forget`: every installed package's rows, children first),
+ * tenancy's own rows (the team, invitations, address history), every
+ * person's "current company" pointing here cleared, and the company's row
+ * emptied (settings, branding, owner, Stripe customer) and marked deleted.
+ * The row itself and its old web addresses are KEPT, empty: a deleted
+ * company's address stays reserved, so its old links, invitation emails and
+ * receipts can never land a stranger on another business. One audit row,
+ * written on the same transaction and never forgotten with it, records who,
+ * when, the company's name and address, the counts, and the reason when
+ * forced. After the commit: `company.deleted` is emitted and the forget
+ * step's `afterCommit` (the files' bytes) runs, reported, never thrown.
+ */
+export async function deleteCompany(
+  ctx: Ctx,
+  input: OperatorMutation & { readonly confirmSlug: string; readonly force?: { readonly reason: string } },
+): Promise<DeletedCompany> {
+  if (input.tenantId === "*" || input.tenantId.trim() === "") throw ctx.fail("not_found");
+  const deletion = ctx.deletion;
+  const forceReason = input.force ? input.force.reason.trim() : null;
+  if (forceReason !== null && (forceReason.length < 3 || forceReason.length > 500)) {
+    throw ctx.fail("invalid", { issues: [{ path: ["force", "reason"], message: "Say why it's being deleted anyway (3 to 500 characters). Only staff see it." }] });
+  }
+  const out = await ctx.db.transaction(async (raw) => {
+    const tx = raw as unknown as TenancyDb;
+    await requireStaff(ctx, tx, input.actorUserId, "staff.tenants.delete");
+    if (!deletion) {
+      throw ctx.fail("unavailable", undefined, `This site can't delete a ${ctx.noun.singular} yet: its packages' forget step isn't connected.`);
+    }
+    const company = await liveCompany(ctx, tx, input.tenantId, true);
+    const typed = (input.confirmSlug ?? "").trim().toLowerCase();
+    if (typed !== company.slug) {
+      const message = `Type this ${ctx.noun.singular}'s web address exactly to confirm: ${company.slug}`;
+      throw ctx.fail("confirmation_mismatch", { issues: [{ path: ["confirmSlug"], message }] }, message);
+    }
+    const stillPaying = deletion.livePaidSubscription ? await deletion.livePaidSubscription(tx, company.id) : null;
+    if (stillPaying !== null && forceReason === null) {
+      const message = `${company.name} is still paying for ${stillPaying}. Cancel it first, or delete anyway and say why.`;
+      throw ctx.fail("still_paying", { issues: [{ path: ["force"], message }] }, message);
+    }
+    const forgotten = await deletion.forget(tx, company.id);
+    const counts: Record<string, number> = {};
+    for (const [table, n] of Object.entries(forgotten.counts)) if (Number(n) > 0) counts[table] = (counts[table] ?? 0) + Number(n);
+    for (const table of TENANCY_FORGOTTEN) {
+      const gone = await q(
+        tx,
+        sql`/* adminigloo:tenancy/forget-${sql.raw(table)} */
+          with gone as (delete from ${sql.raw(table)} where tenant_id = ${company.id} returning 1) select count(*) as n from gone`,
+      );
+      const n = num(gone[0]?.["n"]);
+      if (n > 0) counts[table] = n;
+    }
+    await tx.execute(sql`/* adminigloo:tenancy/forget-active */
+      update users set active_tenant_id = null where active_tenant_id = ${company.id}`);
+    const at = ctx.now();
+    await tx.execute(sql`/* adminigloo:tenancy/delete */
+      update tenants set deleted_at = ${at}, owner_user_id = null, stripe_customer_id = null, creation_key = null,
+        branding = '{}'::jsonb, settings = '{}'::jsonb, setup_state = '{}'::jsonb, updated_at = now()
+      where id = ${company.id}`);
+    const rows = Object.values(counts).reduce((a, b) => a + b, 0);
+    await ctx.audit(tx, {
+      action: "company.deleted",
+      actorUserId: input.actorUserId,
+      scope: "staff",
+      tenantId: company.id,
+      resourceType: "tenant",
+      resourceId: company.id,
+      metadata: {
+        name: company.name,
+        slug: company.slug,
+        rows,
+        counts,
+        ...(forceReason !== null ? { forced: true, reason: forceReason, stillPaying } : {}),
+      },
+      request: input.request ?? null,
+    });
+    const deleted: DeletedCompany = { id: company.id, name: company.name, slug: company.slug, deletedAt: at, rows, counts, forced: forceReason !== null };
+    return { deleted, afterCommit: forgotten.afterCommit };
+  });
+  ctx.emit({ type: "company.deleted", tenantId: out.deleted.id, by: input.actorUserId });
+  if (out.afterCommit) {
+    try {
+      await out.afterCommit();
+    } catch (error) {
+      ctx.report(error, "company.deleted.afterCommit");
+    }
+  }
+  return out.deleted;
 }
 
 async function staffRoleViews(db: TenancyDb, actorRank: number, topRank: number): Promise<StaffRoleView[]> {

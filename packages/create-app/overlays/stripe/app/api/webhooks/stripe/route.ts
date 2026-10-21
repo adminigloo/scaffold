@@ -290,7 +290,15 @@ async function mirrorSubscription(
     source: "stripe",
   });
 
-  if (!result.applied) {
+  if (result.tenantGone) {
+    // Acknowledged, written nowhere: the company was deleted. Logged loudly
+    // because a live subscription at Stripe for a deleted company is money
+    // somebody should stop taking.
+    logger.warn(
+      { subscriptionId: snapshot.subscriptionId, eventId: event.id, tenantId, status: snapshot.status, why: result.why },
+      "A subscription event for a deleted company — nothing written. Cancel it in Stripe if it is still charging.",
+    );
+  } else if (!result.applied) {
     logger.info(
       { subscriptionId: snapshot.subscriptionId, eventId: event.id, why: result.why },
       "Stale subscription event ignored — the row already holds a newer state.",

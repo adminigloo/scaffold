@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, isNull, lte } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, lte, sql } from "drizzle-orm";
 import { z } from "zod";
 import { emitEvents, derivedOf, optionLabels } from "./events.js";
 import { getEstimate, getEstimateRow, lockEstimate, QUOTE_REQUEST_NOTE, sendWarningsFor, type EstimatorWriteOptions } from "./estimates.js";
@@ -379,15 +379,36 @@ async function announceExpiry(db: EstimatorDb, tenantId: string, id: string, now
     .where(and(eq(e.id, id), eq(e.tenantId, tenantId), isNull(e.expiryNotifiedAt)));
 }
 
+/**
+ * A PAST RECORD'S EXPIRY IS HISTORY (0.7). A quote typed in from old records
+ * whose time ran out before it was entered (`valid_until` before
+ * `entered_at`) is stamped as announced in the same UPDATE that expires it,
+ * and so is one `setEstimateStatus` stamped when it was recorded as sent
+ * (`expiry_notified_at` at or after `sent_at`): the customer is never
+ * emailed "your quote has expired" about a quote from last year.
+ */
+function expiryStamp(now: Date) {
+  return sql`case when ${e.enteredAt} is not null and ${e.validUntil} < ${e.enteredAt} and ${e.expiryNotifiedAt} is null then ${now} else ${e.expiryNotifiedAt} end`;
+}
+
+/** Already announced for THIS send: stamped at or after the quote last went out. */
+function announcedForThisSend(row: { expiryNotifiedAt: Date | null; sentAt: Date | null }): boolean {
+  return row.expiryNotifiedAt !== null && row.sentAt !== null && row.expiryNotifiedAt.getTime() >= row.sentAt.getTime();
+}
+
 /** Expire ONE overdue quote (the sweep's UPDATE for one row); true when this call moved it. */
 async function expireOne(db: EstimatorDb, tenantId: string, id: string, now: Date, options: EstimatorWriteOptions): Promise<boolean> {
   const [row] = (await db
     .update(e)
-    .set({ status: "expired", expiredAt: now, updatedAt: now })
+    .set({ status: "expired", expiredAt: now, updatedAt: now, expiryNotifiedAt: expiryStamp(now) })
     .where(and(eq(e.id, id), eq(e.tenantId, tenantId), inArray(e.status, ["sent", "viewed"]), lte(e.validUntil, now)))
-    .returning({ id: e.id })) as Array<{ id: string }>;
+    .returning({ id: e.id, expiryNotifiedAt: e.expiryNotifiedAt, sentAt: e.sentAt })) as Array<{
+    id: string;
+    expiryNotifiedAt: Date | null;
+    sentAt: Date | null;
+  }>;
   if (!row) return false;
-  await announceExpiry(db, tenantId, id, now, options);
+  if (!announcedForThisSend(row)) await announceExpiry(db, tenantId, id, now, options);
   return true;
 }
 
@@ -425,7 +446,7 @@ export async function expireQuotes(
     .for("update", { skipLocked: true });
   const rows = (await db
     .update(e)
-    .set({ status: "expired", expiredAt: now, updatedAt: now })
+    .set({ status: "expired", expiredAt: now, updatedAt: now, expiryNotifiedAt: expiryStamp(now) })
     .where(and(eq(e.tenantId, tenantId), inArray(e.id, overdue)))
     .returning({ id: e.id })) as Array<{ id: string }>;
   // This run's expiries and any an earlier run left unannounced, oldest first.

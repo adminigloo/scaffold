@@ -43,7 +43,9 @@ export const SCHEDULING_TENANT = "primary";
  *                            only this
  *   staff.schedule.view      the calendar and every crew's day
  *   staff.schedule.manage    book, accept, decline, move, cancel
- *   staff.schedule.settings  the business, online booking, crews and hours
+ *   staff.schedule.settings  the business, online booking, crews and hours —
+ *                            and giving a visit a past date when moving old
+ *                            records in
  *
  * The keys are declared in src/permissions/catalog.ts (with the roles that
  * hold them by default) and granted to the seeded staff roles the first time
@@ -54,6 +56,7 @@ export const SCHEDULING_STAFF_KEYS: Readonly<Record<SchedulingPermission, string
   "schedule.view": "staff.schedule.view",
   "schedule.manage": "staff.schedule.manage",
   "schedule.resources.manage": "staff.schedule.settings",
+  "schedule.history": "staff.schedule.settings",
 };
 
 /**

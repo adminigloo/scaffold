@@ -317,6 +317,11 @@ export function VisitPanel({
           </span>
           <span className="aisw-hint">{visit.origin === "public" ? "Booked online" : "Booked by staff"}</span>
         </div>
+        {visit.enteredLater && Number.isFinite(Date.parse(visit.enteredLater.at)) ? (
+          <p className="aisw-hint" data-aisw-entered-later="">
+            Entered from past records on {formatShortDate(todayIn(zone, new Date(visit.enteredLater.at)), locale)}
+          </p>
+        ) : null}
         {visit.status === "pending" ? (
           <p className="aisw-hint">
             {requestedAt ? `Requested ${requestedAt}` : "Requested online"}

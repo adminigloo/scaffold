@@ -78,6 +78,16 @@ export const schedulingPermissions = {
     // nobody notices until the phone stops ringing.
     defaultFor: ["owner", "admin"],
   },
+  "schedule.history": {
+    label: "Enter past records",
+    description:
+      "When moving old records in: give a visit the day it was really booked, done or cancelled, not today. A visit that's over is saved as history and nobody is told; it shows as entered later.",
+    category: "Schedule",
+    // Not member. A past date decides which month's books a record lands
+    // in, and nobody is told about it, so it belongs with the people who
+    // answer for the books — the same as reversing a payment.
+    defaultFor: ["owner", "admin"],
+  },
 } as const satisfies Record<string, SchedulingPermissionDefinition>;
 
 export type SchedulingPermission = keyof typeof schedulingPermissions;

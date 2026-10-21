@@ -170,6 +170,11 @@ export function InvoiceEditor(props: InvoiceEditorProps) {
               {invoice.customerEmail ? ` · ${invoice.customerEmail}` : ""}
               {invoice.dueDate ? ` · due ${formatDate(invoice.dueDate, format, locale)}` : ""}
             </p>
+            {invoice.enteredLater ? (
+              <p className="aiiw-small" data-aiiw-entered-later="">
+                Entered from past records on {formatDate(invoice.enteredLater.at, format, locale)}
+              </p>
+            ) : null}
           </div>
           <span className={`aiiw-tag aiiw-tag-${STATUS_TONE[invoice.status]}`} data-aiiw-status="">
             {STATUS_WORDS[invoice.status]}
@@ -654,6 +659,11 @@ function Payments({
             ) : payment.flag === "dispute_lost" ? (
               <span className="aiiw-small" data-aiiw-flag="dispute_lost">
                 The dispute was lost: the bank took this payment back (see the reversal).
+              </span>
+            ) : null}
+            {payment.enteredLater ? (
+              <span className="aiiw-small" data-aiiw-entered-later="">
+                Entered from past records on {formatDate(payment.enteredLater.at, format, locale)}
               </span>
             ) : null}
             {invoice.can.reverse && !payment.reversed && payment.reversedAmount === 0 && !payment.reversesPaymentId ? (

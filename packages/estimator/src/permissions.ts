@@ -70,6 +70,16 @@ export const estimatorPermissions = {
     category: "Estimates",
     defaultFor: ["owner", "admin"],
   },
+  "estimator.history": {
+    label: "Enter past records",
+    description:
+      "When moving old records in: give an estimate the day it was really made, sent, accepted or declined, not today. Nobody is emailed about it, and it shows as entered later.",
+    category: "Estimates",
+    // Not member. A past date decides which month's books a record lands
+    // in, and nobody is told about it, so it belongs with the people who
+    // answer for the books — the same as reversing a payment.
+    defaultFor: ["owner", "admin"],
+  },
 } as const satisfies Record<string, EstimatorPermissionDefinition>;
 
 export type EstimatorPermission = keyof typeof estimatorPermissions;

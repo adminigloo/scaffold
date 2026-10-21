@@ -171,6 +171,13 @@ export const schedulingBookings = pgTable(
     completedAt: timestamp("completed_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
+    /**
+     * 0.7, past records: when and by whom a visit booked on an EARLIER day
+     * (`bookedAt`) was typed in. Its own dates say when it was booked and
+     * done; these say it was entered later. Null on one booked the day it was.
+     */
+    enteredAt: timestamp("entered_at", { withTimezone: true }),
+    enteredBy: text("entered_by"),
   },
   (t) => [
     index("scheduling_bookings_tenant_date_idx").on(t.tenantId, t.scheduledDate),

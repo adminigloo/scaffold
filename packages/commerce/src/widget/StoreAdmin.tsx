@@ -537,7 +537,26 @@ export function orderStatusWords(order: StoreOrderWire): string {
   if (order.refundedMinor > 0) return `Part refunded (${formatMoney(order.refundedMinor, order.currency)})`;
   if (order.status === "sent") return "Sent";
   if (order.status === "pending") return "Payment on its way";
+  // A sale recorded by hand left with its buyer: there's nothing to send.
+  if (order.inPerson) return "Paid in person";
   return "Paid — to send";
+}
+
+const PAID_BY_WORDS: Readonly<Record<string, string>> = {
+  cash: "Cash",
+  check: "Check",
+  card_terminal: "Card terminal",
+  other: "Other",
+};
+
+/** How a sale recorded by hand was paid: "Cash", "Check #1042", "Card terminal · slip 88". Null for an online order. */
+export function paidInPersonWords(order: Pick<StoreOrderWire, "inPerson" | "paidBy" | "paymentReference">): string | null {
+  if (!order.inPerson) return null;
+  const how = PAID_BY_WORDS[order.paidBy] ?? "Other";
+  const ref = order.paymentReference?.trim();
+  if (!ref) return how;
+  if (order.paidBy === "check") return `Check #${ref.replace(/^(check\s*)?#?\s*/i, "")}`;
+  return `${how} · ${ref}`;
 }
 
 const FLAG_WORDS: Readonly<Record<string, string>> = {
@@ -607,8 +626,14 @@ function OrdersPanel(props: { readonly baseUrl: string; readonly canManage: bool
                   <span className="aics-muted">{order.placedAt ? whenText(order.placedAt, props.locale) : ""}</span>
                 </td>
                 <td>
+                  {order.buyer?.name ? <div>{order.buyer.name}</div> : null}
                   {order.email || <span className="aics-muted">No email given</span>}
-                  {addressLines(order).length > 0 ? (
+                  {order.buyer?.phone ? (
+                    <div className="aics-muted" data-store-buyer-phone="">
+                      {order.buyer.phone}
+                    </div>
+                  ) : null}
+                  {!order.inPerson && addressLines(order).length > 0 ? (
                     <div className="aics-muted" data-store-ship-to="">
                       Send to: {addressLines(order).join(", ")}
                     </div>
@@ -625,6 +650,14 @@ function OrdersPanel(props: { readonly baseUrl: string; readonly canManage: bool
                 <td className="aics-price">{formatMoney(order.totalMinor, order.currency)}</td>
                 <td>
                   {orderStatusWords(order)}
+                  {paidInPersonWords(order) ? (
+                    <>
+                      <br />
+                      <span className="aics-muted" data-store-paid-by="">
+                        {paidInPersonWords(order)}
+                      </span>
+                    </>
+                  ) : null}
                   {order.flag ? (
                     <>
                       <br />
@@ -640,7 +673,7 @@ function OrdersPanel(props: { readonly baseUrl: string; readonly canManage: bool
                 </td>
                 <td>
                   <div className="aics-row">
-                    {props.canManage && order.status === "paid" ? (
+                    {props.canManage && order.status === "paid" && !order.inPerson ? (
                       <button type="button" className="aics-btn aics-btn-quiet" disabled={busy === order.id} onClick={() => void sent(order)}>
                         Mark as sent
                       </button>

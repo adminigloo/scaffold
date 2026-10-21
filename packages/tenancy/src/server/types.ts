@@ -127,6 +127,11 @@ export interface CreateTenancyServiceOptions {
   readonly onEvent?: TenancyEventListener;
   readonly onEventError?: (error: unknown, event: TenancyEvent | { readonly type: string }) => void;
   readonly now?: () => Date;
+  /**
+   * Delete a company (0.8): the project's forget step. Absent → the console
+   * offers no Delete and `deleteCompany` answers `unavailable`.
+   */
+  readonly deletion?: CompanyDeletion;
 }
 
 // ---------------------------------------------------------------------------
@@ -369,10 +374,56 @@ export interface AdminCompanyDetail {
   readonly retiredAddresses: readonly string[];
   /** Filled by the HANDLER from its `recentAudit` option; null = not connected. */
   readonly activity: readonly AuditLineWire[] | null;
-  readonly can: { readonly suspend: boolean; readonly assignOwner: boolean; readonly releaseAddresses: boolean };
+  readonly can: { readonly suspend: boolean; readonly assignOwner: boolean; readonly releaseAddresses: boolean; readonly delete: boolean };
+  /** Delete a company (0.8): whether the project connected its forget step, and the plan the company still pays for, in words. */
+  readonly deletion: { readonly available: boolean; readonly stillPaying: string | null };
 }
 
 export type StaffRoleView = StaffRoleWire;
+
+/**
+ * What a project gives tenancy so a company can be DELETED (tenancy 0.8,
+ * create-app's src/server/forget-company.ts). Tenancy forgets its own rows
+ * (the team, invitations, address history) and keeps the company's row, its
+ * web addresses reserved; everything the project's other packages keep is
+ * this step's.
+ */
+export interface CompanyDeletion {
+  /**
+   * Forget every row the project's packages keep for the company, children
+   * first, ON `tx` — the deletion's transaction, so a failure anywhere
+   * leaves everything as it was. Returns the rows deleted per table.
+   */
+  forget(tx: TenancyDb, tenantId: string): Promise<CompanyForgetResult>;
+  /**
+   * The plan the company is still paying for, in words ("Pro, active"), or
+   * null. A company that is still paying is only deleted when staff force it
+   * with a reason. Absent: nobody pays here (a project that sells no plans).
+   */
+  livePaidSubscription?(tx: TenancyDb, tenantId: string): Promise<string | null>;
+}
+
+export interface CompanyForgetResult {
+  readonly counts: Readonly<Record<string, number>>;
+  /**
+   * Runs once the deletion has committed (the files' bytes, which no
+   * transaction can take back). Awaited, never throwing out of
+   * `deleteCompany`: a failure is reported and the deletion stands.
+   */
+  readonly afterCommit?: () => Promise<void>;
+}
+
+export interface DeletedCompany {
+  readonly id: string;
+  readonly name: string;
+  readonly slug: string;
+  readonly deletedAt: Date;
+  /** Every row forgotten, tenancy's own included. */
+  readonly rows: number;
+  /** Per table, only the tables that had any. */
+  readonly counts: Readonly<Record<string, number>>;
+  readonly forced: boolean;
+}
 
 export interface AdminPerson {
   readonly userId: string;
@@ -606,6 +657,14 @@ export interface TenancyService {
   reactivateCompany(input: Actor & Req): Promise<AdminCompanyDetail>;
   assignOwner(input: Actor & { readonly toUserId: string } & Req): Promise<AdminCompanyDetail>;
   releaseRetiredAddresses(input: Actor & Req): Promise<AdminCompanyDetail>;
+  /**
+   * Delete a company for good (staff.tenants.delete; tenancy 0.8): staff type
+   * its web address again (`confirmSlug`); one still paying for a plan is
+   * refused (`still_paying`) unless `force` carries a reason. Everything it
+   * kept goes in ONE transaction, with one audit row that outlives it (who,
+   * when, its name and the counts). Never the site's own ("*").
+   */
+  deleteCompany(input: Actor & { readonly confirmSlug: string; readonly force?: { readonly reason: string } } & Req): Promise<DeletedCompany>;
   listPeople(input: {
     readonly actorUserId: string;
     readonly q?: string;

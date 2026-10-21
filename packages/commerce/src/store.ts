@@ -6,6 +6,7 @@ import { formatOrderNumber } from "./order-number.js";
 import { checkoutSessionKey } from "./orders.js";
 import { orderItems, orders, storeAlerts, storeCheckouts, storeSettings, type OrderAddress, type StoreCheckoutLine } from "./schema.js";
 import type {
+  StoreSaleMethod,
   StoreAlertWire,
   StoreCheckoutStatusResponse,
   StoreOrderWire,
@@ -1104,6 +1105,8 @@ export interface StoreOrderPlaced {
   readonly lines: readonly { readonly name: string; readonly quantity: number; readonly unitPriceMinor: number }[];
   readonly shipTo: OrderAddress | null;
   readonly placedAt: Date;
+  /** commerce 0.4: a sale recorded by hand — the buyer's name and phone when staff knew. Never where to send it. */
+  readonly buyer?: { readonly name: string | null; readonly phone: string | null } | null;
 }
 
 /** Which of an order's emails are still owed. */
@@ -1626,7 +1629,8 @@ async function storeDispute(
 
 /** Store orders are the Checkout ones (the site's own admin-entered orders have other keys). */
 function checkoutOrders(column: typeof orders.idempotencyKey) {
-  return sql`${column} like ${"checkout_session:%"}`;
+  // commerce 0.4: and the sales staff recorded by hand.
+  return sql`(${column} like ${"checkout_session:%"} or ${column} like ${`${STORE_SALE_KEY_PREFIX}%`})`;
 }
 
 /** The business's orders from its store, newest first, with their lines. */
@@ -1658,9 +1662,300 @@ export async function listStoreOrders(db: StoreDb, tenantId: string, options: { 
     shipTo: row.shippingAddress ?? null,
     lines: items
       .filter((item) => item.orderId === row.id)
-      .map((item) => ({ name: item.name, quantity: item.quantity, unitPriceMinor: Number(item.unitPriceMinor), totalMinor: Number(item.totalMinor) })),
+      .map((item) => ({
+        name: item.name,
+        quantity: item.quantity,
+        unitPriceMinor: Number(item.unitPriceMinor),
+        totalMinor: Number(item.totalMinor),
+        priceChanged: priceChangeOf(item.metadata),
+      })),
     stripeUrl: storeStripePaymentUrl(row.stripePaymentIntentId),
+    paidBy: isSaleMethod(row.paymentMethod) ? row.paymentMethod : "card",
+    paymentReference: row.paymentReference ?? null,
+    inPerson: row.idempotencyKey.startsWith(STORE_SALE_KEY_PREFIX),
+    buyer: row.idempotencyKey.startsWith(STORE_SALE_KEY_PREFIX) ? buyerOf(row.billingAddress) : null,
   }));
+}
+
+// --- A sale recorded by hand (commerce 0.4) ------------------------------------------
+
+/** The idempotency key prefix of a sale recorded by hand: `store_sale:{request key}`. */
+export const STORE_SALE_KEY_PREFIX = "store_sale:";
+export const STORE_SALE_METHODS: readonly StoreSaleMethod[] = Object.freeze(["cash", "check", "card_terminal", "other"]);
+/** The most of one product a sale by hand takes (a counter sale, not a cart). */
+export const STORE_SALE_MAX_QUANTITY = 999;
+
+/** A sale by hand's buyer, kept as who paid (`billing_address`), never as where to ship. */
+function buyerOf(value: unknown): { name: string | null; phone: string | null } | null {
+  if (!value || typeof value !== "object") return null;
+  const { name, phone } = value as { name?: unknown; phone?: unknown };
+  const out = { name: typeof name === "string" && name ? name : null, phone: typeof phone === "string" && phone ? phone : null };
+  return out.name || out.phone ? out : null;
+}
+
+function isSaleMethod(value: unknown): value is StoreSaleMethod {
+  return typeof value === "string" && (STORE_SALE_METHODS as readonly string[]).includes(value);
+}
+
+/** A line whose price staff changed: the catalog price and the reason, kept in its metadata (strings). */
+function priceChangeOf(metadata: unknown): { listPriceMinor: number; reason: string } | null {
+  if (!metadata || typeof metadata !== "object") return null;
+  const { listPriceMinor, priceReason } = metadata as { listPriceMinor?: unknown; priceReason?: unknown };
+  const list = typeof listPriceMinor === "string" ? Number(listPriceMinor) : NaN;
+  return Number.isSafeInteger(list) && typeof priceReason === "string" ? { listPriceMinor: list, reason: priceReason } : null;
+}
+
+export interface StoreSaleLineInput {
+  /** One of the company's own products (its catalog). */
+  readonly productId: string;
+  readonly quantity: number;
+  /** Staff charging something other than the catalog price: the price, in minor units… */
+  readonly priceMinor?: number;
+  /** …and why (3 to 200 characters). Kept on the order line with the catalog price. */
+  readonly priceReason?: string;
+}
+
+export interface StoreSaleInput {
+  readonly lines: readonly StoreSaleLineInput[];
+  readonly method: StoreSaleMethod;
+  /** A check number or the terminal's slip number. */
+  readonly reference?: string | null;
+  /** Who bought it, when staff know: an email puts the sale on their timeline and can take the receipt. */
+  readonly customer?: { readonly name?: string | null; readonly email?: string | null; readonly phone?: string | null } | null;
+  /** Email the customer their receipt (default false). Needs an email. */
+  readonly sendReceipt?: boolean;
+  /** One key per "Record sale" press (8–64 letters, digits, - or _): a double submit records ONE sale. */
+  readonly requestKey: string;
+}
+
+export interface StoreSaleOptions {
+  /** The staff member recording it. */
+  readonly recordedBy: string | null;
+  /** The store's `onOrder` (the customer's timeline, the receipt): told once, after the commit. */
+  readonly onOrder?: StoreEventOptions["onOrder"];
+  readonly orderPrefix?: string;
+  readonly report?: (error: unknown) => void;
+  readonly now?: Date;
+}
+
+export interface StoreSaleResult {
+  readonly order: StoreOrderWire;
+  /** True when this press had been recorded before (nothing new was taken). */
+  readonly duplicate: boolean;
+  /** "sent", "not asked", "no email" (none given), or "failed" (the sale stands; send it again from the order). */
+  readonly receipt: "sent" | "not_asked" | "no_email" | "failed";
+}
+
+const SALE_KEY = /^[A-Za-z0-9_-]{8,64}$/;
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function oneLineText(value: unknown, max: number): string | null {
+  if (typeof value !== "string") return null;
+  const text = value.replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, " ").trim();
+  return text ? text.slice(0, max) : null;
+}
+
+/**
+ * RECORD A SALE BY HAND (commerce 0.4): a counter sale, a market stall, a
+ * customer who paid cash at the door. Staff of the company only (the route is
+ * `store.manage`).
+ *
+ * - Products and quantities from the company's own catalog; every price is
+ *   the catalog's. Charging another price needs a reason (3–200 characters),
+ *   and the line keeps the catalog price and the reason beside what was
+ *   charged.
+ * - How it was paid: cash, check, card terminal or other (no Stripe here —
+ *   the money changed hands already), with a check or slip number.
+ * - Stock comes off the shelf EXACTLY ONCE: the order is keyed on the press's
+ *   `requestKey`, checked under the company's order lock BEFORE any stock is
+ *   touched, so a double submit records one sale and takes one lot. Only free
+ *   stock can be sold (what online checkouts hold stays theirs).
+ * - Numbered like every order of the company (its prefix, its sequence).
+ * - After the commit, the store's `onOrder` is told once (the customer's
+ *   timeline; the receipt when asked and there is an email). The owner's "new
+ *   order" email is not owed — staff made the sale.
+ */
+export async function recordStoreSale(db: StoreDb, tenantId: string, input: StoreSaleInput, options: StoreSaleOptions): Promise<StoreSaleResult> {
+  const now = options.now ?? new Date();
+  if (!input || typeof input.requestKey !== "string" || !SALE_KEY.test(input.requestKey)) {
+    throw new StoreRefusal("invalid", "This sale couldn't be read. Refresh the page and try again.");
+  }
+  if (!isSaleMethod(input.method)) throw new StoreRefusal("invalid", "Choose how it was paid: cash, check, card terminal or other.");
+  if (!Array.isArray(input.lines) || input.lines.length === 0) throw new StoreRefusal("invalid", "Add at least one product.");
+  if (input.lines.length > STORE_MAX_LINES) throw new StoreRefusal("invalid", `A sale holds up to ${STORE_MAX_LINES} different products.`);
+  const wanted = new Map<string, { quantity: number; priceMinor?: number; priceReason?: string }>();
+  for (const line of input.lines) {
+    const productId = line?.productId;
+    if (typeof productId !== "string" || productId.length < 1 || productId.length > 64) throw new StoreRefusal("not_found", "That product isn't in your store.");
+    if (typeof line.quantity !== "number" || !Number.isInteger(line.quantity) || line.quantity < 1 || line.quantity > STORE_SALE_MAX_QUANTITY) {
+      throw new StoreRefusal("invalid", `Choose a quantity from 1 to ${STORE_SALE_MAX_QUANTITY}.`);
+    }
+    if (wanted.has(productId)) throw new StoreRefusal("invalid", "Each product goes on one line. Change its quantity instead.");
+    if (line.priceMinor !== undefined) {
+      if (typeof line.priceMinor !== "number" || !Number.isSafeInteger(line.priceMinor) || line.priceMinor < 0 || line.priceMinor > STORE_MAX_AMOUNT) {
+        throw new StoreRefusal("invalid", "Enter the price charged, in whole cents.");
+      }
+    }
+    wanted.set(productId, {
+      quantity: line.quantity,
+      ...(line.priceMinor !== undefined ? { priceMinor: line.priceMinor } : {}),
+      ...(line.priceReason !== undefined ? { priceReason: line.priceReason } : {}),
+    });
+  }
+  const email = oneLineText(input.customer?.email, 320)?.toLowerCase() ?? null;
+  if (email !== null && !EMAIL.test(email)) throw new StoreRefusal("invalid", "Enter the customer's email address, or leave it blank.");
+  const reference = oneLineText(input.reference, 100);
+  const idempotencyKey = `${STORE_SALE_KEY_PREFIX}${input.requestKey}`;
+
+  type Done = { kind: "duplicate"; orderId: string } | { kind: "recorded"; orderId: string; orderNumber: string; lines: StoreOrderPlaced["lines"]; total: number; currency: string };
+  const done: Done = await db.transaction(async (tx): Promise<Done> => {
+    // The company's order lock first: the numbering, and "was this press recorded already?".
+    await lockKey(tx, `commerce-orders:${tenantId}`);
+    const [already] = (await tx
+      .select({ id: orders.id })
+      .from(orders)
+      .where(and(eq(orders.tenantId, tenantId), eq(orders.idempotencyKey, idempotencyKey)))
+      .limit(1)) as Array<{ id: string }>;
+    if (already) return { kind: "duplicate", orderId: already.id };
+
+    const rows = (await tx
+      .select(productColumns)
+      .from(products)
+      .innerJoin(productVariants, and(eq(productVariants.productId, products.id), eq(productVariants.isDefault, true)))
+      .where(and(ownProducts(tenantId), inArray(products.id, [...wanted.keys()])))) as ProductRow[];
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const stock = await lockVariants(tx, rows.map((row) => row.variantId));
+    const lines: Array<StoreCheckoutLine & { listPriceMinor: number; reason: string | null }> = [];
+    for (const [productId, want] of wanted) {
+      // Another company's product — or a removed one — is not in this store.
+      const row = byId.get(productId);
+      if (!row) throw new StoreRefusal("not_found", "That product isn't in your store.");
+      const listPriceMinor = Number(row.priceMinor);
+      const charged = want.priceMinor ?? listPriceMinor;
+      let reason: string | null = null;
+      if (charged !== listPriceMinor) {
+        reason = oneLineText(want.priceReason, 200);
+        if (!reason || reason.length < 3) throw new StoreRefusal("invalid", `Say why ${row.name} is ${formatStoreMoney(charged, row.currency)} instead of ${formatStoreMoney(listPriceMinor, row.currency)}.`);
+      }
+      lines.push({
+        productId: row.id,
+        variantId: row.variantId,
+        name: row.name,
+        quantity: want.quantity,
+        unitPriceMinor: charged,
+        held: (stock.get(row.variantId)?.inventory ?? null) !== null,
+        listPriceMinor,
+        reason,
+      });
+    }
+    const currency = byId.get(lines[0]!.productId)!.currency.toLowerCase();
+    if (rows.some((row) => row.currency.toLowerCase() !== currency)) throw new StoreRefusal("invalid", "These products are priced in different currencies, so they can't be sold together.");
+    let total = 0;
+    for (const line of lines) total += line.unitPriceMinor * line.quantity;
+    if (!Number.isSafeInteger(total) || total > STORE_MAX_AMOUNT) throw new StoreRefusal("invalid", "That's more than one sale can record. Split it into smaller sales.");
+
+    // The stock: free stock only (online checkouts keep what they hold), taken once, here.
+    for (const line of [...lines].sort(byVariant)) {
+      const variant = stock.get(line.variantId);
+      if (!line.held || !variant || variant.inventory === null) continue;
+      const free = Math.max(0, variant.inventory - variant.held);
+      if (free < line.quantity) {
+        throw new StoreRefusal("sold_out", free <= 0 ? `${line.name} is out of stock. Add stock first, then record the sale.` : `Only ${free} of ${line.name} ${free === 1 ? "is" : "are"} in stock.`);
+      }
+      variant.inventory -= line.quantity;
+      await tx.update(productVariants).set({ inventory: variant.inventory, updatedAt: now }).where(eq(productVariants.id, variant.id));
+    }
+
+    const [counted] = (await tx.select({ n: count() }).from(orders).where(eq(orders.tenantId, tenantId))) as Array<{ n: number }>;
+    const orderNumber = formatOrderNumber({ prefix: options.orderPrefix ?? "ORD", sequence: Number(counted?.n ?? 0) + 1, date: now });
+    const name = oneLineText(input.customer?.name, 200);
+    const phone = oneLineText(input.customer?.phone, 60);
+    const wantsReceipt = input.sendReceipt === true && email !== null;
+    const [order] = (await tx
+      .insert(orders)
+      .values({
+        tenantId,
+        idempotencyKey,
+        orderNumber,
+        userId: null,
+        email: email ?? "",
+        status: "paid",
+        subtotalMinor: BigInt(total),
+        shippingMinor: 0n,
+        taxMinor: 0n,
+        discountMinor: 0n,
+        totalMinor: BigInt(total),
+        currency,
+        placedAt: now,
+        // Who paid, never where to send it: a counter sale has nothing to ship,
+        // and a name in shipping_address read as an order waiting to go out.
+        ...(name || phone ? { billingAddress: { ...(name ? { name } : {}), ...(phone ? { phone } : {}) } as OrderAddress } : {}),
+        // Staff made the sale: the owner's "new order" email isn't owed, and
+        // a receipt nobody asked for is deliberately skipped.
+        noticeSentAt: now,
+        ...(wantsReceipt ? {} : { receiptSentAt: now }),
+        paymentMethod: input.method,
+        paymentReference: reference,
+        recordedBy: options.recordedBy,
+      })
+      .returning({ id: orders.id })) as Array<{ id: string }>;
+    const orderId = order!.id;
+    await tx.insert(orderItems).values(
+      lines.map((line) => ({
+        orderId,
+        productRef: line.productId,
+        variantRef: line.variantId,
+        name: line.name,
+        quantity: line.quantity,
+        unitPriceMinor: BigInt(line.unitPriceMinor),
+        totalMinor: BigInt(line.unitPriceMinor * line.quantity),
+        ...(line.reason
+          ? { metadata: { listPriceMinor: String(line.listPriceMinor), priceReason: line.reason, ...(options.recordedBy ? { priceChangedBy: options.recordedBy } : {}) } }
+          : {}),
+      })),
+    );
+    return {
+      kind: "recorded",
+      orderId,
+      orderNumber,
+      lines: lines.map((line) => ({ name: line.name, quantity: line.quantity, unitPriceMinor: line.unitPriceMinor })),
+      total,
+      currency,
+    };
+  });
+
+  const [wire] = await listStoreOrders(db, tenantId, { orderId: done.orderId, limit: 1 });
+  if (!wire) throw new StoreRefusal("not_found", "That sale isn't here any more.");
+  if (done.kind === "duplicate") return { order: wire, duplicate: true, receipt: "not_asked" };
+
+  const wantsReceipt = input.sendReceipt === true && email !== null;
+  let receipt: StoreSaleResult["receipt"] = email === null ? (input.sendReceipt === true ? "no_email" : "not_asked") : wantsReceipt ? "failed" : "not_asked";
+  if (options.onOrder) {
+    const placed: StoreOrderPlaced = {
+      tenantId,
+      orderId: done.orderId,
+      orderNumber: done.orderNumber,
+      email: email ?? "",
+      totalMinor: done.total,
+      shippingMinor: 0,
+      currency: done.currency,
+      lines: done.lines,
+      shipTo: wire.shipTo ?? null,
+      placedAt: now,
+      buyer: wire.buyer,
+    };
+    try {
+      const went = (await options.onOrder(placed, { receipt: wantsReceipt, notice: false })) ?? {};
+      if (wantsReceipt && went.receipt !== false) {
+        await db.update(orders).set({ receiptSentAt: new Date() }).where(and(eq(orders.id, done.orderId), eq(orders.tenantId, tenantId)));
+        receipt = "sent";
+      }
+    } catch (error) {
+      // The sale stands: the money changed hands. The receipt can go again.
+      options.report?.(error);
+    }
+  }
+  return { order: wire, duplicate: false, receipt };
 }
 
 /** "Mark as sent": a paid order is now on its way. Null: not this business's order. */

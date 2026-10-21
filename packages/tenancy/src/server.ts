@@ -64,6 +64,7 @@ export {
   adminCompanyDetailToWire,
   adminPersonToWire,
   adminPeopleToWire,
+  deletedCompanyToWire,
   publicCompanyToWire,
 } from "./server/to-wire.js";
 
@@ -78,10 +79,13 @@ export type {
   BootstrapForEmailOutcome,
   ChecklistView,
   CompanyChoice,
+  CompanyDeletion,
+  CompanyForgetResult,
   CompanyProfile,
   CompanyView,
   CreateCompanyResult,
   CreateTenancyServiceOptions,
+  DeletedCompany,
   DeprovisionResult,
   EmailHold,
   EmailReservation,

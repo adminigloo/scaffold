@@ -30,7 +30,8 @@ export type StoreAdminRouteKind =
   | "orders"
   | "order-sent"
   | "attention"
-  | "attention-resolve";
+  | "attention-resolve"
+  | "sale-record";
 
 export type StorePublicRouteKind = "store" | "checkout" | "checkout-status";
 
@@ -48,6 +49,8 @@ export const STORE_ADMIN_ROUTE_PERMISSIONS: Readonly<Record<StoreAdminRouteKind,
   "order-sent": "store.manage",
   attention: "store.view",
   "attention-resolve": "store.manage",
+  // commerce 0.4: a sale recorded by hand (in person) — staff who run the store.
+  "sale-record": "store.manage",
 };
 
 function freeze<T extends readonly StoreRoute[]>(routes: T): T {
@@ -91,6 +94,14 @@ export const STORE_ADMIN_ROUTES: readonly StoreRoute<StoreAdminRouteKind>[] = fr
   { kind: "order-sent", method: "POST", path: "v1/admin/orders/{store-order}/sent", permission: "store.manage", body: {} },
   { kind: "attention", method: "GET", path: "v1/admin/attention", permission: "store.view" },
   { kind: "attention-resolve", method: "POST", path: "v1/admin/attention/{store-alert}/resolve", permission: "store.manage", body: {} },
+  // commerce 0.4: a sale by hand — the product named in the BODY is the row it reads (another company's is "not found").
+  {
+    kind: "sale-record",
+    method: "POST",
+    path: "v1/admin/sales",
+    permission: "store.manage",
+    body: { lines: [{ productId: "{store-product}", quantity: 1 }], method: "cash", requestKey: "isolation-probe-sale" },
+  },
 ] as const);
 
 /**

@@ -121,6 +121,12 @@ export const VISIT_STATUSES: readonly VisitStatus[] = [
 ];
 const STATUS_SET = new Set<string>(VISIT_STATUSES);
 
+/** 0.7: "entered from past records" — when, and by whom (a user id); null when it wasn't. */
+function parseEnteredLater(raw: unknown): { at: string; by: string | null } | null {
+  if (!isObject(raw) || typeof raw.at !== "string" || !Number.isFinite(Date.parse(raw.at))) return null;
+  return { at: raw.at, by: typeof raw.by === "string" ? raw.by : null };
+}
+
 export function parseVisitSnapshot(raw: unknown): VisitSnapshot | null {
   if (!isObject(raw) || !isString(raw.id) || !raw.id || !isString(raw.status) || !STATUS_SET.has(raw.status)) return null;
   if (!isDateString(raw.date) || !isTimeOfDay(raw.startTime) || !isTimeOfDay(raw.endTime)) return null;
@@ -160,6 +166,7 @@ export function parseVisitSnapshot(raw: unknown): VisitSnapshot | null {
     completedAt: strOrNull(raw.completedAt),
     createdAt: str(raw.createdAt),
     updatedAt: str(raw.updatedAt),
+    enteredLater: parseEnteredLater(raw.enteredLater),
   };
 }
 

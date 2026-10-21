@@ -1197,7 +1197,7 @@ export type TenancyErrorCode =
   | "not_found" | "unavailable" | "name_invalid" | "slug_invalid" | "slug_reserved" | "slug_taken"
   | "rank" | "owner_protected" | "owner_must_transfer" | "self" | "last_owner" | "last_admin"
   | "already_member" | "personal_workspace" | "seats_full" | "confirmation_mismatch"
-  | "logo_storage_off" | "logo_invalid" | "rate_limited" | "internal";
+  | "logo_storage_off" | "logo_invalid" | "rate_limited" | "internal" | "still_paying";
 
 export class TenancyError extends Error {
   readonly name = "TenancyError";
@@ -2372,9 +2372,22 @@ export interface AdminCompanyDetailWire {
   invitations: { email: string; roleName: string; invitedBy: string | null; expiresAt: Instant | null }[];
   retiredAddresses: string[];         // old web addresses still pointing here
   activity: AuditLineWire[] | null;   // null = the host connected no activity source
-  can: { suspend: boolean; assignOwner: boolean; releaseAddresses: boolean };
+  can: { suspend: boolean; assignOwner: boolean; releaseAddresses: boolean; delete: boolean };
+  // Delete a company (tenancy 0.8): whether this project can (it connected its
+  // packages' forget step), and the plan it is still paying for, in words.
+  deletion: { available: boolean; stillPaying: string | null };
 }
 export interface SuspendBody { reason: string }   // 3..500 chars
+// Delete a company (tenancy 0.8): its web address typed again; `force` with a
+// reason (3..500 chars) deletes one that is still paying.
+export interface DeleteCompanyBody { confirmSlug: string; force?: { reason: string } }
+export interface DeletedCompanyWire {
+  id: string; name: string; slug: string;
+  deletedAt: Instant;
+  rows: number;                        // every row forgotten, all packages
+  counts: Record<string, number>;      // per table, the ones that had any
+  forced: boolean;
+}
 export interface AssignOwnerBody { toUserId: string }
 export interface StaffRoleWire { key: string; name: string; rank: number; assignable: boolean }
 export interface AdminPersonWire {

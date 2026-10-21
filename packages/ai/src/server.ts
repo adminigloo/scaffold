@@ -524,3 +524,6 @@ export async function sweepStaleReservations(
     return 0;
   }
 }
+
+// Delete a company (create-app 0.37): every AI call one company made.
+export { forgetTenant } from "./forget.js";

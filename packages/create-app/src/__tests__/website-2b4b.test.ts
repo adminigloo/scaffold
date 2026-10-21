@@ -59,7 +59,10 @@ describe("packages, overlays, versions and capabilities", () => {
   it("installs seo-reports 0.2 and aeo 0.2 (and ai 0.3), and the overlays by their conditions", () => {
     expect(packagesFor(answers(COMPANIES))).toEqual(expect.arrayContaining(["@adminigloo/seo-reports", "@adminigloo/aeo"]));
     const versions = packageVersions();
-    expect([versions["seo-reports"], versions.aeo, versions.ai]).toEqual(["0.2.0", "0.2.0", "0.3.0"]);
+    // The release lines (each 0.x+1 adds forgetTenant).
+    expect(versions["seo-reports"]).toMatch(/^0\.3\.\d+$/);
+    expect(versions.aeo).toMatch(/^0\.3\.\d+$/);
+    expect(versions.ai).toMatch(/^0\.4\.\d+$/);
     expect(overlayNamesFor(answers(COMPANIES))).toEqual(expect.arrayContaining(["seo-reports", "seo-admin", "seo-reports-companies", "aeo", "aeo-admin", "aeo-companies"]));
     expect(overlayNamesFor(answers(SINGLE))).not.toContain("seo-reports-companies");
     expect(overlayNamesFor(answers(SINGLE))).not.toContain("aeo-companies");
@@ -229,6 +232,6 @@ describe("the README and the upgrade notes", () => {
     expect(notes).toContain("sql/upgrade-0.1-to-0.2.sql");
     expect(notes).toContain("node_modules/@adminigloo/aeo/sql/upgrade-0.1-to-0.2.sql");
     expect(notes).toContain("tenant_id = 'primary'");
-    expect(upgradeNotesFor(answers({ ...COMPANIES, ...AI }), "0.36.2")).toEqual([]);
+    expect(upgradeNotesFor(answers({ ...COMPANIES, ...AI }), "0.36.1").join("\n")).not.toContain("aeo/sql/upgrade-0.1-to-0.2.sql");
   });
 });

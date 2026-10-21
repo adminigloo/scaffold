@@ -43,3 +43,5 @@ export type {
 export { FIRM_WIDE } from "./constants.js";
 export { STAFF_ROLE_TEMPLATES } from "./roles.js";
 export type { BootstrapPolicy, RoleTemplateSpec, StaffRoleTemplateKey } from "./roles.js";
+
+export { forgetTenant } from "./server/forget.js";

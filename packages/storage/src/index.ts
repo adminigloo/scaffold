@@ -68,3 +68,7 @@ export type { StorageAlertChannel, StorageAlertDraft, StorageAlertKind, StorageA
 export { sanitizeFilename } from "./filenames.js";
 export { DEFAULT_MAX_SIZE_BYTES, deleteFile, getFile, listFiles, storeFile, storeFileSchema } from "./legacy.js";
 export type { StoredFileRow, StoreFileInput } from "./legacy.js";
+
+// Delete a company (create-app 0.37): every file record of one company, and where its bytes are.
+export { forgetTenant, listTenantObjects } from "./forget.js";
+export type { StoredObjectRef } from "./forget.js";

@@ -114,7 +114,13 @@ it("the README's 0.3 → 0.4 SQL upgrades a 0.3 database to the 0.4 schema and b
     ["v3", "2026-11-03T10:00:00.000Z", "2026-11-03T11:00:00.000Z", "staff", null],
   ]);
 
-  // The upgraded schema is the 0.4 schema: the same columns, types, defaults and indexes.
+  // Then 0.6 → 0.7 (past records' entered_at / entered_by), from its own README section.
+  const later = readme.slice(readme.indexOf("## Upgrading from 0.6"), readme.indexOf("## Upgrading from 0.3"));
+  const laterBlocks = [...later.matchAll(/```sql\n([\s\S]*?)```/g)].map((m) => m[1]!);
+  expect(laterBlocks).toHaveLength(1);
+  await pg.exec(laterBlocks[0]!);
+
+  // The upgraded schema is today's schema: the same columns, types, defaults and indexes.
   const fresh = await createTestDb();
   const shape = async (db: PGlite) => ({
     columns: (

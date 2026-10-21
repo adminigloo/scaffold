@@ -41,8 +41,17 @@ export interface InvoiceSummaryWire {
 export interface InvoiceListWire { invoices: InvoiceSummaryWire[]; nextCursor: string | null; format: MoneyFormatWire }
 
 export interface InvoiceLineWire { id: string; description: string; quantity: number; unitPrice: number; total: number }
+/**
+ * 0.7, past records: this was typed in later from the business's records —
+ * when (`at`) and by whom (`by`, the user id `authorize` named). The
+ * record's own dates say when it happened. Absent or null on one entered the
+ * day it happened.
+ */
+export interface EnteredLaterWire { at: Instant; by: string | null }
 export interface InvoicePaymentWire {
   id: string; amount: number; method: PaymentMethodWire; reference: string | null; paidAt: Instant;
+  /** 0.7: a payment recorded on a later day than it was paid ("Entered from past records on …"). */
+  enteredLater?: EnteredLaterWire | null;
   /** A reversal row names the payment it undoes; `reversed` marks a payment that has been undone. */
   reversesPaymentId: string | null; reversed: boolean; reason: string | null;
   /** A card payment the customer's bank disputed: still open, or lost (then a reversal took it off). */
@@ -89,6 +98,8 @@ export interface InvoiceDetailWire {
   editable: boolean; nextStatuses: SettableInvoiceStatusWire[];
   can: { manage: boolean; record: boolean; reverse: boolean };
   deposit: DepositWire;
+  /** 0.7: an invoice typed in from past records (`issuedAt`): "Entered from past records on …". */
+  enteredLater?: EnteredLaterWire | null;
 }
 export interface InvoiceResponse { invoice: InvoiceDetailWire; format: MoneyFormatWire }
 

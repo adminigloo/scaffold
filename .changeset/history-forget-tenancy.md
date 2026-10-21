@@ -1,0 +1,7 @@
+---
+"@adminigloo/tenancy": minor
+---
+
+Delete a company (`tenancy.deleteCompany`, `POST v1/admin/companies/:tenantId/delete`, staff key `staff.tenants.delete`): staff type its web address again (`confirmSlug`; `confirmation_mismatch` otherwise); never the site's own (`"*"`); a company still paying for a plan is refused with the new code `still_paying` unless `force: { reason }` (3–500 characters). In ONE transaction under the company's lock: the project's forget step (`createTenancyService({ deletion: { forget, livePaidSubscription } })` — every installed package's rows), tenancy's own rows (team, invitations, address history), anyone's current company pointing at it cleared, and the company's row emptied and marked deleted — kept, with its old web addresses, so its address is never given to another business. One audit row (`company.deleted`, sensitive) records who, when, the name, address and counts, and the reason when forced. After the commit: the `company.deleted` event and the forget step's `afterCommit` (the files' bytes), reported, never thrown. The console detail gains `can.delete` and `deletion: { available, stillPaying }`.
+
+**Upgrading:** nothing changes until you pass `deletion`. Add `staff.tenants.delete` to your staff catalog (create-app 0.37 does) — a key no catalog declares can never be granted. Code that switches over `TenancyErrorCode` exhaustively gains `still_paying`; listeners over `TenancyEvent` gain `company.deleted`.

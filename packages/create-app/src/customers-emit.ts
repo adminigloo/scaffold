@@ -326,9 +326,10 @@ export async function customerOnStoreOrder(order: StoreOrderPlaced): Promise<voi
     source: "public",
     occurredAt: order.placedAt,
     summary: \`Order \${order.orderNumber} paid · \${money(order.totalMinor, order.currency)}\`,
-    name: to?.name ?? null,
+    // A sale recorded by hand (commerce 0.4) names its buyer apart from any address.
+    name: order.buyer?.name ?? to?.name ?? null,
     email: order.email,
-    phone: to?.phone ?? null,
+    phone: order.buyer?.phone ?? to?.phone ?? null,
     address: address || null,
   });
 }

@@ -67,8 +67,10 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // files keep logos per company), and `tenancyAlertKinds` /
   // `tenancyAlertsFor` are the team alerts. The emitted alerts glue calls
   // all of them; none exist in 0.5.x.
-  tenancy: "0.7.0",
-  permissions: "0.2.0",
+  // 0.37 (history and housekeeping): `forgetTenant` for deleting a company (deleteCompany, staff.tenants.delete).
+  tenancy: "0.8.0",
+  // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
+  permissions: "0.3.0",
   // 0.2.0 rather than 0.1.x because `requireTenant(...).input(...)` did not
   // compile before it. `^0.1.0` would resolve to a build a generated project
   // cannot typecheck against.
@@ -94,6 +96,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // store's server-priced lines on Stripe's page. Not in 0.4.0.
   // 0.5.0 (polish 3): `describeStripeFailure` — the emitted payments glue logs and reports every
   // failed Stripe call and answers owners in plain words; none of it exists in 0.4.x.
+  // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
   stripe: "0.5.0",
   // 0.2.0 for the variant- and product-name rules. The product builder refuses
   // to start a save that `validateProduct` cannot clear, so a project resolving
@@ -102,13 +105,15 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // `upsertVariant` refuse it, and left a draft with nothing under it.
   // 0.3.0 (getting paid, part 2): product_variants.held — the stock open store
   // checkouts hold, apart from what is on the shelf. The store reads it.
-  catalog: "0.3.0",
+  // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
+  catalog: "0.4.0",
   // 0.2.0 (getting paid, part 2): a store of its own — the emitted store
   // glue imports @adminigloo/commerce/store and /widget, the route tables and
   // storePermissions, and the schema has store_checkouts and store_alerts.
   // None exist in 0.1.x.
   // 0.3.0: title={false} and locale on the store screens (create-app 0.36, the showroom).
   // 0.4.0 (polish 3): `<StoreAdmin actionsInHeader>` — the store page puts "See your store" in its own header.
+  // 0.37 (history and housekeeping): `forgetTenant` for deleting a company, and sales recorded by hand.
   commerce: "0.4.0",
   // 0.2.0 for the typed plan record. `src/plans.ts` is emitted into every
   // project that sells something and calls `definePlans`, which does not exist
@@ -116,16 +121,19 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // the generator wrote. The same release changed `grantsForPlan` and
   // `planGrantDiff` to take a `PlanTier`, and a caret over 0.1.x would resolve
   // to the signatures nothing here calls.
-  billing: "0.3.0",
+  // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
+  billing: "0.4.0",
   // 0.2.0 (Tenancy 2b-3): the ledger moved into the package — the emitted
   // src/server/ai.ts and src/server/assistant.ts import recordAiUsage,
   // aiSpendSince and checkAiAllowance from ./server, which 0.1.x doesn't have.
   // 0.3.0 (Tenancy 2b-4b): a call's fees beyond tokens (`feesMicros`: web
   // searches), which src/server/ai-mentions.ts settles every AI mention check with.
-  ai: "0.3.0",
+  // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
+  ai: "0.4.0",
   // 0.3.0 (Tenancy 2a, D8): a per-message From name and Reply-To, so a
   // company's email carries its name on the platform's verified address.
-  email: "0.3.0",
+  // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
+  email: "0.4.0",
   // First releases, all three proven on adminigloo.com before they were
   // offered here — the same publish → dogfood → template rhythm feedback
   // followed. The emitted routers import from each unconditionally, so a
@@ -133,12 +141,14 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // with the workspace versions the drift test reads.
   // 0.2.0 (Tenancy 2b-4b): the search check per company — its handlers and
   // route table, the safe fetcher, the screen (./ui) — none of which 0.1 has.
-  "seo-reports": "0.2.0",
+  // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
+  "seo-reports": "0.3.0",
   // 0.2.0 (Tenancy 2b-1): alerts per company and per person. The emitted
   // src/server/alerts.ts builds createNotifications over the named tables,
   // the kind registry and the host seams, and the routes mount
   // createNotificationHandlers; 0.1 had a firm-wide inbox and none of these.
-  notifications: "0.2.0",
+  // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
+  notifications: "0.3.0",
   // First release (Tenancy 2b-1): the bell, the alerts page and Alert
   // settings, over notifications 0.2's wire. Pinned in step with the
   // workspace, as every first release here is.
@@ -148,7 +158,8 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // records, the allowance, signed links and the logo store, and the routes
   // mount createStorageHandlers / createStorageLinkHandlers; 0.1 had a
   // public-only, firm-wide file table behind a two-method adapter.
-  storage: "0.2.0",
+  // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
+  storage: "0.3.0",
   // First release (Tenancy 2b-1): photos and files on a record, the Files
   // screen and the usage meter, over storage 0.2's wire.
   "storage-widget": "0.1.1",
@@ -165,7 +176,8 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // the company, the emitted glue builds createAssistantHandlers and
   // createAnthropicProvider (./anthropic), and the tools import saveFaq — none
   // of which exist in 0.8.x.
-  assistant: "0.9.1",
+  // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
+  assistant: "0.10.0",
   // 0.3.0: the launcher, history, Stop, starters and the "ask before acting"
   // card, and the settings screen (./admin) the company pages mount.
   "assistant-widget": "0.3.1",
@@ -194,6 +206,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // boards pass `epicsHref`, and the isolation proof plants an epic (createEpic,
   // setEpicTickets) for the epic routes — none of which exist in 0.11.
   // 0.13.0 (polish 3): `<FeedbackEpicsActions>` — New epic in the epics page header.
+  // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
   feedback: "0.13.0",
   // 0.2.1 — 0.2.0 brought the "My reports" view the thread endpoints exist
   // to serve; the patch is the glacier re-skin with the widget's own dark
@@ -213,7 +226,8 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // it belongs here all the same. `renderPackageJson` spelled `^0.1.1` out
   // inline, which put a fourteenth version in a place no drift test looked at —
   // the exact arrangement the rest of this table exists to replace.
-  testing: "0.2.4",
+  // 0.37 (history and housekeeping): `forgetTenant` for deleting a company (./forget, the proof's planter).
+  testing: "0.3.0",
   // Field service — first releases, pinned at the workspace versions the drift
   // test reads. The emitted routers/handlers import from each unconditionally
   // for the config that selects it, so a caret over anything older can resolve
@@ -238,7 +252,8 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // imports all of them.
   // 0.5.1 (the customer list): its comms range moves to ^0.5.0 with comms 0.5 (onSent).
   // 0.6.0: startingPrices, the "from $X" on a company's public page (create-app 0.36).
-  estimator: "0.6.0",
+  // 0.37 (history and housekeeping): `forgetTenant` for deleting a company, and past records with their real dates.
+  estimator: "0.7.0",
   // 0.2.0: the estimate page, the quote page and the four staff pages render
   // its components (EstimateTool, QuoteView, EstimatesQueue, EstimateEditor,
   // PriceBook, EstimatorSettings, EmbedKeys). It speaks 0.3's wire, so it
@@ -279,7 +294,8 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // `officeRecipients` / `officeSent`, `alertsHref` and the visit as a
   // file record. The alerts and files glue imports all of them.
   // 0.6.1 (the customer list): its comms range moves to ^0.5.0 with comms 0.5.
-  scheduling: "0.6.1",
+  // 0.37 (history and housekeeping): `forgetTenant` for deleting a company, and past records with their real dates.
+  scheduling: "0.7.0",
   // First release. The booking page, the manage page and the three staff
   // pages render its components; it speaks 0.4's wire, so it moves with
   // scheduling 0.4 and never with 0.3.
@@ -300,7 +316,8 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.3.0: <SetupChecklist compact> on the dashboard (create-app 0.36).
   // 0.4.0: <SetupChecklist collapsible>, the dashboard's one-line card above
   // its numbers (create-app 0.36.1); a 0.3.x project's dashboard won't compile.
-  "tenancy-widget": "0.4.0",
+  // 0.37 (history and housekeeping): `forgetTenant` for deleting a company (the console's Delete).
+  "tenancy-widget": "0.5.0",
   // 0.2.0 (sweep): line items after creation, atomic idempotent payments,
   // reversals, a status transition table and tenant-scoped reads — the emitted
   // admin page and router call addInvoiceItem/reversePayment/markInvoiceViewed
@@ -316,7 +333,8 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // deposits, handleInvoiceCardEvent and invoice_checkouts. None exist in 0.4.x.
   // 0.6.0 (the customer list): `invoice.created` and the phone on an event —
   // the customers glue links a staff-made invoice to its customer from it.
-  invoicing: "0.6.0",
+  // 0.37 (history and housekeeping): `forgetTenant` for deleting a company, and past records with their real dates.
+  invoicing: "0.7.0",
   // First release (Tenancy 2a): the ledger, one invoice's editor and the
   // customer's invoice page, over invoicing 0.3's wire. 0.1.1 (Tenancy 2b-1):
   // its invoicing peer is ^0.4.0 — pinned for the same lockfile reason.
@@ -338,7 +356,8 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // `templateLabel` and the failed-email alert kind.
   // 0.5.0 (the customer list): `onSent` — each message that went lands on
   // its customer's timeline (src/server/comms-senders.ts).
-  comms: "0.5.0",
+  // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
+  comms: "0.6.0",
   // First release (Tenancy 2a): the Messages console, over comms 0.3's wire.
   // 0.1.1 (Tenancy 2b-1): its comms peer is ^0.4.0, and it names the team
   // alert email — pinned for the same lockfile reason.
@@ -347,22 +366,26 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   "comms-widget": "0.2.0",
   // 0.2.0 (Tenancy 2b-4b): AI mentions per company — the handlers and route
   // table, the metered runner, the Anthropic engine (./anthropic), the screen.
-  aeo: "0.2.0",
+  // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
+  aeo: "0.3.0",
   // Tenancy 2b-4a: each company's website numbers. 0.3.0 has the site
   // register, the company handlers and route tables, the drop-in screens
   // (./dashboard: WebsiteTraffic, WebsitesSettings) and the snippet's script,
   // none of which exist in 0.2.x.
-  analytics: "0.3.0",
+  // 0.37 (history and housekeeping): `forgetTenant` for deleting a company, and importVisits.
+  analytics: "0.4.0",
   // 0.2.0: one audience per company (createAudiences), its company handlers
   // and route table, and the drop-in "leave these people out" panel.
-  audience: "0.2.0",
+  // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
+  audience: "0.3.0",
   // 0.2.0: a whole-segment * in the path list (a company's token pages,
   // /t/{web address}/quote/…) and a LocalBusiness without an address.
   seo: "0.2.0",
   // 0.2.0 (Tenancy 2b-4c): book a call per company — the admin and public
   // handlers and their route tables, the open/closed gate, the company caps,
   // reminders and the pinned calendar reader. 0.1 had none of these.
-  booking: "0.2.0",
+  // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
+  booking: "0.3.0",
   // 0.2.0: the fetch adapter over booking 0.2's admin routes, the honeypot and
   // the "closed" sentence; pinned in step with the workspace.
   // 0.3.0: title={false} on the calls screen (create-app 0.36).
@@ -374,6 +397,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // handler and its route table, and the screens (./admin).
   // 0.2.0: title={false} and locale on the customer list (create-app 0.36).
   // 0.3.0 (polish 3): `<CustomersActions>` — Add customer, Import and Export in the page header.
+  // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
   customers: "0.3.0",
 };
 

@@ -15,6 +15,7 @@ import {
 import { entitlements, plans as planTable, subscriptions } from "__SCOPE__/billing/schema";
 import { auditEntry, defineAuditedActions } from "__SCOPE__/observability";
 import { auditLog } from "__SCOPE__/observability/schema";
+import { tenants } from "__SCOPE__/tenancy/schema";
 import { db, type Db } from "@/db";
 import { plans } from "@/plans";
 
@@ -259,6 +260,12 @@ export interface ApplySubscriptionResult {
   readonly status: SubscriptionStatus;
   readonly why: string;
   readonly entitlements: EntitlementOutcome | null;
+  /**
+   * TRUE when the subscription belongs to a company that has been deleted
+   * (create-app 0.37): nothing was written, on purpose. Like a stale event it
+   * is a success to acknowledge, or Stripe redelivers it for three days.
+   */
+  readonly tenantGone?: true;
 }
 
 /**
@@ -305,6 +312,32 @@ async function writeSubscription(
   tx: Tx,
   input: ApplySubscriptionInput,
 ): Promise<ApplySubscriptionResult> {
+  // ---- 0. a company that's gone -------------------------------------------
+  //
+  // Deleting a company forgets its subscription and entitlement rows, and a
+  // forced delete leaves the subscription live at Stripe. Its next event (the
+  // cancel staff make afterwards, next month's invoice.paid) must not write
+  // them back: a row for a company that no longer exists, re-granting a plan
+  // to nobody. Read under a share lock on the company's row, so a delete committing
+  // alongside is seen before this writes (and waits for it if it starts after).
+  const [company] = await tx
+    .select({ deletedAt: tenants.deletedAt })
+    .from(tenants)
+    .where(eq(tenants.id, input.tenantId))
+    .limit(1)
+    .for("share");
+  if (company?.deletedAt) {
+    return {
+      subscriptionId: null,
+      applied: false,
+      created: false,
+      status: input.status,
+      why: `The ${input.tenantId} company was deleted on ${company.deletedAt.toISOString()}: nothing written. If Stripe is still charging it, cancel the subscription there.`,
+      entitlements: null,
+      tenantGone: true,
+    };
+  }
+
   // ---- 1. the plan --------------------------------------------------------
   //
   // The TIER comes from the record and the ROW comes from the table, and both

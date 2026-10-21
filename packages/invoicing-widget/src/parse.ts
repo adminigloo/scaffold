@@ -64,6 +64,12 @@ function parseLine(raw: unknown): InvoiceLineWire | null {
   return { id: raw.id, description: str(raw.description), quantity: num(raw.quantity), unitPrice: num(raw.unitPrice), total: num(raw.total) };
 }
 
+/** 0.7: "entered from past records" — when, and by whom (a user id); null when it wasn't. */
+function parseEnteredLater(raw: unknown): { at: string; by: string | null } | null {
+  if (!isObject(raw) || typeof raw.at !== "string" || !Number.isFinite(Date.parse(raw.at))) return null;
+  return { at: raw.at, by: typeof raw.by === "string" ? raw.by : null };
+}
+
 function parsePayment(raw: unknown): InvoicePaymentWire | null {
   if (!isObject(raw) || typeof raw.id !== "string") return null;
   return {
@@ -77,6 +83,7 @@ function parsePayment(raw: unknown): InvoicePaymentWire | null {
     reason: strOrNull(raw.reason),
     flag: raw.flag === "disputed" || raw.flag === "dispute_lost" ? (raw.flag as PaymentFlagWire) : null,
     reversedAmount: num(raw.reversedAmount),
+    enteredLater: parseEnteredLater(raw.enteredLater),
   };
 }
 
@@ -139,6 +146,7 @@ function parseDetail(raw: unknown): InvoiceDetailWire | null {
     nextStatuses: listOf(raw.nextStatuses, (s) => (SETTABLE.includes(s as SettableInvoiceStatusWire) ? (s as SettableInvoiceStatusWire) : null)),
     can: { manage: can.manage === true, record: can.record === true, reverse: can.reverse === true },
     deposit: parseDeposit(raw.deposit),
+    enteredLater: parseEnteredLater(raw.enteredLater),
   };
 }
 

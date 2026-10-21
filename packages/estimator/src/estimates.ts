@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, gt, inArray, isNull, like, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
+import { parseHistoryDate } from "./history.js";
 import { recipeOf } from "./catalog.js";
 import { emitEvents, derivedOf, type EstimatorActor, type EstimatorEventListener, type EstimatorEvent } from "./events.js";
 import { calculateItemTotal, calculateTotals, type Measurement } from "./pricing.js";
@@ -458,11 +459,24 @@ export async function createEstimate(
   db: EstimatorDb,
   input: CreateEstimateInput,
   createdBy?: string,
-  options: { now?: Date; settings?: EstimatorSettings } = {},
+  options: {
+    now?: Date;
+    settings?: EstimatorSettings;
+    /**
+     * 0.7, past records: the day this estimate was really made (staff and
+     * server paths only). Not in the future, not before 2000. Its number is
+     * that year's; `entered_at`/`entered_by` record that it was typed in now.
+     */
+    occurredAt?: Date | string;
+  } = {},
 ): Promise<CreatedEstimate> {
   const parsed = createEstimateSchema.parse(input);
-  const now = options.now ?? new Date();
+  const enteredAt = options.now ?? new Date();
   const settings = options.settings ?? (await getEstimatorSettings(db, parsed.tenantId));
+  // A day ("2025-06-14") is that day where the company is.
+  const now =
+    options.occurredAt !== undefined ? parseHistoryDate(options.occurredAt, enteredAt, "occurredAt", null, settings.timeZone) : enteredAt;
+  const backdated = options.occurredAt !== undefined;
 
   const items: PricedItem[] = [];
   for (const item of parsed.items) items.push(await priceStaffItem(db, parsed.tenantId, item, settings));
@@ -497,6 +511,7 @@ export async function createEstimate(
       createdBy: createdBy ?? null,
       createdAt: now,
       updatedAt: now,
+      ...(backdated ? { enteredAt, enteredBy: createdBy ?? null } : {}),
     },
     items,
   );
@@ -857,19 +872,52 @@ export async function setEstimateStatus(
   db: EstimatorDb,
   tenantId: string,
   input: z.input<typeof setEstimateStatusSchema>,
-  options: EstimatorWriteOptions = {},
+  options: EstimatorWriteOptions & {
+    /**
+     * 0.7, past records: the day this really happened (staff and server
+     * paths only) — not in the future, not before 2000, not before the
+     * estimate was made. Its stamp (sent_at, approved_at…) and its event
+     * carry that day, and the customer is never told.
+     */
+    occurredAt?: Date | string;
+  } = {},
 ): Promise<boolean> {
   const parsed = setEstimateStatusSchema.parse(input);
   if (parsed.status === "converted") return false;
   const from = ESTIMATE_STATUSES.filter((s) => ESTIMATE_STATUS_TRANSITIONS[s].includes(parsed.status));
   if (from.length === 0) return false;
-  const now = options.now ?? new Date();
+  const enteredAt = options.now ?? new Date();
+  let now = enteredAt;
+  const backdated = options.occurredAt !== undefined;
+  let settings = options.settings;
+  if (backdated) {
+    const [made] = await db
+      .select({ createdAt: estimatorEstimates.createdAt })
+      .from(estimatorEstimates)
+      .where(and(eq(estimatorEstimates.id, parsed.id), eq(estimatorEstimates.tenantId, tenantId)))
+      .limit(1);
+    if (!made) return false;
+    settings ??= await getEstimatorSettings(db, tenantId);
+    // A day ("2025-06-14") is that day where the company is.
+    now = parseHistoryDate(
+      options.occurredAt,
+      enteredAt,
+      "occurredAt",
+      { at: (made as { createdAt: Date }).createdAt, what: "the estimate was made" },
+      settings.timeZone,
+    );
+  }
   const set: Partial<typeof estimatorEstimates.$inferInsert> = { status: parsed.status, updatedAt: now };
   switch (parsed.status) {
     case "sent": {
-      const settings = options.settings ?? (await getEstimatorSettings(db, tenantId));
+      settings ??= await getEstimatorSettings(db, tenantId);
       set.sentAt = now;
       set.validUntil = new Date(now.getTime() + settings.quoteValidDays * DAY_MS);
+      // A past quote whose time ran out before it was typed in expired long
+      // ago: that is history, not news. Stamped as announced, the expiry
+      // sweep moves it to "expired" and tells nobody — no "your quote has
+      // expired" email to a customer about a quote from last year.
+      if (backdated && set.validUntil.getTime() <= enteredAt.getTime()) set.expiryNotifiedAt = enteredAt;
       break;
     }
     case "viewed":
@@ -908,7 +956,8 @@ export async function setEstimateStatus(
           type: parsed.status === "approved" ? "quote.accepted" : "quote.declined",
           estimateId: parsed.id,
           actor: options.actor ?? { type: "staff", id: null },
-          notify: options.notify ?? false,
+          // A past record is history, never news to the customer.
+          notify: backdated ? false : (options.notify ?? false),
           via: "staff",
           note: parsed.note ?? null,
         },
@@ -1564,6 +1613,7 @@ export function sendWarningsFor(
 // --- The staff detail ------------------------------------------------------------------------
 
 function timelineOf(row: EstimateRow): Array<{ at: string; label: string }> {
+  const entered = row.enteredAt ? [{ at: row.enteredAt, label: "Entered from past records" }] : [];
   const entries: Array<{ at: Date; label: string }> = [
     { at: row.createdAt, label: row.source === "staff" ? "Created" : "Lead received" },
   ];
@@ -1574,6 +1624,7 @@ function timelineOf(row: EstimateRow): Array<{ at: string; label: string }> {
   if (row.expiredAt) entries.push({ at: row.expiredAt, label: "Expired" });
   if (row.convertedAt) entries.push({ at: row.convertedAt, label: "Turned into an invoice" });
   if (row.archivedAt) entries.push({ at: row.archivedAt, label: "Archived" });
+  entries.push(...entered);
   return entries.sort((a, b) => a.at.getTime() - b.at.getTime()).map((entry) => ({ at: entry.at.toISOString(), label: entry.label }));
 }
 
@@ -1721,6 +1772,8 @@ export async function getEstimateDetail(
     timeline: timelineOf(row),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+    enteredAt: iso(row.enteredAt ?? null),
+    enteredBy: row.enteredBy ?? null,
   };
 }
 

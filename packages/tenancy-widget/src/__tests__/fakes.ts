@@ -249,7 +249,8 @@ export function adminDetail(extra: Partial<AdminCompanyDetailWire> = {}, company
       { at: "2026-10-12T15:00:00.000Z", action: "company.created", label: "Created a company", actor: "Olivia", sensitive: false, detail: null },
       { at: "2026-10-12T17:00:00.000Z", action: "company.ownership.transferred", label: "Handed ownership of the company to someone else", actor: "Olivia", sensitive: true, detail: "Sam Lee" },
     ],
-    can: { suspend: true, assignOwner: true, releaseAddresses: true },
+    can: { suspend: true, assignOwner: true, releaseAddresses: true, delete: false },
+    deletion: { available: true, stillPaying: null },
     ...extra,
   };
 }

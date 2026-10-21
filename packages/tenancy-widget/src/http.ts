@@ -96,6 +96,7 @@ export const WIRE_ERROR_CODES: ReadonlySet<TenancyErrorCode> = new Set<TenancyEr
   "logo_invalid",
   "rate_limited",
   "internal",
+  "still_paying",
 ]);
 
 // ---------------------------------------------------------------------------

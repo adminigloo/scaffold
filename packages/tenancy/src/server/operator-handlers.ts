@@ -13,7 +13,7 @@ import {
   settleBeforeAnswering,
 } from "./http.js";
 import { TENANCY_OPERATOR_ROUTES, type TenancyOperatorRouteKind } from "./routes.js";
-import { adminCompanyDetailToWire, adminCompanyListToWire, adminPeopleToWire, adminPersonToWire } from "./to-wire.js";
+import { adminCompanyDetailToWire, adminCompanyListToWire, adminPeopleToWire, adminPersonToWire, deletedCompanyToWire } from "./to-wire.js";
 import type { RequestFacts, TenancyService } from "./types.js";
 import type { AuditLineWire } from "../wire.js";
 
@@ -30,6 +30,10 @@ export interface CreateTenancyOperatorHandlersOptions {
 const suspendBody = z.object({ reason: z.string().max(500) });
 const ownerBody = z.object({ toUserId: z.string().min(1).max(128) });
 const staffRoleBody = z.object({ templateKey: z.string().min(1).max(64).nullable() });
+const deleteBody = z.object({
+  confirmSlug: z.string().max(100),
+  force: z.object({ reason: z.string().max(500) }).optional(),
+});
 
 function parse<T>(schema: z.ZodType<T>, body: unknown): T {
   const result = schema.safeParse(body);
@@ -107,6 +111,17 @@ export function createTenancyOperatorHandlers(options: CreateTenancyOperatorHand
       case "admin-release-addresses":
         await readJson(req);
         return jsonResponse(200, await detailWithActivity(tenantId, await tenancy.releaseRetiredAddresses({ actorUserId: userId, tenantId, request })));
+      case "admin-delete": {
+        const body = parse(deleteBody, await readJson(req));
+        const deleted = await tenancy.deleteCompany({
+          actorUserId: userId,
+          tenantId,
+          confirmSlug: body.confirmSlug,
+          ...(body.force ? { force: { reason: body.force.reason } } : {}),
+          request,
+        });
+        return jsonResponse(200, { deleted: deletedCompanyToWire(deleted) });
+      }
       case "admin-people": {
         const q = url.searchParams.get("q");
         const staffOnly = url.searchParams.get("staffOnly");

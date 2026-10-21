@@ -573,19 +573,19 @@ describe("what the project installs and says (17)", () => {
       expect.arrayContaining(["@adminigloo/notifications-widget", "@adminigloo/storage-widget"]),
     );
     for (const [pkg, range] of [
-      ["notifications", "^0.2.0"],
+      ["notifications", "^0.3.0"],
       ["notifications-widget", "^0.1.0"],
-      ["storage", "^0.2.0"],
+      ["storage", "^0.3.0"],
       ["storage-widget", "^0.1.0"],
-      ["tenancy", "^0.7.0"],
-      ["tenancy-widget", "^0.4.0"],
-      ["scheduling", "^0.6.1"],
+      ["tenancy", "^0.8.0"],
+      ["tenancy-widget", "^0.5.0"],
+      ["scheduling", "^0.7.0"],
       ["scheduling-widget", "^0.5.0"],
-      ["estimator", "^0.6.0"],
+      ["estimator", "^0.7.0"],
       ["estimator-widget", "^0.7.0"],
-      ["invoicing", "^0.6.0"],
+      ["invoicing", "^0.7.0"],
       ["invoicing-widget", "^0.4.0"],
-      ["comms", "^0.5.0"],
+      ["comms", "^0.6.0"],
       ["comms-widget", "^0.2.0"],
     ] as const) {
       expectSameLine(versionRangeFor(`@adminigloo/${pkg}`), range, pkg);

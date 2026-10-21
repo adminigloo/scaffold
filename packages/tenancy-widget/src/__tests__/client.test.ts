@@ -240,7 +240,7 @@ describe("createTenancyClient", () => {
 
   it("a code with no message gets the server's own default sentence, never the code", () => {
     expect(toClientError(403, { error: { code: "not_a_member" } }).message).toBe("You're not part of this company.");
-    expect(WIRE_ERROR_CODES.size).toBe(27);
+    expect(WIRE_ERROR_CODES.size).toBe(28);
   });
 
   it("reads narrowly: a ready session without a company, or an accepted join without one, is a bad answer", () => {

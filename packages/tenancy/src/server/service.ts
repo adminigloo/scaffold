@@ -17,6 +17,7 @@ import {
 } from "./invitations-lifecycle.js";
 import {
   assignOwner,
+  deleteCompany,
   getCompanyDetail,
   listCompanies,
   listPeople,
@@ -84,6 +85,7 @@ export function createTenancyService(options: CreateTenancyServiceOptions): Tena
     ...(options.roles ? { roles: options.roles } : {}),
     ...(options.seats ? { seats: options.seats } : {}),
     ...(options.logos ? { logos: options.logos } : {}),
+    ...(options.deletion ? { deletion: options.deletion } : {}),
     ...(options.reservedSlugs ? { reservedSlugs: options.reservedSlugs } : {}),
     ...(options.invitations ? { invitations: options.invitations } : {}),
     ...(options.companiesPerAccount !== undefined ? { companiesPerAccount: options.companiesPerAccount } : {}),
@@ -154,6 +156,7 @@ export function createTenancyService(options: CreateTenancyServiceOptions): Tena
     reactivateCompany: (input) => reactivateCompany(ctx, input),
     assignOwner: (input) => assignOwner(ctx, input),
     releaseRetiredAddresses: (input) => releaseRetiredAddresses(ctx, input),
+    deleteCompany: (input) => deleteCompany(ctx, input),
     listPeople: (input) => listPeople(ctx, input),
     listStaffRoles: (input) => listStaffRoles(ctx, input),
     setStaffRole: (input) => setStaffRole(ctx, input),
