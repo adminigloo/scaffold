@@ -1,5 +1,19 @@
 # @adminigloo/testing
 
+## 0.3.2
+
+### Patch Changes
+
+- Updated dependencies [5125945]
+- Updated dependencies [5125945]
+- Updated dependencies [5125945]
+  - @adminigloo/env@0.4.0
+  - @adminigloo/permissions@0.4.0
+  - @adminigloo/stripe@0.7.0
+  - @adminigloo/auth@0.2.1
+  - @adminigloo/db@0.2.3
+  - @adminigloo/tenancy@0.8.1
+
 ## 0.3.1
 
 ### Patch Changes

@@ -1,5 +1,17 @@
 # @adminigloo/billing
 
+## 0.6.0
+
+### Minor Changes
+
+- 5125945: Billing 0.6: a free tier, plans not on sale yet, and one way to show a plan. **`free: { name?, description?, features }`** in `definePlans` (top level, or per product line) declares what a signed-in account with no plan holds — checked like a tier (every feature of the line given a value) — and `loadCompanyPlan` grants it, in memory, to any line whose standing isn't open, summed with add-ons and grants and replaced the moment a paid tier of the line is live (`freeGrantRows`, `FREE_TIER_REF`). **`onSale: true | "coming" | false`** on a tier (resolved on `PlanTier.onSale`; a retired tier is never on sale): `planOnSale` / `notOnSaleReason` are what a checkout asks — a "coming" tier is shown with its price and never sold, an `onSale: false` one is put on by hand only. **`planColumns(plans, { line, interval, currency, headline })`** is the presentation every plans page draws: the free tier first, then every tier on sale or coming; each column lists what it includes (never "No …"), the next tier up says "Everything in Free, plus:" and lists only what it adds (unless it has less of something, then everything), prices in whole units when exact with "2 months free" on a yearly price, and "Most popular" only where the record set `highlight`. `planIntervals` / `defaultPlanInterval` put yearly first. `formatMinor` and `formatPrice` (whole units when exact) format plan prices without the catalog package, so a project that sells plans and no products installs no shop. **`subscriptions.price_minor`** (nullable): what each subscription line is actually charged per period, as Stripe bills it — a repricing in the record doesn't change it for people already on the old Price — written by create-app's mirror; `pnpm db:generate` adds the column and nothing else.
+
+### Patch Changes
+
+- Updated dependencies [5125945]
+  - @adminigloo/permissions@0.4.0
+  - @adminigloo/db@0.2.3
+
 ## 0.5.0
 
 ### Minor Changes

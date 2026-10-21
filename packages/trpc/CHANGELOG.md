@@ -1,5 +1,14 @@
 # @adminigloo/trpc
 
+## 0.3.2
+
+### Patch Changes
+
+- Updated dependencies [5125945]
+  - @adminigloo/permissions@0.4.0
+  - @adminigloo/auth@0.2.1
+  - @adminigloo/observability@0.2.2
+
 ## 0.3.1
 
 ### Patch Changes

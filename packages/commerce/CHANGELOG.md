@@ -1,5 +1,16 @@
 # @adminigloo/commerce
 
+## 0.4.2
+
+### Patch Changes
+
+- Updated dependencies [5125945]
+- Updated dependencies [5125945]
+  - @adminigloo/permissions@0.4.0
+  - @adminigloo/stripe@0.7.0
+  - @adminigloo/db@0.2.3
+  - @adminigloo/catalog@0.4.1
+
 ## 0.4.1
 
 ### Patch Changes

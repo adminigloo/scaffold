@@ -1,5 +1,16 @@
 # @adminigloo/ai
 
+## 0.4.1
+
+### Patch Changes
+
+- Updated dependencies [5125945]
+- Updated dependencies [5125945]
+  - @adminigloo/env@0.4.0
+  - @adminigloo/permissions@0.4.0
+  - @adminigloo/auth@0.2.1
+  - @adminigloo/db@0.2.3
+
 ## 0.4.0
 
 ### Minor Changes

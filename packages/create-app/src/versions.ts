@@ -53,8 +53,8 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // localhost app URL is the founder's own machine for the first-admin rule
   // and the "no access" page.
   env: "0.4.0",
-  db: "0.2.2",
-  auth: "0.2.0",
+  db: "0.2.3",
+  auth: "0.2.1",
   // 0.3.0: creating a tenant now writes its owner the owner role as a row, and
   // the emitted code calls the export that does it. Owning a tenant conferred
   // nothing before that, so a project on 0.2.x compiles and grants nobody
@@ -71,7 +71,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // `tenancyAlertsFor` are the team alerts. The emitted alerts glue calls
   // all of them; none exist in 0.5.x.
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company (deleteCompany, staff.tenants.delete).
-  tenancy: "0.8.0",
+  tenancy: "0.8.1",
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
   // 0.4.0 (create-app 0.39): the seed applies a seal over an allow row a
   // shipped role already held (`sealsApplied`, `withdrawn`) — what takes a
@@ -81,11 +81,11 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.2.0 rather than 0.1.x because `requireTenant(...).input(...)` did not
   // compile before it. `^0.1.0` would resolve to a build a generated project
   // cannot typecheck against.
-  trpc: "0.3.1",
+  trpc: "0.3.2",
   // The same, and the one that was actually broken: `createErrorReporter` ships
   // in 0.2.0 and `src/server/error-reporter.ts` imports it unconditionally, so
   // a project resolving 0.1.x fails to compile on a file every project gets.
-  observability: "0.2.1",
+  observability: "0.2.2",
   // 0.2.0 for the subscription mirror. The generated webhook route imports
   // `subscriptionSnapshot`, `subscriptionIdFromInvoice` and
   // `SUBSCRIPTION_EVENT_TYPES`, and the billing router imports
@@ -121,7 +121,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.3.0 (getting paid, part 2): product_variants.held — the stock open store
   // checkouts hold, apart from what is on the shelf. The store reads it.
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
-  catalog: "0.4.0",
+  catalog: "0.4.1",
   // 0.2.0 (getting paid, part 2): a store of its own — the emitted store
   // glue imports @adminigloo/commerce/store and /widget, the route tables and
   // storePermissions, and the schema has store_checkouts and store_alerts.
@@ -129,7 +129,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.3.0: title={false} and locale on the store screens (create-app 0.36, the showroom).
   // 0.4.0 (polish 3): `<StoreAdmin actionsInHeader>` — the store page puts "See your store" in its own header.
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company, and sales recorded by hand.
-  commerce: "0.4.1",
+  commerce: "0.4.2",
   // 0.2.0 for the typed plan record. `src/plans.ts` is emitted into every
   // project that sells something and calls `definePlans`, which does not exist
   // in 0.1.x — so a project resolving the old line fails to compile on a file
@@ -153,11 +153,11 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.3.0 (Tenancy 2b-4b): a call's fees beyond tokens (`feesMicros`: web
   // searches), which src/server/ai-mentions.ts settles every AI mention check with.
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
-  ai: "0.4.0",
+  ai: "0.4.1",
   // 0.3.0 (Tenancy 2a, D8): a per-message From name and Reply-To, so a
   // company's email carries its name on the platform's verified address.
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
-  email: "0.4.0",
+  email: "0.4.1",
   // First releases, all three proven on adminigloo.com before they were
   // offered here — the same publish → dogfood → template rhythm feedback
   // followed. The emitted routers import from each unconditionally, so a
@@ -251,7 +251,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // inline, which put a fourteenth version in a place no drift test looked at —
   // the exact arrangement the rest of this table exists to replace.
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company (./forget, the proof's planter).
-  testing: "0.3.1",
+  testing: "0.3.2",
   // Field service — first releases, pinned at the workspace versions the drift
   // test reads. The emitted routers/handlers import from each unconditionally
   // for the config that selects it, so a caret over anything older can resolve
@@ -319,7 +319,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // file record. The alerts and files glue imports all of them.
   // 0.6.1 (the customer list): its comms range moves to ^0.5.0 with comms 0.5.
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company, and past records with their real dates.
-  scheduling: "0.7.0",
+  scheduling: "0.7.1",
   // First release. The booking page, the manage page and the three staff
   // pages render its components; it speaks 0.4's wire, so it moves with
   // scheduling 0.4 and never with 0.3.
@@ -424,7 +424,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.2.0: title={false} and locale on the customer list (create-app 0.36).
   // 0.3.0 (polish 3): `<CustomersActions>` — Add customer, Import and Export in the page header.
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
-  customers: "0.3.0",
+  customers: "0.3.1",
 };
 
 export class UnknownPackageVersionError extends Error {

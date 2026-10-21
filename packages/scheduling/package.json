@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/scheduling",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Field-service scheduling in the business's own time zone: customers book online and manage their visit from an emailed link, staff accept, move and reassign visits on a calendar, crews get today's route, and unanswered requests expire. Drive times come from Google Maps when you pass a key (selectMapsProvider), or straight-line estimates without one. Emails and reminders via ./comms.",
   "license": "UNLICENSED",
   "type": "module",
