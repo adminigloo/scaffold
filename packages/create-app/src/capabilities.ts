@@ -291,6 +291,8 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
   },
   {
     capability: "commerce.customer-account",
+    // The orders page (create-app 0.39): a project with plans and no shop has
+    // an account overview too, and no orders to read back.
     why:
       "The signed-in overview a buyer lands on, from the account overlay. THE " +
       "READ HALF OF `commerce.orders`, which claimed only the write: every " +
@@ -298,28 +300,28 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
       "reachable from one page keyed on a reference in a URL the buyer was " +
       "about to navigate away from, and the manifest said the project had " +
       "orders.",
-    provenBy: (plan) => exists(plan, "app", "(site)", "account", "page.tsx"),
+    provenBy: (plan) => exists(plan, "app", "(site)", "account", "orders", "page.tsx"),
   },
   {
     capability: "billing.entitlements",
-    why: "The same function grants the entitlement that the order paid for.",
-    provenBy: (plan) =>
-      mentions(plan, ["src", "server", "fulfilment.ts"], "entitlement"),
+    why:
+      "The subscription mirror grants what a plan includes (and, with a shop, " +
+      "fulfilPurchase grants what an order paid for).",
+    provenBy: (plan) => mentions(plan, ["src", "server", "subscription.ts"], "planGrantDiff("),
   },
   {
     capability: "commerce.one-time-checkout",
     why:
-      "The checkout router creates the payment intent. See " +
-      "UNDISTINGUISHED_CAPABILITIES: the emitted project is identical across " +
-      "the three money-taking models.",
+      "The shop's checkout router creates the payment intent. Only with a shop " +
+      "(--model one-time or both, create-app 0.39).",
     provenBy: (plan) => exists(plan, "src", "server", "routers", "checkout.ts"),
   },
   {
     capability: "billing.subscriptions",
     why:
-      "The same checkout router and the same fulfilment path. See " +
+      "The billing router: the plan checkout, changes, added lines. See " +
       "UNDISTINGUISHED_CAPABILITIES.",
-    provenBy: (plan) => exists(plan, "src", "server", "routers", "checkout.ts"),
+    provenBy: (plan) => exists(plan, "src", "server", "routers", "billing.ts"),
   },
   {
     capability: "email.transactional",
@@ -327,12 +329,12 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
       "A sender that is constructed AND a template for it to send. With no " +
       "key the send is recorded as skipped, which is still transactional mail " +
       "— the absent thing would be the module, not the credential.",
+    // The invitation email and its template — or, in a consumers project (no
+    // invitations, create-app 0.39), the sender for its own emails to its people.
     provenBy: (plan) =>
-      mentions(
-        plan,
-        ["src", "server", "invitation-mail.ts"],
-        "createEmailSender(",
-      ) && exists(plan, "src", "emails", "invitation.ts"),
+      (mentions(plan, ["src", "server", "invitation-mail.ts"], "createEmailSender(") &&
+        exists(plan, "src", "emails", "invitation.ts")) ||
+      mentions(plan, ["src", "server", "mail.ts"], "createEmailSender("),
   },
   {
     capability: "feedback.intake",
@@ -1018,15 +1020,10 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
  * so — which is the only mechanism that gets a list like this pruned.
  */
 export const UNDISTINGUISHED_CAPABILITIES: Readonly<Record<string, string>> = {
-  "commerce.one-time-checkout":
-    "`--model one-time`, `--model subscription` and `--model both` select the " +
-    "same overlays, the same packages and the same router. The answer reaches " +
-    "the manifest and SCAFFOLD.md and nothing else, so a one-time project " +
-    "ships the identical subscription code and merely declines to claim it.",
   "billing.subscriptions":
-    "the other half of that trio, and the more misleading direction: a " +
-    "`--model one-time` project does not claim subscriptions and contains " +
-    "every line of the subscription path.",
+    "a `--model one-time` project does not claim subscriptions and still " +
+    "contains every line of the plan path (the stripe overlay is the plans' " +
+    "half every money project has; only the shop is split off, create-app 0.39).",
 };
 
 export class UnprovableCapabilityError extends Error {

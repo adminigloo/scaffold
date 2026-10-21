@@ -18,11 +18,12 @@ import {
 } from "@/components/account/orderPresentation";
 import { db } from "@/db";
 import { currentPrincipal } from "@/server/auth";
-import { formatDay, type Delivery, type GrantedEntitlement } from "@/account";
+import { formatDay, type GrantedEntitlement } from "@/account";
+import type { Delivery } from "@/account-orders";
 import {
   readDeliveriesForOrders,
   readGrantsForReferences,
-} from "@/server/account";
+} from "@/server/account-orders";
 import { readOrderForUser, type FulfilledOrderView } from "@/server/fulfilment";
 import { STOREFRONT_TENANT_ID } from "@/server/routers/checkout";
 import { OperatorOnly } from "@/components/OperatorOnly";

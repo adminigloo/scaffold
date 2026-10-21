@@ -214,7 +214,11 @@ describe("create-adminigloo-app upgrade", () => {
     expect(steps).toContain(`${sepPath("src/env.ts")}.new  ->  ${sepPath("src/env.ts")}`);
     expect(steps).toContain(sepPath("src/server/old-blob-store.ts"));
     expect(steps).toContain("@adminigloo/tenancy  ^0.5.0 -> ");
-    expect(steps).toContain("pnpm db:generate && pnpm db:migrate && pnpm db:seed");
+    // Never `generate && migrate` (review): the migration is read first.
+    expect(steps).not.toContain("pnpm db:generate && pnpm db:migrate");
+    expect(steps).toContain("  pnpm db:generate\n");
+    expect(steps).toContain("  pnpm db:migrate        once you have read it");
+    expect(steps).toContain("  pnpm db:seed\n");
     // The rewritten .npmrc makes pnpm ask once to rebuild node_modules: said beforehand.
     expect(plan.rewrites.has(".npmrc")).toBe(true);
     expect(steps).toContain("it may ask once to remove and reinstall node_modules");

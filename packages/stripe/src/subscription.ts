@@ -77,6 +77,14 @@ export interface StripeSubscriptionItemSnapshot {
    * people on it) says which plan it is from the Price itself.
    */
   readonly priceMetadata: Readonly<Record<string, string>>;
+  /**
+   * What the item is charged each period, in minor units of `currency`: its
+   * Price's `unit_amount` times its quantity (stripe 0.7). The amount the
+   * subscriber actually pays — a Price from before a repricing still bills the
+   * people on it at the old amount, which a plan record's price no longer says.
+   * NULL when Stripe gives no whole unit amount (a tiered or metered price).
+   */
+  readonly amountMinor?: bigint | null;
 }
 
 /** One Stripe subscription, flattened, with no Stripe types left in it. */
@@ -204,7 +212,15 @@ function itemSnapshot(item: Stripe.SubscriptionItem): StripeSubscriptionItemSnap
     currentPeriodEnd: fromUnix(item.current_period_end),
     metadata: item.metadata ?? {},
     priceMetadata: item.price?.metadata ?? {},
+    amountMinor: itemAmountMinor(item),
   };
+}
+
+/** The item's price times its quantity, or NULL when Stripe gives no whole unit amount. */
+function itemAmountMinor(item: Stripe.SubscriptionItem): bigint | null {
+  const unit = item.price?.unit_amount;
+  if (typeof unit !== "number" || !Number.isInteger(unit) || unit < 0) return null;
+  return BigInt(unit) * BigInt(item.quantity ?? 1);
 }
 
 /**

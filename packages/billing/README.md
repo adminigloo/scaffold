@@ -26,7 +26,7 @@ What a company sees as its plan changes:
 
 | You install | You get | You wire yourself |
 | --- | --- | --- |
-| `@adminigloo/billing` | `definePlans` (the plan record: quotas, on/off features, options, prices per interval and currency), `grantsForPlan` / `planGrantDiff` (what a plan entitles, and moving between plans without losing what's been used), `resolveEntitlements` / `checkEntitlement`, `planStanding`, `createPlanGate`, `gatePermissionLoaders`, `billingPermissions`, and the `plans`, `subscriptions` and `entitlements` tables (`./schema`) | Your plan record, the tables, and where your checkpoints ask the gate |
+| `@adminigloo/billing` | `definePlans` (the plan record: quotas, on/off features, options, prices per interval and currency, a free tier, and what's on sale), `planColumns` (how a plan is shown, 0.6), `formatMinor` / `formatPrice`, `grantsForPlan` / `planGrantDiff` (what a plan entitles, and moving between plans without losing what's been used), `resolveEntitlements` / `checkEntitlement`, `planStanding`, `createPlanGate`, `gatePermissionLoaders`, `billingPermissions`, and the `plans`, `subscriptions` and `entitlements` tables (`./schema`) | Your plan record, the tables, and where your checkpoints ask the gate |
 | + `./server` | `loadCompanyPlan` (a company's standing and every limit, from its rows — per product line too), `loadPlanStanding`, `liveStripeSubscription`, `liveStripeLines`, `lineOfStoredRow`, `companyStripeCustomer` | A database handle (drizzle, Postgres) |
 | + `@adminigloo/stripe` | Checkout, the Stripe event ledger, and changing a plan on the company's existing subscription | Stripe keys and the webhook route |
 | + `@adminigloo/create-app` (`--model subscription`, with companies) | All of it wired: the plan check at every checkpoint, a free trial for every new company, plan limits for team members, storage and online estimates, Billing with "change plan" (a price preview, never a second subscription), a banner saying where the company stands, and the operator's Company plans page with Give free months | Your prices in `src/plans.ts`, and `BILLING_TRIAL_DAYS` if 14 days isn't right |
@@ -99,6 +99,58 @@ diff: `planGrantDiff(current, nextTier, { refs: planLineRefs(plans, line) })`
 standing per line: `loadCompanyPlan(db, { tenantId, trialStartedAt, trialDays,
 plans })` returns `lines` (each line's standing and newest subscription) and
 `standing`, the best of them.
+
+## A free tier, and plans not on sale yet (0.6)
+
+```ts
+export const plans = definePlans({
+  features: {
+    weather_live: { kind: "flag", label: "Live prices for every city" },
+    cities: { kind: "quota", label: "watchlist cities", labelOne: "watchlist city" },
+  },
+  // What a signed-in account with no plan holds. Not a plan: no $0
+  // subscription, no `plans` row, nothing at Stripe.
+  free: { description: "Follow three cities.", features: { weather_live: false, cities: 3 } },
+  tiers: [
+    { key: "basic", name: "Basic", prices: { month: { usd: 1000n }, year: { usd: 10000n } }, features: { weather_live: true, cities: 24 } },
+    // Shown with its price and "Coming soon"; checkout refuses it.
+    { key: "pro", name: "Pro", onSale: "coming", prices: { month: { usd: 2000n } }, features: { weather_live: true, cities: 24 } },
+  ],
+});
+```
+
+`free` (top level, or on a product line) is checked like a tier — every
+feature of the line given a value — and `loadCompanyPlan(db, { …, plans })`
+grants it, in memory, to any line whose standing isn't open: it sums with
+add-ons and grants, and the moment a paid tier of the line is live its own
+rows replace it. So the plan check, the pricing page's Free column and the
+plan chooser all read the same record. Usage on a free quota isn't stored:
+ask with the amount the account would hold after the change.
+
+`onSale` is `true` (the default), `"coming"` (shown, never sold — for a plan
+whose features aren't built yet) or `false` (sold by hand only: free months, a
+founding member). A retired tier (`isActive: false`) is never on sale. Every
+checkout asks `planOnSale(tier)`, and refuses with `notOnSaleReason(tier)`.
+
+## Showing a plan (0.6)
+
+```ts
+import { planColumns, defaultPlanInterval } from "@adminigloo/billing";
+
+const columns = planColumns(plans, { interval: defaultPlanInterval(plans), currency: "usd" });
+// [{ key: "free", name: "Free", price: { kind: "free", label: "Free" }, includes: [{ text: "3 watchlist cities" }] },
+//  { key: "basic", price: { kind: "amount", label: "$100", per: "/yr", note: "2 months free" },
+//    buildsOn: "Free", includes: [{ text: "Live prices for every city" }, { text: "24 watchlist cities" }] },
+//  { key: "pro", onSale: "coming", buildsOn: "Basic", … }]
+```
+
+One answer for every plans page: the free tier first, then every tier on sale
+or coming. A column lists what it includes — never "No …" — and the next tier
+up says what it adds over the one before ("Everything in Free, plus:"); a
+tier with less of something than the one before lists everything instead.
+Prices are whole units when exact (`formatPrice`: "$10", "$12.50"), yearly
+first (`planIntervals`), and "Most popular" only where the record set
+`highlight`.
 
 ## The plan check at your checkpoints
 

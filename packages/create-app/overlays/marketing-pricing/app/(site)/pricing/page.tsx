@@ -7,6 +7,7 @@ import { currentPrincipal } from "@/server/auth";
 import { loadStaffPermissions } from "@/server/permissions";
 import { db } from "@/db";
 import { plans } from "@/plans";
+import { PRICING } from "@/marketing-copy";
 // From the `marketing` overlay, which is selected whenever this one is — the
 // pricing page needs both a marketing site to belong to and plans to price. It
 // borrows the landing page's section shell on purpose: a pricing page set in the
@@ -24,22 +25,18 @@ import {
 
 export const metadata: Metadata = {
   title: "Pricing",
-  description: "What each plan includes and what it costs. Every plan includes everything; they differ in how much.",
+  description: PRICING.description,
   alternates: { canonical: "/pricing" },
 };
 
 /**
  * NOT STATIC, and the reason is not the prices.
  *
- * The prices come from `src/plans.ts`, which is source: they are fixed at build
- * time and a cached page would be perfectly correct about them. What is not
- * fixed is whether the `plans` table has caught up with that record yet — which
- * is a fact about the database at this moment, and a page cached at build time
- * would serve one afternoon's answer to that question for the life of the
- * deployment, including the wrong one from before the seed was run.
- *
- * Reading `searchParams` for the cadence would force this anyway. Both are
- * stated because either one alone would look removable.
+ * The prices come from `src/plans.ts`, which is source: a cached page would be
+ * correct about them. What is not fixed is whether the `plans` table has caught
+ * up with that record yet — a fact about the database at this moment — and
+ * whether the reader is signed in (their button goes straight to the plan
+ * chooser).
  */
 export const dynamic = "force-dynamic";
 
@@ -52,23 +49,21 @@ interface PricingParams {
  * The pricing page, rendered from the plan record.
  *
  * THE ONE RULE THIS PAGE EXISTS TO HOLD: every number and every feature line on
- * it comes out of `src/plans.ts`, which is the same object `grantsForPlan` turns
- * into entitlement rows and the same object `pnpm db:seed:plans` projects into
- * the `plans` table. A pricing page written as prose drifts from what the code
- * honours inside one release, and the person who finds out is a customer who
- * paid for something they do not get. There is no number typed into this file.
+ * it comes out of `src/plans.ts`, the same object the plan check enforces and
+ * `pnpm db:seed:plans` projects into the `plans` table. There is no number
+ * typed into this file. The cards are `PlanCard`s from `planColumns`
+ * (@__SCOPE_NAME__/billing) — the same cards the plan chooser on
+ * /account/billing and the landing page's plans draw — so a plan reads the same
+ * everywhere: what it includes (never "No …"), "Everything in Free, plus:" for
+ * the next one up, whole-dollar prices, yearly first.
  *
- * RETIRED TIERS ARE ABSENT. `isActive: false` is how a tier is taken off sale
- * without stranding the people on it — the record still describes it so
- * `planGrantDiff` can reason about their entitlements, and this page does not
- * advertise it. That filter is the whole of the difference between "on the
- * pricing page" and "in the record".
+ * WHAT IS SHOWN: a line's free tier when the record declares one, every tier
+ * on sale, and every tier `onSale: "coming"` (its price, and "Coming soon").
+ * Retired tiers and plans sold by hand (`onSale: false`) are not.
  *
- * IT RENDERS WITH NO DATABASE AND NO STRIPE KEY. On a fresh clone the prices are
- * right and nothing is purchasable, and the page says exactly that rather than
- * rendering four empty cards. The alternative — reading prices out of the table
- * or out of Stripe — is a pricing page that shows nothing at all until somebody
- * has run a script, which is the failure the record was written to end.
+ * IT RENDERS WITH NO DATABASE AND NO STRIPE KEY. What needs a database is a
+ * `plans` row to subscribe to, and only this site's staff are told when that is
+ * missing; a visitor reads the prices.
  */
 export default async function PricingPage({
   searchParams,
@@ -79,13 +74,11 @@ export default async function PricingPage({
   const interval = resolveInterval(params.interval, plans);
   const currency = resolveCurrency(params.currency, plans);
 
-  const onSale = plans.tiers.filter((tier) => tier.isActive);
+  // Every tier somebody can see here: on sale, or coming.
+  const shown = plans.tiers.filter((tier) => tier.isActive && tier.onSale !== false);
 
-  // ASKED BEFORE ANYTHING QUERIES, the same way every other page in this project
-  // asks it. `db` is a stand-in that throws a typed error on the first query
-  // when DATABASE_URL is unset, and this page is linked from the header of every
-  // other page — so on a fresh clone it is among the first things anybody
-  // clicks, and it must not be the thing that 500s.
+  // ASKED BEFORE ANYTHING QUERIES, the same way every other page here asks it:
+  // on a fresh clone this page must not be the thing that 500s.
   const purchasable: ReadonlySet<string> | null = isDbConfigured(db)
     ? new Set(
         (await db.select({ key: planTable.key }).from(planTable)).map(
@@ -94,13 +87,8 @@ export default async function PricingPage({
       )
     : null;
 
-  // Every row the record projects for a tier that is still on sale. A retired
-  // tier's rows are deliberately not counted: they SHOULD be in the table and
-  // are not advertised here, so counting them would report a project as
-  // under-seeded for doing exactly the right thing.
-  const expected = plans.rows.filter(
-    (row) => plans.tier(row.tierKey)?.isActive === true,
-  );
+  // Every row the record projects for a tier shown here.
+  const expected = plans.rows.filter((row) => shown.some((tier) => tier.key === row.tierKey));
   const missing =
     purchasable === null
       ? []
@@ -108,22 +96,20 @@ export default async function PricingPage({
 
   // The "what isn't wired up yet" notes below are the OPERATOR's: they name a
   // file, a setting and a script, so only the site's staff ever read them.
-  // A visitor reads the prices.
   const principal = await currentPrincipal().catch(() => null);
   const staff = principal ? (await loadStaffPermissions({ principal }).catch(() => null)) !== null : false;
+  const signedIn = principal !== null;
 
   return (
     <>
       <section className="mx-auto max-w-6xl px-4 pt-16 pb-4 sm:px-6 sm:pt-20">
-        <p className="text-sm font-semibold text-accent">Pricing</p>
+        <p className="text-sm font-semibold text-accent">{PRICING.eyebrow}</p>
 
-        <h1 className="mt-4 max-w-[18ch] text-[clamp(2rem,5.5vw,3rem)] leading-[1.05] font-semibold tracking-[-0.035em] text-balance">
-          One price. Everything included.
+        <h1 className="mt-4 max-w-[22ch] text-[clamp(2rem,5.5vw,3rem)] leading-[1.05] font-semibold tracking-[-0.035em] text-balance">
+          {PRICING.title}
         </h1>
 
-        <p className="mt-5 max-w-[56ch] text-[17px] leading-relaxed text-ink-muted">
-          Every plan has every feature. Pick the one that fits the size of your business, and change it whenever you like.
-        </p>
+        <p className="mt-5 max-w-[56ch] text-[17px] leading-relaxed text-ink-muted">{PRICING.intro}</p>
 
         <PricingControls
           intervals={toggleableIntervals(plans)}
@@ -132,19 +118,6 @@ export default async function PricingPage({
           currency={currency}
         />
 
-        {/*
-          THE ZERO STATE, AND IT IS NOT AN EMPTY PAGE.
-
-          The prices above are correct on a machine with nothing configured,
-          because they are source. What needs a database is a `plans` ROW: it is
-          what `subscriptions.plan_id` points at and where the Stripe price id is
-          cached, so with an empty table there is a published price and nothing
-          anybody can actually subscribe to.
-
-          Said out loud rather than hidden, on the same principle the storefront
-          follows. This only appears in a state that is genuinely broken, and a
-          broken state nobody can see is the one that reaches production.
-        */}
         {!staff ? null : purchasable === null ? (
           <div className="mt-10">
             <Notice tone="info" title="Prices are real; subscribing is not wired up yet">
@@ -165,8 +138,7 @@ export default async function PricingPage({
               so nothing on this page can be bought. Run{" "}
               <code className="font-mono text-xs">pnpm db:seed:plans</code> to
               write the projection of{" "}
-              <code className="font-mono text-xs">src/plans.ts</code> into it. It
-              writes no fiction and is safe to run against any environment.
+              <code className="font-mono text-xs">src/plans.ts</code> into it.
             </Notice>
           </div>
         ) : missing.length > 0 ? (
@@ -194,51 +166,44 @@ export default async function PricingPage({
             <div key={line.key} className="mt-12">
               <h2 className="text-2xl font-semibold tracking-tight text-ink">{line.name}</h2>
               {line.description ? <p className="mt-2 max-w-[56ch] text-ink-muted">{line.description}</p> : null}
-              <PlanColumns tiers={onSale.filter((tier) => tier.line === line.key)} interval={interval} currency={currency} />
+              <div className="mt-6">
+                <PlanColumns line={line.key} interval={interval} currency={currency} signedIn={signedIn} />
+              </div>
             </div>
           ))
         ) : (
-          <PlanColumns tiers={onSale} interval={interval} currency={currency} />
+          <div className="mt-12">
+            <PlanColumns interval={interval} currency={currency} signedIn={signedIn} />
+          </div>
         )}
       </section>
 
-      {plans.lines.length > 1 ? (
-        plans.lines.map((line) => (
-          <div key={line.key} className="mt-16">
-            <Section label="Side by side">
-              <SectionHeading title={`Compare ${line.name}`}>Every allowance, side by side.</SectionHeading>
-              <ComparisonTable catalog={{ ...plans, features: line.features }} tiers={onSale.filter((tier) => tier.line === line.key)} />
-            </Section>
-          </div>
-        ))
-      ) : (
-        <div className="mt-16">
+      {plans.lines.map((line) => (
+        <div key={line.key} className="mt-16">
           <Section label="Side by side">
-            <SectionHeading title="Compare the plans">Every allowance, side by side.</SectionHeading>
-            <ComparisonTable catalog={plans} tiers={onSale} />
+            <SectionHeading title={plans.lines.length > 1 ? `Compare ${line.name}` : "Compare the plans"}>
+              Every feature, side by side.
+            </SectionHeading>
+            <ComparisonTable
+              features={line.features}
+              columns={[
+                ...(line.free ? [{ key: "free", name: line.free.name, features: line.free.features }] : []),
+                ...shown.filter((tier) => tier.line === line.key),
+              ]}
+            />
           </Section>
         </div>
-      )}
+      ))}
 
       <Section label="Questions">
         <SectionHeading title="About plans and billing" />
         <dl className="flex flex-col gap-6">
-          <div>
-            <dt className="text-[15px] font-medium text-ink">
-              Can I change plan later?
-            </dt>
-            <dd className="mt-1.5 max-w-[58ch] text-[15px] leading-relaxed text-ink-muted">
-              Yes, up or down, whenever you like. What you&rsquo;ve already used this month stays counted on the new plan.
-            </dd>
-          </div>
-          <div>
-            <dt className="text-[15px] font-medium text-ink">
-              What happens when I reach a limit?
-            </dt>
-            <dd className="mt-1.5 max-w-[58ch] text-[15px] leading-relaxed text-ink-muted">
-              You&rsquo;re told which one and what your plan allows. Nothing is deleted and nothing extra is charged.
-            </dd>
-          </div>
+          {PRICING.faq.map((item) => (
+            <div key={item.q}>
+              <dt className="text-[15px] font-medium text-ink">{item.q}</dt>
+              <dd className="mt-1.5 max-w-[58ch] text-[15px] leading-relaxed text-ink-muted">{item.a}</dd>
+            </div>
+          ))}
         </dl>
       </Section>
     </>

@@ -12,13 +12,12 @@ import {
   buttonClass,
 } from "@/components/ui";
 import {
-  accountOrderHref,
   describeSubscription,
   formatDay,
   metersFor,
-  type Delivery,
   type GrantedEntitlement,
 } from "@/account";
+import { accountOrderHref, type Delivery } from "@/account-orders";
 import { LicenceKey } from "@/components/account/LicenceKey";
 import {
   featureLabel,
@@ -27,11 +26,8 @@ import {
 } from "@/components/account/orderPresentation";
 import { db } from "@/db";
 import { currentPrincipal } from "@/server/auth";
-import {
-  readDeliveriesForOrders,
-  readGrantsForReferences,
-  readSubscriptionForTenant,
-} from "@/server/account";
+import { readSubscriptionForTenant } from "@/server/account";
+import { readDeliveriesForOrders, readGrantsForReferences } from "@/server/account-orders";
 import { listOrdersForUser, type FulfilledOrderView } from "@/server/fulfilment";
 import { loadTenantPermissions } from "@/server/permissions";
 import { STOREFRONT_TENANT_ID } from "@/server/routers/checkout";

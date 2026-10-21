@@ -7,7 +7,7 @@ import type { Catalog, PermissionRule } from "__SCOPE__/permissions";
 import { assertCatalogConformance } from "__SCOPE__/testing/permissions";
 import type { ConformanceResult } from "__SCOPE__/testing/permissions";
 import { tenancyPermissions } from "__SCOPE__/tenancy";
-import { staffCatalog, tenantCatalog } from "@/permissions/catalog";
+import { HELD_BY_NOBODY, staffCatalog, tenantCatalog } from "@/permissions/catalog";
 import { ROLES_NOT_IN_THIS_PROJECT, TENANT_ROLES } from "@/permissions/roles";
 
 /**
@@ -172,6 +172,10 @@ const DELIBERATELY_UNREACHABLE: readonly string[] = [
   // storefront ops job, that one refunds a subscription invoice and is
   // finance's. Same reasoning, same deliberate absence of a `defaultFor`.
   "orders.refund",
+  // A consumers project's team keys (create-app 0.39): each account is one
+  // person's, so nobody invites, removes, re-roles or hands over. Empty
+  // anywhere else.
+  ...HELD_BY_NOBODY,
 ];
 
 /**
@@ -368,6 +372,11 @@ const SEALED_BY_DECISION: readonly string[] = [
   // an override must never hand it to one person quietly (review T1-05): a
   // lead given it by override could then give themselves every other key.
   "staff.roles.manage",
+  // A consumers project's team keys (create-app 0.39): each account is one
+  // person's, so no role holds them AND no per-person setting may hand them
+  // out — the seal is also what takes them back from a role that held them
+  // before. Empty anywhere else.
+  ...HELD_BY_NOBODY,
 ];
 
 /**

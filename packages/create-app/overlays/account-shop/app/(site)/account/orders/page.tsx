@@ -14,7 +14,8 @@ import {
   TR,
   buttonClass,
 } from "@/components/ui";
-import { accountOrderHref, formatDay } from "@/account";
+import { formatDay } from "@/account";
+import { accountOrderHref } from "@/account-orders";
 import { orderStatusView } from "@/components/account/orderPresentation";
 import { db } from "@/db";
 import { currentPrincipal } from "@/server/auth";

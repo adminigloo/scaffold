@@ -51,14 +51,31 @@ generated app misbehaves.
    `--audience consumers` to `--tenant-noun none`. With `--model subscription`
    each person pays for their own plans — several product lines on one bill
    (`definePlans({ lines })` in `src/plans.ts`), gated feature by feature with
-   `requireEntitlement(feature)` (src/server/access.ts) — nobody can share an
-   account (no team, no invitations), and you see who pays for what at
-   `/admin/billing/subscribers`:
+   `requireEntitlement(feature)` (src/server/access.ts), reading the person's
+   OWN account — nobody can share an account (no /settings/team, /members or
+   /invite page, no invitation email, a seat limit of one, and no role, the
+   owner included, holds the invite, remove, change-role or hand-over keys),
+   and you see who pays for what at `/admin/billing/subscribers` and on the
+   dashboard at `/admin` (subscribers by plan and line, monthly vs yearly, MRR
+   and ARR, new and cancelled this month, failed payments, free to paid):
 
    ```
    pnpm dlx @adminigloo/create-app weather-terminal --tenant-noun none --audience consumers \
      --model subscription --admin full --email --marketing --seo --analytics
    ```
+
+   **Plans are not a shop** (create-app 0.39): `--model subscription` sells
+   plans and nothing else — Stripe and billing, and no `/products`,
+   `/checkout`, `/account/orders`, product builder, licence keys,
+   `seed-shop`, or catalog and commerce packages. `--model one-time` and
+   `both` keep the shop. In `src/plans.ts`, `free: { features }` is what an
+   account with no plan gets (the plan check, the pricing page's Free column
+   and the plan chooser read the same one), and a tier can be
+   `onSale: "coming"` (shown with its price, never sold) or `onSale: false`
+   (sold by hand only). The pricing page, the landing page's plans and
+   `/account/billing` draw one `PlanCard`: what each plan includes (never "No
+   …"), "Everything in Free, plus:", whole-dollar prices, yearly first, and
+   "Most popular" only where the record sets `highlight`.
 
    **Alerts and files** (Tenancy 2b-1, `--notifications` and `--storage`):
    each company gets a bell in the header and an alerts page (`/app/alerts`)
@@ -126,21 +143,72 @@ can tell a file you changed from one you didn't. Then:
 
 `.env.local` is never touched; new variables are listed. On a project nobody
 edited, the result is exactly what generating fresh with this version gives.
+A change of line endings is never an edit: a file an older create-app wrote
+with CRLF, checked out of git as LF, is still yours untouched.
+
+**Nothing is lost without being asked.** An upgrade that would drop tables (a
+package this version no longer uses leaves `src/db/schema.ts`, so the next
+`pnpm db:generate` writes `DROP TABLE … CASCADE` for each of its tables),
+change what an account is (companies, or one person each) or stop a plan
+check is refused before it writes anything, and says exactly what it would
+lose. Run it again with `--allow-data-loss` to go ahead: every loss is printed
+above the steps, the dropped tables by name.
 
 **What still needs a hand edit**, and nothing else: each `<file>.new` (fold
 your change in, then replace the file), any retired file you had changed (it
 is left, and listed: move your change, then delete it), and any file of your
-own that imports one of the retired files. Then:
+own that imports one of the retired files (a retired page you kept is still
+served at its address until you delete it). Then:
 
 ```
 pnpm install
-pnpm db:generate && pnpm db:migrate && pnpm db:seed
+pnpm db:generate      # then READ the migration it wrote (drizzle/)
+pnpm db:migrate       # only once you have: it can't be undone
+pnpm db:seed
 pnpm exec tsc --noEmit && pnpm test
 ```
 
 `add <feature>` refuses a project an older create-app made, and says to run
 `upgrade` first: the new feature's files would be written for packages the
 project doesn't have yet.
+
+### Switching an answer (create-app 0.39)
+
+`upgrade` can change what a project IS while it brings it up to date:
+
+```
+pnpm dlx @adminigloo/create-app upgrade --audience consumers
+pnpm dlx @adminigloo/create-app upgrade --set businessModel=both --set feedback=true
+```
+
+`--set <answer>=<value>` takes `tenantNoun`, `audience`, `businessModel` (or
+`model`), `adminShell` (or `admin`), or any feature on or off
+(`feedback=true`, `seo-reports=false`); `--audience <a>` is
+`--set audience=<a>`. The project is re-planned with the new answers by the
+same rules as a version upgrade — new files written, files you never changed
+rewritten, the ones the new answers don't have deleted, `<file>.new` beside
+every file you did change — so an untouched project ends byte for byte where
+a fresh generation with those answers starts (`.env.local` apart, and
+`src/plans.ts`: a switch never rewrites it, since its tiers are the ones
+people pay for — the new sample goes beside it as `src/plans.ts.new`). On a
+project already at this version only the switch is applied, and nothing is
+fetched. `adminigloo.json` records the new answers.
+
+A switch that loses something — a feature or the model switched off (their
+tables dropped), companies to one account per person or back, consumers back
+to business (each person's plan check, and one person per account) — needs
+`--allow-data-loss`, and lists every loss first. A companies project asked for
+`--audience consumers` is refused outright: that is a new project.
+
+### Crawlable public pages (create-app 0.39)
+
+There is no `loading.tsx` over the public pages any more: it streamed every
+page into hidden blocks, so crawlers read "Loading", a redirect answered 200
+with a meta refresh and a missing page answered 200. `pnpm build && pnpm
+test:pages` checks, as a crawler, that every page in the sitemap answers a
+real 200 with its `<h1>` in the first HTML, a missing page a real 404 and a
+signed-in page asked for signed out a real 307 (`PAGES_BASE_URL` points it at a
+running site instead of starting one).
 
 ### From Tenancy 2a (create-app 0.23) to Tenancy 2b-1 (0.24)
 

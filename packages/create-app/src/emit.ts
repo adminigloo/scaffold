@@ -44,7 +44,32 @@ import {
 } from "./tenancy-proofs-emit.js";
 import { renderProjectReadme } from "./readme-emit.js";
 import { personalPlans, plansEnforced, renderAccess, renderEntitled, renderPlanBannerSlot, renderPlanGate, sellsPlans } from "./plans-emit.js";
-import { renderConsumerPlanCatalog, renderConsumerTeamPage } from "./consumer-emit.js";
+import {
+  PERSONAL_ACCOUNT_RETIRED,
+  renderConsumerMail,
+  renderConsumerPlanCatalog,
+  renderConsumerTenant,
+  renderMembershipGate,
+  renderSharedAccounts,
+  teamInvites,
+} from "./consumer-emit.js";
+import { renderShopHooks, sellsShop } from "./shop-emit.js";
+import {
+  renderConsumerDashboard,
+  renderSubscriberFacts,
+  renderSubscriberFactsTest,
+  renderSubscriberNumbers,
+  renderSubscriberNumbersTest,
+} from "./consumer-dashboard-emit.js";
+import { renderConversionPaths, renderConversionsTest, renderServerConversions, renderWelcomeRoute } from "./conversions-emit.js";
+import {
+  renderAccountPlansTest,
+  renderFirstAdministratorTest,
+  renderOnePersonAccountsTest,
+  renderRefusalsTest,
+} from "./account-proofs-emit.js";
+import { renderPagesTest, renderPagesTestConfig } from "./pages-test-emit.js";
+import { renderAccountCopy, renderAccountLayout, renderAccountTabs, renderPlansAccountPage } from "./account-emit.js";
 import { renderPersonalPlansTest } from "./personal-plans-emit.js";
 import { renderCompanyPlansTest } from "./plans-proof-emit.js";
 import { renderDeploymentUpgradeNotes, UPGRADE_NOTES_MARKER } from "./upgrade-notes.js";
@@ -332,6 +357,16 @@ export async function planEmit(
     }
   }
 
+  // ONE PERSON PER ACCOUNT (create-app 0.39): a consumers project's people sign
+  // up as themselves, so the base template's team page, members redirect,
+  // invitation page and invitation email are not part of it at all — not a
+  // "just you" page left for old links, and nothing to invite anyone with.
+  if (!teamInvites(answers)) {
+    for (const path of PERSONAL_ACCOUNT_RETIRED) files.delete(join(...path.split("/")));
+    // And whose account a page is about is always the person's own.
+    files.set(join("src", "server", "tenant.ts"), renderConsumerTenant(answers));
+  }
+
   // DEPLOYMENT.md's "Vercel needs these or the build refuses to start" table,
   // from the env module's own deferred list (review R2 TB2-02): the only
   // other place a buyer met it was the generator's terminal output.
@@ -389,14 +424,20 @@ export async function planEmit(
   // mail depend on what was installed, and the alternative is an emitted file
   // holding an `if` about a feature it cannot see.
   files.set(join("src", "server", "audit.ts"), renderAuditRegistry(answers));
-  files.set(
-    join("src", "server", "invitation-mail.ts"),
-    renderInvitationMail(answers),
-  );
+  // Not in a consumers project (create-app 0.39): nobody there invites anyone.
+  // Its own emails to its people go through src/server/mail.ts instead.
+  if (teamInvites(answers)) {
+    files.set(
+      join("src", "server", "invitation-mail.ts"),
+      renderInvitationMail(answers),
+    );
+  } else if (answers.includeEmail) {
+    files.set(join("src", "server", "mail.ts"), renderConsumerMail(answers));
+  }
   // Only the --email variant talks to a provider and a log table, so only it
   // has a verdict to keep honest (a sent email stays "sent" when the log write
   // fails). The no-mail variant is a constant "skipped" with nothing to test.
-  if (answers.includeEmail) {
+  if (answers.includeEmail && teamInvites(answers)) {
     files.set(
       join("src", "server", "__tests__", "invitation-mail.test.ts"),
       renderInvitationMailTest(answers),
@@ -520,6 +561,17 @@ export async function planEmit(
   if (hasCompanyWebsitePage(answers)) {
     files.set(join("app", "(site)", "app", "website", "page.tsx"), renderCompanyWebsitePage(answers));
   }
+  // CONVERSIONS (create-app 0.39), in EVERY project: where a new sign-up
+  // lands first and the two hooks the sign-up and the checkout's return call —
+  // real with --analytics ("Signed up" and "First payment" mark the visit, so
+  // /admin/analytics shows which pages bring them), no-ops without.
+  files.set(join("src", "conversions.ts"), renderConversionPaths(answers));
+  files.set(join("src", "server", "conversions.ts"), renderServerConversions(answers));
+  if (answers.includeAnalytics) {
+    files.set(join("app", "welcome", "route.ts"), renderWelcomeRoute(answers));
+    // What counts as a sign-up and a first payment, held (review).
+    files.set(join("src", "__tests__", "conversions.test.ts"), renderConversionsTest(answers));
+  }
   // This site's own visit counter, in EVERY project: the (site) layout mounts
   // the slot without an `if` — the beacon with --analytics, nothing without.
   files.set(join("src", "components", "SiteAnalyticsSlot.tsx"), renderSiteAnalyticsSlot(answers));
@@ -612,6 +664,15 @@ export async function planEmit(
   // the four core roles, plus Crew from scheduling in a companies project.
   // Read by the tenancy service AND by the seed, in both modes.
   files.set(join("src", "permissions", "roles.ts"), renderTenantRoles(answers));
+  // WHO COUNTS AS A MEMBER, and what the seed does about accounts more than
+  // one person is in (create-app 0.39), in two variants each: in a consumers
+  // project every person is a member of their own account only — the
+  // permission loaders refuse any other (src/server/membership.ts), and
+  // `pnpm db:seed` suspends memberships of somebody else's account
+  // (src/permissions/shared-accounts.ts). Anywhere else, tenancy's own gate
+  // and nothing to suspend. See consumer-emit.ts.
+  files.set(join("src", "server", "membership.ts"), renderMembershipGate(answers));
+  files.set(join("src", "permissions", "shared-accounts.ts"), renderSharedAccounts(answers));
   // PLANS FOR EVERY PACKAGE (billing 0.3), in every project: the one plan
   // check src/server/permissions.ts, the company routes, the tenancy service
   // and the files glue all ask, and the banner above every page. The real
@@ -635,12 +696,37 @@ export async function planEmit(
   // product line, on this project's own src/plans.ts.
   if (personalPlans(answers)) {
     files.set(join("src", "server", "__tests__", "personal-plans.test.ts"), renderPersonalPlansTest(answers));
+    // The account pages say what the plan check says (review). See account-proofs-emit.ts.
+    files.set(join("src", "server", "__tests__", "account-plans.test.ts"), renderAccountPlansTest(answers));
   }
-  // NOBODY SHARES AN ACCOUNT (billing 0.5): a consumers project has no team.
-  // The page stays (old links, /members) and says so; the seat limit of one
-  // (src/server/plan-gate.ts) refuses every invitation on the server.
+  // A refusal names only plans on sale (review), wherever plans are sold.
+  if (sellsPlans(answers)) {
+    files.set(join("src", "server", "__tests__", "refusals.test.ts"), renderRefusalsTest(answers));
+  }
+  // One person per account on a database that ran as a business first, and
+  // the first administrator never handed to a stranger (review).
   if (consumerProduct(answers)) {
-    files.set(join("app", "(site)", "settings", "team", "page.tsx"), renderConsumerTeamPage(answers));
+    files.set(join("src", "server", "__tests__", "one-person-accounts.test.ts"), renderOnePersonAccountsTest(answers));
+  }
+  files.set(join("src", "server", "__tests__", "first-administrator.test.ts"), renderFirstAdministratorTest(answers));
+  // NOBODY SHARES AN ACCOUNT (billing 0.5, create-app 0.39): a consumers
+  // project has no team page, no members redirect and no invitation page or
+  // email (removed above), and the seat limit of one (src/server/plan-gate.ts)
+  // refuses any invitation on the server as well.
+  //
+  // THE ACCOUNT AREA'S GENERATED FILES (create-app 0.39), in every project
+  // that sells: how it names whoever pays ("your account" for a person), its
+  // heading and tabs, what the Stripe webhook hands the shop (or that there is
+  // none) — and, with no shop, its overview page (what you're on). See
+  // account-emit.ts and shop-emit.ts.
+  if (answers.businessModel !== "none") {
+    files.set(join("src", "account-copy.ts"), renderAccountCopy(answers));
+    files.set(join("app", "(site)", "account", "layout.tsx"), renderAccountLayout(answers));
+    files.set(join("src", "components", "account", "AccountTabs.tsx"), renderAccountTabs(answers));
+    files.set(join("src", "server", "shop-hooks.ts"), renderShopHooks(answers));
+    if (!sellsShop(answers)) {
+      files.set(join("app", "(site)", "account", "page.tsx"), renderPlansAccountPage(answers));
+    }
   }
   // EACH COMPANY RUNS THE FEATURES ITSELF (Tenancy 2a), companies only: whose
   // request a feature route is (the company id or web address in its path),
@@ -727,16 +813,19 @@ export async function planEmit(
   );
   // Accepting by the link through the project's own route and Clerk wiring
   // (review R3 TB2-10): the verified addresses reach the package.
-  files.set(
-    join("src", "server", "__tests__", "invite-accept-route.test.ts"),
-    renderInviteAcceptRouteTest(answers),
-  );
-  // "We emailed" only about an email that went, through the project's own
-  // handlers and mailer, with and without the email package (review R4 SEC-T1-B).
-  files.set(
-    join("src", "server", "__tests__", "invite-email-route.test.ts"),
-    renderInviteEmailRouteTest(answers),
-  );
+  // Not in a consumers project (create-app 0.39): there is no invitation to accept.
+  if (teamInvites(answers)) {
+    files.set(
+      join("src", "server", "__tests__", "invite-accept-route.test.ts"),
+      renderInviteAcceptRouteTest(answers),
+    );
+    // "We emailed" only about an email that went, through the project's own
+    // handlers and mailer, with and without the email package (review R4 SEC-T1-B).
+    files.set(
+      join("src", "server", "__tests__", "invite-email-route.test.ts"),
+      renderInviteEmailRouteTest(answers),
+    );
+  }
   // The nav and the landing page that reads it. Generated together and for the
   // same reason: /products exists only in a project that sells something and
   // /admin only in one with an admin shell, so neither the lists nor the page
@@ -761,7 +850,20 @@ export async function planEmit(
     // not — so no single file in `admin-minimal` could have been right for
     // both, and the version that shipped there dodged the problem by counting
     // nothing at all and listing the viewer's permission keys instead.
-    files.set(join("app", "admin", "page.tsx"), renderAdminDashboard(answers));
+    // A project whose customers are people, selling plans (create-app 0.39):
+    // the founder's subscriber numbers instead — who pays for what, MRR and
+    // ARR, new and cancelled, failed payments, free to paid — each defined
+    // once in src/server/subscriber-numbers.ts and proved beside it.
+    if (personalPlans(answers)) {
+      files.set(join("app", "admin", "page.tsx"), renderConsumerDashboard(answers));
+      files.set(join("src", "server", "subscriber-numbers.ts"), renderSubscriberNumbers(answers));
+      files.set(join("src", "server", "__tests__", "subscriber-numbers.test.ts"), renderSubscriberNumbersTest(answers));
+      // The one read the dashboard makes, and its proof on the mirror's own rows (review).
+      files.set(join("src", "server", "subscriber-facts.ts"), renderSubscriberFacts(answers));
+      files.set(join("src", "server", "__tests__", "subscriber-facts.test.ts"), renderSubscriberFactsTest(answers));
+    } else {
+      files.set(join("app", "admin", "page.tsx"), renderAdminDashboard(answers));
+    }
   }
   // The plan record — what a tier includes, what it costs, and what the `plans`
   // table has to hold for it. Written only where there is billing to describe:
@@ -813,6 +915,21 @@ export async function planEmit(
   files.set(join("src", "seo.ts"), answers.includeSeo ? renderSeoPackageModule(answers) : renderSeoModule(answers));
   files.set(join("app", "llms.txt", "route.ts"), renderLlmsTxt(answers));
   files.set(join("app", "robots.ts"), answers.includeSeo ? renderSeoRobots(answers) : renderRobots(answers));
+  // THE PUBLIC PAGES, AS A CRAWLER READS THEM (create-app 0.39): every page the
+  // sitemap lists answers a real 200 with its <h1> in the first HTML, a missing
+  // page a real 404, a signed-in page asked for signed out a real 307 —
+  // \`pnpm build && pnpm test:pages\`. See pages-test-emit.ts.
+  files.set("vitest.pages.config.ts", renderPagesTestConfig());
+  files.set(
+    join("tests", "pages", "public-pages.test.ts"),
+    renderPagesTest(answers, {
+      pages: sitemapPages(answers).map((page) => page.path),
+      redirects: [
+        ...(answers.adminShell !== "none" ? [{ path: "/admin", to: "/sign-in" }] : []),
+        ...(teamInvites(answers) ? [{ path: "/members", to: "/settings/team" }] : []),
+      ],
+    }),
+  );
   files.set(join("app", "sitemap.ts"), answers.includeSeo ? renderSeoSitemap(answers) : renderSitemap(answers));
   // The derived half of the legal pages: who else sees a customer's data, and
   // which clauses follow from what this project does. Written on the same
@@ -1023,8 +1140,11 @@ export function renderPackageJson(answers: Answers): string {
   }
   if (answers.businessModel !== "none") {
     deps["stripe"] = "^22.6.0";
-    // The Payment Element runs in the browser, so checkout needs the client SDK
-    // as well as the server one.
+  }
+  if (sellsShop(answers)) {
+    // The shop's Payment Element runs in the browser, so its checkout needs the
+    // client SDK as well as the server one. Plans check out on Stripe's own
+    // page, so a project with plans and no shop never loads it.
     deps["@stripe/stripe-js"] = "^9.13.0";
     deps["@stripe/react-stripe-js"] = "^6.8.0";
   }
@@ -1108,9 +1228,11 @@ export function renderPackageJson(answers: Answers): string {
       // `src/plans.ts` into the `plans` table, so the pricing page and the
       // subscription screens have something to read. A generated project had an
       // empty `plans` table, which makes every one of them a blank page.
-      "db:seed:demo": sells
+      "db:seed:demo": sellsShop(answers)
         ? "tsx --env-file=.env.local scripts/seed-demo.ts && tsx --env-file=.env.local scripts/seed-plans.ts && tsx --env-file=.env.local scripts/seed-shop.ts"
-        : "tsx --env-file=.env.local scripts/seed-demo.ts",
+        : sells
+          ? "tsx --env-file=.env.local scripts/seed-demo.ts && tsx --env-file=.env.local scripts/seed-plans.ts"
+          : "tsx --env-file=.env.local scripts/seed-demo.ts",
       // Separately runnable, because the catalogue is the half you re-seed
       // after buying everything in it, and re-running the people fixture to get
       // it back is a bigger hammer than the job needs.
@@ -1121,12 +1243,10 @@ export function renderPackageJson(answers: Answers): string {
       // it applies the record every environment already ships in its own source,
       // and the alternative is editing prices by hand in production. The other
       // two refuse outright unless they are pointed at localhost.
-      ...(sells
-        ? {
-            "db:seed:plans": "tsx --env-file=.env.local scripts/seed-plans.ts",
-            "db:seed:shop": "tsx --env-file=.env.local scripts/seed-shop.ts",
-          }
-        : {}),
+      ...(sells ? { "db:seed:plans": "tsx --env-file=.env.local scripts/seed-plans.ts" } : {}),
+      // The shop's catalogue (--model one-time or both): a project with plans
+      // and no shop has none to seed.
+      ...(sellsShop(answers) ? { "db:seed:shop": "tsx --env-file=.env.local scripts/seed-shop.ts" } : {}),
       // This site's own feedback button's key (its tickets land on the
       // site's own board, /admin/feedback): prints the plaintext exactly once,
       // stores only the hash. Companies make their own website keys on their
@@ -1147,6 +1267,9 @@ export function renderPackageJson(answers: Answers): string {
       // treats a missing --env-file as fatal. The script loads it in a try/catch.
       "db:migrate:deploy": "tsx scripts/migrate.ts",
       "test:integration": "vitest run --project=integration",
+      // The public pages as a crawler reads them, against the BUILT site
+      // (create-app 0.39): pnpm build && pnpm test:pages.
+      "test:pages": "vitest run --config vitest.pages.config.ts",
     },
     dependencies: Object.fromEntries(Object.entries(deps).sort()),
     devDependencies: Object.fromEntries(Object.entries(devDeps).sort()),
@@ -1975,7 +2098,7 @@ export function renderEnvModule(answers: Answers): string {
   const features = [
     `{ name: "Database", vars: [...DB_OPTIONAL_UNTIL_DEPLOYED], disables: "Anything that reads or writes data." }`,
     `{ name: "Sign-in", vars: ["CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "CLERK_WEBHOOK_SIGNING_SECRET"], disables: "Signing in, and every permission check. Without the webhook secret alone, sign-in works but deleting someone in Clerk never takes their access away here." }`,
-    `{ name: "First administrator", vars: ["BOOTSTRAP_ADMIN_EMAIL"], disables: "Nothing locally (the first person to open /admin becomes one). On a deployment, nobody is made an administrator automatically — use pnpm admin:grant or the Admin grant workflow." }`,
+    `{ name: "First administrator", vars: ["BOOTSTRAP_ADMIN_EMAIL"], disables: "Nothing on the dev server (the first person to open /admin becomes one). Anywhere else — a production build, your laptop's included — nobody is made an administrator automatically: use pnpm admin:grant <your email>, or the Admin grant workflow. Set, it is the one address made administrator, on any machine." }`,
     `{ name: "Support address", vars: ["SUPPORT_EMAIL"], disables: "Nothing. Where a suspended company is told to write; without it they're pointed at BOOTSTRAP_ADMIN_EMAIL, and with neither they're told to contact support with no address." }`,
   ];
 
@@ -2417,6 +2540,8 @@ export interface PackagePermissionFragment {
 }
 
 const SELLS = (answers: Answers): boolean => answers.businessModel !== "none";
+/** This site's own shop (--model one-time or both): products to author and orders to keep. */
+const SHOP = (answers: Answers): boolean => sellsShop(answers);
 
 export const PACKAGE_PERMISSION_FRAGMENTS: readonly PackagePermissionFragment[] = [
   {
@@ -2432,7 +2557,7 @@ export const PACKAGE_PERMISSION_FRAGMENTS: readonly PackagePermissionFragment[] 
     package: "catalog",
     binding: "catalogPermissions",
     scope: "staff",
-    installedBy: SELLS,
+    installedBy: SHOP,
     why:
       "Defining what is for sale is an operator activity: you author the " +
       "products, your customers buy them. Every default names admin, cs_lead " +
@@ -2451,7 +2576,9 @@ export const PACKAGE_PERMISSION_FRAGMENTS: readonly PackagePermissionFragment[] 
     package: "commerce",
     binding: "commercePermissions",
     scope: "tenant",
-    installedBy: SELLS,
+    // Not for a person's own account (create-app 0.39): nobody there runs
+    // orders or discount codes; the shop's are the site's, worked by staff.
+    installedBy: (answers) => SHOP(answers) && !consumerProduct(answers),
     why:
       "Orders and discount codes, held by the organisation that owns them. " +
       "TENANT: every default here names owner, admin, member or viewer, and " +
@@ -3041,7 +3168,41 @@ export function renderPermissionsCatalog(answers: Answers): string {
   },`
     : "";
   const staffSpread = [...staffFragments, "appStaffPermissions"];
-  const tenantSpread = [...tenantFragments, "appTenantPermissions"];
+  // ONE PERSON PER ACCOUNT (create-app 0.39): in a consumers project the
+  // tenancy fragment is spread with its team keys held by nobody.
+  const personal = consumerProduct(answers);
+  const tenantSpread = [
+    ...tenantFragments.map((binding) => (personal && binding === "tenancyPermissions" ? "personalTenancyPermissions" : binding)),
+    "appTenantPermissions",
+  ];
+  const heldByNobody = personal
+    ? `
+/**
+ * ONE PERSON PER ACCOUNT (create-app 0.39). This project's customers sign up
+ * as themselves, so no role — the account's owner included — holds the keys
+ * that bring someone else in, take them out, change what they may do, or hand
+ * the account over. The keys stay in the catalog, so anything that asks about
+ * them gets a plain "no"; the seat limit of one (src/server/plan-gate.ts)
+ * refuses an invitation on the server as well.
+ *
+ * SEALED, not only left out of every role's defaults: a seal is a deny row
+ * on every shipped role, which the seed writes over the allow row a role held
+ * before (a project that ran as --audience business), and which no
+ * per-person setting can reopen.
+ */
+export const HELD_BY_NOBODY: readonly string[] = ["members.invite", "members.remove", "members.role.change", "tenant.transfer"];
+
+const personalTenancyPermissions = Object.fromEntries(
+  Object.entries(tenancyPermissions).map(([key, definition]) => [
+    key,
+    HELD_BY_NOBODY.includes(key) ? { ...definition, defaultFor: [], sealed: true } : definition,
+  ]),
+) as typeof tenancyPermissions;
+`
+    : `
+/** Keys no role holds on purpose (a consumers project's team keys); none here. */
+export const HELD_BY_NOBODY: readonly string[] = [];
+`;
 
   const source = `${imports.join("\n")}
 
@@ -3065,7 +3226,7 @@ export function renderPermissionsCatalog(answers: Answers): string {
 const appTenantPermissions = {
   // "reports.export": { label: "Export reports", category: "Reports" },
 } as const;
-
+${heldByNobody}
 export const tenantCatalog = definePermissions(
   "tenant",
   { ${tenantSpread.map((f) => `...${f}`).join(", ")} },
@@ -5031,12 +5192,15 @@ export function renderAuditRegistry(answers: Answers): string {
     fragments.push("schedulingAuditedActions");
   }
 
-  if (answers.businessModel !== "none") {
+  if (sellsShop(answers)) {
     // One-way. `routers/catalog.ts` writes through its own registry and imports
     // nothing from here, so this file can read its fragment without the two
     // modules forming a cycle that would leave one of them half-initialised.
+    // The shop's only (create-app 0.39): plans alone author no products.
     imports.push('import { catalogAuditedActions } from "./routers/catalog";');
     fragments.push("catalogAuditedActions");
+  }
+  if (answers.businessModel !== "none") {
     // The customer side, on the same one-way terms and for the same reason.
     // Only one thing a customer does is worth a row — opening the billing
     // portal, which hands them the ability to cancel the subscription and read
@@ -5140,8 +5304,11 @@ export function renderAppRouter(answers: Answers): string {
   if (takesMoney) {
     imports.splice(1, 0, 'import { accountRouter } from "./account";');
     imports.splice(2, 0, 'import { billingRouter } from "./billing";');
-    imports.splice(3, 0, 'import { catalogRouter } from "./catalog";');
-    imports.splice(4, 0, 'import { checkoutRouter } from "./checkout";');
+    // The shop's two (create-app 0.39): --model one-time or both.
+    if (sellsShop(answers)) {
+      imports.splice(3, 0, 'import { catalogRouter } from "./catalog";');
+      imports.splice(4, 0, 'import { checkoutRouter } from "./checkout";');
+    }
   }
 
   // What the AI route cost, read back. The route itself is a plain handler —
@@ -5212,7 +5379,7 @@ export function renderAppRouter(answers: Answers): string {
   const aeo = "";
 
   const shop = takesMoney
-    ? `
+    ? `${sellsShop(answers) ? `
   // The product builder. Staff-scoped, and mounted unconditionally alongside
   // \`admin\` for the same reason: the pages are copied source a client
   // restyles, while this router is where \`requireStaff(...)\` and the price
@@ -5225,7 +5392,7 @@ export function renderAppRouter(answers: Answers): string {
   // and the owning tenant are read from the catalog row, never from the
   // request.
   checkout: checkoutRouter,
-
+` : ""}
   // The customer's own account: the Stripe billing portal, cancelling and
   // resuming a subscription, and the invoice list. Everything else the account
   // area does is a server-component read — pages read, routers mutate — and
@@ -5299,7 +5466,12 @@ export function schemaOwners(answers: Answers): string[] {
   // created.
   const owners = ["auth", "tenancy", "permissions", "observability"];
   if (answers.businessModel !== "none") {
-    owners.push("stripe", "catalog", "commerce", "billing");
+    // Plans need Stripe's ledger and billing's plans, subscriptions and
+    // entitlements; the shop (--model one-time or both) adds the catalog's
+    // products and commerce's orders, discounts and shipments.
+    owners.push("stripe");
+    if (sellsShop(answers)) owners.push("catalog", "commerce");
+    owners.push("billing");
   }
   if (answers.includeAi) owners.push("ai");
   if (answers.includeEmail) owners.push("email");
@@ -5551,7 +5723,7 @@ export function renderSiteNav(answers: Answers): string {
   // Every money-taking model gets the storefront, because every one of them
   // installs the stripe overlay. The one-time/subscription answer shapes what
   // is sold, not whether there is somewhere to sell it.
-  if (answers.businessModel !== "none") {
+  if (sellsShop(answers)) {
     site.push({
       href: "/products",
       label: "Products",
@@ -5879,12 +6051,14 @@ export function renderSiteNav(answers: Answers): string {
       href: "/account",
       label: "Your account",
       bar: true,
-      why:
-        "Orders, licence keys, allowances and billing — the read half of " +
-        "everything `fulfilPurchase` writes. It was the gap: a person could " +
-        "buy something and had nowhere at all to see it afterwards, because " +
-        "the only reader in the project was keyed on a reference in the URL " +
-        "Stripe returned them to.",
+      why: sellsShop(answers)
+        ? "Orders, licence keys, allowances and billing — the read half of " +
+          "everything `fulfilPurchase` writes. It was the gap: a person could " +
+          "buy something and had nowhere at all to see it afterwards, because " +
+          "the only reader in the project was keyed on a reference in the URL " +
+          "Stripe returned them to."
+        : "What the person is on, what it includes, and their billing " +
+          "(create-app 0.39: a project with plans and no shop has no orders).",
     });
   }
 
@@ -5935,7 +6109,7 @@ export function renderSiteNav(answers: Answers): string {
   // the same reason /setup is here — it is a diagnostics surface rather than
   // somewhere a customer goes, and it has to be reachable from wherever
   // somebody has just noticed that a message read wrong.
-  if (answers.includeEmail) {
+  if (answers.includeEmail && teamInvites(answers)) {
     footer.push({
       href: "/setup/email",
       label: "Email templates",
@@ -6209,18 +6383,23 @@ export function renderAdminNav(answers: Answers): string {
   // that overlay not having been copied — not a key nobody happens to hold.
   if (sells) {
     groups.push({
-      heading: "Catalog",
+      heading: sellsShop(answers) ? "Catalog" : "Billing",
       items: [
-        {
-          href: "/admin/products",
-          label: "Products",
-          permission: "catalog.products.view",
-          why:
-            "The product builder, from the catalog-admin overlay. The key is " +
-            "contributed by the catalog package, so a project without a shop " +
-            "has neither the page nor the permission — but what keeps this " +
-            "entry out of one is the overlay that was not copied.",
-        },
+        // The shop's (create-app 0.39): --model one-time or both.
+        ...(sellsShop(answers)
+          ? [
+              {
+                href: "/admin/products",
+                label: "Products",
+                permission: "catalog.products.view",
+                why:
+                  "The product builder, from the shop-admin overlay. The key is " +
+                  "contributed by the catalog package, so a project without a shop " +
+                  "has neither the page nor the permission — but what keeps this " +
+                  "entry out of one is the overlay that was not copied.",
+              },
+            ]
+          : []),
         {
           href: "/admin/billing",
           label: "Plans & billing",
@@ -6796,7 +6975,9 @@ export function AdminNav({ granted }: AdminNavProps) {
  */
 export function renderAdminDashboard(answers: Answers): string {
   const scope = answers.scope;
-  const sells = answers.businessModel !== "none";
+  // The shop's tiles (orders, despatch, products) only where there is a shop
+  // (create-app 0.39): a project with plans alone has none of those tables.
+  const sells = sellsShop(answers);
   const full = answers.adminShell === "full";
   const plural = tenantLabelPlural(answers);
   const lowerPlural = tenantLabelPlural(answers).toLowerCase();
@@ -7429,8 +7610,10 @@ function tile(props: TileProps): TileProps {
  */
 export function renderHomePage(answers: Answers): string {
   const sells = answers.businessModel !== "none";
+  // The shop's card (create-app 0.39): only where there is a shop to open.
+  const shopCard = sellsShop(answers);
 
-  const uiImports = sells
+  const uiImports = shopCard
     ? "Card, CardBody, PageHeader, buttonClass"
     : "Card, CardBody, PageHeader";
 
@@ -7455,7 +7638,7 @@ export function renderHomePage(answers: Answers): string {
     `  { path: "app/globals.css", what: "Colours, radius, dark mode" },`,
   ].join("\n");
 
-  const shop = sells
+  const shop = shopCard
     ? `
       <h2 className="mt-10 mb-2 text-[11px] font-medium uppercase tracking-wider text-ink-muted">
         Your shop
@@ -8023,18 +8206,23 @@ export function robotsDisallowed(answers: Answers): { readonly path: string; rea
       path: "/setup",
       why: "The credential report. It never prints a value, but it does list which services this deployment is wired to, which is not a search result anybody wants.",
     },
-    {
-      path: "/members",
-      why: "Signed-in only. A crawler gets the sign-in redirect, which costs it a request and gains it nothing.",
-    },
-    {
-      path: "/settings",
-      why: "The team page (and, for companies, their settings). Signed-in only.",
-    },
-    {
-      path: "/invite/",
-      why: "An invitation link. The URL is the key to it, and the page says nothing until someone signs in.",
-    },
+    // The team routes, where there is a team (none in a consumers project).
+    ...(teamInvites(answers)
+      ? [
+          {
+            path: "/members",
+            why: "Signed-in only. A crawler gets the sign-in redirect, which costs it a request and gains it nothing.",
+          },
+          {
+            path: "/settings",
+            why: "The team page (and, for companies, their settings). Signed-in only.",
+          },
+          {
+            path: "/invite/",
+            why: "An invitation link. The URL is the key to it, and the page says nothing until someone signs in.",
+          },
+        ]
+      : []),
     {
       path: "/sign-in",
       why: "An auth screen indexes as a page with no content, and it competes with the real landing page for the brand term.",
@@ -8102,16 +8290,17 @@ export function robotsDisallowed(answers: Answers): { readonly path: string; rea
     });
   }
   if (sells) {
-    disallowed.push(
-      {
-        path: "/account",
-        why: "A customer's own orders and billing. Signed-in only, and never a search result.",
-      },
-      {
-        path: "/checkout",
-        why: "Meaningless without a product in the query string, and a crawler following it would be indexing a payment form.",
-      },
-    );
+    disallowed.push({
+      path: "/account",
+      why: "A customer's own orders and billing. Signed-in only, and never a search result.",
+    });
+  }
+  // The shop's checkout (create-app 0.39): only where there is a shop.
+  if (sellsShop(answers)) {
+    disallowed.push({
+      path: "/checkout",
+      why: "Meaningless without a product in the query string, and a crawler following it would be indexing a payment form.",
+    });
   }
   return disallowed;
 }
@@ -8230,10 +8419,10 @@ export function sitemapPages(answers: Answers): { readonly path: string; readonl
       why: "The instant estimate, from the estimator overlay. The quote pages under /quote are never listed: each URL is one customer's key.",
     });
   }
-  if (sells) {
+  if (sellsShop(answers)) {
     pages.push({
       path: "/products",
-      why: "The storefront, from the stripe overlay. Individual product pages are deliberately absent: they are database rows, so this file cannot know them — add a database read here when the catalogue is worth indexing.",
+      why: "The storefront, from the shop overlay. Individual product pages are deliberately absent: they are database rows, so this file cannot know them — add a database read here when the catalogue is worth indexing.",
     });
   }
   if (answers.includeMarketing || sells) {
@@ -8331,7 +8520,7 @@ export function renderLlmsTxt(answers: Answers): string {
   if (single && answers.includeEstimator) {
     pages.push({ path: "/estimate", line: "Instant estimate: a price from our own price book for what you can count or measure." });
   }
-  if (sells) {
+  if (sellsShop(answers)) {
     pages.push({ path: "/products", line: "Published products available to buy." });
   }
   if (answers.includeMarketing || sells) {

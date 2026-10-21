@@ -1,6 +1,7 @@
 export {
   resolveAppEnv,
   isDeployed,
+  isLocalRun,
   appEnvOrigin,
   describeAppEnv,
 } from "./app-env.js";

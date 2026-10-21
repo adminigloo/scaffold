@@ -104,8 +104,9 @@ export class UnknownFeatureError extends Error {
       `"${feature}" is not a feature you can add. One of: ` +
         `${ADDABLE_FEATURES.join(", ")}.\n` +
         `Structural choices — the admin shell, the business model, the tenant ` +
-        `noun — are not additive and are not changed by \`add\`; regenerate for ` +
-        `those.`,
+        `noun, who signs up — are not additive and are not changed by \`add\`: ` +
+        `switch one with \`upgrade --set <answer>=<value>\` (or ` +
+        `\`upgrade --audience consumers\`).`,
     );
   }
 }
@@ -321,7 +322,7 @@ export async function planAdd(
     if (before === undefined) {
       const onDisk = await readIfExists(join(projectDir, relPath));
       if (onDisk === null) creates.set(relPath, next);
-      else if (onDisk === next) continue; // already there, identical
+      else if (sameText(onDisk, next)) continue; // already there, identical
       else conflicts.set(relPath, next); // something else wrote it first
       continue;
     }
@@ -341,7 +342,7 @@ export async function planAdd(
     }
     // Overwrite only if the copy on disk is still what the generator wrote.
     const onDisk = await readIfExists(join(projectDir, relPath));
-    if (onDisk === null || onDisk === before) rewrites.set(relPath, next);
+    if (onDisk === null || sameText(onDisk, before)) rewrites.set(relPath, next);
     else conflicts.set(relPath, next);
   }
 
@@ -469,6 +470,22 @@ export async function readIfExists(path: string): Promise<string | null> {
   return readFile(path, "utf8");
 }
 
+/**
+ * Is a file on disk still what the generator wrote, LINE ENDINGS ASIDE?
+ *
+ * Every "did you change this file?" question `add` and `upgrade` ask goes
+ * through here, never through `===` (review: line endings). A project kept in
+ * git is checked out under its own `.gitattributes` (`* text=auto eol=lf`),
+ * so a file a generator wrote with CRLF comes back from `git checkout` as LF
+ * — the same file, byte for byte different. Compared raw, `upgrade` called
+ * six untouched shop files "yours", kept them, and the project no longer
+ * built. A change of line endings alone is never an edit.
+ */
+export function sameText(onDisk: string | null, generated: string | null | undefined): boolean {
+  if (onDisk === null || generated === null || generated === undefined) return false;
+  return onDisk === generated || onDisk.replace(/\r\n/g, "\n") === generated.replace(/\r\n/g, "\n");
+}
+
 export async function writeInto(
   projectDir: string,
   relPath: string,
@@ -510,7 +527,7 @@ export async function mergePackageJson(
 ): Promise<{ readonly text: string; readonly raised: readonly RaisedPin[] }> {
   const onDisk = await readIfExists(join(projectDir, "package.json"));
   const after = JSON.parse(generatedAfter) as PackageJson;
-  if (onDisk === null || onDisk === generatedBefore) {
+  if (onDisk === null || sameText(onDisk, generatedBefore)) {
     const before = onDisk === null ? ({} as PackageJson) : (JSON.parse(onDisk) as PackageJson);
     return { text: generatedAfter, raised: raisedBetween(before, after, scope) };
   }

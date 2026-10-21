@@ -1,5 +1,6 @@
 import { SignUp } from "@clerk/nextjs";
 import Link from "next/link";
+import { afterSignUpPath } from "@/conversions";
 import { env } from "@/env";
 import { safeReturnPath } from "@/redirect";
 import { AFTER_AUTH_PATH } from "@/tenancy";
@@ -81,9 +82,13 @@ export default async function SignUpPage({
           "/" — and a new owner never meets "What's your company called?".
           The other page's address is ALWAYS passed, so the link inside Clerk's
           card stays on this site instead of Clerk's hosted page (TB-DEPLOY-11). */}
+      {/* THROUGH afterSignUpPath (create-app 0.39): with analytics, a new
+          sign-up passes through /welcome, which marks the visit "Signed up"
+          and sends them on — so the site's numbers show which pages bring
+          people who sign up. Without analytics it is the same path. */}
       <SignUp
-        fallbackRedirectUrl={AFTER_AUTH_PATH}
-        forceRedirectUrl={back ?? undefined}
+        fallbackRedirectUrl={afterSignUpPath(AFTER_AUTH_PATH)}
+        forceRedirectUrl={back === null ? undefined : afterSignUpPath(back)}
         signInUrl={
           back === null ? "/sign-in" : `/sign-in?redirect_url=${encodeURIComponent(back)}`
         }

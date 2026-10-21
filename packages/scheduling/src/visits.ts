@@ -186,7 +186,12 @@ export async function bookVisit(
     endsAt,
     origin: "staff",
     pendingExpiresAt: parsed.status === "pending" && !history ? pendingDeadline(settings, enteredAt, startsAt) : null,
-    ...(backdated ? { createdAt: bookedOn, updatedAt: history ? bookedOn : enteredAt, enteredAt, enteredBy: options.actor?.id ?? null } : {}),
+    // Booked on the clock the caller passed (`now`), not the database's: the
+    // "before the visit was booked" check reads this, and a caller with its
+    // own clock (a test, an import) must see the day it said.
+    ...(backdated
+      ? { createdAt: bookedOn, updatedAt: history ? bookedOn : enteredAt, enteredAt, enteredBy: options.actor?.id ?? null }
+      : { createdAt: enteredAt, updatedAt: enteredAt }),
   };
   const insert = async (handle: SchedulingDb): Promise<BookingRow> => {
     const [row] = await handle.insert(schedulingBookings).values(values).returning();

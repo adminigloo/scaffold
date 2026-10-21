@@ -2,18 +2,17 @@ import { definePlans } from "__SCOPE__/billing";
 import type { PlanFeature, PlanTier } from "__SCOPE__/billing";
 import { describe, expect, it } from "vitest";
 import {
-  amountLabel,
-  annualSavingPercent,
-  featureBullet,
   featureCell,
-  priceDisplay,
   resolveCurrency,
   resolveInterval,
   toggleableIntervals,
 } from "@/components/marketing/pricing/planPresentation";
 
 /**
- * The numbers on the pricing page, checked against the record they came from.
+ * The pricing page's own decisions, checked against the record they came from:
+ * the cadence and currency it opens on, and the comparison table's cells. What
+ * a plan CARD says (its price, what it includes, "Everything in Free, plus:")
+ * is @__SCOPE_NAME__/billing's `planColumns`, tested in that package.
  *
  * WHY THIS SUITE EXISTS AT ALL. The rule the whole marketing half is built on is
  * that the page and the enforcement read the SAME record — so the page cannot
@@ -108,7 +107,8 @@ describe("which cadences the toggle offers", () => {
     // product billed differently, and a reader asked to compare it against a
     // monthly price is being asked a question with no answer.
     expect(catalog.intervals).toContain("once");
-    expect(toggleableIntervals(catalog)).toEqual(["month", "year"]);
+    // Yearly first (create-app 0.39): one charge a year, and the better deal.
+    expect(toggleableIntervals(catalog)).toEqual(["year", "month"]);
   });
 
   it("takes an interval from the query string only if the record prices it", () => {
@@ -121,10 +121,13 @@ describe("which cadences the toggle offers", () => {
     // interesting rejection: it is a real PlanInterval and a real key in the
     // record, so a naive "is this a valid interval" check would accept it and
     // put the toggle in a third state nothing renders.
-    expect(resolveInterval("once", catalog)).toBe("month");
-    expect(resolveInterval("weekly", catalog)).toBe("month");
-    expect(resolveInterval(undefined, catalog)).toBe("month");
-    expect(resolveInterval("", catalog)).toBe("month");
+    // The default is yearly, wherever a plan is sold yearly.
+    expect(resolveInterval("once", catalog)).toBe("year");
+    expect(resolveInterval("weekly", catalog)).toBe("year");
+    expect(resolveInterval(undefined, catalog)).toBe("year");
+    expect(resolveInterval("", catalog)).toBe("year");
+    // NEGATIVE CONTROL: a catalog sold monthly only opens on monthly.
+    expect(resolveInterval(undefined, { intervals: ["month"] })).toBe("month");
   });
 
   it("refuses a currency the catalog does not price in", () => {
@@ -135,136 +138,6 @@ describe("which cadences the toggle offers", () => {
     // The fallback is US dollars where the catalog prices in them (create-app 0.36).
     expect(resolveCurrency("XXXXX", catalog)).toBe("usd");
     expect(resolveCurrency(undefined, catalog)).toBe("usd");
-  });
-});
-
-describe("what a tier costs", () => {
-  it("reads the amount out of the record for the cadence asked for", () => {
-    expect(priceDisplay(tier("pro"), "month", "gbp")).toEqual({
-      kind: "amount",
-      amountMinor: 2400n,
-      interval: "month",
-    });
-    expect(priceDisplay(tier("pro"), "year", "usd")).toEqual({
-      kind: "amount",
-      amountMinor: 29000n,
-      interval: "year",
-    });
-  });
-
-  it("says a tier is sold on another cadence rather than showing nothing", () => {
-    // A blank card between two priced ones reads as a page that failed to load,
-    // and the reader's conclusion is about the product rather than about the
-    // cadence they happen to have selected.
-    expect(priceDisplay(tier("monthly-only"), "year", "gbp")).toEqual({
-      kind: "other-interval",
-      available: ["month"],
-    });
-  });
-
-  it("shows a lifetime price under either position of the toggle", () => {
-    for (const interval of ["month", "year"] as const) {
-      expect(priceDisplay(tier("lifetime"), interval, "gbp")).toEqual({
-        kind: "amount",
-        amountMinor: 40000n,
-        interval: "once",
-      });
-    }
-  });
-
-  it("distinguishes an unpriced tier from an unavailable cadence", () => {
-    // "Enterprise, talk to us" is a tier with no prices at all, and it must not
-    // be reported as one that is merely sold annually — the page renders a
-    // contact action for the first and a switch-the-toggle hint for the second.
-    expect(priceDisplay(tier("enterprise"), "month", "gbp")).toEqual({
-      kind: "enquire",
-    });
-  });
-
-  it("prints zero as Free", () => {
-    // The record writes a free plan as 0 rather than as an absent price, on
-    // purpose. £0.00 at the top of a pricing page reads as a price that failed
-    // to load.
-    expect(amountLabel(0n, "gbp")).toBe("Free");
-    expect(amountLabel(2400n, "gbp")).toBe("£24.00");
-  });
-
-  it("formats in one pinned locale, so two build agents agree", () => {
-    // Not the machine's ICU default. The same commit built on two runners would
-    // otherwise produce two differently punctuated pricing pages.
-    // en-US (create-app 0.36): a US business reads "$29.00", never "US$29.00".
-    expect(amountLabel(2900n, "usd")).toBe("$29.00");
-  });
-});
-
-describe("the annual saving", () => {
-  it("is the percentage off twelve months, rounded down", () => {
-    // 24000 against 12 x 2400 = 28800, which is 16.66…% and must print as 16.
-    // Rounded down so a saving is never overstated.
-    expect(annualSavingPercent(tier("pro"), "gbp")).toBe(16);
-  });
-
-  it("claims nothing for a free tier", () => {
-    expect(annualSavingPercent(tier("free"), "gbp")).toBeNull();
-  });
-
-  it("claims nothing when there is no annual price to compare", () => {
-    expect(annualSavingPercent(tier("monthly-only"), "gbp")).toBeNull();
-    expect(annualSavingPercent(tier("enterprise"), "gbp")).toBeNull();
-  });
-
-  it("refuses to advertise a negative saving", () => {
-    // An annual price above twelve months is a pricing mistake. Printing
-    // "save -8%" would put the mistake on the page in the client's own voice.
-    const wrong = definePlans({
-      features: {},
-      tiers: [
-        {
-          key: "backwards",
-          name: "Backwards",
-          prices: { month: { gbp: 1000n }, year: { gbp: 13000n } },
-          features: {},
-        },
-      ],
-    });
-    const backwards = wrong.tier("backwards");
-    expect(backwards).toBeDefined();
-    if (backwards === undefined) return;
-    expect(annualSavingPercent(backwards, "gbp")).toBeNull();
-  });
-});
-
-describe("what a plan card lists", () => {
-  const pro = tier("pro");
-  const free = tier("free");
-
-  it("prints an unlimited quota as unlimited, never as a number", () => {
-    expect(featureBullet(feature(pro, "seats"))).toBe("Unlimited members");
-  });
-
-  it("groups a thousand", () => {
-    expect(featureBullet(feature(pro, "exports"))).toBe("5,000 exports a month");
-  });
-
-  it("lists an included flag by its label", () => {
-    expect(featureBullet(feature(pro, "sso"))).toBe("Single sign-on");
-  });
-
-  it("lists the best option a tier offers", () => {
-    // `allowed` is best first and non-empty by construction, which is why there
-    // is no fallback in the renderer for a case the record forbids.
-    expect(featureBullet(feature(pro, "support"))).toBe("Priority support");
-    expect(featureBullet(feature(free, "support"))).toBe("Community support");
-  });
-
-  it("contributes NO LINE for something the tier withholds", () => {
-    // A bullet reading "No single sign-on" belongs in the comparison table,
-    // where columns are being weighed against each other — not on the card
-    // somebody is deciding to buy. A zero quota is the same: the record writes
-    // it as an explicit 0 so the entitlement row survives for the audit trail,
-    // and that is a fact about the database, not a selling point.
-    expect(featureBullet(feature(free, "sso"))).toBeNull();
-    expect(featureBullet(feature(free, "exports"))).toBeNull();
   });
 });
 

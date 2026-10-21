@@ -83,6 +83,13 @@ describe("subscriptions, per product line (billing 0.5)", () => {
     expect(line?.default).toBe(DEFAULT_PLAN_LINE);
     expect(columnsOf(subscriptions).get("stripe_item_id")?.notNull).toBe(false);
   });
+
+  it("billing 0.6: price_minor, what the line is actually charged — nullable, so every existing row and every free month fits", () => {
+    const price = columnsOf(subscriptions).get("price_minor");
+    expect(price?.notNull).toBe(false);
+    expect(price?.columnType).toBe("PgBigInt64");
+    expect(price?.hasDefault).toBe(false);
+  });
 });
 
 describe("billingSchema", () => {

@@ -504,20 +504,26 @@ export const INVITATION_EXPIRY_HOURS = 24 * 7;
 /**
  * Who becomes the first administrator.
  *
- * On a laptop, the first person to sign in — there is no one else. On a
- * deployment, only BOOTSTRAP_ADMIN_EMAIL, and only once that address is
- * VERIFIED with Clerk; unset, nobody is made one automatically (the sign-up
- * page is public). Retried whenever no administrator exists, not only at the
- * first sign-in, so signing in before the roles were installed no longer
- * locks /admin for good.
+ * BOOTSTRAP_ADMIN_EMAIL, when it is set, wherever this runs — and only once
+ * that address is VERIFIED with Clerk. Unset: on the dev server and in the
+ * tests (\`resolveAppEnv() === "local"\`: NODE_ENV says development or test),
+ * the first person to sign in, since there is no one else; anywhere else,
+ * nobody is made one automatically (the sign-up page is public) — run
+ * \`pnpm admin:grant <your email>\`, which the no-access page names. Retried
+ * whenever no administrator exists, not only at the first sign-in, so signing
+ * in before the roles were installed no longer locks /admin for good.
  *
- * A runtime ENVIRONMENT check (which deployment is this?), the one the 0.21
- * bootstrap made — not a feature switch.
+ * NEVER "first-user" FROM A GUESS (review): a production build is never
+ * handed to the first stranger who signs up, even on a localhost app URL — a
+ * self-hosted server that loads the project's .env.local has exactly that
+ * URL, so the URL can't tell a laptop from a server. (\`isLocalRun\` chooses
+ * only the wording of the no-access page.) A runtime ENVIRONMENT check, the
+ * one the 0.21 bootstrap made — not a feature switch.
  */
 export function bootstrapPolicy(): BootstrapPolicy {
-  if (resolveAppEnv() === "local") return { mode: "first-user" };
   const email = env.BOOTSTRAP_ADMIN_EMAIL?.trim();
-  return email ? { mode: "email", email } : { mode: "off" };
+  if (email) return { mode: "email", email };
+  return resolveAppEnv() === "local" ? { mode: "first-user" } : { mode: "off" };
 }
 
 /**
@@ -568,6 +574,68 @@ export const tenancy = createTenancyService({
 
 export function renderTenancyHandlers(answers: Answers): string {
   const scope = answers.scope;
+  // ONE PERSON PER ACCOUNT (create-app 0.39): a consumers project has no
+  // invitation page and no invitation email, so the handlers get neither.
+  const invites = !consumerProduct(answers);
+  const inviteImports = invites
+    ? `
+import { invitePath } from "@/invitations";`
+    : "";
+  const mailImport = invites
+    ? `
+import { invitationEmailsConfigured, sendInvitationEmail } from "./invitation-mail";`
+    : "";
+  const invitationUrl = invites
+    ? `/**
+ * The absolute link an invitation email carries. Built from NEXT_PUBLIC_APP_URL,
+ * which on production falls back to the project's production domain, never a
+ * per-deployment *.vercel.app address an invitee would meet a login wall on.
+ */
+export function invitationUrl(token: string): string {
+  return new URL(invitePath(token), env.NEXT_PUBLIC_APP_URL).toString();
+}`
+    : `/**
+ * NO INVITATIONS HERE (create-app 0.39): each person's account is theirs
+ * alone. No role holds members.invite and the seat limit is one
+ * (src/server/plan-gate.ts), so an invitation is refused before a link is
+ * made, and nothing emails one. There is no invitation page either: were a
+ * link ever made, it would open the home page and nothing else.
+ */
+export function invitationUrl(_token: string): string {
+  // This site has no invitations: each account is one person's.
+  return new URL("/", env.NEXT_PUBLIC_APP_URL).toString();
+}`;
+  const deliver = invites
+    ? `/**
+ * After the invitation is saved: a failed email never un-sends it — the team
+ * page hands the inviter the link to copy instead. Only "sent" counts as an
+ * email (the package's per-address limits, and the inviter's "We emailed …",
+ * are read from those alone); "skipped", "failed" or a throw frees the
+ * address at once.
+ */
+const deliverInvitation: NonNullable<CreateTenancyHandlersOptions["deliverInvitation"]> = async (input) => {
+  const outcome = await sendInvitationEmail({
+    to: input.to,
+    tenantId: input.tenantId,
+    tenantName: input.companyName,
+    invitedBy: input.invitedBy,
+    roleName: input.roleName,
+    url: input.url,
+    expiresAt: input.expiresAt,
+    invitationId: input.invitationId,
+  });
+  return { status: outcome.status };
+};
+`
+    : "";
+  const deliverOption = invites
+    ? `
+    // Only when this project can send mail (the email package AND a
+    // RESEND_API_KEY): one that can't is never told it emails, so no
+    // invitation ever waits on an email that was never going to go — the
+    // inviter gets the link, every time.
+    ...(invitationEmailsConfigured ? { deliverInvitation } : {}),`
+    : "";
   return `import { desc, eq } from "drizzle-orm";
 import { users } from "${scope}/auth/schema";
 import { auditLog } from "${scope}/observability/schema";
@@ -578,19 +646,16 @@ import {
   createTenancyOperatorHandlers,
   TENANCY_RATE_LIMITS,
   type AuditLineWire,
-  type CreateTenancyHandlersOptions,
-  type RateLimiter,
+${invites ? "  type CreateTenancyHandlersOptions,\n" : ""}  type RateLimiter,
   type RequestFacts,
   type TenancyHandlers,
   type TenancyPrincipal,
 } from "${scope}/tenancy/server";
 import { db } from "@/db";
-import { env } from "@/env";
-import { invitePath } from "@/invitations";
+import { env } from "@/env";${inviteImports}
 import { auditRegistry } from "./audit";
 import { currentPrincipal, verifiedEmails } from "./auth";
-import { reportError } from "./error-reporter";
-import { invitationEmailsConfigured, sendInvitationEmail } from "./invitation-mail";
+import { reportError } from "./error-reporter";${mailImport}
 import { limiter } from "./rate-limit";
 import { tenancy } from "./tenancy";
 
@@ -612,14 +677,7 @@ export async function requestPrincipal(): Promise<TenancyPrincipal | null> {
   return principal ? { userId: principal.userId, email: principal.email } : null;
 }
 
-/**
- * The absolute link an invitation email carries. Built from NEXT_PUBLIC_APP_URL,
- * which on production falls back to the project's production domain, never a
- * per-deployment *.vercel.app address an invitee would meet a login wall on.
- */
-export function invitationUrl(token: string): string {
-  return new URL(invitePath(token), env.NEXT_PUBLIC_APP_URL).toString();
-}
+${invitationUrl}
 
 /** The package's buckets on this project's limiter (Upstash when configured). */
 const limit: RateLimiter = async ({ bucket, key }) => {
@@ -651,38 +709,13 @@ export interface TenancyHandlerOverrides {
   readonly verifiedEmails?: (req: Request) => Promise<readonly string[]>;
 }
 
-/**
- * After the invitation is saved: a failed email never un-sends it — the team
- * page hands the inviter the link to copy instead. Only "sent" counts as an
- * email (the package's per-address limits, and the inviter's "We emailed …",
- * are read from those alone); "skipped", "failed" or a throw frees the
- * address at once.
- */
-const deliverInvitation: NonNullable<CreateTenancyHandlersOptions["deliverInvitation"]> = async (input) => {
-  const outcome = await sendInvitationEmail({
-    to: input.to,
-    tenantId: input.tenantId,
-    tenantName: input.companyName,
-    invitedBy: input.invitedBy,
-    roleName: input.roleName,
-    url: input.url,
-    expiresAt: input.expiresAt,
-    invitationId: input.invitationId,
-  });
-  return { status: outcome.status };
-};
-
+${deliver}
 export function buildTenancyHandlers(overrides: TenancyHandlerOverrides = {}): TenancyHandlers {
   return createTenancyHandlers({
     tenancy,
     principal: overrides.principal ?? (() => requestPrincipal()),
     verifiedEmails: overrides.verifiedEmails ?? (() => verifiedEmails()),
-    invitationUrl,
-    // Only when this project can send mail (the email package AND a
-    // RESEND_API_KEY): one that can't is never told it emails, so no
-    // invitation ever waits on an email that was never going to go — the
-    // inviter gets the link, every time.
-    ...(invitationEmailsConfigured ? { deliverInvitation } : {}),
+    invitationUrl,${deliverOption}
     limit,
     requestFacts,
     onError,

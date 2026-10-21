@@ -44,7 +44,15 @@ export function renderPlanGate(answers: Answers): string {
     const why = companiesMode(answers)
       ? `this project's ${tenantLabel(answers).toLowerCase()}s aren't sold a plan (it was generated with --model ${answers.businessModel})`
       : "this project runs one business, so there is nobody else's plan to check";
-    return `/**
+    // The account pages read each line's standing from here, in every project
+    // that has them (create-app 0.39, review): billing's own reading, with no
+    // trial — nothing here is closed by it, but /account says what you're on.
+    const billing = answers.businessModel !== "none";
+    return `${billing ? `import { loadCompanyPlan, type CompanyPlan } from "${scope}/billing/server";
+import { db } from "@/db";
+import { plans } from "@/plans";
+
+` : ""}/**
  * THE PLAN CHECK — the open variant: ${why}. Every helper here answers "no
  * limit", and the permission loaders pass through untouched. GENERATED in two
  * variants; the other one (a companies project that sells subscriptions)
@@ -92,7 +100,17 @@ export interface PlanStandingView {
 export async function planStandingOf(_tenantId: string): Promise<PlanStandingView | null> {
   return null;
 }
-
+${billing ? `
+/**
+ * Each product line's standing for an account — billing's own reading of its
+ * rows, the one a plan check would make — for /account and /account/billing:
+ * what you're on, and whether that's the free tier (create-app 0.39). Nothing
+ * here is closed by it.
+ */
+export async function linePlansOf(tenantId: string): Promise<CompanyPlan["lines"]> {
+  return (await loadCompanyPlan(db, { tenantId, trialStartedAt: null, trialDays: 0, plans })).lines;
+}
+` : ""}
 /** Online estimate requests are never limited by a plan here. */
 export async function estimateQuota(
   _tenantId: string,
@@ -243,6 +261,16 @@ export async function companyPlan(tenantId: string, executor: BillingDb = db): P
 }
 
 /**
+ * Each product line's standing, EXACTLY as the plan check reads it — what
+ * /account and /account/billing show: what the ${noun} is on, and whether
+ * that's the free tier (create-app 0.39, review: they read the subscription's
+ * status instead, and disagreed with the check once free months ended).
+ */
+export async function linePlansOf(tenantId: string): Promise<CompanyPlan["lines"]> {
+  return (await companyPlan(tenantId)).lines;
+}
+
+/**
  * Everything the ${noun}'s plan allows, one answer per feature — what
  * \`requireEntitlement\` reads (src/server/access.ts). On the free trial, the
  * highlighted plan's allowances for anything it doesn't already hold, so it
@@ -299,9 +327,9 @@ function smallestTier() {
   return (key ? plans.tier(key) : undefined) ?? plans.tiers.find((tier) => tier.isActive);
 }
 
-/** The plan everyone tries on the free trial: the highlighted one, else the first on sale. */
+/** The plan everyone tries on the free trial: the highlighted one, else the first on sale (never one still "coming"). */
 function trialTier() {
-  return plans.tiers.find((tier) => tier.isActive && tier.highlight) ?? plans.tiers.find((tier) => tier.isActive);
+  return plans.tiers.find((tier) => tier.onSale === true && tier.highlight) ?? plans.tiers.find((tier) => tier.onSale === true);
 }
 
 /**
@@ -595,7 +623,7 @@ export function sellsPlans(answers: Answers): boolean {
 export function renderAccess(answers: Answers): string {
   const scope = answers.scope;
   const who = personalPlans(answers) ? "person" : tenantLabel(answers).toLowerCase();
-  return `import { checkEntitlement, type EntitlementCheck } from "${scope}/billing";
+  return `import { checkEntitlement, planOnSale, type EntitlementCheck } from "${scope}/billing";
 import { plans } from "@/plans";
 import { currentPrincipal } from "./auth";
 import { tenantEntitlements } from "./plan-gate";
@@ -644,11 +672,19 @@ function either(names: readonly string[]): string {
   return \`\${names.slice(0, -1).join(", ")} or \${names[names.length - 1]}\`;
 }
 
-/** Which plans on sale include a feature (a flag that's on, a quota above zero). */
-function plansWith(feature: string): string[] {
-  return plans.tiers
+/** The plan record's parts a refusal reads: src/plans.ts, unless a test hands it another. */
+export type RefusalRecord = Pick<typeof plans, "tiers" | "features">;
+
+/**
+ * Which plans ON SALE include a feature (a flag that's on, a quota above
+ * zero). On sale is \`planOnSale\` — the checkout's own rule — so a refusal
+ * never names a tier that is "coming", sold by hand only, or retired (review:
+ * "comes with Enterprise. See plans to add it." for a plan no page offers).
+ */
+function plansWith(feature: string, record: RefusalRecord): string[] {
+  return record.tiers
     .filter((tier) => {
-      if (!tier.isActive) return false;
+      if (!planOnSale(tier)) return false;
       const held = tier.features[feature];
       if (held === undefined) return false;
       if (held.kind === "flag") return held.included;
@@ -659,10 +695,10 @@ function plansWith(feature: string): string[] {
 }
 
 /** The sentence for a refusal, from the reason and the plan record. */
-export function refusalFor(feature: string, check: Pick<EntitlementCheck, "reason">): string {
-  const heading = plans.features.find((candidate) => candidate.feature === feature);
+export function refusalFor(feature: string, check: Pick<EntitlementCheck, "reason">, record: RefusalRecord = plans): string {
+  const heading = record.features.find((candidate) => candidate.feature === feature);
   const label = heading?.label ?? feature;
-  const sellers = plansWith(feature);
+  const sellers = plansWith(feature, record);
   // A flag at 0 is "withheld by the plan", which reads like not having it at all.
   if (check.reason === "limit-reached" && heading?.kind !== "flag") {
     return sellers.length > 0 ? \`You've used all of your \${label}. A bigger plan has more.\` : \`You've used all of your \${label}.\`;

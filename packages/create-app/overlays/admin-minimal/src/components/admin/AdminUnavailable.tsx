@@ -18,17 +18,23 @@ export type AdminUnavailableReason = "database" | "not-seeded" | "not-staff";
  * who runs the site does when they are the one locked out.
  *
  * `deployed` picks the recovery that works WHERE THIS RUNS (TB-DEPLOY-08): on a
- * laptop, a command in the project folder; on a deployed site, the deploy and
- * the "Admin grant" workflow — because `pnpm admin:grant` on a laptop reaches
- * only the database in .env.local (staging), never production.
+ * laptop — a production build on a localhost address included — the command,
+ * with the signed-in person's own email in it; on a deployed site, the same
+ * command pointed at that site's database, and the "Admin grant" workflow only
+ * for a project that deploys from GitHub (.github/workflows/deploy.yml), since
+ * `pnpm admin:grant` reaches only the database in .env.local.
  */
 export function AdminUnavailable({
   reason,
   deployed = false,
+  email = null,
 }: {
   readonly reason: AdminUnavailableReason;
   readonly deployed?: boolean;
+  /** The signed-in person's email, so the command to run is theirs. */
+  readonly email?: string | null;
 }) {
+  const command = `pnpm admin:grant ${email ?? "you@example.com"}`;
   const copy =
     reason === "database"
       ? {
@@ -50,8 +56,8 @@ export function AdminUnavailable({
             title: "You do not have access to the admin panel",
             body: "Your account is signed in, but it holds no staff role. An administrator can give you one, from People.",
             detail: deployed
-              ? "If you run this site and are locked out, run the Admin grant workflow in GitHub Actions (Actions, then Deploy, then Run workflow) with your email."
-              : "If you run this site and are locked out, run pnpm admin:grant you@example.com from the project folder.",
+              ? `If you run this site and are locked out, run ${command} from the project folder with this site's DATABASE_URL in .env.local — or, if the project deploys from GitHub, the Admin grant workflow (Actions, then Deploy, then Run workflow) with your email.`
+              : `If you run this site and are locked out, run ${command} in the project folder, then reload this page.`,
             action: { href: "/", label: "Back to the app" },
           };
 

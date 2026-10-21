@@ -1,7 +1,7 @@
 import { UserButton } from "@clerk/nextjs";
 import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
-import { resolveAppEnv } from "__SCOPE__/env";
+import { isLocalRun } from "__SCOPE__/env";
 import { AdminNav } from "@/components/admin/AdminNav";
 import { AlertsBellSlot } from "@/components/AlertsBellSlot";
 import {
@@ -53,7 +53,7 @@ export default async function AdminLayout({ children }: { children: ReactNode })
       else refused = healed.reason === "templates-missing" ? "not-seeded" : "not-staff";
     }
   } catch {
-    return <AdminUnavailable reason="database" deployed={resolveAppEnv() !== "local"} />;
+    return <AdminUnavailable reason="database" deployed={!isLocalRun()} />;
   }
 
   if (!principal) redirect("/sign-in?redirect_url=%2Fadmin");
@@ -62,10 +62,11 @@ export default async function AdminLayout({ children }: { children: ReactNode })
   // where you started reads as broken software, and the first thing anyone does
   // is click it again. Which recovery it suggests depends on where it runs (a
   // command on a laptop, a workflow on a deployment) — a runtime environment
-  // check, not a feature switch.
+  // check, not a feature switch. A production build on a localhost app URL is
+  // your laptop (\`isLocalRun\`), and the command names your own email.
   if (!can) {
     return (
-      <AdminUnavailable reason={refused ?? "not-staff"} deployed={resolveAppEnv() !== "local"} />
+      <AdminUnavailable reason={refused ?? "not-staff"} deployed={!isLocalRun()} email={principal.email} />
     );
   }
 

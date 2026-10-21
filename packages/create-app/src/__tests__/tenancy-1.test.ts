@@ -165,8 +165,11 @@ describe("the generated project's wiring", () => {
     expect(layout).toContain("tenancy.ensureBootstrapAdmin(");
     expect(layout).toContain('"templates-missing" ? "not-seeded"');
     const unavailable = get(plan, "src", "components", "admin", "AdminUnavailable.tsx");
-    expect(unavailable).toContain("pnpm admin:grant you@example.com");
-    expect(unavailable).toContain("Admin grant workflow");
+    // The signed-in person's own email in the command (create-app 0.39); the
+    // workflow named only for a project that deploys from GitHub.
+    expect(unavailable).toContain('const command = `pnpm admin:grant ${email ?? "you@example.com"}`;');
+    expect(unavailable).toContain("if the project deploys from GitHub, the Admin grant workflow");
+    expect(layout).toContain("deployed={!isLocalRun()} email={principal.email}");
     expect(unavailable).toContain("from People");
   });
 

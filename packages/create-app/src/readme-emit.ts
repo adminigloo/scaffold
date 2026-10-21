@@ -488,7 +488,9 @@ export function renderProjectReadme(manifest: ProjectManifest): string {
 
   const what = companies
     ? `A multi-${noun} web application: a business owner signs up, names their ${noun}, invites their team and runs it; you, the platform owner, see and steer every ${noun} from the admin console.`
-    : `A single-business web application: everyone who signs up gets their own workspace, and you invite your staff into yours.`;
+    : answers.audience === "consumers"
+      ? `A web application for people who sign up as themselves: each account is one person's, with its own plans${answers.businessModel === "subscription" || answers.businessModel === "both" ? " (src/plans.ts)" : ""}, and nobody shares one.`
+      : `A single-business web application: everyone who signs up gets their own workspace, and you invite your staff into yours.`;
   // Said in the first paragraph (review R2 TB2-06): with companies, WHO the
   // features are for. Since Tenancy 2a, each company runs them itself.
   const features = companyRunFeatures(answers);
@@ -512,7 +514,7 @@ export function renderProjectReadme(manifest: ProjectManifest): string {
     "4. To sign in and keep data, put your Neon **staging** branch's `DATABASE_URL` (pooled) and `DATABASE_URL_UNPOOLED` (direct), and Clerk's development keys, into `.env.local` (it's already there, with every name commented). Then:",
     "   - `pnpm db:generate && pnpm db:migrate`",
     "   - `pnpm db:seed`",
-    "5. Sign in. On your laptop the first person to sign in becomes the administrator straight away and lands in /admin; on a deployment it's BOOTSTRAP_ADMIN_EMAIL (DEPLOYMENT.md).",
+    "5. Sign in. On the dev server (`pnpm dev`) the first person to sign in becomes the administrator straight away and lands in /admin — or only BOOTSTRAP_ADMIN_EMAIL, once you set it; anywhere else (a production build, `pnpm start` on your laptop included) it's BOOTSTRAP_ADMIN_EMAIL, or `pnpm admin:grant <your email>` (DEPLOYMENT.md).",
     "",
     "## Private packages",
     "",
@@ -587,6 +589,21 @@ export function renderProjectReadme(manifest: ProjectManifest): string {
             "",
           ]
         : []),
+    );
+  } else if (answers.audience === "consumers") {
+    // PERSONAL ACCOUNTS (create-app 0.39): one person each, no team.
+    const plansSold = answers.businessModel === "subscription" || answers.businessModel === "both";
+    lines.push(
+      "## Personal accounts",
+      "",
+      "- Each person who signs up gets their own account. There is no team page and no invitations: the seat limit of one refuses them, and no role (the owner included) holds the keys to invite, remove, change roles or hand an account over.",
+      ...(plansSold
+        ? [
+            "- Plans are each person's (src/plans.ts): `requireEntitlement(feature)`, `withEntitlement` and `<Entitled feature>` (src/server/access.ts) answer from the person's OWN account. `free:` in src/plans.ts is what an account with no plan gets.",
+            ...(shell ? ["- Who pays for what: /admin (subscribers by plan, MRR and ARR, new and cancelled, failed payments, free to paid) and /admin/billing/subscribers (each person, and Give free months)."] : []),
+          ]
+        : []),
+      "",
     );
   } else {
     lines.push(

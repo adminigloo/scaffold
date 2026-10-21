@@ -634,9 +634,10 @@ export function nextSteps(answers: Answers, targetDir: string): string {
     "",
     // What really happens locally (review R2 T1BO-11): the first sign-in is
     // made administrator at once, and staff with no company land in /admin.
-    "Sign in. On your laptop the first person to sign in becomes the",
-    "administrator straight away and lands in /admin; on a deployment it's",
-    "BOOTSTRAP_ADMIN_EMAIL (DEPLOYMENT.md).",
+    "Sign in. On the dev server the first person to sign in becomes the",
+    "administrator straight away and lands in /admin (or only",
+    "BOOTSTRAP_ADMIN_EMAIL, once it is set); anywhere else it's",
+    "BOOTSTRAP_ADMIN_EMAIL, or pnpm admin:grant <your email> (DEPLOYMENT.md).",
     "",
     // SPLIT, and pulled from the env module's own deferred list so it can't
     // drift: what stops a DEPLOYMENT from starting, and what only switches a
@@ -694,6 +695,16 @@ export function nextSteps(answers: Answers, targetDir: string): string {
         "",
       );
     }
+  } else if (answers.audience === "consumers") {
+    // PERSONAL ACCOUNTS (create-app 0.39): never "single business", never a team.
+    lines.push(
+      "Personal accounts: your customers sign up as themselves, and each",
+      "account is one person's — no team page, no invitations, plans per person.",
+      ...(answers.adminShell !== "none" && answers.businessModel !== "none"
+        ? ["You see who pays for what on /admin and at /admin/billing/subscribers."]
+        : []),
+      "",
+    );
   } else {
     lines.push(
       "Single business: everyone who signs up gets their own workspace, and",
@@ -972,16 +983,32 @@ export function nextSteps(answers: Answers, targetDir: string): string {
       // empty and nothing anywhere said which command fills it. A capability
       // nobody can find is a capability nobody has, and the terminal directly
       // after generation is the only documentation that gets read.
-      "You can walk the whole purchase path before any Stripe account exists.",
-      "With DATABASE_URL set:",
-      "",
-      "  pnpm db:seed && pnpm db:seed:demo",
-      "  pnpm dev, then open /products and buy something",
-      "",
-      "With no STRIPE_SECRET_KEY the checkout records the order and applies",
-      "every grant through the same function a real payment runs. It refuses",
-      "as soon as Stripe is configured, and on production either way.",
-      "",
+      ...(answers.businessModel === "one-time" || answers.businessModel === "both"
+        ? [
+            "You can walk the whole purchase path before any Stripe account exists.",
+            "With DATABASE_URL set:",
+            "",
+            "  pnpm db:seed && pnpm db:seed:demo",
+            "  pnpm dev, then open /products and buy something",
+            "",
+            "With no STRIPE_SECRET_KEY the checkout records the order and applies",
+            "every grant through the same function a real payment runs. It refuses",
+            "as soon as Stripe is configured, and on production either way.",
+            "",
+          ]
+        : [
+            // PLANS, NO SHOP (create-app 0.39): --model subscription sells plans only.
+            "Your plans are src/plans.ts (prices, what each includes, the free tier).",
+            "You can start one before any Stripe account exists. With DATABASE_URL set:",
+            "",
+            "  pnpm db:seed && pnpm db:seed:plans",
+            "  pnpm dev, then open /account/billing and choose a plan",
+            "",
+            "With no STRIPE_SECRET_KEY choosing a plan starts it with nothing charged,",
+            "through the same function a real Stripe webhook runs. It refuses as soon",
+            "as Stripe is configured, and on production either way.",
+            "",
+          ]),
     );
   }
 

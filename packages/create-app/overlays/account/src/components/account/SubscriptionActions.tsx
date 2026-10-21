@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button, Notice } from "@/components/ui";
 import type { SubscriptionAction } from "@/account";
+import { PERSONAL_ACCOUNTS } from "@/account-copy";
 import { api } from "@/trpc/client";
 
 /**
@@ -93,9 +94,15 @@ export function SubscriptionActions(props: SubscriptionActionsProps) {
           {props.action.label}
         </Button>
         <p className="max-w-[62ch] text-sm text-ink-muted">
-          Changing what this __TENANT_LABEL_LOWER__ pays needs{" "}
-          <code className="font-mono">subscriptions.manage</code>, which normally
-          only its owner holds. Ask them, or have them grant it to you.
+          {PERSONAL_ACCOUNTS ? (
+            "This plan can only be changed from the account it belongs to."
+          ) : (
+            <>
+              Changing what this __TENANT_LABEL_LOWER__ pays needs{" "}
+              <code className="font-mono">subscriptions.manage</code>, which normally
+              only its owner holds. Ask them, or have them grant it to you.
+            </>
+          )}
         </p>
       </div>
     );

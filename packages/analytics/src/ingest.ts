@@ -892,7 +892,20 @@ export interface ConversionInput {
    * Left out: any of the tenant's visits (0.2's behaviour).
    */
   siteId?: string | null;
+  /**
+   * 0.5: a key this conversion counts under AT MOST ONCE for the tenant — a
+   * sign-up under the person's id, their first payment under theirs. A second
+   * call with a key already recorded records nothing (no event, the visit not
+   * touched again) and returns null; without `once`, every call counts, as
+   * before. Kept on the event row, in the column a web vital uses for its
+   * per-load id (a conversion has none). Two calls in the very same instant
+   * can both land; anything later can't.
+   */
+  once?: string | null;
 }
+
+/** The longest `once` key kept: longer ones are cut, the same way every time. */
+const MAX_ONCE_KEY = 200;
 
 /** The visit a server-side conversion landed on — pass both to `audience.classifyActor` when the actor may be internal. */
 export interface RecordedConversion {
@@ -913,6 +926,16 @@ export async function recordConversionIn(ctx: AnalyticsContext, input: Conversio
   if (!input.userAgent || classifyCrawler(input.userAgent)) return null;
   const { db, t } = ctx;
   const at = input.at ?? new Date();
+  // ONCE (0.5): a conversion already recorded under this key is not news.
+  const once = input.once?.trim() ? input.once.trim().slice(0, MAX_ONCE_KEY) : null;
+  if (once !== null) {
+    const [already] = await db
+      .select({ id: t.events.id })
+      .from(t.events)
+      .where(and(eq(t.events.tenantId, input.tenantId), eq(t.events.name, "conversion"), eq(t.events.metricId, once)))
+      .limit(1);
+    if (already) return null;
+  }
   const keys = await resolveVisitorKeysIn(ctx, { tenantId: input.tenantId, ip: input.ip ?? "0.0.0.0", userAgent: input.userAgent, at, timeZone: input.timeZone });
   const since = new Date(at.getTime() - SESSION_INACTIVITY_MS);
   const [session] = await db
@@ -939,6 +962,8 @@ export async function recordConversionIn(ctx: AnalyticsContext, input: Conversio
     name: "conversion",
     path: normalizePath(input.path ?? session.landingPath),
     label: scrubLabel(input.label ?? input.name, ctx.limits.maxLabelLength),
+    // The `once` key, so the next call with it finds this row (null without one).
+    metricId: once,
     occurredAt: at,
   });
   const recorded = { sessionId: session.id, visitorId: session.visitorKey };

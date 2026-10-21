@@ -26,7 +26,7 @@ import { db } from "@/db";
 import { env } from "@/env";
 import { reportError } from "@/server/error-reporter";
 import { limiter } from "@/server/rate-limit";
-import { fulfilPurchase, windowProductGrants } from "@/server/fulfilment";
+import { bookShopPayment, followShopSubscription } from "@/server/shop-hooks";
 import { plans } from "@/plans";
 import { stripe } from "@/server/stripe";
 import { mirrorStripeSubscription } from "@/server/subscription";
@@ -142,44 +142,10 @@ registry.on("payment_intent.succeeded", async (event) => {
     return;
   }
 
-  if (!tenantId || !variantId || !rawQuantity) {
-    throw new Error(
-      `payment_intent.succeeded ${intent.id} is missing the metadata needed to ` +
-        `book an order (tenantId, variantId, quantity). It was not created by ` +
-        `checkout.createIntent — reconcile it by hand before refunding.`,
-    );
-  }
-
-  // Stripe stringifies every metadata value, so this is always a string on the
-  // way back out and always needs parsing. Base 10 explicitly: a quantity that
-  // somehow arrived as "0x10" must not silently become sixteen.
-  const quantity = Number.parseInt(rawQuantity, 10);
-  if (!Number.isInteger(quantity) || quantity < 1) {
-    throw new Error(
-      `payment_intent.succeeded ${intent.id} carries quantity "${rawQuantity}", ` +
-        `which is not a positive integer.`,
-    );
-  }
-
-  await fulfilPurchase({
-    variantId,
-    quantity,
-    // NULL is a supported value: `orders.user_id` is nullable for guest
-    // checkout. An empty-string metadata field is not the same thing, so it is
-    // normalised here rather than written as a user id nothing can join to.
-    userId: metadata["userId"] || null,
-    tenantId,
-    // THE PAYMENT INTENT ID IS THE REFERENCE. It is the one identifier that is
-    // stable across every redelivery of this event, which is what makes the
-    // unique index on `(tenant_id, idempotency_key)` do its job. The event id
-    // would not: Stripe can emit more than one event for one payment, and each
-    // carries a different id, so keying on it would book the same sale twice.
-    reference: intent.id,
-    source: "stripe",
-    // A recurring product's first payment names its subscription, so the
-    // subscription's later events can end what this order granted (review B4).
-    subscriptionId: metadata["subscriptionId"] || null,
-  });
+  // A purchase from this site's own shop: booked as an order (the shop's
+  // part, src/server/shop-hooks.ts) — or, in a project with no shop, a
+  // payment this application never asked for, recorded and skipped.
+  await bookShopPayment(intent);
 });
 
 /**
@@ -244,10 +210,11 @@ async function mirrorSubscription(
     // A recurring PRODUCT from the shop: its order was booked by
     // `payment_intent.succeeded`, and what it granted now follows this
     // subscription (review B4) — read live, so a late event can't reopen a
-    // cancelled one. Never thrown: it is somebody else's mechanism.
+    // cancelled one. Never thrown: it is somebody else's mechanism. In a
+    // project with no shop there is nothing to follow (src/server/shop-hooks.ts).
     const live = fresh || !stripe ? current : await stripe.stripe.subscriptions.retrieve(subscription.id);
     const state = subscriptionSnapshot(live);
-    const moved = await windowProductGrants({
+    const moved = await followShopSubscription({
       subscriptionId: state.subscriptionId,
       status: mapStripeSubscriptionStatus(state.status),
       cancelAtPeriodEnd: state.cancelAtPeriodEnd,

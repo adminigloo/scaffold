@@ -1,3 +1,4 @@
+import { pointsAtLocalhost } from "./validators.js";
 export type AppEnv = "local" | "staging" | "production";
 
 export type EnvSource = Record<string, string | undefined>;
@@ -199,3 +200,27 @@ export function isDeployed(source: EnvSource = process.env): boolean {
   const { appEnv, origin } = describeAppEnv(source);
   return appEnv !== "local" && (origin === "vercel" || origin === "app-env");
 }
+
+/**
+ * Does this LOOK like the founder's own machine (env 0.4)? `resolveAppEnv()
+ * === "local"` — or a PRODUCTION BUILD that nothing has identified as a
+ * deployment, run against a localhost app URL: `pnpm build && pnpm start` on a
+ * laptop. That second case resolves to `staging` above (it fails closed on
+ * DANGER: live keys, simulated checkout), and it must keep doing so.
+ *
+ * A GUESS, AND ONLY FOR WORDING (review). A self-hosted server that loads the
+ * project's .env.local — `next start` reads it in production, and its
+ * generated NEXT_PUBLIC_APP_URL is http://localhost:3000 — answers true here
+ * too, and nothing a process can see tells the two apart. So it may choose
+ * which way back in a "no access" page suggests (a command in the project
+ * folder, rather than a deploy workflow) and nothing else: never who becomes
+ * the first administrator, never anything about money. Granting on it handed
+ * /admin to the first stranger to sign up on such a server.
+ */
+export function isLocalRun(source: EnvSource = process.env): boolean {
+  if (resolveAppEnv(source) === "local") return true;
+  if (isDeployed(source)) return false;
+  const url = source.NEXT_PUBLIC_APP_URL?.trim();
+  return url !== undefined && url.length > 0 && pointsAtLocalhost(url);
+}
+

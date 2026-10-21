@@ -26,6 +26,8 @@ export interface RouterScopeRow {
 
 const always = (): boolean => true;
 const sells = (answers: Answers): boolean => answers.businessModel !== "none";
+/** This site's own shop (create-app 0.39): --model one-time or both. */
+const shop = (answers: Answers): boolean => answers.businessModel === "one-time" || answers.businessModel === "both";
 
 /**
  * Every router a generated project can mount, the rung it must be built
@@ -53,9 +55,9 @@ export const ROUTER_SCOPES: readonly RouterScopeRow[] = [
   // Nor feedback (Tenancy 2b-2a): its board is the package's handlers too.
   // Nor seo or aeo (Tenancy 2b-4b): the search check and AI mentions are too.
   { key: "assistant", scope: "staff", installedBy: (a) => a.includeAssistant, source: "assistant/src/server/routers/assistant.ts" },
-  { key: "catalog", scope: "staff", installedBy: sells, source: "stripe/src/server/routers/catalog.ts" },
-  { key: "checkout", scope: "public", installedBy: sells, source: "stripe/src/server/routers/checkout.ts" },
-  { key: "checkout.createIntent", scope: "authenticated", installedBy: sells, source: "stripe/src/server/routers/checkout.ts" },
+  { key: "catalog", scope: "staff", installedBy: shop, source: "shop/src/server/routers/catalog.ts" },
+  { key: "checkout", scope: "public", installedBy: shop, source: "shop/src/server/routers/checkout.ts" },
+  { key: "checkout.createIntent", scope: "authenticated", installedBy: shop, source: "shop/src/server/routers/checkout.ts" },
   { key: "account", scope: "tenant", installedBy: sells, source: "account/src/server/routers/account.ts" },
   { key: "billing", scope: "staff", installedBy: sells, source: "stripe/src/server/routers/billing.ts" },
   { key: "billing.subscribeToPlan", scope: "tenant", installedBy: sells, source: "stripe/src/server/routers/billing.ts" },
@@ -161,13 +163,24 @@ export const TENANT_PROCEDURES: readonly {
 function consumerSeatLift(answers: Answers): string {
   if (!consumerProduct(answers)) return "";
   return `
-// One person per account in this project (billing 0.5): lifted here only so
-// the team these cases need can be built. personal-plans.test.ts proves the
-// limit itself.
+// One person per account in this project (billing 0.5, create-app 0.39):
+// lifted here only so the team these cases need can be built — the seat
+// limit of one, and the team keys no role holds (the owner's are given back
+// for this file). personal-plans.test.ts proves both locks themselves.
 vi.mock("@/server/plan-gate", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/server/plan-gate")>()),
   seatLimitOption: {},
 }));
+vi.mock("@/permissions/catalog", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/permissions/catalog")>();
+  const { definePermissions } = await import("${answers.scope}/permissions");
+  const { tenancyPermissions } = await import("${answers.scope}/tenancy");
+  return {
+    ...original,
+    tenantCatalog: definePermissions("tenant", { ...original.tenantCatalog.permissions, ...tenancyPermissions }),
+    HELD_BY_NOBODY: [],
+  };
+});
 `;
 }
 

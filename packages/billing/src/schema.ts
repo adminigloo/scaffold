@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   boolean,
   index,
   integer,
@@ -157,6 +158,18 @@ export const subscriptions = pgTable(
      * before 0.5 (the next event fills it in).
      */
     stripeItemId: text("stripe_item_id"),
+    /**
+     * WHAT THIS LINE IS ACTUALLY CHARGED each period (billing 0.6), in minor
+     * units of the plan row's currency: Stripe's own price for the item, times
+     * its quantity, written by the mirror. Not the plan row's `price_minor` —
+     * that is what the record sells the tier at TODAY, and a repricing changes
+     * it for new subscribers only: everyone already on the old Price keeps
+     * paying it, which is what MRR has to count (review).
+     *
+     * NULL on a row with no Stripe object (free months, simulated) — nobody is
+     * charged — and on a row mirrored before 0.6, until its next event.
+     */
+    priceMinor: bigint("price_minor", { mode: "bigint" }),
     stripeCustomerId: text("stripe_customer_id"),
     /**
      * Written only by `mapStripeSubscriptionStatus`, never copied out of a

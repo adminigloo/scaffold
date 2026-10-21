@@ -147,7 +147,7 @@ describe("per-person access inside a customer's company", () => {
         principalId: people.agent.id,
         scope: "tenant",
         tenantId: "t_customer",
-        permission: "members.invite",
+        permission: "tenant.edit",
         effect: "allow",
       }),
     ).rejects.toMatchObject({ code: "FORBIDDEN", message: expect.stringContaining("Only an administrator") });
@@ -157,7 +157,7 @@ describe("per-person access inside a customer's company", () => {
         principalId: people.agent.id,
         scope: "tenant",
         tenantId: "t_customer",
-        permission: "members.invite",
+        permission: "tenant.edit",
         effect: "allow",
       }),
     ).resolves.toBeDefined();

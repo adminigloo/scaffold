@@ -2,7 +2,10 @@ import { TRPCError } from "@trpc/server";
 import { and, count, desc, eq, exists, ilike, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
+  formatMinor,
   mapStripeSubscriptionStatus,
+  notOnSaleReason,
+  planOnSale,
   planRowKey,
   priceFor,
   type PlanInterval,
@@ -17,7 +20,6 @@ import {
   loadCompanyPlan,
   type LiveStripeLine,
 } from "__SCOPE__/billing/server";
-import { formatMinor } from "__SCOPE__/catalog";
 import { createLogger } from "__SCOPE__/observability";
 import {
   addLine as addStripeLine,
@@ -37,7 +39,7 @@ import { db } from "@/db";
 import { env } from "@/env";
 import { plans } from "@/plans";
 import { checkoutMode } from "@/server/checkout-mode";
-import { windowProductGrants } from "@/server/fulfilment";
+import { followShopSubscription } from "@/server/shop-hooks";
 import { CHECKOUT_TRIAL_DAYS, planStandingOf } from "@/server/plan-gate";
 import { stripe } from "@/server/stripe";
 import { tenancy } from "@/server/tenancy";
@@ -49,7 +51,7 @@ import {
   simulatedSubscriptionRef,
   PLAN_METADATA_KEY,
 } from "@/server/subscription";
-import { isOwnPersonalWorkspace } from "./checkout";
+import { isOwnPersonalWorkspace } from "@/server/stripe-customers";
 import { requestContext } from "../request-context";
 import { createTRPCRouter, requireStaff, requireTenant } from "../trpc";
 
@@ -285,8 +287,10 @@ export const billingRouter = createTRPCRouter({
         // Both back to the billing page. It is where the subscription appears,
         // where the banner explains what state it is in, and where somebody who
         // abandoned the checkout can try again — a cancel that lands on the site
-        // root reads as "something went wrong".
-        successPath: "/account/billing",
+        // root reads as "something went wrong". A success passes through
+        // /account/billing/return first (create-app 0.39), which marks a FIRST
+        // payment for the site's numbers and 307s on to the billing page.
+        successPath: "/account/billing/return",
         cancelPath: "/account/billing",
       });
 
@@ -920,6 +924,14 @@ export const billingRouter = createTRPCRouter({
           outcomes.push({ key: row.key, outcome: "retired — left alone" });
           continue;
         }
+        // Nor is a tier that isn't on sale (billing 0.6, review): "coming"
+        // (shown with its price, never sold) or sold by hand only. The same
+        // rule as checkout's, `planOnSale`, for the same reason as above.
+        const tierOnSale = plans.tier(row.tierKey);
+        if (tierOnSale === undefined || !planOnSale(tierOnSale)) {
+          outcomes.push({ key: row.key, outcome: tierOnSale?.onSale === "coming" ? "coming soon — not published until it's on sale" : "not on sale — left alone" });
+          continue;
+        }
 
         const published = await ensurePlanPrice(client, {
           planKey: row.key,
@@ -1013,8 +1025,9 @@ export const billingRouter = createTRPCRouter({
         });
 
         if (outcome.kind === "product") {
-          // A recurring product's grants follow its subscription (review B4).
-          await windowProductGrants({
+          // A recurring product's grants follow its subscription (review B4);
+          // nothing to follow in a project with no shop (src/server/shop-hooks.ts).
+          await followShopSubscription({
             subscriptionId: snapshot.subscriptionId,
             status: mapStripeSubscriptionStatus(snapshot.status),
             cancelAtPeriodEnd: snapshot.cancelAtPeriodEnd,
@@ -1115,6 +1128,15 @@ function planRowOrThrow(input: {
       code: "NOT_FOUND",
       message: `There is no plan called "${input.tierKey}".`,
     });
+  }
+
+  // ON SALE (billing 0.6): a plan marked "coming" is shown with its price and
+  // never sold; one marked onSale: false is put on by hand only (free months,
+  // from the Subscribers page). Every way in — a new checkout, a simulated
+  // one, a change of plan, an added line — comes through here.
+  const notSold = notOnSaleReason(tier);
+  if (notSold !== null) {
+    throw new TRPCError({ code: "PRECONDITION_FAILED", message: notSold });
   }
 
   const interval: PlanInterval = input.interval;

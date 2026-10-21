@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import type Stripe from "stripe";
 import { isDbConfigured } from "__SCOPE__/db";
 import { formatMinor } from "__SCOPE__/catalog";
-import { accountOrderHref } from "@/account";
+import { accountOrderHref } from "@/account-orders";
 import { Card, CardBody, Notice, PageHeader, buttonClass } from "@/components/ui";
 import { db } from "@/db";
 import { currentPrincipal, isSignInConfigured } from "@/server/auth";

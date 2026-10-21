@@ -16,6 +16,7 @@ import { personalPlans, plansEnforced, sellsPlans } from "../plans-emit.js";
 import { ROUTER_SCOPES, TENANT_PROCEDURES } from "../tenancy-proofs-emit.js";
 import { defaultsOnlyPrompter } from "../prompt.js";
 import { packageVersions } from "../versions.js";
+import { renderShopHooks } from "../shop-emit.js";
 import { TEMPLATE_DIR } from "./configurations.js";
 
 /**
@@ -146,7 +147,9 @@ describe("one question for every paid feature: requireEntitlement", () => {
     }
     const proof = file(await plan(CONSUMERS), "src", "server", "__tests__", "personal-plans.test.ts");
     expect(proof).toContain("3. a second line STACKS on the first");
-    expect(proof).toContain('rejects.toMatchObject({ code: "seats_full" })');
+    // Two locks (create-app 0.39): no role holds members.invite, and one seat.
+    expect(proof).toContain('rejects.toMatchObject({ code: "forbidden" })');
+    expect(proof).toContain("expect(await seatLimitOption.seats.limitFor()).toBe(1);");
   });
 
   it("the banner speaks to the person, about their own plans", async () => {
@@ -169,15 +172,48 @@ describe("a consumers project's sample plans, team and admin", () => {
     expect(file(await plan(COMPANIES), "src", "plans.ts")).toContain('seats: { kind: "quota", label: "team members"');
   });
 
-  it("no team: the page says the account is just yours, and no nav links to it; a single business keeps its team", async () => {
+  it("no team (create-app 0.39): no team page, no /members, no /invite, no invitation email; a single business keeps all four", async () => {
     const p = await plan(CONSUMERS);
-    const team = file(p, "app", "(site)", "settings", "team", "page.tsx");
-    expect(team).toContain("This account is for one person.");
-    expect(team).not.toContain("TeamManager");
+    for (const path of [
+      ["app", "(site)", "settings", "team", "page.tsx"],
+      ["app", "(site)", "members", "page.tsx"],
+      ["app", "(site)", "invite", "[token]", "page.tsx"],
+      ["src", "invitations.ts"],
+      ["src", "emails", "invitation.ts"],
+      ["src", "server", "invitation-mail.ts"],
+      ["app", "(site)", "setup", "email", "page.tsx"],
+    ]) {
+      expect(p.files.has(join(...path)), path.join("/")).toBe(false);
+    }
     expect(file(p, "src", "nav.ts")).not.toContain('href: "/settings/team"');
+    expect(file(p, "src", "nav.ts")).not.toContain('href: "/setup/email"');
+    // The handlers are built with no invitation link and no mailer.
+    const handlers = file(p, "src", "server", "tenancy-handlers.ts");
+    expect(handlers).not.toContain("@/invitations");
+    expect(handlers).not.toContain("deliverInvitation");
+    expect(handlers).toContain("// This site has no invitations: each account is one person's.");
+    // Its own emails go through one sender instead.
+    expect(file(p, "src", "server", "mail.ts")).toContain("createEmailSender(");
     const business = await plan(ONE_BUSINESS);
     expect(file(business, "app", "(site)", "settings", "team", "page.tsx")).toContain("<TeamManager");
     expect(file(business, "src", "nav.ts")).toContain('href: "/settings/team"');
+    expect(business.files.has(join("app", "(site)", "invite", "[token]", "page.tsx"))).toBe(true);
+    expect(file(business, "src", "server", "tenancy-handlers.ts")).toContain("deliverInvitation");
+    expect(business.files.has(join("src", "server", "mail.ts"))).toBe(false);
+  });
+
+  it("no role holds the team keys in a consumers project — the owner included — and access reads the person's own account", async () => {
+    const p = await plan(CONSUMERS);
+    const catalog = file(p, "src", "permissions", "catalog.ts");
+    expect(catalog).toContain('export const HELD_BY_NOBODY: readonly string[] = ["members.invite", "members.remove", "members.role.change", "tenant.transfer"];');
+    expect(catalog).toContain("...personalTenancyPermissions");
+    expect(catalog).not.toContain("commercePermissions");
+    expect(file(p, "src", "server", "tenant.ts")).toContain("const own = personalWorkspaceId(userId);");
+    // NEGATIVE CONTROL: a single business's owner still invites, and reads the session's company.
+    const business = await plan(ONE_BUSINESS);
+    expect(file(business, "src", "permissions", "catalog.ts")).toContain("export const HELD_BY_NOBODY: readonly string[] = [];");
+    expect(file(business, "src", "permissions", "catalog.ts")).toContain("...tenancyPermissions");
+    expect(file(business, "src", "server", "tenant.ts")).not.toContain("personalWorkspaceId(userId)");
   });
 
   it("the founder's Subscribers page and its link, in consumers projects with an admin shell only", async () => {
@@ -201,18 +237,21 @@ describe("a consumers project's sample plans, team and admin", () => {
     expect(file(p, ".env.local")).toContain("# BILLING_TRIAL_DAYS=7");
   });
 
-  it("the invitation proofs lift the one-seat limit only to build their teams, and only in consumers projects", async () => {
+  it("the isolation proof lifts the one-seat limit only to build its teams, and only in consumers projects; there are no invitation-route proofs there", async () => {
+    expect(file(await plan(CONSUMERS), "src", "server", "__tests__", "tenant-isolation.test.ts")).toContain('vi.mock("@/server/plan-gate"');
     for (const name of ["tenant-isolation.test.ts", "invite-accept-route.test.ts", "invite-email-route.test.ts"]) {
-      expect(file(await plan(CONSUMERS), "src", "server", "__tests__", name), name).toContain('vi.mock("@/server/plan-gate"');
       expect(file(await plan(ONE_BUSINESS), "src", "server", "__tests__", name), name).not.toContain('vi.mock("@/server/plan-gate"');
+    }
+    for (const name of ["invite-accept-route.test.ts", "invite-email-route.test.ts"]) {
+      expect((await plan(CONSUMERS)).files.has(join("src", "server", "__tests__", name)), name).toBe(false);
     }
   });
 });
 
 describe("the release lines a generated project needs", () => {
-  it("billing 0.5 (product lines) and stripe 0.6 (items per line, one customer per tenant)", () => {
-    expect(packageVersions()["billing"]).toMatch(/^0\.5\.\d+$/);
-    expect(packageVersions()["stripe"]).toMatch(/^0\.6\.\d+$/);
+  it("billing 0.6 (free tier, on sale, planColumns, price_minor) and stripe 0.7 (items per line, one customer per tenant, each item's amount)", () => {
+    expect(packageVersions()["billing"]).toMatch(/^0\.6\.\d+$/);
+    expect(packageVersions()["stripe"]).toMatch(/^0\.7\.\d+$/);
   });
 });
 
@@ -253,17 +292,23 @@ describe("the money paths in the overlays (billing 0.5)", () => {
   it("every Stripe-sourced write mirrors the whole subscription, one line per item; a recurring product's grant follows it", async () => {
     const webhook = await read("stripe", "app", "api", "webhooks", "stripe", "route.ts");
     expect(webhook).toContain("const outcome = await mirrorStripeSubscription(snapshot, {");
-    expect(webhook).toContain("await windowProductGrants({");
-    expect(webhook).toContain('subscriptionId: metadata["subscriptionId"] || null,');
-    const fulfilment = await read("stripe", "src", "server", "fulfilment.ts");
+    // The shop's part goes through the generated hooks (create-app 0.39): real with a shop, nothing without.
+    expect(webhook).toContain("await followShopSubscription({");
+    expect(webhook).toContain("await bookShopPayment(intent);");
+    const shopHooks = renderShopHooks({ ...answers(CONSUMERS), businessModel: "both" });
+    expect(shopHooks).toContain('subscriptionId: metadata["subscriptionId"] || null,');
+    expect(shopHooks).toContain("return windowProductGrants(state);");
+    expect(renderShopHooks(answers(CONSUMERS))).toContain("return 0;");
+    const fulfilment = await read("shop", "src", "server", "fulfilment.ts");
     expect(fulfilment).toContain('if (input.subscriptionId) lineMetadata["subscriptionId"] = input.subscriptionId;');
     expect(fulfilment).toContain("export async function windowProductGrants(");
   });
 
   it("one Stripe customer per tenant, for plans and products alike", async () => {
-    const checkout = await read("stripe", "src", "server", "routers", "checkout.ts");
+    const checkout = await read("shop", "src", "server", "routers", "checkout.ts");
     expect(checkout).toContain("const customerId = await resolveStripeCustomer(client, {");
-    expect(checkout).toContain("export async function findBillingCustomerId(");
+    // Shared with the plans (create-app 0.39): beside the Stripe client, not in the shop's router.
+    expect(await read("stripe", "src", "server", "stripe-customers.ts")).toContain("export async function findBillingCustomerId(");
     // ...but only in a person's OWN workspace: a member's own purchases never go on a company's customer (review).
     expect(checkout).toContain("if (tenant !== null && (await isOwnPersonalWorkspace(tenant.id, principal.userId))) {");
     const router = await read("stripe", "src", "server", "routers", "billing.ts");

@@ -24,6 +24,14 @@ export interface SeedReport {
   readonly sealsAdded: number;
   /** Deny rows on SYSTEM templates turned to allow because the catalog now grants the key. */
   readonly sealsLifted: number;
+  /**
+   * Allow rows on SYSTEM templates turned to deny because the catalog now
+   * SEALS the key against that template (0.4): a key a shipped role held and
+   * may no longer hold. The other half of `sealsLifted`.
+   */
+  readonly sealsApplied: number;
+  /** What `sealsApplied` took back, as "scope/template/key": "tenant/owner/members.invite". */
+  readonly withdrawn: readonly string[];
   /** Catalog keys no template in that scope grants after the run (the /admin/access health card, PC-09). */
   readonly ungrantedKeys: readonly { readonly scope: Scope; readonly key: string }[];
 }
@@ -45,10 +53,11 @@ export const SEED_LOCK_KEY = "adminigloo:permissions:seed";
  *   - ONE TRANSACTION, under an advisory lock, so a seed racing a seed (two
  *     deploys, or a deploy and the first company's self-seed) can't
  *     interleave.
- *   - INSERT-ONLY, with one deliberate exception (sealsLifted below). A
- *     customised template — `is_system = false` under a shipped key — is
- *     never touched: a catalog upgrade that rewrote a hand-edited template
- *     would silently revoke access somebody granted on purpose.
+ *   - INSERT-ONLY, with two deliberate exceptions (sealsLifted and
+ *     sealsApplied below), both on system templates only. A customised
+ *     template — `is_system = false` under a shipped key — is never touched:
+ *     a catalog upgrade that rewrote a hand-edited template would silently
+ *     revoke access somebody granted on purpose.
  *   - For each system template: every `defaultFor` key gets an allow row,
  *     and every SEALED key it isn't given gets a deny row. Since omission
  *     already denies, a deny row means something stronger: an override cannot
@@ -68,6 +77,8 @@ export async function seedPermissionCatalog(
     let grantsAdded = 0;
     let sealsAdded = 0;
     let sealsLifted = 0;
+    let sealsApplied = 0;
+    const withdrawn: string[] = [];
     const ungrantedKeys: { scope: Scope; key: string }[] = [];
 
     for (const scope of ["staff", "tenant"] as const) {
@@ -168,6 +179,27 @@ export async function seedPermissionCatalog(
             .onConflictDoNothing()
             .returning({ permission: roleTemplateGrant.permission });
           sealsAdded += added.length;
+
+          // THE SECOND UPDATE, the mirror of the one above (0.4). A key this
+          // system template HELD (an allow row from an earlier catalog) that
+          // the catalog now seals against it must become deny: `on conflict do
+          // nothing` keeps the old allow row for ever, so the seal never took
+          // effect — a consumers project's owners kept the invite and hand-over
+          // keys the catalog had taken away (review). System templates only,
+          // like the lift: a customised template keeps what somebody chose.
+          const applied = await tx
+            .update(roleTemplateGrant)
+            .set({ effect: "deny" })
+            .where(
+              and(
+                eq(roleTemplateGrant.templateId, row.id),
+                eq(roleTemplateGrant.effect, "allow"),
+                inArray(roleTemplateGrant.permission, sealed),
+              ),
+            )
+            .returning({ permission: roleTemplateGrant.permission });
+          sealsApplied += applied.length;
+          for (const each of applied) withdrawn.push(`${scope}/${template.key}/${each.permission}`);
         }
       }
 
@@ -188,6 +220,6 @@ export async function seedPermissionCatalog(
       for (const key of spec.catalog.keys) if (!grantedSet.has(key)) ungrantedKeys.push({ scope, key });
     }
 
-    return { created, skippedCustomised, grantsAdded, sealsAdded, sealsLifted, ungrantedKeys };
+    return { created, skippedCustomised, grantsAdded, sealsAdded, sealsLifted, sealsApplied, withdrawn: withdrawn.sort(), ungrantedKeys };
   });
 }

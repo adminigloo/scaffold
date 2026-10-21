@@ -60,19 +60,19 @@ export default defineConfig({
             { find: /^__SCOPE__\/catalog$/, replacement: here("../catalog/src/index.ts") },
             {
               find: /^@\/components\/admin\//,
-              replacement: here("./overlays/catalog-admin/src/components/admin/"),
+              replacement: here("./overlays/shop-admin/src/components/admin/"),
             },
-            // Reached from storefrontUrl.ts. It lives in the stripe overlay,
+            // Reached from storefrontUrl.ts. It lives in the shop overlay,
             // which is where the storefront itself lives — the admin links to
             // pages it does not own, and the URL rule has to come from the
             // owner or the two drift.
-            { find: /^@\/storefront$/, replacement: here("./overlays/stripe/src/storefront.ts") },
+            { find: /^@\/storefront$/, replacement: here("./overlays/shop/src/storefront.ts") },
           ],
         },
         test: {
-          name: "catalog-admin",
+          name: "shop-admin",
           testTimeout,
-          include: ["overlays/catalog-admin/**/*.test.ts"],
+          include: ["overlays/shop-admin/**/*.test.ts"],
           exclude: ["**/node_modules/**", "**/dist/**"],
         },
       },
@@ -99,13 +99,13 @@ export default defineConfig({
          */
         resolve: {
           alias: [
-            { find: /^@\/storefront$/, replacement: here("./overlays/stripe/src/storefront.ts") },
+            { find: /^@\/storefront$/, replacement: here("./overlays/shop/src/storefront.ts") },
           ],
         },
         test: {
           name: "storefront",
           testTimeout,
-          include: ["overlays/stripe/src/__tests__/*.test.ts"],
+          include: ["overlays/shop/src/__tests__/*.test.ts"],
           exclude: ["**/node_modules/**", "**/dist/**"],
         },
       },
@@ -135,6 +135,12 @@ export default defineConfig({
           alias: [
             { find: /^__SCOPE__\/billing$/, replacement: here("../billing/src/index.ts") },
             { find: /^@\/account$/, replacement: here("./overlays/account/src/account.ts") },
+            // What an order means is the shop's half (account-shop, create-app 0.39).
+            { find: /^@\/account-orders$/, replacement: here("./overlays/account-shop/src/account-orders.ts") },
+            {
+              find: /^@\/components\/account\/orderPresentation$/,
+              replacement: here("./overlays/account-shop/src/components/account/orderPresentation.ts"),
+            },
             {
               find: /^@\/components\/account\//,
               replacement: here("./overlays/account/src/components/account/"),
@@ -149,7 +155,7 @@ export default defineConfig({
         test: {
           name: "account",
           testTimeout,
-          include: ["overlays/account/**/*.test.ts"],
+          include: ["overlays/account/**/*.test.ts", "overlays/account-shop/**/*.test.ts"],
           exclude: ["**/node_modules/**", "**/dist/**"],
         },
       },

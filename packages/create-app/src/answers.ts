@@ -438,7 +438,15 @@ export function packagesFor(answers: Answers): readonly string[] {
   // are how either kind grants something. The one-time/subscription answer
   // shapes the UI and the plan handling, not the package set.
   if (answers.businessModel !== "none") {
-    optional.push("stripe", "catalog", "commerce", "billing");
+    // PLANS ALONE ARE NOT A SHOP (create-app 0.39). `--model subscription`
+    // sells plans and nothing else: Stripe and billing (plans, subscriptions,
+    // entitlements) and no catalog or commerce — no products, orders,
+    // discounts or shipments. One-time and both keep the shop.
+    if (answers.businessModel === "one-time" || answers.businessModel === "both") {
+      optional.push("stripe", "catalog", "commerce", "billing");
+    } else {
+      optional.push("stripe", "billing");
+    }
   }
 
   if (answers.includeAi) optional.push("ai");
@@ -820,13 +828,20 @@ export function overlayNamesFor(answers: Answers): readonly string[] {
   // imports a package the app never installed.
   if (answers.businessModel !== "none") names.push("stripe");
 
-  // The product builder is an ADMIN surface, so it needs both: something to
-  // sell AND an admin shell to put it in. In the base template it emitted even
-  // with `--admin none`, which put admin pages in a project that had
-  // deliberately declined one.
+  // THIS SITE'S OWN SHOP (create-app 0.39): the storefront (/products), its
+  // checkout (/checkout), the order books, the catalog and checkout routers and
+  // `pnpm db:seed:shop` — only where products are sold (--model one-time or
+  // both). `stripe` above is the plans' half every money project has.
+  const shop = answers.businessModel === "one-time" || answers.businessModel === "both";
+  if (shop) names.push("shop");
+
+  // The billing admin (the plans published to Stripe, the resync) is an ADMIN
+  // surface, so it needs both: something to sell AND an admin shell to put it
+  // in. The product builder beside it (/admin/products) is the shop's.
   if (answers.businessModel !== "none" && answers.adminShell !== "none") {
     names.push("catalog-admin");
   }
+  if (shop && answers.adminShell !== "none") names.push("shop-admin");
 
   // WHO PAYS FOR WHAT (billing 0.5): the founder's Subscribers page, in a
   // project whose customers are people — on catalog-admin's condition (an
@@ -852,6 +867,10 @@ export function overlayNamesFor(answers: Answers): readonly string[] {
   // the buyer was about to leave. Splitting them means a project can restyle
   // the account area without touching the checkout.
   if (answers.businessModel !== "none") names.push("account");
+  // What a person BOUGHT (create-app 0.39): their orders, licence keys and
+  // deliveries, and the shop's own account overview — only with a shop. A
+  // project with plans alone has an overview of what you're on (generated).
+  if (shop) names.push("account-shop");
 
   // The mail templates and the preview that renders them. They import
   // @__SCOPE_NAME__/email, which a project generated without `--email` never
@@ -1092,7 +1111,6 @@ export function capabilitiesFor(answers: Answers): readonly string[] {
     "auth.clerk",
     "permissions.two-layer",
     "trpc.procedure-ladder",
-    "tenancy.invitations",
     "observability.audit-log",
     "observability.error-log",
     "observability.rate-limit",
@@ -1113,6 +1131,10 @@ export function capabilitiesFor(answers: Answers): readonly string[] {
       ? "tenancy.personal-workspace"
       : "tenancy.organizations",
   );
+  // Invitations, in every project where people are invited into an account —
+  // not in a consumers project (create-app 0.39), where each person's account
+  // is theirs alone.
+  if (!consumerProduct(answers)) keys.push("tenancy.invitations");
 
   // TENANCY 1, in every project: the permission catalog is seeded on every
   // deploy and the first administrator can always be recovered (first-run),
@@ -1127,25 +1149,27 @@ export function capabilitiesFor(answers: Answers): readonly string[] {
   // pages, so they need a shell to live in.
   if (answers.adminShell !== "none") keys.push("admin.operator-console");
   if (answers.adminShell === "full") keys.push("admin.support-tools");
-  if (takesMoney && answers.adminShell !== "none") {
+  // THE SHOP (create-app 0.39): products, a storefront, orders — only with
+  // --model one-time or both. Plans alone sell no products.
+  const shop = answers.businessModel === "one-time" || answers.businessModel === "both";
+  if (shop && answers.adminShell !== "none") {
     keys.push("admin.product-builder");
   }
 
   if (takesMoney) {
+    // Every project that takes money: Stripe, and entitlements (a plan's, or
+    // what a product grants).
+    keys.push("payments.stripe", "billing.entitlements");
+  }
+  if (shop) {
     keys.push(
-      "payments.stripe",
       "catalog.products",
       "storefront",
-      // An order is the record of any purchase, recurring or not, and an
-      // entitlement is how either kind grants something. Both exist on both
-      // paths, which is why they are not conditioned on the business model.
+      // An order is the record of any purchase from the shop, recurring or not.
       "commerce.orders",
-      "billing.entitlements",
       // The buyer's own side. Distinct from `commerce.orders`, which is the
       // WRITE — `fulfilPurchase` booking a row — and was true for a year while
-      // no customer-facing screen could read one back. A consumer asking "can
-      // a person see what they bought here" was getting the answer to a
-      // different question.
+      // no customer-facing screen could read one back.
       "commerce.customer-account",
     );
   }

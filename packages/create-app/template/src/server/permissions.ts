@@ -1,6 +1,6 @@
 import { createDrizzlePermissionLoaders } from "__SCOPE__/permissions/server";
-import { tenancyMembershipGate } from "__SCOPE__/tenancy/server";
 import { db } from "@/db";
+import { membershipGate } from "./membership";
 import { gateLoaders } from "./plan-gate";
 
 /**
@@ -18,12 +18,15 @@ import { gateLoaders } from "./plan-gate";
  * template — now live in @__SCOPE_NAME__/permissions/server, where a fix
  * reaches this project by `npm update`. The why-comments moved with them.
  *
- * THE MEMBERSHIP GATE is @__SCOPE_NAME__/tenancy's, and it is where a
- * suspended company is enforced: one place, for the loaders, the company
- * routes and the pages. Everyone in a suspended company gets "Access to this
- * account is suspended" from the tenant rung instead of "not a member".
- * Imported from the package directly rather than through src/server/tenancy.ts,
- * so this module never joins the import cycle that one sits in.
+ * THE MEMBERSHIP GATE is @__SCOPE_NAME__/tenancy's (handed over by
+ * src/server/membership.ts), and it is where a suspended company is enforced:
+ * one place, for the loaders, the company routes and the pages. Everyone in a
+ * suspended company gets "Access to this account is suspended" from the
+ * tenant rung instead of "not a member". In a project whose customers are
+ * people (--audience consumers) it is narrowed to each person's OWN account,
+ * so nobody acts in anyone else's (create-app 0.39). src/server/membership.ts
+ * imports no app module, so this one never joins the import cycle
+ * src/server/tenancy.ts sits in.
  *
  * THE PLAN (billing 0.3). `gateLoaders` is the one place a company's plan
  * reaches the tRPC rung and every page gate: while a company's plan is closed
@@ -33,5 +36,5 @@ import { gateLoaders } from "./plan-gate";
  * untouched. Staff permissions are never trimmed.
  */
 export const { loadTenantPermissions, loadStaffPermissions, explainTenantDenial } = gateLoaders(
-  createDrizzlePermissionLoaders(db, { membership: tenancyMembershipGate }),
+  createDrizzlePermissionLoaders(db, { membership: membershipGate }),
 );

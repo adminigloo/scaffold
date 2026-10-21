@@ -49,6 +49,8 @@ describe("seedPermissionCatalog (PC-09: the seed every deploy runs)", () => {
     expect(again.grantsAdded).toBe(0);
     expect(again.sealsAdded).toBe(0);
     expect(again.sealsLifted).toBe(0);
+    expect(again.sealsApplied).toBe(0);
+    expect(again.withdrawn).toEqual([]);
   });
 
   it("never touches a customised (non-system) template under a shipped key, and reports it", async () => {
@@ -79,6 +81,57 @@ describe("seedPermissionCatalog (PC-09: the seed every deploy runs)", () => {
     const report = await seedPermissionCatalog(t.db, { tenant: { catalog: changed, templates: TENANT_TEMPLATES } });
     expect(report.sealsLifted).toBe(1);
     expect(await grantsOf("tenant", "admin")).toContainEqual({ permission: "tenant.transfer", effect: "allow" });
+  });
+
+  /**
+   * THE OTHER DIRECTION (0.4, review): a catalog that takes a key away from a
+   * role and SEALS it — a consumers project's team keys, which no role may
+   * hold — on a database a business-era seed already wrote. Before, the deny
+   * row clashed with the allow row, `on conflict do nothing` kept the allow,
+   * and the owner kept inviting.
+   */
+  it("sealsApplied: a key a system template held, and the catalog now seals against it, turns into deny", async () => {
+    await seedPermissionCatalog(t.db, SEED_BOTH);
+    expect(await grantsOf("tenant", "owner")).toContainEqual({ permission: "members.invite", effect: "allow" });
+    const personal = definePermissions("tenant", {
+      ...tenantCatalog.permissions,
+      "members.invite": { label: "Invite", sealed: true, defaultFor: [] },
+      "tenant.transfer": { label: "Transfer", sealed: true, defaultFor: [] },
+    });
+    const report = await seedPermissionCatalog(t.db, { tenant: { catalog: personal, templates: TENANT_TEMPLATES } });
+    expect(report.sealsApplied).toBe(3);
+    expect(report.withdrawn).toEqual(["tenant/admin/members.invite", "tenant/owner/members.invite", "tenant/owner/tenant.transfer"]);
+    for (const key of ["owner", "admin", "member", "viewer"]) {
+      const grants = await grantsOf("tenant", key);
+      expect(grants, key).toContainEqual({ permission: "members.invite", effect: "deny" });
+      expect(grants, key).toContainEqual({ permission: "tenant.transfer", effect: "deny" });
+    }
+    // Untouched: a key the catalog still grants.
+    expect(await grantsOf("tenant", "owner")).toContainEqual({ permission: "members.remove", effect: "allow" });
+    // And run again: nothing left to take back.
+    const again = await seedPermissionCatalog(t.db, { tenant: { catalog: personal, templates: TENANT_TEMPLATES } });
+    expect(again.sealsApplied).toBe(0);
+  });
+
+  it("NEGATIVE CONTROLS: a key merely dropped from defaultFor keeps its allow row (insert-only), and a customised template keeps a sealed key", async () => {
+    await seedPermissionCatalog(t.db, SEED_BOTH);
+    // A customised admin template that holds members.invite on purpose.
+    await t.db.insert(roleTemplate).values({ scope: "tenant", tenantId: FIRM_WIDE, key: "editor", name: "Our editors", rank: 25, isSystem: false });
+    const [editor] = await t.db.select({ id: roleTemplate.id }).from(roleTemplate).where(and(eq(roleTemplate.scope, "tenant"), eq(roleTemplate.key, "editor")));
+    await t.db.insert(roleTemplateGrant).values({ templateId: editor!.id, permission: "members.invite", effect: "allow" });
+    const dropped = definePermissions("tenant", {
+      ...tenantCatalog.permissions,
+      // Not sealed: just no longer a default. The seed doesn't revoke.
+      "members.remove": { label: "Remove", defaultFor: [] },
+      "members.invite": { label: "Invite", sealed: true, defaultFor: [] },
+    });
+    const report = await seedPermissionCatalog(t.db, {
+      tenant: { catalog: dropped, templates: [...TENANT_TEMPLATES, { key: "editor", name: "Editor", rank: 25 }] },
+    });
+    expect(report.skippedCustomised).toContain("tenant/editor");
+    expect(await grantsOf("tenant", "owner")).toContainEqual({ permission: "members.remove", effect: "allow" });
+    expect(await grantsOf("tenant", "editor")).toEqual([{ permission: "members.invite", effect: "allow" }]);
+    expect(report.withdrawn).toEqual(["tenant/admin/members.invite", "tenant/owner/members.invite"]);
   });
 
   it("ungrantedKeys lists keys no template holds", async () => {

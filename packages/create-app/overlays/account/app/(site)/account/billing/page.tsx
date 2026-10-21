@@ -1,8 +1,8 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { formatMinor } from "__SCOPE__/catalog";
+import { formatMinor } from "__SCOPE__/billing";
 import { isDbConfigured } from "__SCOPE__/db";
-import { planLineRefs, priceFor, type PlanTier } from "__SCOPE__/billing";
+import { planColumns, planIntervals, planLineRefs, type PlanColumn } from "__SCOPE__/billing";
 import {
   Badge,
   Card,
@@ -14,7 +14,7 @@ import {
   buttonClass,
 } from "@/components/ui";
 import { BillingPortalButton } from "@/components/account/BillingPortalButton";
-import { PlanChooser, type ChoosableTier } from "@/components/account/PlanChooser";
+import { PlanChooser } from "@/components/account/PlanChooser";
 import { SubscriptionActions } from "@/components/account/SubscriptionActions";
 import { db } from "@/db";
 import { env } from "@/env";
@@ -22,12 +22,15 @@ import { HEADLINE_FEATURES, plans } from "@/plans";
 import { currentPrincipal } from "@/server/auth";
 import {
   describeSubscription,
+  endedByDate,
   formatDay,
   metersFor,
   primaryActionFor,
   type GrantedEntitlement,
 } from "@/account";
+import { CHOOSER_HINT, NO_ACCOUNT, PERSONAL_ACCOUNTS, SIGNED_OUT_BILLING, onlyTheOwner, payerName } from "@/account-copy";
 import {
+  readLineHoldings,
   readSubscriptionsForTenant,
   type AccountSubscription,
 } from "@/server/account";
@@ -81,14 +84,22 @@ import { api } from "@/trpc/server";
  */
 export const dynamic = "force-dynamic";
 
-export default async function AccountBillingPage() {
+export default async function AccountBillingPage({
+  searchParams,
+}: {
+  readonly searchParams: Promise<{ readonly plan?: string | string[] }>;
+}) {
+  // The plan someone chose on the pricing page (?plan=<tier>), carried here
+  // through sign-up: marked on its card, so the next click is the checkout.
+  const askedPlan = (await searchParams).plan;
+  const picked = typeof askedPlan === "string" && plans.tier(askedPlan)?.onSale === true ? askedPlan : null;
   const principal = await currentPrincipal();
   if (!principal) {
+    const back = picked === null ? "/account/billing" : `/account/billing?plan=${picked}`;
     return (
       <Notice tone="info" title="Sign in to see billing">
-        What is being charged depends on which __TENANT_LABEL_LOWER__ you are
-        in, and that depends on who you are.{" "}
-        <Link href="/sign-in" className="text-accent underline underline-offset-2">
+        {SIGNED_OUT_BILLING}{" "}
+        <Link href={`/sign-in?redirect_url=${encodeURIComponent(back)}`} className="text-accent underline underline-offset-2">
           Sign in
         </Link>
         .
@@ -107,8 +118,8 @@ export default async function AccountBillingPage() {
   const tenant = await currentTenantFor(principal.userId);
   if (!tenant) {
     return (
-      <Notice tone="info" title="You're not part of a __TENANT_LABEL_LOWER__ yet">
-        A plan belongs to a __TENANT_LABEL_LOWER__. Once you make one, or someone invites you to theirs, its billing is here.
+      <Notice tone="info" title={NO_ACCOUNT.title}>
+        {NO_ACCOUNT.body}
       </Notice>
     );
   }
@@ -141,6 +152,10 @@ export default async function AccountBillingPage() {
   // reads exactly as before; with Weather and Sports, each line has its own
   // plan, its own meters and its own chooser — and they stack on one bill.
   const byLine = await readSubscriptionsForTenant(tenant.id);
+  // WHAT THE ACCOUNT IS ON, per line, as the plan check reads it (review):
+  // the tier marked as yours, and whether Free is. Never the row's status —
+  // free months that ended, or a plan that never started, are not "on Pro".
+  const holdings = await readLineHoldings(tenant.id);
   const multiLine = plans.lines.length > 1;
   const paid = [...byLine.values()].filter((row) => row.live && row.stripeSubscriptionId !== null);
   // The cadence everything on the bill shares (Stripe's rule): a line added or
@@ -194,14 +209,20 @@ export default async function AccountBillingPage() {
   return (
     <div className="flex flex-col gap-6">
       {lineViews.map(({ line, subscription, meters, linePaid, sharesBill }) => {
-        const currentTier = subscription === null ? null : (plans.tierForRow(subscription.planKey) ?? null);
+        const holding = holdings.get(line.key);
+        // The tier the plan check serves on this line right now (none on Free).
+        const currentTierKey = holding?.tierKey ?? null;
         // Adding this line to a plan already paid: one subscription, one bill.
         const addsToPlan = multiLine && !linePaid && paid.length > 0;
         return (
           <section key={line.key} className="flex flex-col gap-6" aria-label={multiLine ? line.name : undefined}>
             {multiLine ? <h2 className="text-xl font-semibold tracking-tight text-ink">{line.name}</h2> : null}
             {subscription === null ? (
-              <NoSubscription tenantName={tenant.name} lineName={multiLine ? line.name : null} />
+              <NoSubscription
+                payer={payerName(tenant.name)}
+                lineName={multiLine ? line.name : null}
+                freeName={line.free?.name ?? null}
+              />
             ) : (
               <SubscriptionCard
                 subscription={subscription}
@@ -236,7 +257,7 @@ export default async function AccountBillingPage() {
             <Card>
               <CardHeader
                 title={
-                  subscription?.live === true
+                  currentTierKey !== null
                     ? multiLine ? `Change your ${line.name} plan` : "Change plan"
                     : addsToPlan
                       ? `Add ${line.name}`
@@ -246,21 +267,27 @@ export default async function AccountBillingPage() {
                   addsToPlan
                     ? "Added to the plan you already pay for: one bill, one date. You pay for the rest of this period today."
                     : multiLine
-                      ? (line.description ?? "Change it whenever you like.")
-                      : "Every plan includes everything. They differ in how much: people, storage and requests."
+                      ? (line.description ?? CHOOSER_HINT)
+                      : CHOOSER_HINT
                 }
               />
               <CardBody>
                 <PlanChooser
                   tenantId={tenant.id}
-                  tiers={choosableTiers(line.key)}
-                  intervals={subscribableIntervals()}
+                  columns={columnsFor(line.key)}
+                  intervals={planIntervals(plans)}
                   currencies={plans.currencies}
+                  // On the line's free tier: the record declares one, and the plan
+                  // check serves nothing paid on the line — the same answer that
+                  // grants the free tier's features (review).
+                  onFree={holding?.onFree ?? false}
+                  pickedTierKey={picked !== null && plans.tier(picked)?.line === line.key ? picked : null}
                   mode={mode}
                   canManage={canManage}
                   contactHref={contact ? `mailto:${contact}` : null}
                   staff={staff}
-                  currentTierKey={currentTier?.key ?? null}
+                  ownerOnly={onlyTheOwner(tenant.name)}
+                  currentTierKey={currentTierKey}
                   // A __TENANT_LABEL_LOWER__ that already pays through Stripe changes its plan in
                   // place (billing 0.3), never through a second checkout.
                   hasPaidPlan={linePaid}
@@ -274,6 +301,9 @@ export default async function AccountBillingPage() {
         );
       })}
 
+      {/* No Stripe keys: there is nothing for a customer to manage, so the card
+          (and its "not switched on" note, the operator's to fix) is staff only. */}
+      {!stripe && !staff ? null : (
       <Card>
         <CardHeader title="Card, invoices and cancelling" hint="On Stripe's secure billing page, where your card details live." />
         <CardBody className="flex flex-col gap-3">
@@ -315,12 +345,15 @@ export default async function AccountBillingPage() {
                 Manage billing
               </button>
               <p className="max-w-[62ch] text-sm text-ink-muted">
-                Only the owner of {tenant.name} can open billing. Ask them, or have them give you access.
+                {PERSONAL_ACCOUNTS
+                  ? "Billing can't be opened from this account."
+                  : `Only the owner of ${tenant.name} can open billing. Ask them, or have them give you access.`}
               </p>
             </div>
           )}
         </CardBody>
       </Card>
+      )}
 
       <Invoices list={invoices} canSee={canSeeInvoices} />
     </div>
@@ -355,6 +388,8 @@ function SubscriptionCard({
 }) {
   const banner = describeSubscription(subscription);
   const action = primaryActionFor(subscription, new Date(), { freeMonths });
+  // Free months past their date are over, whatever the row's status says.
+  const ended = endedByDate(subscription);
 
   return (
     <div className="flex flex-col gap-3">
@@ -368,10 +403,10 @@ function SubscriptionCard({
       <Card>
         <CardHeader
           title={subscription.planName}
-          hint={`${tenantName} · billed every ${subscription.interval}`}
+          hint={PERSONAL_ACCOUNTS ? `Billed every ${subscription.interval}` : `${tenantName} · billed every ${subscription.interval}`}
           actions={
-            <Badge tone={subscription.live ? "accent" : "neutral"}>
-              {STATUS_WORDS[subscription.status] ?? subscription.status}
+            <Badge tone={subscription.live && !ended ? "accent" : "neutral"}>
+              {ended ? "Ended" : (STATUS_WORDS[subscription.status] ?? subscription.status)}
             </Badge>
           }
         />
@@ -504,10 +539,26 @@ function Invoices({
  * that `customer.subscription.*` is mirrored, no longer the state a developer
  * lands in after buying one. The plan chooser below is the action.
  */
-function NoSubscription({ tenantName, lineName }: { readonly tenantName: string; readonly lineName: string | null }) {
+function NoSubscription({
+  payer,
+  lineName,
+  freeName,
+}: {
+  readonly payer: string;
+  readonly lineName: string | null;
+  /** The line's free tier (billing 0.6), when the record declares one: that's what this account is on. */
+  readonly freeName: string | null;
+}) {
+  if (freeName !== null) {
+    return (
+      <EmptyState title={lineName ? `You're on ${lineName} ${freeName}` : `You're on ${freeName}`}>
+        Nothing is being charged to {payer}. Choose a plan below for more; it switches on straight away.
+      </EmptyState>
+    );
+  }
   return (
     <EmptyState title={lineName ? `You're not on ${lineName} yet` : "You're not on a plan yet"}>
-      Nothing is being charged to {tenantName}{lineName ? ` for ${lineName}` : ""}. Choose a plan below and everything it includes switches on straight away.
+      Nothing is being charged to {payer}{lineName ? ` for ${lineName}` : ""}. Choose a plan below and everything it includes switches on straight away.
     </EmptyState>
   );
 }
@@ -517,90 +568,20 @@ function NoSubscription({ tenantName, lineName }: { readonly tenantName: string;
 // ---------------------------------------------------------------------------
 
 /**
- * Which intervals the chooser offers.
- *
- * `catalog.intervals` reports what is actually offered, and `once` is not a
- * subscription cadence — a plan priced `once` belongs to no toggle. Filtering
- * here rather than in the component keeps the record's own answer authoritative
- * and stops the browser from being handed an option the mutation would refuse.
+ * Every plan card this line shows, for each cadence and currency the chooser
+ * can switch to, keyed `<interval>:<currency>` — the same `planColumns` the
+ * pricing page draws (@__SCOPE_NAME__/billing), so the two never disagree.
+ * Worked out HERE, on the server: prices are bigint minor units, and
+ * formatting them in the browser is how ¥1,000 becomes ¥10.
  */
-function subscribableIntervals(): readonly ("month" | "year")[] {
-  return plans.intervals.filter(
-    (interval): interval is "month" | "year" =>
-      interval === "month" || interval === "year",
-  );
-}
-
-/**
- * Every active tier, with its prices already formatted.
- *
- * FORMATTED ON THE SERVER, always. Amounts are `bigint` minor units and
- * `formatMinor` is what renders them — JPY has no minor unit, so dividing by a
- * hundred in the browser prints ¥1,000 as ¥10. It also keeps `bigint` off the
- * server/client boundary entirely.
- *
- * RETIRED TIERS ARE ABSENT rather than disabled: `isActive: false` means closed
- * to new subscriptions, and a greyed-out card advertising a price nobody may
- * pay is worse than no card at all. The people already on one still see their
- * plan name, because that comes from the `plans` row their subscription points
- * at rather than from this list.
- */
-function choosableTiers(line: string): readonly ChoosableTier[] {
-  return plans.tiers
-    .filter((tier) => tier.isActive && tier.line === line)
-    .map((tier) => ({
-      key: tier.key,
-      name: tier.name,
-      description: tier.description,
-      highlight: tier.highlight,
-      prices: pricesFor(tier),
-      headline: featureLines(tier, HEADLINE_FEATURES),
-      features: featureLines(tier),
-    }));
-}
-
-function pricesFor(tier: PlanTier): Readonly<Record<string, string>> {
-  const prices: Record<string, string> = {};
-  for (const interval of subscribableIntervals()) {
+function columnsFor(line: string): Readonly<Record<string, readonly PlanColumn[]>> {
+  const out: Record<string, readonly PlanColumn[]> = {};
+  for (const interval of planIntervals(plans)) {
     for (const currency of plans.currencies) {
-      const amount = priceFor(tier, interval, currency);
-      // `undefined` is a real answer — a tier priced monthly and not yearly is
-      // an ordinary thing to sell — so the key is left out rather than filled
-      // with a zero, which reads as free.
-      if (amount === undefined) continue;
-      prices[`${interval}:${currency}`] = formatMinor(amount, currency);
+      out[`${interval}:${currency}`] = planColumns(plans, { line, interval, currency, headline: HEADLINE_FEATURES });
     }
   }
-  return prices;
-}
-
-/**
- * One line per declared feature, in the record's own order.
- *
- * The three kinds read differently and that is the point of having three: a
- * quota is a number in front of its label, a flag is present or absent, and an
- * option names the best value the tier allows. `allowed[0]` needs no `??`
- * because the tuple is non-empty by construction — which is exactly why
- * `definePlans` types it that way.
- */
-function featureLines(tier: PlanTier, only?: readonly string[]): readonly string[] {
-  const lines: string[] = [];
-  const headings = only ? only.flatMap((key) => plans.features.filter((heading) => heading.feature === key)) : plans.features;
-  for (const heading of headings) {
-    const feature = tier.features[heading.feature];
-    if (feature === undefined) continue;
-    if (feature.kind === "quota") {
-      // "1 website", never "1 websites": a limit of one reads the singular label.
-      if (feature.limit === null) lines.push(`Unlimited ${feature.label}`);
-      else if (feature.limit === 1 && feature.labelOne) lines.push(`1 ${feature.labelOne}`);
-      else lines.push(`${new Intl.NumberFormat("en-US").format(feature.limit)} ${feature.label}`);
-    } else if (feature.kind === "flag") {
-      lines.push(feature.included ? feature.label : `No ${feature.label.toLowerCase()}`);
-    } else {
-      lines.push(`${feature.label}: ${feature.allowed[0]}`);
-    }
-  }
-  return lines;
+  return out;
 }
 
 /** A subscription's status, as an owner says it. */

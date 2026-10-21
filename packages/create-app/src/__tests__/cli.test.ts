@@ -134,17 +134,24 @@ describe("packagesFor — the only structural branch", () => {
     }
   });
 
-  it("installs the whole money stack together, for every paying model", () => {
-    // Splitting these by business model generated projects that could not
-    // resolve their own imports: fulfilPurchase writes an order (commerce),
-    // grants an entitlement (billing), reads a price from a variant (catalog)
-    // and charges through stripe — on BOTH paths.
-    for (const model of ["one-time", "subscription", "both"] as const) {
+  it("installs the whole money stack together wherever there is a shop", () => {
+    // fulfilPurchase writes an order (commerce), grants an entitlement
+    // (billing), reads a price from a variant (catalog) and charges through
+    // stripe — so a project with a shop installs all four together.
+    for (const model of ["one-time", "both"] as const) {
       const p = packagesFor(answers({ businessModel: model }));
       for (const pkg of ["stripe", "catalog", "commerce", "billing"]) {
         expect(p, `${model} is missing ${pkg}`).toContain(`@adminigloo/${pkg}`);
       }
     }
+  });
+
+  it("installs only the plans' packages for --model subscription: no shop (create-app 0.39)", () => {
+    const p = packagesFor(answers({ businessModel: "subscription" }));
+    for (const pkg of ["stripe", "billing"]) expect(p, pkg).toContain(`@adminigloo/${pkg}`);
+    for (const pkg of ["catalog", "commerce"]) expect(p, pkg).not.toContain(`@adminigloo/${pkg}`);
+    // NEGATIVE CONTROL: a store of its own (a business's products) still brings them.
+    expect(packagesFor(answers({ businessModel: "subscription", includeStore: true }))).toContain("@adminigloo/commerce");
   });
 
   it("installs none of it when the project takes no money", () => {
@@ -527,8 +534,11 @@ describe("adminigloo.json — the project manifest", () => {
       "admin-full",
       "companies",
       "stripe",
+      "shop",
       "catalog-admin",
+      "shop-admin",
       "account",
+      "account-shop",
       "email",
       "legal",
     ]);
@@ -548,8 +558,11 @@ describe("adminigloo.json — the project manifest", () => {
       "admin-full",
       "companies",
       "stripe",
+      "shop",
       "catalog-admin",
+      "shop-admin",
       "account",
+      "account-shop",
       "legal",
       "marketing",
       "marketing-pricing",
@@ -659,14 +672,14 @@ describe("capabilities", () => {
     ).toContain("admin.product-builder");
   });
 
-  it("claim orders and entitlements on BOTH money paths, not one each", () => {
-    // An order is the record of any purchase, recurring or not; entitlements
-    // are how either kind grants something. Splitting them by business model
-    // was a real bug in the package set once already.
+  it("claim entitlements on every money path, and orders only where there is a shop", () => {
+    // An order is the record of any purchase from the shop, recurring or not;
+    // entitlements are how a plan or a product grants something.
     for (const businessModel of ["one-time", "subscription", "both"] as const) {
       const keys = capabilitiesFor(answers({ businessModel }));
-      expect(keys).toContain("commerce.orders");
       expect(keys).toContain("billing.entitlements");
+      expect(keys.includes("commerce.orders"), businessModel).toBe(businessModel !== "subscription");
+      expect(keys.includes("storefront"), businessModel).toBe(businessModel !== "subscription");
     }
   });
 
@@ -1260,9 +1273,15 @@ describe("stripe overlay", () => {
  * the full one.
  */
 const SELLING_MODELS = ["one-time", "subscription", "both"] as const;
+/** The models with a shop of this site's own (create-app 0.39): plans alone are not one. */
+const SHOP_MODELS = ["one-time", "both"] as const;
 
 describe("the public nav", () => {
-  it.each(SELLING_MODELS)("lists the storefront for --model %s", (businessModel) => {
+  it("lists no storefront for --model subscription (plans, no shop)", () => {
+    expect(renderSiteNav(answers({ businessModel: "subscription" }))).not.toContain('href: "/products"');
+  });
+
+  it.each(SHOP_MODELS)("lists the storefront for --model %s", (businessModel) => {
     const nav = renderSiteNav(answers({ businessModel }));
     expect(nav).toContain(`{ href: "/products", label: "Products" }`);
   });
@@ -1296,7 +1315,11 @@ describe("the public nav", () => {
 });
 
 describe("the landing page", () => {
-  it.each(SELLING_MODELS)("links to the shop for --model %s", (businessModel) => {
+  it("links to no shop for --model subscription", () => {
+    expect(renderHomePage(answers({ businessModel: "subscription" }))).not.toContain('href="/products"');
+  });
+
+  it.each(SHOP_MODELS)("links to the shop for --model %s", (businessModel) => {
     const page = renderHomePage(answers({ businessModel }));
     expect(page).toContain('href="/products"');
     // Prominent, from the design system. A bare text link next to six file
@@ -1330,7 +1353,7 @@ describe("the landing page", () => {
 });
 
 describe("nothing links to the shop — end to end", () => {
-  it.each(SELLING_MODELS)("plans a reachable shop for --model %s", async (businessModel) => {
+  it.each(SHOP_MODELS)("plans a reachable shop for --model %s", async (businessModel) => {
     const plan = await planEmit(TEMPLATE_DIR, "/out", answers({ businessModel }));
     expect(plan.files.get(join("src", "nav.ts")) ?? "").toContain('href: "/products"');
     expect(plan.files.get(join("app", "(site)", "page.tsx")) ?? "").toContain(
@@ -2467,6 +2490,13 @@ describe("the audit vocabulary", () => {
  * not a page nobody noticed.
  */
 const UNLINKED_BY_DESIGN: Readonly<Record<string, string>> = {
+  "/account/billing/return":
+    "where Stripe's checkout sends someone who paid (create-app 0.39): it " +
+    "marks a first payment and 307s to /account/billing, so it is the " +
+    "checkout's success URL, never a nav entry.",
+  "/welcome":
+    "where the sign-up page sends a new account (create-app 0.39, with " +
+    "--analytics): it marks the visit \"Signed up\" and 307s on.",
   "/llms.txt":
     "read by answer-engine crawlers, the way /robots.txt and /sitemap.xml " +
     "are — those two escape this list only because Next emits them from " +
@@ -2598,7 +2628,8 @@ describe("every generated page is reachable from somewhere", () => {
     const plan = await planEmit(
       TEMPLATE_DIR,
       "/out",
-      answers({ businessModel: "both", adminShell: "full", includeEmail: true }),
+      // With --analytics, whose /welcome is excused too (create-app 0.39).
+      answers({ businessModel: "both", adminShell: "full", includeEmail: true, includeAnalytics: true }),
     );
     const routes = new Set(routeKeysIn(plan));
     for (const key of Object.keys(UNLINKED_BY_DESIGN)) {
@@ -2673,7 +2704,6 @@ const BASE_BOUNDARIES = [
   join("app", "not-found.tsx"),
   join("app", "(site)", "error.tsx"),
   join("app", "(site)", "not-found.tsx"),
-  join("app", "(site)", "loading.tsx"),
 ];
 
 /** Every emitted React error boundary, by path. */
@@ -2726,7 +2756,7 @@ describe("error and loading boundaries", () => {
     }
   });
 
-  it.each(SELLING_MODELS)(
+  it.each(SHOP_MODELS)(
     "checkout gets its own, for --model %s",
     async (businessModel) => {
       const plan = await planEmit(TEMPLATE_DIR, "/out", answers({ businessModel }));

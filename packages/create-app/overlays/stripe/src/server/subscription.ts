@@ -221,6 +221,13 @@ export interface ApplySubscriptionInput {
    * row keeps the item it already names (cancel and resume don't move it).
    */
   readonly stripeItemId?: string | null;
+  /**
+   * What the line is actually charged each period (billing 0.6): Stripe's
+   * price for the item times its quantity, from the mirror. Omitted: the row
+   * keeps what it holds (cancel, resume and the line-closing path don't know
+   * it). Free months and simulated plans pass nothing — nobody is charged.
+   */
+  readonly priceMinor?: bigint | null;
   readonly stripeCustomerId: string | null;
   /** Already mapped through `mapStripeSubscriptionStatus`. Never a raw Stripe string. */
   readonly status: SubscriptionStatus;
@@ -415,6 +422,7 @@ async function writeSubscription(
     line,
     stripeSubscriptionId: input.stripeSubscriptionId,
     ...(input.stripeItemId !== undefined ? { stripeItemId: input.stripeItemId } : {}),
+    ...(input.priceMinor !== undefined ? { priceMinor: input.priceMinor } : {}),
     stripeCustomerId: input.stripeCustomerId,
     status: input.status,
     currentPeriodStart: input.currentPeriodStart,
@@ -1098,6 +1106,7 @@ export async function mirrorStripeSubscription(
             currentPeriodEnd: snapshot.currentPeriodEnd,
             metadata: {} as Readonly<Record<string, string>>,
             priceMetadata: {} as Readonly<Record<string, string>>,
+            amountMinor: null as bigint | null,
           },
         ];
 
@@ -1137,6 +1146,8 @@ export async function mirrorStripeSubscription(
       planKey: each.planKey,
       stripeSubscriptionId: snapshot.subscriptionId,
       ...(each.itemId !== null ? { stripeItemId: each.itemId } : {}),
+      // What Stripe really charges for this line, for the founder's MRR.
+      ...(each.item.amountMinor !== undefined && each.item.amountMinor !== null ? { priceMinor: each.item.amountMinor } : {}),
       stripeCustomerId: snapshot.customerId,
       status,
       currentPeriodStart: each.item.currentPeriodStart ?? snapshot.currentPeriodStart,

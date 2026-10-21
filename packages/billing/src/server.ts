@@ -1,7 +1,7 @@
 import { desc, eq } from "drizzle-orm";
 import type { PgDatabase } from "drizzle-orm/pg-core";
 import { resolveEntitlements, type EntitlementRow, type ResolvedEntitlement } from "./entitlements.js";
-import { DEFAULT_PLAN_LINE, type PlanCatalog } from "./plans.js";
+import { DEFAULT_PLAN_LINE, freeGrantRows, type PlanCatalog } from "./plans.js";
 import { entitlements, plans, subscriptions } from "./schema.js";
 import { combineStandings, planStanding, type PlanStanding } from "./standing.js";
 import type { SubscriptionStatus } from "./status.js";
@@ -167,7 +167,15 @@ export async function loadCompanyPlan(db: BillingDb, input: LoadPlanStandingInpu
     ? (lines.values().next().value as LinePlan).standing
     : combineStandings([...lines.values()].map((line) => line.standing));
 
-  return { standing, entitlements: resolveEntitlements(rows as EntitlementRow[], now), lines };
+  // THE FREE TIER (billing 0.6): a line the record gives a free tier, and on
+  // which nothing paid is open right now, grants what the free tier says —
+  // in memory, never written — summed with add-ons and grants like any plan
+  // row. The moment a paid tier of the line is live its own rows replace it.
+  const freeRows = (catalog?.lines ?? []).flatMap((line) =>
+    line.free !== null && line.free !== undefined && lines.get(line.key)?.standing.open !== true ? freeGrantRows(line.free) : [],
+  );
+
+  return { standing, entitlements: resolveEntitlements([...(rows as EntitlementRow[]), ...freeRows], now), lines };
 }
 
 /** Just the standing: what a plan gate's `standing(tenantId)` returns. */

@@ -207,7 +207,8 @@ export function defineAnalyticsTables(options: DefineAnalyticsTablesOptions = {}
       /**
        * web-vitals' per-page-load metric id. CLS and INP report more than once
        * per load (every time the page is hidden); p75 takes the max per id so
-       * one load is one sample.
+       * one load is one sample. On a server-side `conversion` (0.5), its
+       * `once` key instead — what makes it count once — or null.
        */
       metricId: text("metric_id"),
       occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),

@@ -1,4 +1,4 @@
-import { tenantLabel, type Answers } from "./answers.js";
+import { consumerProduct, tenantLabel, type Answers } from "./answers.js";
 import { companiesMode } from "./tenancy-emit.js";
 
 /**
@@ -148,7 +148,9 @@ function faqFor(answers: Answers): readonly { readonly q: string; readonly a: st
   if (sells) {
     out.push({
       q: "What does it cost?",
-      a: "One monthly price for your business, with everything included. You can change plans whenever you like.",
+      a: consumerProduct(answers)
+        ? "There's a free account, and plans for more. Each plan lists exactly what it includes, and you can change or cancel whenever you like."
+        : "One monthly price for your business, with everything included. You can change plans whenever you like.",
       link: { href: "/pricing", label: "See the plans" },
     });
   }
@@ -249,6 +251,59 @@ ${screenshots.join("\n")}
 
 /** Where "Go to your dashboard" goes for someone already signed in. */
 export const DASHBOARD_HREF = ${JSON.stringify(dashboard)};
+${pricingCopy(answers)}`;
+}
+
+/**
+ * The pricing page's words, and the plans section on the landing page
+ * (create-app 0.39): every sentence on /pricing that isn't a plan. A person
+ * buying for themselves (--audience consumers) reads about their own account,
+ * never "the size of your business".
+ */
+function pricingCopy(answers: Answers): string {
+  if (answers.businessModel === "none" || !answers.includeMarketing) return "";
+  const personal = consumerProduct(answers);
+  const copy = personal
+    ? {
+        title: "Start free. Upgrade when you want more.",
+        intro: "Each plan lists exactly what it includes. Change it or cancel whenever you like.",
+        description: "What each plan includes and what it costs, starting with a free account.",
+        teaserTitle: "Plans",
+        teaserBody: "Start with a free account, and upgrade when you want more.",
+        faq: [
+          { q: "Can I cancel any time?", a: "Yes, from your account. You keep everything until the end of the period you've paid for, and nothing more is charged." },
+          { q: "Can I change plans later?", a: "Yes, up or down, whenever you like. Moving up is charged for the rest of the period, today." },
+          { q: "Do I need a card for the free account?", a: "No. Sign up with your email and use it for as long as you like." },
+        ],
+      }
+    : {
+        title: "One price. Everything included.",
+        intro: "Every plan has every feature. Pick the one that fits the size of your business, and change it whenever you like.",
+        description: "What each plan includes and what it costs. Every plan includes everything; they differ in how much.",
+        teaserTitle: "One price, everything included",
+        teaserBody: "Pick the plan that fits the size of your business. Change it whenever you like.",
+        faq: [
+          { q: "Can I change plan later?", a: "Yes, up or down, whenever you like. What you've already used this month stays counted on the new plan." },
+          { q: "What happens when I reach a limit?", a: "You're told which one and what your plan allows. Nothing is deleted and nothing extra is charged." },
+        ],
+      };
+  const faq = copy.faq.map((item) => `    { q: ${JSON.stringify(item.q)}, a: ${JSON.stringify(item.a)} },`).join("\n");
+  return `
+/** The pricing page's words (and the plans section on this page). The plans themselves are src/plans.ts. */
+export const PRICING = {
+  eyebrow: "Pricing",
+  title: ${JSON.stringify(copy.title)},
+  intro: ${JSON.stringify(copy.intro)},
+  /** The page's search description. */
+  description: ${JSON.stringify(copy.description)},
+  /** The plans section on the landing page. */
+  teaserTitle: ${JSON.stringify(copy.teaserTitle)},
+  teaserBody: ${JSON.stringify(copy.teaserBody)},
+  /** Questions about plans and billing, under the plans. Answer them in your own words. */
+  faq: [
+${faq}
+  ] as readonly { readonly q: string; readonly a: string }[],
+};
 `;
 }
 
@@ -271,45 +326,32 @@ export function PlansTeaser() {
 `;
   }
   return `import Link from "next/link";
+import { defaultPlanInterval, planColumns } from "${answers.scope}/billing";
 import { buttonClass } from "@/components/ui";
-import { amountLabel, priceDisplay } from "@/components/marketing/pricing/planPresentation";
+import { PlanCard, PlanCardCell, PlanCards } from "@/components/plans/PlanCard";
 import { Section, SectionHeading } from "@/components/marketing/Section";
-import { DEFAULT_CURRENCY, plans } from "@/plans";
+import { PRICING } from "@/marketing-copy";
+import { DEFAULT_CURRENCY, HEADLINE_FEATURES, plans } from "@/plans";
 
 /**
- * The plans, in brief: each plan's name, its one-line promise and its price
- * per month — every word and number read from src/plans.ts, the record the
- * software enforces, so the teaser can't disagree with the pricing page.
+ * The plans, on the landing page: the same \`PlanCard\`s as /pricing and the
+ * plan chooser (create-app 0.39), drawn from \`planColumns\` — every word and
+ * number read from src/plans.ts, so this can't disagree with the pricing page.
+ * The first product line's, yearly first; the buttons all lead to /pricing.
  */
 export function PlansTeaser() {
-  const tiers = plans.tiers.filter((tier) => tier.isActive);
-  if (tiers.length === 0) return null;
-  const currency = DEFAULT_CURRENCY;
-  const interval = plans.intervals.includes("month") ? "month" : (plans.intervals[0] ?? "month");
+  const columns = planColumns(plans, { interval: defaultPlanInterval(plans), currency: DEFAULT_CURRENCY, headline: HEADLINE_FEATURES });
+  if (columns.length === 0) return null;
   return (
     <Section id="plans" label="Plans">
-      <SectionHeading title="One price, everything included">Pick the plan that fits the size of your business. Change it whenever you like.</SectionHeading>
-      <ul className="grid list-none gap-4 p-0 sm:grid-cols-2 lg:grid-cols-3">
-        {tiers.map((tier) => {
-          const price = priceDisplay(tier, interval, currency);
-          return (
-            <li key={tier.key} className="flex flex-col rounded-[--radius-card] border border-line bg-surface p-5 shadow-card" data-highlight={tier.highlight ? "" : undefined}>
-              <p className="text-base font-semibold text-ink">{tier.name}</p>
-              {tier.description ? <p className="mt-1.5 text-sm leading-relaxed text-ink-muted">{tier.description}</p> : null}
-              <p className="mt-auto pt-5 text-sm text-ink-muted">
-                {price.kind === "amount" ? (
-                  <>
-                    <span className="text-2xl font-semibold tracking-tight text-ink tabular-nums">{amountLabel(price.amountMinor, currency)}</span>
-                    {price.amountMinor > 0n ? (price.interval === "year" ? " a year" : price.interval === "once" ? " once" : " a month") : null}
-                  </>
-                ) : (
-                  <span className="text-base font-semibold text-ink">Talk to us</span>
-                )}
-              </p>
-            </li>
-          );
-        })}
-      </ul>
+      <SectionHeading title={PRICING.teaserTitle}>{PRICING.teaserBody}</SectionHeading>
+      <PlanCards>
+        {columns.map((column) => (
+          <PlanCardCell key={column.key}>
+            <PlanCard column={column} detail={false} />
+          </PlanCardCell>
+        ))}
+      </PlanCards>
       <div className="mt-6">
         <Link href="/pricing" className={buttonClass("secondary")}>
           Compare the plans

@@ -49,7 +49,10 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // gets the four-line body that failed open — an unlabelled deployment read as
   // somebody's laptop — and `checkout.simulate` refuses to give the shop away
   // on precisely that answer.
-  env: "0.3.0",
+  // 0.4.0 (create-app 0.39): `isLocalRun()` — a production build on a
+  // localhost app URL is the founder's own machine for the first-admin rule
+  // and the "no access" page.
+  env: "0.4.0",
   db: "0.2.2",
   auth: "0.2.0",
   // 0.3.0: creating a tenant now writes its owner the owner role as a row, and
@@ -70,7 +73,11 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company (deleteCompany, staff.tenants.delete).
   tenancy: "0.8.0",
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
-  permissions: "0.3.0",
+  // 0.4.0 (create-app 0.39): the seed applies a seal over an allow row a
+  // shipped role already held (`sealsApplied`, `withdrawn`) — what takes a
+  // consumers project's team keys back on a database a business seed wrote.
+  // The emitted seed logs `withdrawn`, which 0.3.x doesn't report.
+  permissions: "0.4.0",
   // 0.2.0 rather than 0.1.x because `requireTenant(...).input(...)` did not
   // compile before it. `^0.1.0` would resolve to a build a generated project
   // cannot typecheck against.
@@ -102,7 +109,10 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // one with removeLine, and both checkouts share resolveStripeCustomer; the
   // mirror reads each item's Price stamp (`priceMetadata`) and the plan
   // checkout counts only plans (`isPlanSubscriptionFor`). None exist in 0.5.x.
-  stripe: "0.6.0",
+  // 0.7.0 (create-app 0.39): each item's `amountMinor` — what Stripe really
+  // charges it — which the mirror writes to subscriptions.price_minor for the
+  // founder's MRR. Not in 0.6.x.
+  stripe: "0.7.0",
   // 0.2.0 for the variant- and product-name rules. The product builder refuses
   // to start a save that `validateProduct` cannot clear, so a project resolving
   // 0.1.x gets a validator with no opinion about a blank variant name — which
@@ -131,7 +141,12 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // and stripe_item_id and scopes its diff with planLineRefs; the plan gate and
   // the billing router read loadCompanyPlan's lines, liveStripeLines and
   // lineOfStoredRow. None exist in 0.4.x.
-  billing: "0.5.0",
+  // 0.6.0 (create-app 0.39): the free tier (`free:`, granted by
+  // loadCompanyPlan), `onSale` and `notOnSaleReason` at checkout,
+  // `formatMinor`/`formatPrice` (a plans-only project installs no catalog),
+  // and `planColumns`, the one plan presentation every plans page draws; and
+  // subscriptions.price_minor, what each subscription is actually charged.
+  billing: "0.6.0",
   // 0.2.0 (Tenancy 2b-3): the ledger moved into the package — the emitted
   // src/server/ai.ts and src/server/assistant.ts import recordAiUsage,
   // aiSpendSince and checkAiAllowance from ./server, which 0.1.x doesn't have.
@@ -382,7 +397,9 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // (./dashboard: WebsiteTraffic, WebsitesSettings) and the snippet's script,
   // none of which exist in 0.2.x.
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company, and importVisits.
-  analytics: "0.4.0",
+  // 0.5.0 (create-app 0.39): a conversion that counts once (`once`) — a
+  // sign-up and a first payment, once per person. Not in 0.4.x.
+  analytics: "0.5.0",
   // 0.2.0: one audience per company (createAudiences), its company handlers
   // and route table, and the drop-in "leave these people out" panel.
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.

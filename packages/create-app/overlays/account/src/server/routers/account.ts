@@ -10,7 +10,7 @@ import { readSubscriptionForTenant, readSubscriptionsForTenant, type AccountSubs
 import { stripe } from "@/server/stripe";
 import { applySubscription, mirrorStripeSubscription } from "@/server/subscription";
 import { requestContext } from "../request-context";
-import { findBillingCustomerId } from "./checkout";
+import { findBillingCustomerId } from "@/server/stripe-customers";
 import { createTRPCRouter, requireTenant } from "../trpc";
 
 /**
@@ -44,12 +44,12 @@ import { createTRPCRouter, requireTenant } from "../trpc";
  * package's declaration names a template that exists only in
  * `TENANT_ROLE_TEMPLATES`, which is the tie-breaker the fragment table uses.
  *
- * NOTE WHAT IS NOT GATED THIS WAY. `/account` and `/account/orders` check no
- * permission key at all, and that is not an oversight — see the header of
- * `src/server/account.ts`. A storefront order is booked under the FIRM's tenant
- * with the buyer's `user_id`, so the buyer is not a member of the tenant their
- * own order lives in, and a `requireTenant("orders.view")` there would deny
- * every customer their own receipt. Ownership of the row is the authorisation
+ * NOTE WHAT IS NOT GATED THIS WAY. `/account` and `/account/orders` (with a
+ * shop) check no permission key at all, and that is not an oversight — see
+ * src/server/account-orders.ts. A storefront order is booked under the FIRM's
+ * tenant with the buyer's `user_id`, so the buyer is not a member of the
+ * tenant their own order lives in, and a tenant check for viewing orders
+ * there would deny every customer their own receipt. Ownership of the row is the authorisation
  * on those pages. A subscription is different: it belongs to a real customer
  * organisation, several people can be in it, and only some of them should be
  * able to cancel it. That is what a permission is for, and it is why only this

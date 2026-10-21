@@ -258,14 +258,50 @@ export interface PlanTierInput<F extends PlanFeatureDecls> {
    * off the pricing page.
    */
   readonly isActive?: boolean;
-  /** "Most popular". At most one tier in a catalog may claim it. */
+  /**
+   * "Most popular". At most one tier in a line may claim it, and only the
+   * record can: no page adds the badge on its own, so it is never shown on a
+   * plan nobody has bought yet unless you say so here.
+   */
   readonly highlight?: boolean;
+  /**
+   * Can somebody buy it today (billing 0.6)? Defaults to true for a tier that
+   * is active.
+   *
+   *   true      shown with its price, and checkout sells it
+   *   "coming"  shown with its price and "Coming soon" in place of the button;
+   *             checkout refuses it — for a plan whose features aren't built yet
+   *   false     shown nowhere and never sold, but still a live plan you can put
+   *             someone on by hand (free months, a founding member)
+   *
+   * Not the same as `isActive: false`, which RETIRES a tier: off sale for good
+   * and kept only for the people already on it.
+   */
+  readonly onSale?: boolean | "coming";
   /**
    * An empty object is a legitimate tier: "Enterprise — talk to us". It projects
    * no `plans` row, because there is nothing to charge and nothing for Stripe to
    * hold a price for.
    */
   readonly prices: PlanPrices;
+  readonly features: { readonly [K in keyof F]: PlanFeatureValueFor<F[K]> };
+}
+
+/**
+ * THE FREE TIER (billing 0.6): what a signed-in account gets with no plan on
+ * this line. Not a plan — there is no $0 subscription, no `plans` row and
+ * nothing at Stripe — so it has no key and no prices. Declared once here, it
+ * is what the plan gate grants an account that holds no live tier of the line
+ * (`loadCompanyPlan`), the Free column on the pricing page and the card the
+ * plan chooser marks "Your plan": three readers, one record.
+ *
+ * Every feature of the line is given a value, as on a tier: a flag withheld is
+ * `false`, a quota of none is `0`.
+ */
+export interface PlanFreeInput<F extends PlanFeatureDecls> {
+  /** "Free", unless you name it. */
+  readonly name?: string;
+  readonly description?: string;
   readonly features: { readonly [K in keyof F]: PlanFeatureValueFor<F[K]> };
 }
 
@@ -291,6 +327,8 @@ export interface PlanLineInput<F extends PlanFeatureDecls> {
   readonly name: string;
   readonly description?: string;
   readonly features: F;
+  /** What an account with no plan on this line gets (billing 0.6). */
+  readonly free?: PlanFreeInput<F>;
   readonly tiers: readonly PlanTierInput<F>[];
 }
 
@@ -299,15 +337,32 @@ export interface PlanLineShape {
   readonly name: string;
   readonly description?: string;
   readonly features: PlanFeatureDecls;
+  readonly free?: {
+    readonly name?: string;
+    readonly description?: string;
+    readonly features: Readonly<Record<string, unknown>>;
+  };
   readonly tiers: readonly {
     readonly key: string;
     readonly name: string;
     readonly description?: string;
     readonly isActive?: boolean;
     readonly highlight?: boolean;
+    readonly onSale?: boolean | "coming";
     readonly prices: PlanPrices;
     readonly features: Readonly<Record<string, unknown>>;
   }[];
+}
+
+/**
+ * A line's free tier, resolved (billing 0.6): every feature carries its kind,
+ * its label and the value an account with no plan holds.
+ */
+export interface PlanFreeTier {
+  readonly line: string;
+  readonly name: string;
+  readonly description: string | null;
+  readonly features: Readonly<Record<string, PlanFeature>>;
 }
 
 /**
@@ -330,6 +385,8 @@ export interface PlanLine {
   readonly features: readonly PlanFeatureHeading[];
   /** This line's tiers, retired ones included, in declaration order. */
   readonly tiers: readonly PlanTier[];
+  /** What an account with no plan on this line gets, or null when the line declares no free tier (billing 0.6). */
+  readonly free: PlanFreeTier | null;
 }
 
 /** One tier, resolved: every feature carries its kind, its label and its value. */
@@ -345,6 +402,11 @@ export interface PlanTier {
   readonly description: string | null;
   readonly isActive: boolean;
   readonly highlight: boolean;
+  /**
+   * Can it be bought today (billing 0.6): true, "coming" (shown, not sold) or
+   * false (sold by hand only). Always false for a retired tier.
+   */
+  readonly onSale: boolean | "coming";
   /**
    * Derived from declaration order, never supplied.
    *
@@ -529,6 +591,8 @@ export function planAllows(
  */
 export function definePlans<const F extends PlanFeatureDecls>(input: {
   readonly features: F;
+  /** What a signed-in account with no plan gets (billing 0.6). */
+  readonly free?: PlanFreeInput<F>;
   readonly tiers: readonly PlanTierInput<F>[];
 }): PlanCatalog;
 /**
@@ -542,11 +606,20 @@ export function definePlans<const L extends Readonly<Record<string, PlanLineShap
   // line's tiers CHECKED against that line's own vocabulary: a feature
   // forgotten on a tier, or an option value nobody declared, is a compile
   // error exactly as in the one-line form.
-  readonly lines: L & { readonly [K in keyof L]: { readonly tiers: readonly PlanTierInput<L[K]["features"]>[] } };
+  readonly lines: L & {
+    readonly [K in keyof L]: {
+      readonly free?: PlanFreeInput<L[K]["features"]>;
+      readonly tiers: readonly PlanTierInput<L[K]["features"]>[];
+    };
+  };
 }): PlanCatalog;
 export function definePlans(
   input:
-    | { readonly features: PlanFeatureDecls; readonly tiers: readonly PlanTierInput<PlanFeatureDecls>[] }
+    | {
+        readonly features: PlanFeatureDecls;
+        readonly free?: PlanLineShape["free"];
+        readonly tiers: readonly PlanTierInput<PlanFeatureDecls>[];
+      }
     | { readonly lines: Readonly<Record<string, PlanLineShape>> },
 ): PlanCatalog {
   const declaredLines: readonly {
@@ -555,6 +628,7 @@ export function definePlans(
     readonly description: string | null;
     readonly implicit: boolean;
     readonly features: PlanFeatureDecls;
+    readonly free: PlanLineShape["free"] | undefined;
     readonly tiers: readonly PlanLineShape["tiers"][number][];
   }[] =
     "lines" in input
@@ -564,6 +638,7 @@ export function definePlans(
           description: line.description ?? null,
           implicit: false,
           features: line.features,
+          free: line.free,
           tiers: line.tiers,
         }))
       : [
@@ -573,6 +648,7 @@ export function definePlans(
             description: null,
             implicit: true,
             features: input.features,
+            free: input.free,
             tiers: input.tiers,
           },
         ];
@@ -680,13 +756,28 @@ export function definePlans(
         features[heading.feature] = resolveFeature(key, heading.feature, decl, value);
       }
 
+      const isActive = declared.isActive ?? true;
+      // ON SALE (billing 0.6): a retired tier is never sold, and saying it is
+      // would be a record that contradicts itself.
+      if (!isActive && (declared.onSale === true || declared.onSale === "coming")) {
+        throw new InvalidPlanCatalogError(
+          `"${key}" is retired (isActive: false) and also says onSale: ${JSON.stringify(declared.onSale)}. ` +
+            `A retired tier is off sale for good; take one of the two out.`,
+        );
+      }
+      if (declared.onSale !== undefined && declared.onSale !== true && declared.onSale !== false && declared.onSale !== "coming") {
+        throw new InvalidPlanCatalogError(
+          `"${key}" says onSale: ${JSON.stringify(declared.onSale)}. Use true (sold), "coming" (shown, not sold yet) or false (sold by hand only).`,
+        );
+      }
       const tier: PlanTier = {
         key,
         line: declaredLine.key,
         name: declared.name,
         description: declared.description ?? null,
-        isActive: declared.isActive ?? true,
+        isActive,
         highlight: declared.highlight ?? false,
+        onSale: isActive ? (declared.onSale ?? true) : false,
         // Spaced by ten, so a plan added to the database by hand can be slipped
         // between two of these without renumbering the catalog. Counted across
         // every line, so the plans table sorts in pricing-page order.
@@ -699,6 +790,38 @@ export function definePlans(
       tiers.push(tier);
     }
 
+    // THE FREE TIER (billing 0.6), checked against the line's vocabulary the
+    // way a tier is: every feature given a value, none from another line.
+    let free: PlanFreeTier | null = null;
+    if (declaredLine.free !== undefined) {
+      const label = declaredLine.implicit ? "the free tier" : `the "${declaredLine.key}" line's free tier`;
+      for (const named of Object.keys(declaredLine.free.features)) {
+        if (declaredLine.features[named] === undefined) {
+          throw new InvalidPlanCatalogError(
+            `${label} gives a value for "${named}", which ${declaredLine.implicit ? "the catalog" : "that line"} does not declare.`,
+          );
+        }
+      }
+      const freeFeatures: Record<string, PlanFeature> = {};
+      for (const heading of lineHeadings) {
+        const decl = declaredLine.features[heading.feature];
+        if (decl === undefined) continue;
+        const value = (declaredLine.free.features as Readonly<Record<string, unknown>>)[heading.feature];
+        if (value === undefined) {
+          throw new InvalidPlanCatalogError(
+            `${label} gives no value for "${heading.feature}". Say what an account with no plan holds — false for a flag it doesn't get, 0 for a quota of none — so the pricing page and the plan check read the same answer.`,
+          );
+        }
+        freeFeatures[heading.feature] = resolveFeature("free", heading.feature, decl, value);
+      }
+      free = {
+        line: declaredLine.key,
+        name: declaredLine.free.name ?? "Free",
+        description: declaredLine.free.description ?? null,
+        features: freeFeatures,
+      };
+    }
+
     lines.push({
       key: declaredLine.key,
       name: declaredLine.name,
@@ -706,7 +829,15 @@ export function definePlans(
       implicit: declaredLine.implicit,
       features: lineHeadings,
       tiers: lineTiers,
+      free,
     });
+  }
+
+  if (lines.some((line) => line.free !== null) && seenKeys.has(FREE_TIER_REF)) {
+    throw new InvalidPlanKeyError(
+      FREE_TIER_REF,
+      "this catalog declares a free tier, whose rows are told apart from a tier's by that name. Rename the tier.",
+    );
   }
 
   const currencies = collectCurrencies(tiers);
@@ -755,6 +886,71 @@ export function planLineRefs(catalog: Pick<PlanCatalog, "lines">, lineKey: strin
   const line = catalog.lines.find((candidate) => candidate.key === lineKey);
   return new Set((line?.tiers ?? []).map((tier) => tier.key));
 }
+
+/**
+ * May this tier be bought today (billing 0.6)? Active, and `onSale: true`.
+ * The one test every checkout asks before it opens a payment: a "coming"
+ * tier is shown with its price and never sold, and an `onSale: false` one is
+ * put on by hand only.
+ */
+export function planOnSale(tier: Pick<PlanTier, "isActive" | "onSale">): boolean {
+  return tier.isActive && tier.onSale === true;
+}
+
+/** What `planOnSale` refuses, said plainly — the sentence a checkout answers with. */
+export function notOnSaleReason(tier: Pick<PlanTier, "name" | "isActive" | "onSale">): string | null {
+  if (planOnSale(tier)) return null;
+  if (!tier.isActive) return `${tier.name} isn't offered any more.`;
+  if (tier.onSale === "coming") return `${tier.name} is coming soon. It can't be bought yet.`;
+  return `${tier.name} isn't for sale.`;
+}
+
+/**
+ * The entitlement rows a line's free tier stands for (billing 0.6): what an
+ * account with no live plan on the line holds. `source: "plan"` and
+ * `source_ref: "free"`, never written to the table — `loadCompanyPlan` adds
+ * them in memory for a line whose standing isn't open, so they sum with
+ * add-ons and grants exactly as a plan's rows would, and vanish the moment a
+ * paid tier of the line is live.
+ *
+ * A flag withheld is a row at 0 (as a tier's is), so a grant of the same
+ * feature can still turn it on. Usage on a free quota isn't kept here: ask
+ * with the amount the account would hold after the change
+ * (`entitlementOf(id, "cities", count + 1)`).
+ */
+export function freeGrantRows(free: PlanFreeTier): {
+  readonly feature: string;
+  readonly limitValue: number | null;
+  readonly usedValue: number;
+  readonly source: "plan";
+  readonly sourceRef: string;
+  readonly expiresAt: null;
+}[] {
+  const rows: {
+    feature: string;
+    limitValue: number | null;
+    usedValue: number;
+    source: "plan";
+    sourceRef: string;
+    expiresAt: null;
+  }[] = [];
+  for (const feature of Object.values(free.features)) {
+    // Options never become rows (planAllows answers them), as for a tier.
+    if (feature.kind === "option") continue;
+    rows.push({
+      feature: feature.feature,
+      limitValue: feature.kind === "quota" ? feature.limit : feature.included ? 1 : 0,
+      usedValue: 0,
+      source: "plan",
+      sourceRef: FREE_TIER_REF,
+      expiresAt: null,
+    });
+  }
+  return rows;
+}
+
+/** The `source_ref` a free tier's in-memory rows carry. A catalog that declares a free tier can't also key a tier "free". */
+export const FREE_TIER_REF = "free";
 
 /** The vocabulary of one line, checked, in declaration order. */
 function vocabularyOf(declarations: PlanFeatureDecls): PlanFeatureHeading[] {

@@ -96,7 +96,9 @@ describe("every checkpoint asks it", () => {
     for (const overrides of [SAAS, SINGLE]) {
       const permissions = file(await plan(overrides), "src", "server", "permissions.ts");
       expect(permissions).toContain('import { gateLoaders } from "./plan-gate";');
-      expect(permissions).toContain("gateLoaders(\n  createDrizzlePermissionLoaders(db, { membership: tenancyMembershipGate }),\n)");
+      expect(permissions).toContain("gateLoaders(\n  createDrizzlePermissionLoaders(db, { membership: membershipGate }),\n)");
+      // The gate itself is tenancy's, handed over by src/server/membership.ts (narrowed to each person's own account for consumers).
+      expect(file(await plan(overrides), "src", "server", "membership.ts")).toContain("tenancyMembershipGate");
     }
   });
 

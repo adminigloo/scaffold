@@ -17,8 +17,11 @@ import {
   applyUpgrade,
   fetchPreviousGenerator,
   loadPreviousGenerator,
+  parseAnswerOverride,
   planUpgrade,
+  PreviousGeneratorError as NeedsPreviousGenerator,
   upgradeNextSteps,
+  type AnswerOverrides,
 } from "./upgrade.js";
 
 export {
@@ -130,9 +133,20 @@ export {
   extractTarGz,
   PreviousGeneratorError,
   UpgradeVersionMismatchError,
+  UpgradeLosesDataError,
+  parseAnswerOverride,
+  switchedAnswers,
+  AnswerSwitchError,
 } from "./upgrade.js";
-export type { UpgradePlan, PreviousGenerator, PackFn } from "./upgrade.js";
-export { upgradeNotesFor, compareVersions } from "./upgrade-notes.js";
+export {
+  PACKAGE_TABLES,
+  schemaOwnersIn,
+  upgradeLosses,
+  describeLosses,
+} from "./upgrade-losses.js";
+export type { UpgradeLosses, DroppedTables } from "./upgrade-losses.js";
+export type { UpgradePlan, PreviousGenerator, PackFn, AnswerOverrides } from "./upgrade.js";
+export { upgradeNotesFor, switchNotesFor, compareVersions } from "./upgrade-notes.js";
 
 const ADD_HELP = `
 create-adminigloo-app add <feature> — turn a feature on in an existing project.
@@ -195,6 +209,8 @@ create-adminigloo-app upgrade — bring a project an earlier create-app made up
 to this version.
 
   pnpm dlx @adminigloo/create-app upgrade [--dir <path>] [--from <folder>]
+                                          [--audience <a>] [--set <answer>=<value>]
+                                          [--allow-data-loss]
 
   Reads the project's adminigloo.json and fetches the create-app version that
   made it (npm pack, through the project's own .npmrc) to see exactly what it
@@ -210,42 +226,94 @@ to this version.
       merge by hand.
 
   .env.local is never touched; new variables are listed. Then pnpm install,
-  pnpm db:generate && pnpm db:migrate && pnpm db:seed, and the steps it prints
-  for the versions crossed (DEPLOYMENT.md has them too).
+  pnpm db:generate — read the migration it writes before pnpm db:migrate —
+  pnpm db:seed, and the steps it prints for the versions crossed
+  (DEPLOYMENT.md has them too).
+
+  An upgrade that would DROP tables (a feature or a model switched off, or a
+  package this version no longer uses), change what an account is (companies
+  or one person each) or stop a plan check is refused, with everything it
+  would lose listed, until you add --allow-data-loss.
 
   --dir <path>     The project. Defaults to the current directory.
   --from <folder>  The create-app that made the project, already unpacked (a
                    folder with dist/, template/ and overlays/), instead of
                    fetching it.
+  --audience <a>   Switch who signs up (business | consumers) in a project with
+                   no companies: consumers makes every account one person's
+                   (no team, no invitations, plans per person). Same as
+                   --set audience=<a>.
+  --set <a>=<v>    Switch a structural answer while upgrading: audience,
+                   businessModel (or model), adminShell (or admin), tenantNoun
+                   (what a company is called — to or from none ends or starts
+                   companies, which needs --allow-data-loss), or a feature on
+                   or off (feedback=true; off drops its tables, which needs
+                   --allow-data-loss). Repeatable. The project is re-planned with
+                   it, by the same rules: files you never changed are
+                   rewritten or removed, files you did get a <file>.new, and
+                   src/plans.ts (your plans and prices) is never rewritten —
+                   the new sample goes beside it. On a project already at this
+                   version, only the switch is applied.
+  --allow-data-loss
+                   Go ahead with an upgrade that drops tables, changes what an
+                   account is or stops a plan check. It still lists every loss,
+                   the dropped tables by name.
   --help, -h       Show this.
 `.trimStart();
 
-/** `upgrade` reads only --dir and --from. */
+/** `upgrade` reads --dir, --from, and the answers to switch (--audience, --set). */
 async function upgradeMain(rawArgs: readonly string[]): Promise<number> {
   let dir: string | undefined;
   let from: string | undefined;
-  for (let i = 0; i < rawArgs.length; i += 1) {
-    const arg = rawArgs[i];
-    if (arg === undefined) continue;
-    if (arg === "--help" || arg === "-h") {
-      stdout.write(UPGRADE_HELP);
-      return 0;
+  let overrides: AnswerOverrides = {};
+  let allowDataLoss = false;
+  try {
+    for (let i = 0; i < rawArgs.length; i += 1) {
+      const arg = rawArgs[i];
+      if (arg === undefined) continue;
+      if (arg === "--help" || arg === "-h") {
+        stdout.write(UPGRADE_HELP);
+        return 0;
+      }
+      if (arg === "--allow-data-loss") {
+        allowDataLoss = true;
+      } else if (arg === "--dir" || arg.startsWith("--dir=")) {
+        dir = arg === "--dir" ? rawArgs[i + 1] : arg.slice("--dir=".length);
+        if (arg === "--dir") i += 1;
+      } else if (arg === "--from" || arg.startsWith("--from=")) {
+        from = arg === "--from" ? rawArgs[i + 1] : arg.slice("--from=".length);
+        if (arg === "--from") i += 1;
+      } else if (arg === "--audience" || arg.startsWith("--audience=")) {
+        const value = arg === "--audience" ? rawArgs[i + 1] : arg.slice("--audience=".length);
+        if (arg === "--audience") i += 1;
+        overrides = { ...overrides, ...parseAnswerOverride(`audience=${value ?? ""}`) };
+      } else if (arg === "--set" || arg.startsWith("--set=")) {
+        const value = arg === "--set" ? rawArgs[i + 1] : arg.slice("--set=".length);
+        if (arg === "--set") i += 1;
+        overrides = { ...overrides, ...parseAnswerOverride(value ?? "") };
+      } else {
+        throw new Error(`upgrade doesn't take "${arg}". See upgrade --help.`);
+      }
     }
-    if (arg === "--dir" || arg.startsWith("--dir=")) {
-      dir = arg === "--dir" ? rawArgs[i + 1] : arg.slice("--dir=".length);
-      if (arg === "--dir") i += 1;
-    } else if (arg === "--from" || arg.startsWith("--from=")) {
-      from = arg === "--from" ? rawArgs[i + 1] : arg.slice("--from=".length);
-      if (arg === "--from") i += 1;
-    }
+  } catch (error) {
+    stderr.write(`
+${error instanceof Error ? error.message : String(error)}
+`);
+    return 1;
   }
 
   let cleanup: (() => Promise<void>) | null = null;
   try {
     const projectDir = resolve(cwd(), dir ?? ".");
-    // Up to date already: nothing to fetch.
-    const first = await planUpgrade(templateDir(), projectDir, { previous: null }).catch(() => null);
-    if (first?.upToDate) {
+    // Up to date already (and nothing to switch), or only an answer to switch
+    // on a project this version made: nothing to fetch.
+    const first = await planUpgrade(templateDir(), projectDir, { previous: null, overrides, allowDataLoss }).catch((error: unknown) => {
+      // Behind: the version that made it is needed to compare with (fetched below).
+      if (error instanceof NeedsPreviousGenerator) return null;
+      throw error;
+    });
+    if (first) {
+      if (!first.upToDate) await applyUpgrade(first);
       stdout.write(upgradeNextSteps(first));
       return 0;
     }
@@ -257,7 +325,7 @@ async function upgradeMain(rawArgs: readonly string[]): Promise<number> {
       cleanup = fetched.cleanup;
       previousDir = fetched.dir;
     }
-    const plan = await planUpgrade(templateDir(), projectDir, { previous: await loadPreviousGenerator(previousDir) });
+    const plan = await planUpgrade(templateDir(), projectDir, { previous: await loadPreviousGenerator(previousDir), overrides, allowDataLoss });
     await applyUpgrade(plan);
     stdout.write(upgradeNextSteps(plan));
     return 0;

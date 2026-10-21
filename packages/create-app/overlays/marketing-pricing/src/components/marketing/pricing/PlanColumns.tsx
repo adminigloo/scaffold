@@ -1,282 +1,87 @@
 import Link from "next/link";
-import type { PlanInterval, PlanTier } from "__SCOPE__/billing";
-import { buttonClass, cx } from "@/components/ui";
-import { HEADLINE_FEATURES } from "@/plans";
-import {
-  amountLabel,
-  annualSavingPercent,
-  featureBullet,
-  intervalName,
-  perLabel,
-  priceDisplay,
-} from "@/components/marketing/pricing/planPresentation";
+import { planColumns, type PlanColumn } from "__SCOPE__/billing";
+import { buttonClass } from "@/components/ui";
+import { PlanCard, PlanCardCell, PlanCards } from "@/components/plans/PlanCard";
+import { HEADLINE_FEATURES, plans } from "@/plans";
 
 /**
- * Where "Talk to us" goes.
+ * Where "Talk to us" goes for a plan with no published price.
  *
  * `example.com` is reserved by RFC 2606 precisely so a placeholder cannot reach
- * a real inbox, which is the only responsible default here. Replace it with the
- * address somebody reads: an enterprise tier whose one action bounces is worse
- * than an enterprise tier with no action at all.
+ * a real inbox. Replace it with the address somebody reads.
  */
 const SALES_CONTACT = "mailto:sales@example.com";
 
 /**
- * One column per tier the record still sells.
- *
- * EVERY WORD IN A COLUMN COMES OUT OF `src/plans.ts`. The name, the sentence
- * under it, the price, and every line in the list — all of it is the same object
- * `grantsForPlan` turns into entitlement rows. That is the point of the whole
- * exercise: a hand-written pricing page and the enforcement code drift within
- * one release, and the way anybody finds out is a customer paying for something
- * they do not get.
- *
- * WHAT IS NOT FROM THE RECORD is the layout and the two verbs on the buttons.
- * Restyle freely; the moment you type a number in here you have made a second
- * copy of the answer.
- *
- * A COLUMN, NOT A CARD. The product's `Card` exists to say "this border is one
- * row of data"; a pricing table is a comparison, and four bordered boxes side by
- * side push the eye around the border instead of down the column it is meant to
- * be reading. A rule across the top does the grouping, and the recommended tier
- * gets a heavier rule in the accent — which is the only place colour appears
- * here, so it means something.
- *
- * `auto-fit` rather than a fixed column count. The number of active tiers is
- * data: a client with two plans and a client with six both get a grid that
- * fits, and neither gets a row of three columns with a lonely fourth beneath it.
+ * Where choosing a plan goes: the plan chooser on /account/billing, with the
+ * plan marked (`?plan=`), so the next click is the checkout. Someone signed
+ * out goes through sign-up first, and sign-up brings them back to it.
+ */
+export function planHref(tierKey: string, signedIn: boolean): string {
+  const chooser = `/account/billing?plan=${encodeURIComponent(tierKey)}`;
+  return signedIn ? chooser : `/sign-up?redirect_url=${encodeURIComponent(chooser)}`;
+}
+
+/**
+ * One product line's plans, as cards: the record's free tier first (when it
+ * declares one), then every tier on sale or coming — `planColumns` from
+ * @__SCOPE_NAME__/billing, drawn by the shared `PlanCard`. Every word and
+ * number is the record's; this file owns only the buttons.
  */
 export function PlanColumns({
-  tiers,
+  line,
   interval,
   currency,
+  signedIn,
 }: {
-  readonly tiers: readonly PlanTier[];
-  readonly interval: PlanInterval;
+  /** The product line (billing 0.5); the only one when omitted. */
+  readonly line?: string;
+  readonly interval: "month" | "year";
   readonly currency: string;
+  readonly signedIn: boolean;
 }) {
+  const columns = planColumns(plans, { ...(line === undefined ? {} : { line }), interval, currency, headline: HEADLINE_FEATURES });
   return (
-    <ul className="mt-12 grid list-none grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-6 p-0">
-      {tiers.map((tier) => (
-        <li key={tier.key} className="flex">
-          <PlanColumn tier={tier} interval={interval} currency={currency} />
-        </li>
+    <PlanCards>
+      {columns.map((column) => (
+        <PlanCardCell key={column.key}>
+          <PlanCard column={column} action={<Action column={column} signedIn={signedIn} />} />
+        </PlanCardCell>
       ))}
-    </ul>
+    </PlanCards>
   );
 }
 
-function PlanColumn({
-  tier,
-  interval,
-  currency,
-}: {
-  readonly tier: PlanTier;
-  readonly interval: PlanInterval;
-  readonly currency: string;
-}) {
-  const price = priceDisplay(tier, interval, currency);
-  const saving =
-    interval === "year" ? annualSavingPercent(tier, currency) : null;
-
-  // A generated array with no entry: a tier that withholds single sign-on
-  // contributes no line rather than a line saying it does not have it. The
-  // comparison table below is where a withheld feature is stated.
-  //
-  // Keyed on the FEATURE NAME rather than on the rendered line, because two
-  // features can legitimately render the same words — a flag labelled "Priority
-  // support" beside an option whose best value is "priority" — and duplicate
-  // React keys drop one of them from the list with no error anywhere. The
-  // iteration order is the order `definePlans` declared the vocabulary in, which
-  // is the order the comparison table uses too.
-  const bullets = Object.entries(tier.features)
-    .map(([name, feature]) => ({ name, line: featureBullet(feature) }))
-    .filter((entry): entry is { name: string; line: string } => entry.line !== null);
-  // The few numbers the plan leads with (HEADLINE_FEATURES in src/plans.ts);
-  // the rest are one click away, under "What's included".
-  const headline = HEADLINE_FEATURES.flatMap((key) => bullets.filter((entry) => entry.name === key));
-
-  return (
-    <div className="flex w-full flex-col">
-      {/*
-        The badge sits ABOVE the rule rather than floating over the column, so
-        the rule stays an unbroken line across the whole grid. A badge that
-        notches the border is the detail that makes a pricing table look
-        assembled rather than drawn.
-
-        A FIXED HEIGHT rather than a transparent copy of the text or a
-        non-breaking space. Both of those keep the rules aligned and both put an
-        invisible character into the markup: one a screen reader may announce,
-        and one nobody grepping this file would ever find. An empty box of a
-        stated height says the same thing to the layout and nothing at all to
-        anybody else.
-
-        `highlight` is capped at one tier by `definePlans`, so this cannot
-        appear twice and mean nothing.
-      */}
-      <p className="h-5 text-xs leading-5 font-semibold text-accent">{tier.highlight ? "Most popular" : null}</p>
-
-      <div
-        className={cx(
-          "mt-1.5 flex flex-1 flex-col rounded-[--radius-card] border bg-surface p-6 shadow-card",
-          tier.highlight ? "border-accent" : "border-line",
-        )}
-      >
-        <h2 className="text-lg font-semibold tracking-tight text-ink">
-          {tier.name}
-        </h2>
-
-        {/* The plan's one-line promise. */}
-        {tier.description !== null && (
-          <p className="mt-1.5 text-sm leading-relaxed text-ink-muted">
-            {tier.description}
-          </p>
-        )}
-
-        <div className="mt-5 min-h-[3.75rem]">
-          <Price display={price} currency={currency} />
-        </div>
-
-        {saving !== null && (
-          <p className="mt-1 text-[13px] text-accent">
-            Save {saving}% against paying monthly
-          </p>
-        )}
-
-        <div className="mt-5">
-          <Action tier={tier} enquire={price.kind === "enquire"} />
-        </div>
-
-        <p className="mt-6 flex items-center gap-2 text-sm font-medium text-ink">
-          <Tick />
-          Everything included
-        </p>
-        <ul className="mt-2 flex list-none flex-col gap-2 p-0">
-          {headline.map((entry) => (
-            <li key={entry.name} className="flex gap-2 text-sm leading-snug text-ink-muted">
-              <Tick />
-              <span>{entry.line}</span>
-            </li>
-          ))}
-        </ul>
-
-        {bullets.length > headline.length ? (
-          <details className="group mt-3 text-sm">
-            <summary className="inline-flex min-h-11 cursor-pointer list-none items-center gap-1 font-medium text-accent [&::-webkit-details-marker]:hidden">
-              What&rsquo;s included
-              <span aria-hidden="true" className="text-ink-muted group-open:rotate-180">
-                &#x25BE;
-              </span>
-            </summary>
-            <ul className="mt-1 flex list-none flex-col gap-1.5 p-0 text-[13px] leading-snug text-ink-muted">
-              {bullets.map((entry) => (
-                <li key={entry.name}>{entry.line}</li>
-              ))}
-            </ul>
-          </details>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-/**
- * The amount, or the honest reason there is not one.
- *
- * `min-h` on the container above rather than a fallback string here, so a
- * column with no price does not sit two lines higher than the ones beside it and
- * pull its button out of the row.
- */
-function Price({
-  display,
-  currency,
-}: {
-  readonly display: ReturnType<typeof priceDisplay>;
-  readonly currency: string;
-}) {
-  if (display.kind === "enquire") {
-    return (
-      <p className="text-[1.4rem] leading-none font-semibold tracking-[-0.02em] text-ink">
-        Custom pricing
-      </p>
+function Action({ column, signedIn }: { readonly column: PlanColumn; readonly signedIn: boolean }) {
+  if (column.free) {
+    return signedIn ? (
+      <Link href="/account" className={buttonClass("secondary", "w-full")}>
+        Your account
+      </Link>
+    ) : (
+      <Link href="/sign-up" className={buttonClass("secondary", "w-full")}>
+        Start free
+      </Link>
     );
   }
-
-  if (display.kind === "other-interval") {
+  if (column.onSale === "coming") {
+    // Shown with its price so people know it's on the way; never sold before it exists.
     return (
-      <p className="text-sm text-ink-muted">
-        Sold{" "}
-        {display.available
-          .map((candidate) => intervalName(candidate).toLowerCase())
-          .join(" and ")}{" "}
-        only.
-      </p>
-    );
-  }
-
-  const label = amountLabel(display.amountMinor, currency);
-
-  return (
-    <p>
-      <span className="text-[1.75rem] leading-none font-semibold tracking-[-0.03em] tabular-nums text-ink">
-        {label}
+      <span aria-disabled="true" className={buttonClass("secondary", "w-full cursor-default opacity-60")}>
+        Coming soon
       </span>
-      {/* No cadence under a free plan: "Free per month" is not a thing anybody
-          says, and the record deliberately prices a free tier at 0 on every
-          cadence so this is the only place the distinction has to be made. */}
-      {display.amountMinor > 0n && (
-        <span className="mt-1 block text-[13px] text-ink-muted">
-          {perLabel(display.interval)}
-        </span>
-      )}
-    </p>
-  );
-}
-
-/**
- * What the button does.
- *
- * TWO DESTINATIONS AND NO THIRD. A published price means somebody can sign up,
- * so the button goes to the route every project has. No published price means
- * there is nothing to self-serve, so it goes to a person — and it must be a
- * different affordance rather than the same button with different words, or the
- * reader who clicks it expecting a checkout gets their mail client instead.
- *
- * `/sign-up` carries no plan in the URL. It would be easy to add `?plan=pro` and
- * nothing in this scaffold reads it, so it would be a contract with no other
- * side: the click would be recorded in an analytics tool and honoured by
- * nothing. Wire it up first, then put it here.
- */
-function Action({
-  tier,
-  enquire,
-}: {
-  readonly tier: PlanTier;
-  readonly enquire: boolean;
-}) {
-  if (enquire) {
+    );
+  }
+  if (column.price.kind === "enquire") {
     return (
       <a href={SALES_CONTACT} className={buttonClass("secondary", "w-full")}>
         Talk to us
       </a>
     );
   }
-
   return (
-    <Link
-      href="/sign-up"
-      className={buttonClass(tier.highlight ? "primary" : "secondary", "w-full")}
-    >
-      Choose {tier.name}
+    <Link href={planHref(column.key, signedIn)} className={buttonClass(column.highlight ? "primary" : "secondary", "w-full")}>
+      Choose {column.name}
     </Link>
-  );
-}
-
-/** A small tick in the accent, beside "Everything included" and each number. */
-function Tick() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 20 20" className="mt-0.5 size-4 shrink-0 text-accent" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M4.5 10.5l3.5 3.5 7.5-8" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
   );
 }

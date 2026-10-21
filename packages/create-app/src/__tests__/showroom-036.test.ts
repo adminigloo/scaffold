@@ -201,12 +201,20 @@ describe("plans in owner language", () => {
     expect(record).toContain('export const HEADLINE_FEATURES: readonly string[] = ["seats","storage_gb","estimates"];');
     expect(record).not.toContain("websites of your own counted");
     expect(record).toContain('export const DEFAULT_CURRENCY: string = plans.currencies.includes("usd") ? "usd"');
-    expect(all.get("src/components/marketing/PlansTeaser.tsx")).toContain("const currency = DEFAULT_CURRENCY;");
+    // One plan presentation (create-app 0.39): the teaser, the pricing page and
+    // the billing page's chooser all draw billing's planColumns through PlanCard.
+    const teaser = all.get("src/components/marketing/PlansTeaser.tsx")!;
+    expect(teaser).toContain("currency: DEFAULT_CURRENCY, headline: HEADLINE_FEATURES");
+    expect(teaser).toContain("<PlanCard column={column}");
     const billing = code(all.get("app/(site)/account/billing/page.tsx")!);
-    expect(billing).toContain("else if (feature.limit === 1 && feature.labelOne) lines.push(`1 ${feature.labelOne}`);");
+    expect(billing).toContain("planColumns(plans, { line, interval, currency, headline: HEADLINE_FEATURES })");
+    expect(billing).not.toContain("`No ${feature.label");
     const chooser = code(all.get("src/components/account/PlanChooser.tsx")!);
-    expect(chooser).toContain("Everything included");
-    expect(chooser).toContain("What&apos;s included");
+    expect(chooser).toContain("<PlanCard");
+    expect(chooser).not.toContain("Everything included");
+    const card = code(all.get("src/components/plans/PlanCard.tsx")!);
+    expect(card).toContain("`Everything in ${column.buildsOn}, plus:`");
+    expect(card).toContain("Coming soon");
     expect(chooser).not.toContain("is not sold");
   });
 });

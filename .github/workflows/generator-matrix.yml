@@ -110,7 +110,7 @@ jobs:
           # shell underneath.
           - id: money-without-admin
             flags: --model both --admin none --no-ai --no-email
-            overlays: companies, stripe, account, legal
+            overlays: companies, stripe, shop, account, account-shop, legal
 
           # Overlays: admin-minimal + admin-full. An admin shell with nothing to
           # sell. Every admin page must hold up with no catalog, no orders and
@@ -141,8 +141,9 @@ jobs:
             overlays: companies, email, ai
 
           # Overlays: admin-minimal + stripe + catalog-admin + account + email +
-          # legal. The subscription path against the MINIMAL shell, which is the
-          # shell the product builder is least often seen in.
+          # legal. The subscription path against the MINIMAL shell — plans and
+          # no shop (create-app 0.39): no shop, shop-admin or account-shop, and
+          # no catalog or commerce package installed at all.
           - id: subscription-minimal-shell
             flags: --model subscription --admin minimal --no-ai --email --tenant-noun Team
             overlays: admin-minimal, companies, stripe, catalog-admin, account, email, legal
@@ -153,7 +154,15 @@ jobs:
           # no-Resend branch while everything else is switched on.
           - id: one-time-full-shell
             flags: --model one-time --admin full --ai --no-email --tenant-noun Company
-            overlays: admin-minimal, admin-full, companies, stripe, catalog-admin, account, ai, legal
+            overlays: admin-minimal, admin-full, companies, stripe, shop, catalog-admin, shop-admin, account, account-shop, ai, legal
+
+          # Overlays: people who sign up as themselves, buying plans
+          # (create-app 0.39): one person per account (no team, no invitations),
+          # the personal plan gate, the founder's subscriber dashboard and
+          # Subscribers page, and no shop.
+          - id: consumers-plans
+            flags: --tenant-noun none --audience consumers --model subscription --admin minimal --no-ai --email
+            overlays: admin-minimal, stripe, catalog-admin, subscribers-admin, account, email, legal
 
           # Overlays: the estimator with everything it can be glued to — the
           # founder's field-service project. Photos kept (storage) and read

@@ -10,6 +10,7 @@ import {
 } from "__SCOPE__/tenancy/server";
 import { staffCatalog, tenantCatalog } from "./catalog";
 import { TENANT_ROLES } from "./roles";
+import { closeSharedAccounts } from "./shared-accounts";
 
 /**
  * Install the roles and what each one may do — the ONE seed, run three ways:
@@ -26,9 +27,13 @@ import { TENANT_ROLES } from "./roles";
  * administrator was never made, and /admin stayed locked.
  *
  * Safe to run any number of times: @__SCOPE_NAME__/permissions' seed is one
- * transaction under a lock, insert-only, and never touches a role somebody
- * customised. Then the owner-role backfill (every company owner holds the
- * owner role), then — when an address is given — the first administrator.
+ * transaction under a lock, insert-only (but for a seal the catalog adds or
+ * lifts, which it writes over a shipped role's old row), and never touches a
+ * role somebody customised. Then the owner-role backfill (every company owner
+ * holds the owner role), then the accounts more than one person is in
+ * (src/permissions/shared-accounts.ts: in a consumers project, a membership
+ * of somebody else's account is suspended), then — when an address is given
+ * — the first administrator.
  *
  * IMPORTS NO ENV AND NO APP DATABASE. A deploy job has the database URL and
  * BOOTSTRAP_ADMIN_EMAIL and none of the app's other credentials, and the
@@ -81,7 +86,14 @@ export async function seedPermissions(db: SeedDb, options: SeedPermissionsOption
       ? "Roles: all already installed."
       : `Roles: installed ${report.created.join(", ")}.`,
   );
-  log(`Permissions: ${report.grantsAdded} granted, ${report.sealsAdded} sealed, ${report.sealsLifted} unsealed.`);
+  log(
+    `Permissions: ${report.grantsAdded} granted, ${report.sealsAdded + report.sealsApplied} sealed, ${report.sealsLifted} unsealed.`,
+  );
+  // A key a shipped role HELD and the catalog now seals against it (a
+  // consumers project's team keys, on a database that ran as a business).
+  for (const taken of report.withdrawn) {
+    log(`  taken back: ${taken} (the catalog seals it against that role now)`);
+  }
   for (const skipped of report.skippedCustomised) {
     log(`  left alone: ${skipped} (customised, so this seed doesn't touch it)`);
   }
@@ -101,6 +113,14 @@ export async function seedPermissions(db: SeedDb, options: SeedPermissionsOption
       ? "Owners: every owner already holds the owner role."
       : `Owners: ${owners} given the owner role.`,
   );
+
+  // ONE PERSON PER ACCOUNT, in the database too (create-app 0.39): nothing in
+  // a project whose accounts have teams.
+  const shared = await closeSharedAccounts(db);
+  if (shared.length > 0) {
+    log(`Shared accounts: ${shared.length} membership${shared.length === 1 ? "" : "s"} of somebody else's account suspended (each account here is one person's):`);
+    for (const each of shared) log(`  ${each.userId} in ${each.tenantId}`);
+  }
 
   const email = options.bootstrapEmail?.trim();
   if (email) {

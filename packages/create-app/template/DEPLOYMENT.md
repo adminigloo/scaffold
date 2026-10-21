@@ -592,7 +592,12 @@ DID change. Those `.new` files, any retired file you had changed, and your own
 files that import a removed one are the only hand edits; it lists them all.
 `.env.local` is never touched; new variables are listed.
 
-Then `pnpm install`, `pnpm db:generate && pnpm db:migrate && pnpm db:seed`,
+Then `pnpm install` and `pnpm db:generate` — and READ the migration it wrote
+(the newest file in `drizzle/`) before `pnpm db:migrate`, which can't be
+undone. An upgrade that would drop tables (a package the new version no
+longer uses, or an answer you switched off), change what an account is, or
+stop a plan check is refused until you add `--allow-data-loss`, and then it
+names every table the migration drops. Then `pnpm db:seed`,
 `pnpm exec tsc --noEmit && pnpm test`, push to `staging` as for any change, and
 do what it printed for the versions crossed (below).
 

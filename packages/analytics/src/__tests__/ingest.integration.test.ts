@@ -296,6 +296,36 @@ describe("server-side conversions honour the visitor's privacy signals", () => {
   });
 });
 
+describe("a conversion that counts once (0.5, review: every call added another event)", () => {
+  it("a second call with the same `once` key records nothing; another key, or none, still counts", async () => {
+    const tenantId = tenant("once");
+    const { analytics, handler } = handlerFor(tenantId);
+    await handler.handle(beacon({ t: "pageview", d: "doc_once_0000001", p: "/pricing" }));
+    const base = { tenantId, ip: IP, userAgent: CHROME, name: "Signed up", at: NOW, headers: new Headers({ "user-agent": CHROME }) };
+
+    expect(await analytics.recordConversion({ ...base, once: "signed-up:user_1" })).not.toBeNull();
+    // Refreshed, or came back the next day: not a second sign-up.
+    expect(await analytics.recordConversion({ ...base, once: "signed-up:user_1" })).toBeNull();
+    expect(await analytics.recordConversion({ ...base, once: " signed-up:user_1 ", at: new Date(NOW.getTime() + 60_000) })).toBeNull();
+    const conversions = async () =>
+      (await tdb.db.select().from(analyticsTables.events).where(eq(analyticsTables.events.tenantId, tenantId))).filter((row) => row.name === "conversion");
+    expect(await conversions()).toHaveLength(1);
+    expect((await conversions())[0]?.metricId).toBe("signed-up:user_1");
+    expect((await sessionsOf(tenantId))[0]?.eventCount).toBe(1);
+
+    // NEGATIVE CONTROLS: someone else's key counts, and so does a call with no key at all — every time.
+    expect(await analytics.recordConversion({ ...base, once: "signed-up:user_2" })).not.toBeNull();
+    expect(await analytics.recordConversion({ ...base, name: "call_booked" })).not.toBeNull();
+    expect(await analytics.recordConversion({ ...base, name: "call_booked" })).not.toBeNull();
+    expect(await conversions()).toHaveLength(4);
+    // And one site's key is not another's.
+    const other = tenant("once_other");
+    const second = handlerFor(other);
+    await second.handler.handle(beacon({ t: "pageview", d: "doc_once_0000002", p: "/" }));
+    expect(await second.analytics.recordConversion({ ...base, tenantId: other, once: "signed-up:user_1" })).not.toBeNull();
+  });
+});
+
 describe("the default reporter", () => {
   it("logs a failure that repeats on every beacon once a minute, not once per beacon", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);

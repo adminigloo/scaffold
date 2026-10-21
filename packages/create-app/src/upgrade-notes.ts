@@ -1,5 +1,6 @@
-import { tenantLabel, tenantLabelPlural, type Answers } from "./answers.js";
+import { consumerProduct, tenantLabel, tenantLabelPlural, type Answers } from "./answers.js";
 import { cardPaymentsSetup } from "./payments-emit.js";
+import { personalPlans } from "./personal-plans-emit.js";
 
 /** "1.2.3" → [1, 2, 3]; anything else → null. */
 export function parseVersion(text: string): readonly [number, number, number] | null {
@@ -32,6 +33,53 @@ export function upgradeNotesFor(answers: Answers, fromVersion: string): string[]
   const companies = answers.tenantNoun !== "none";
   const noun = tenantLabel(answers).toLowerCase();
   const crossed = (version: string) => (compareVersions(fromVersion, version) ?? -1) < 0;
+  // 0.39.0 — consumer fit: plans without a shop, one person per account,
+  // crawlable public pages, one plan presentation, conversions.
+  if (crossed("0.39.0")) {
+    if (answers.businessModel === "subscription") {
+      notes.push(
+        "A project that sells plans has no shop any more (--model subscription): /products, /checkout, /account/orders, the " +
+          "product builder (/admin/products), licence keys and seed-shop are gone, and so are the catalog and commerce packages. " +
+          "`pnpm db:generate` writes a migration that DROPS their tables (products, orders, discounts, shipments…): read it before " +
+          "`pnpm db:migrate`. If you ever sold anything through the shop, switch to --model both instead " +
+          "(`create-app upgrade --set businessModel=both`), which keeps it.",
+      );
+    }
+    notes.push(
+      "The public pages are crawlable: app/(site)/loading.tsx is gone (it streamed every page into hidden blocks, so crawlers read " +
+        "\"Loading\", a redirect answered 200 with a meta refresh and a missing page answered 200). If you had changed it, delete it " +
+        "yourself. `pnpm build && pnpm test:pages` checks each page in your sitemap answers a real 200 with its <h1> in the first " +
+        "HTML, a missing page a real 404, and a signed-in page asked for signed out a real 307.",
+    );
+    if (answers.businessModel !== "none") {
+      // `free:` only where something enforces it (review): in a companies
+      // project a company with no plan is paused once its trial ends, so a
+      // Free column there would advertise what nobody can use.
+      notes.push(
+        "Plans are shown one way everywhere (the pricing page, the landing page's plans, /account/billing): what each includes " +
+          "(never \"No …\"), whole-dollar prices, yearly first, and \"Most popular\" only where src/plans.ts sets `highlight`. " +
+          (personalPlans(answers)
+            ? "New in src/plans.ts: `free: { features }` (what an account with no plan gets — the plan check, the pricing page's " +
+              "Free column and the chooser all read it, and the next tier up says \"Everything in Free, plus:\") and "
+            : "New in src/plans.ts: ") +
+          "`onSale: \"coming\"` (shown with its price, refused at checkout and never published to Stripe) or `onSale: false` (sold by " +
+          "hand only).",
+      );
+      notes.push(
+        "Run `pnpm db:generate`: billing 0.6 adds one nullable column, `subscriptions.price_minor` — what each subscriber is " +
+          "actually charged, which a repricing in src/plans.ts doesn't change for people already on the old price. Each " +
+          "subscription's next Stripe event fills it in; until then the dashboard counts the plan's own price. Nothing else moves.",
+      );
+    }
+    if (consumerProduct(answers)) notes.push(onePersonPerAccountNote());
+    if (answers.includeAnalytics) {
+      notes.push(
+        "Conversions: a NEW account's sign-up (through /welcome) and its first payment (back from Stripe's checkout, once Stripe " +
+          "says it was paid — a free trial isn't) each mark the visit converted, once per person, so /admin/analytics shows which " +
+          "pages bring people who sign up and people who pay.",
+      );
+    }
+  }
   // 0.38.0 — billing 0.5: product lines and personal plans. Two columns and
   // two per-line indexes on subscriptions; existing rows satisfy both.
   if (crossed("0.38.0") && answers.businessModel !== "none") {
@@ -468,4 +516,74 @@ export function feedbackUpgradeNotes(answers: Answers): string[] {
         ]
       : []),
   ];
+}
+
+/**
+ * What switching an answer means for a person (create-app 0.39): the steps no
+ * file can take when `upgrade --audience` / `--set` changes what the project
+ * is. Empty when nothing switched.
+ */
+export function switchNotesFor(before: Answers, after: Answers): string[] {
+  const notes: string[] = [];
+  const toConsumers = !consumerProduct(before) && consumerProduct(after);
+  const fromConsumers = consumerProduct(before) && !consumerProduct(after);
+  const shopBefore = before.businessModel === "one-time" || before.businessModel === "both";
+  const shopAfter = after.businessModel === "one-time" || after.businessModel === "both";
+  if (toConsumers) {
+    notes.push(
+      "This project's customers are now PEOPLE, each signing up as themselves (--audience consumers): every account is one " +
+        "person's. The team page, /members, /invite and the invitation email are gone, the seat limit of one refuses any " +
+        "invitation, no role — the owner included — holds the invite, remove, change-role or hand-over keys, and each person " +
+        "can act only in their own account: the server refuses any other account's id, so a membership left from before can't " +
+        "reach somebody else's plan.",
+      onePersonPerAccountNote(),
+      "Plans are each person's now: `requireEntitlement(feature)` (src/server/access.ts) and `<Entitled feature>` read the " +
+        "person's OWN account, and the founder sees who pays for what at /admin/billing/subscribers and on the dashboard " +
+        "(subscribers by plan, MRR and ARR, new and cancelled, failed payments, free to paid).",
+    );
+  }
+  if (fromConsumers) {
+    notes.push(
+      "Accounts can have teams again (--audience " + after.audience + "): the owner and admins of each account may invite people " +
+        "into it. `pnpm db:seed` gives the shipped roles their invite, remove, change-role and hand-over keys back. Anyone the " +
+        "consumer seed suspended from somebody else's account stays suspended: invite them again if they belong there.",
+    );
+  }
+  if (shopBefore && !shopAfter && after.businessModel !== "none") {
+    notes.push(
+      "No shop any more (--model " + after.businessModel + "): /products, /checkout, /account/orders, the product builder, " +
+        "licence keys and seed-shop are gone, and so are the catalog and commerce packages — and their tables, listed above.",
+    );
+  }
+  return notes;
+}
+
+/**
+ * One person per account, in the DATABASE too (create-app 0.39, review): what
+ * `pnpm db:seed` does in a consumers project, said the same way by the version
+ * note and the switch note (so an upgrade that is both says it once).
+ */
+export function onePersonPerAccountNote(): string {
+  return (
+    "Run `pnpm db:seed` (every deploy runs it too). In a consumers project it takes the invite, remove, change-role and " +
+    "hand-over keys back from the shipped roles in the database and seals them, so no per-person setting can give them back " +
+    "(a role you customised is left as it is, and the seed names it), and it suspends anyone who is a member of somebody " +
+    "else's account — an invitation accepted while the project was --audience business — naming each one in its output."
+  );
+}
+
+/**
+ * A switch never rewrites src/plans.ts (review): said when this version's
+ * sample differs, so it is beside it as src/plans.ts.new.
+ */
+export function planRecordSwitchNote(after: Answers): string {
+  return (
+    "src/plans.ts wasn't rewritten — a switch never does: its tiers are the ones people are subscribed to, and a tier missing " +
+    "from it makes that person's next Stripe event fail. This version's sample is beside it as src/plans.ts.new" +
+    (personalPlans(after)
+      ? ": read it for `free:` (what an account with no plan gets, which the plan check, the pricing page and the plan chooser " +
+        "all read) and `onSale: \"coming\"` (shown with its price, never sold), and add them to your own tiers where they fit."
+      : ": take what you want from it into your own tiers.") +
+    " Then delete the .new."
+  );
 }

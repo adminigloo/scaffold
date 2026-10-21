@@ -91,6 +91,17 @@ export async function tenantEntitlements(tenantId: string): Promise<CompanyPlan[
   return (await personalPlan(tenantId)).entitlements;
 }
 
+/**
+ * Each product line's standing, EXACTLY as the plan check reads it — what
+ * /account and /account/billing show: which tier a person is on, and whether
+ * it's the free tier (create-app 0.39, review: the pages read the
+ * subscription's status instead, so once free months ended — or for a plan
+ * that never started — they said Pro while the check said Free).
+ */
+export async function linePlansOf(tenantId: string): Promise<CompanyPlan["lines"]> {
+  return (await personalPlan(tenantId)).lines;
+}
+
 /** A plan standing's shape, for code shared with projects that sell plans to companies. */
 export type PlanStandingView = PlanStanding;
 
@@ -304,7 +315,7 @@ import { db } from "@/db";
 import { plans } from "@/plans";
 import { seedPermissions } from "@/permissions/seed";
 import { entitlementOf, refusalFor } from "@/server/access";
-import { personalBannerSentence, personalPlan } from "@/server/plan-gate";
+import { personalBannerSentence, personalPlan, seatLimitOption } from "@/server/plan-gate";
 import { applySubscription } from "@/server/subscription";
 import { tenancy } from "@/server/tenancy";
 
@@ -385,6 +396,33 @@ function grantedBy(tierKey: string): string[] {
     .map((f) => f.feature);
 }
 
+/**
+ * What a line's free tier gives an account with no plan on it (billing 0.6):
+ * feature -> its limit (a flag reads 1 or 0), from src/plans.ts's \`free:\`.
+ */
+function freeLimits(): Map<string, number | null> {
+  const out = new Map<string, number | null>();
+  for (const line of plans.lines) {
+    if (line.free === null) continue;
+    for (const f of Object.values(line.free.features)) {
+      if (f.kind === "quota") out.set(f.feature, f.limit);
+      else if (f.kind === "flag") out.set(f.feature, f.included ? 1 : 0);
+    }
+  }
+  return out;
+}
+
+/** Features a line's free tier grants (a flag that's on, or a quota above zero). */
+function grantedFree(line: string | undefined): Set<string> {
+  const free = line === undefined ? null : (plans.line(line)?.free ?? null);
+  if (free === null) return new Set();
+  return new Set(
+    Object.values(free.features)
+      .filter((f) => (f.kind === "flag" && f.included) || (f.kind === "quota" && (f.limit === null || f.limit > 0)))
+      .map((f) => f.feature),
+  );
+}
+
 function later(): void {
   vi.setSystemTime(new Date(Date.now() + 1_000));
 }
@@ -410,17 +448,24 @@ beforeAll(async () => {
 });
 
 describe("each person's plans, per product line (billing 0.5)", () => {
-  it("1. a free account: nothing paid for, every paid feature refused in plain words — not a closed account", async () => {
+  it("1. a free account: what the free tier gives and nothing paid for — every paid feature refused in plain words — not a closed account", async () => {
     const plan = await personalPlan(fx.B.workspace);
     expect(plan.standing).toMatchObject({ state: "none", open: false });
     expect([...plan.lines.keys()]).toEqual(plans.lines.map((line) => line.key));
     const cheapest = monthly(FIRST!.key)[0]!;
+    const free = grantedFree(FIRST!.key);
     for (const feature of grantedBy(cheapest.tierKey)) {
       const answer = await entitlementOf(fx.B.workspace, feature);
+      if (free.has(feature)) {
+        // The free tier (src/plans.ts \`free:\`) gives some of it with no plan at all.
+        expect(answer.allowed, feature).toBe(true);
+        continue;
+      }
       expect(answer.allowed, feature).toBe(false);
       expect(answer.message, feature).toBe(refusalFor(feature, answer));
       expect(answer.upgradeHref).toBe("/account/billing");
     }
+    for (const feature of free) expect((await entitlementOf(fx.B.workspace, feature)).allowed, feature).toBe(true);
   });
 
   it("2. the first line, then a tier up within it: the rows are UPDATED in place, so what was used is kept", async () => {
@@ -482,23 +527,32 @@ describe("each person's plans, per product line (billing 0.5)", () => {
     const after = await db.select().from(entitlements).where(eq(entitlements.tenantId, fx.A.workspace));
     expect(after.filter((row) => row.sourceRef === second.tierKey)).toEqual([]);
     for (const row of firstRows) expect(after.find((each) => each.id === row.id)).toMatchObject({ limitValue: row.limitValue, usedValue: row.usedValue });
-    // A feature only the second line sold is refused again (unless the first sells it too).
+    // A feature only the second line sold is refused again (unless the first sells it too, or a free tier gives it).
     const firstSells = new Set(grantedBy(plan.lines.get(FIRST!.key)!.standing.tierKey!));
-    for (const feature of grantedBy(second.tierKey).filter((f) => !firstSells.has(f))) {
+    const freeSecond = grantedFree(SECOND.key);
+    for (const feature of grantedBy(second.tierKey).filter((f) => !firstSells.has(f) && !freeSecond.has(f))) {
       expect((await entitlementOf(fx.A.workspace, feature)).allowed, feature).toBe(false);
     }
   });
 
-  it("4. nothing of A's reaches B", async () => {
+  it("4. nothing of A's reaches B: B holds what the free tier gives, and nothing else", async () => {
     const plan = await personalPlan(fx.B.workspace);
     expect(plan.standing.open).toBe(false);
-    expect(plan.entitlements.size).toBe(0);
+    const free = freeLimits();
+    expect(plan.entitlements.size).toBe(free.size);
+    for (const [feature, held] of plan.entitlements) {
+      expect(free.has(feature), feature).toBe(true);
+      expect(held.limit, feature).toBe(free.get(feature));
+    }
   });
 
-  it("5. nobody shares an account: an invitation into a person's workspace is refused before it is sent", async () => {
+  it("5. nobody shares an account: an invitation into a person's account is refused before it is sent", async () => {
+    // Two locks (create-app 0.39): no role holds members.invite — the owner
+    // included — and the seat limit is one.
     await expect(
       tenancy.sendInvitation({ actorUserId: fx.A.id, tenantId: fx.A.workspace, email: "friend@example.test", roleKey: "member" }),
-    ).rejects.toMatchObject({ code: "seats_full" });
+    ).rejects.toMatchObject({ code: "forbidden" });
+    expect(await seatLimitOption.seats.limitFor()).toBe(1);
   });
 
   it("6. the banner speaks for a failed payment first, and says nothing to someone who never had a plan", () => {

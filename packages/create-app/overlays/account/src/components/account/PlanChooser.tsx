@@ -2,7 +2,9 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Badge, Button, Card, CardBody, Notice, buttonClass, cx } from "@/components/ui";
+import type { PlanColumn } from "__SCOPE__/billing";
+import { Button, Notice, buttonClass, cx } from "@/components/ui";
+import { PlanCard, PlanCardCell, PlanCards } from "@/components/plans/PlanCard";
 import type { CheckoutMode } from "@/server/checkout-mode";
 import { api } from "@/trpc/client";
 
@@ -25,6 +27,11 @@ import { api } from "@/trpc/client";
  * this component pre-rendered strings also keeps `bigint` off the server/client
  * boundary entirely.
  *
+ * THE CARDS ARE THE PRICING PAGE'S (create-app 0.39): `PlanCard`, drawn from
+ * `planColumns` — what each plan includes, "Everything in Free, plus:", whole
+ * dollar prices, yearly first, "Coming soon" on a plan not sold yet — so the
+ * chooser and the pricing page can never describe a plan differently.
+ *
  * THE SIMULATE BUTTON DECIDES NOTHING. It draws when — and only when — the
  * server's `checkoutMode()` came back `simulated`, handed down as a prop,
  * exactly as `SimulatePurchase` takes it. `billing.simulateSubscription` calls
@@ -33,31 +40,22 @@ import { api } from "@/trpc/client";
  * one.
  */
 
-export interface ChoosableTier {
-  readonly key: string;
-  readonly name: string;
-  readonly description: string | null;
-  readonly highlight: boolean;
-  /**
-   * Formatted prices keyed `<interval>:<currency>`. Absent means this tier is
-   * not sold on that combination, which is a real answer — "talk to us" is a
-   * plan — and is why the button says so rather than showing a zero.
-   */
-  readonly prices: Readonly<Record<string, string>>;
-  /**
-   * The 3–4 numbers the plan leads with ("10 team members", "25 GB of photos
-   * and files"), from HEADLINE_FEATURES in src/plans.ts.
-   */
-  readonly headline: readonly string[];
-  /** Every allowance, one line each, for "What's included". */
-  readonly features: readonly string[];
-}
-
 export interface PlanChooserProps {
   readonly tenantId: string;
-  readonly tiers: readonly ChoosableTier[];
-  /** Every interval some tier is sold on, in the record's order. */
+  /**
+   * The line's plan cards for every cadence and currency, keyed
+   * `<interval>:<currency>`: `planColumns` from @__SCOPE_NAME__/billing, worked
+   * out on the server — the same cards the pricing page draws.
+   */
+  readonly columns: Readonly<Record<string, readonly PlanColumn[]>>;
+  /** Every cadence some plan is sold on, yearly first. */
   readonly intervals: readonly ("month" | "year")[];
+  /** No live plan on this line, and the record declares a free tier: the Free card is "Your plan". */
+  readonly onFree: boolean;
+  /** The plan picked on the pricing page before signing in (?plan=), or null. */
+  readonly pickedTierKey: string | null;
+  /** Why someone without the permission can't change the plan, in this project's words. */
+  readonly ownerOnly: string;
   /** Every currency the catalogue prices in. */
   readonly currencies: readonly string[];
   readonly mode: CheckoutMode;
@@ -67,7 +65,7 @@ export interface PlanChooserProps {
   readonly currentTierKey: string | null;
   /** Where "Talk to us" goes for a plan with no price (a mailto:), or null. */
   readonly contactHref: string | null;
-  /** Staff of the site: the "card payments aren't on" line also says why. */
+  /** Staff of the site: the only ones told that card payments aren't switched on (the operator's to fix). */
   readonly staff: boolean;
   /**
    * Does this __TENANT_LABEL_LOWER__ already pay through Stripe? Then picking a plan CHANGES
@@ -189,16 +187,77 @@ export function PlanChooser(props: PlanChooserProps) {
     previewAdd.isPending ||
     addLine.isPending;
   const simulated = props.mode.kind === "simulated";
+  // No Stripe here and nothing may be given away: nothing can be bought yet.
+  const unavailable = props.mode.kind === "unavailable";
   const changing = props.hasPaidPlan && !simulated;
   const adding = props.addsToPlan === true && !props.hasPaidPlan && !simulated;
   const error = subscribe.error ?? simulate.error ?? previewChange.error ?? changePlan.error ?? previewAdd.error ?? addLine.error;
 
+  const columns = props.columns[`${interval}:${currency}`] ?? [];
+
+  /** The button under one card: what this person can do with that plan, right now. */
+  function action(column: PlanColumn) {
+    const current = column.free ? props.onFree : column.key === props.currentTierKey;
+    if (current) return <p className="text-sm text-ink-muted">You&apos;re on this plan.</p>;
+    // Free is what an account holds with no plan: there is nothing to buy.
+    if (column.free) return <p className="text-sm text-ink-muted">What you have with no plan.</p>;
+    if (column.onSale === "coming") {
+      return (
+        <Button variant="secondary" disabled className="w-full">
+          Coming soon
+        </Button>
+      );
+    }
+    if (column.price.kind === "enquire" || column.price.kind === "other-interval") {
+      // Not sold here on this cadence: a conversation, and the button starts one.
+      return props.contactHref ? (
+        <a href={props.contactHref} className={buttonClass("secondary", "w-full")}>
+          Talk to us
+        </a>
+      ) : (
+        <p className="text-sm text-ink-muted">Talk to us about this plan.</p>
+      );
+    }
+    if (unavailable) {
+      return (
+        <Button variant="secondary" disabled className="w-full">
+          Not available yet
+        </Button>
+      );
+    }
+    if (!props.canManage) {
+      return (
+        <Button variant="secondary" disabled className="w-full">
+          Choose {column.name}
+        </Button>
+      );
+    }
+    const primary = column.key === props.pickedTierKey || (props.pickedTierKey === null && column.highlight);
+    return (
+      <Button
+        variant={primary ? "primary" : "secondary"}
+        disabled={busy}
+        className="w-full"
+        onClick={() =>
+          changing
+            ? previewChange.mutate({ tenantId: props.tenantId, tierKey: column.key, interval, currency })
+            : adding
+              ? previewAdd.mutate({ tenantId: props.tenantId, tierKey: column.key, interval, currency })
+              : simulated
+                ? simulate.mutate({ tenantId: props.tenantId, tierKey: column.key, interval, currency })
+                : subscribe.mutate({ tenantId: props.tenantId, tierKey: column.key, interval, currency })
+        }
+      >
+        {busy ? "Working…" : changing ? `Switch to ${column.name}` : adding ? `Add ${column.name}` : `Choose ${column.name}`}
+      </Button>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-3">
-        {/* Only rendered when there is a choice. A toggle with one option is a
-            control that teaches the reader nothing and takes a click to find
-            that out. */}
+        {/* Only rendered when there is a choice. Yearly first: one charge a
+            year instead of twelve, and the better deal. */}
         {fixed === null && props.intervals.length > 1 && (
           <div className="flex items-center gap-1 rounded-md border border-line p-1">
             {props.intervals.map((option) => (
@@ -209,9 +268,7 @@ export function PlanChooser(props: PlanChooserProps) {
                 onClick={() => setInterval(option)}
                 className={cx(
                   "min-h-11 rounded px-4 text-sm transition-colors",
-                  interval === option
-                    ? "bg-accent-soft text-ink"
-                    : "text-ink-muted hover:text-ink",
+                  interval === option ? "bg-accent-soft text-ink" : "text-ink-muted hover:text-ink",
                 )}
               >
                 {option === "month" ? "Monthly" : "Yearly"}
@@ -238,20 +295,24 @@ export function PlanChooser(props: PlanChooserProps) {
         )}
       </div>
 
-      {simulated && (
-        // The operator's job (this site's Stripe keys), told to an owner in one
-        // plain sentence; staff also read what that means underneath.
+      {simulated && props.staff ? (
+        // THE OPERATOR'S CHECKLIST, for staff only: a customer is never told how
+        // this site is configured. Simulated plans exist only where Stripe isn't
+        // set up (a laptop, or ALLOW_SIMULATED_CHECKOUT, never production).
         <p className="max-w-[68ch] text-sm text-ink-muted" data-plans-simulated="">
-          Card payments for plans aren&apos;t switched on for this site yet, so choosing a plan starts it straight away, with
-          nothing charged.
-          {props.staff ? (
-            <span className="mt-1 block text-xs">
-              Stripe isn&apos;t configured here: a plan is recorded and everything it grants applied through the same function a
-              real Stripe webhook runs. This disappears once the Stripe keys are added.
-            </span>
-          ) : null}
+          Stripe isn&apos;t configured here, so choosing a plan starts it straight away with nothing charged: the plan is
+          recorded and everything it grants applied through the same function a real Stripe webhook runs. This goes away
+          once the Stripe keys are added.
         </p>
-      )}
+      ) : null}
+
+      {unavailable ? (
+        // A customer is told plainly that plans can't be bought yet; only staff
+        // read why (the operator's to fix: Stripe's keys, or the opt-in).
+        <p className="max-w-[68ch] text-sm text-ink-muted" data-plans-unavailable="">
+          {props.staff ? props.mode.reason : "Plans can't be bought on this site just yet. Please check back soon."}
+        </p>
+      ) : null}
 
       {error && (
         <Notice
@@ -311,133 +372,20 @@ export function PlanChooser(props: PlanChooserProps) {
         </Notice>
       )}
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {props.tiers.map((tier) => {
-          const price = tier.prices[`${interval}:${currency}`];
-          const current = tier.key === props.currentTierKey;
+      <PlanCards>
+        {columns.map((column) => (
+          <PlanCardCell key={column.key}>
+            <PlanCard
+              column={column}
+              current={column.free ? props.onFree : column.key === props.currentTierKey}
+              picked={column.key === props.pickedTierKey}
+              action={action(column)}
+            />
+          </PlanCardCell>
+        ))}
+      </PlanCards>
 
-          return (
-            <Card key={tier.key} className={cx("flex flex-col", tier.highlight && !current ? "ring-1 ring-accent" : undefined)}>
-              <CardBody className="flex flex-1 flex-col gap-4 p-5">
-                <div className="flex items-start justify-between gap-3">
-                  <h3 className="text-lg font-semibold tracking-tight text-ink">{tier.name}</h3>
-                  {current ? (
-                    <Badge tone="accent">Your plan</Badge>
-                  ) : tier.highlight ? (
-                    <Badge tone="accent">Most popular</Badge>
-                  ) : null}
-                </div>
-                {/* The plan's one-line promise. */}
-                {tier.description ? <p className="-mt-2 text-sm leading-relaxed text-ink-muted">{tier.description}</p> : null}
-
-                <p className="text-ink tabular-nums">
-                  {price === undefined ? (
-                    <span className="text-2xl font-semibold tracking-tight">Custom pricing</span>
-                  ) : (
-                    <>
-                      <span className="text-3xl font-semibold tracking-tight">{price}</span>
-                      <span className="text-sm text-ink-muted"> a {interval}</span>
-                    </>
-                  )}
-                </p>
-
-                <div className="flex flex-col gap-2 text-sm">
-                  <p className="flex items-center gap-2 font-medium text-ink">
-                    <CheckMark />
-                    Everything included
-                  </p>
-                  <ul className="flex flex-col gap-1.5 text-ink-muted">
-                    {tier.headline.map((line) => (
-                      <li key={line} className="flex items-start gap-2">
-                        <CheckMark />
-                        <span>{line}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-
-                {tier.features.length > tier.headline.length ? (
-                  <details className="group text-sm">
-                    <summary className="inline-flex min-h-11 cursor-pointer list-none items-center gap-1 font-medium text-accent [&::-webkit-details-marker]:hidden">
-                      What&apos;s included
-                      <span aria-hidden="true" className="text-ink-muted group-open:rotate-180">
-                        &#x25BE;
-                      </span>
-                    </summary>
-                    <ul className="mt-1 flex flex-col gap-1.5 text-ink-muted">
-                      {tier.features.map((feature) => (
-                        <li key={feature}>{feature}</li>
-                      ))}
-                    </ul>
-                  </details>
-                ) : null}
-
-                <div className="mt-auto pt-2">
-                  {price === undefined ? (
-                    // A plan with no price on this cadence isn't sold here: it's
-                    // a conversation, and the button starts one.
-                    props.contactHref ? (
-                      <a href={props.contactHref} className={buttonClass("secondary", "w-full")}>
-                        Talk to us
-                      </a>
-                    ) : (
-                      <p className="text-sm text-ink-muted">Talk to us about this plan.</p>
-                    )
-                  ) : current ? (
-                    <p className="text-sm text-ink-muted">You&apos;re on this plan.</p>
-                  ) : !props.canManage ? (
-                    <Button variant="secondary" disabled className="w-full">
-                      Choose {tier.name}
-                    </Button>
-                  ) : (
-                    <Button
-                      variant={tier.highlight ? "primary" : "secondary"}
-                      disabled={busy}
-                      className="w-full"
-                      onClick={() =>
-                        changing
-                          ? previewChange.mutate({ tenantId: props.tenantId, tierKey: tier.key, interval, currency })
-                          : adding
-                          ? previewAdd.mutate({ tenantId: props.tenantId, tierKey: tier.key, interval, currency })
-                          : simulated
-                          ? simulate.mutate({
-                              tenantId: props.tenantId,
-                              tierKey: tier.key,
-                              interval,
-                              currency,
-                            })
-                          : subscribe.mutate({
-                              tenantId: props.tenantId,
-                              tierKey: tier.key,
-                              interval,
-                              currency,
-                            })
-                      }
-                    >
-                      {busy ? "Working…" : changing ? `Switch to ${tier.name}` : adding ? `Add ${tier.name}` : `Choose ${tier.name}`}
-                    </Button>
-                  )}
-                </div>
-              </CardBody>
-            </Card>
-          );
-        })}
-      </div>
-
-      {!props.canManage && (
-        <p className="max-w-[62ch] text-sm text-ink-muted">
-          Only the owner of this __TENANT_LABEL_LOWER__ can change its plan.
-        </p>
-      )}
+      {!props.canManage && <p className="max-w-[62ch] text-sm text-ink-muted">{props.ownerOnly}</p>}
     </div>
-  );
-}
-
-/** A small tick in the accent, for "Everything included" and the plan's numbers. */
-function CheckMark() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 20 20" className="mt-0.5 size-4 shrink-0 text-accent" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M4.5 10.5l3.5 3.5 7.5-8" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
   );
 }

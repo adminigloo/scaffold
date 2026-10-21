@@ -49,6 +49,22 @@ function subscription(
 }
 
 describe("subscriptionSnapshot", () => {
+  it("stripe 0.7: carries what each item is ACTUALLY charged — its Price's amount times its quantity", () => {
+    const snapshot = subscriptionSnapshot(subscription());
+    expect(snapshot.items[0]?.amountMinor).toBe(2900n);
+    expect(subscriptionSnapshot(subscription({}, { quantity: 3 })).items[0]?.amountMinor).toBe(8700n);
+    // An old Price still billing someone after a repricing: the amount is the item's own, never the record's.
+    const old = subscriptionSnapshot(
+      subscription({}, { price: { id: "price_old", object: "price", currency: "usd", unit_amount: 1900, recurring: { interval: "month" } } as unknown as Stripe.Price }),
+    );
+    expect(old.items[0]?.amountMinor).toBe(1900n);
+    // NEGATIVE CONTROL: no whole unit amount (tiered or metered) is unknown, never 0.
+    const tiered = subscriptionSnapshot(
+      subscription({}, { price: { id: "price_tiered", object: "price", currency: "usd", unit_amount: null, recurring: { interval: "month" } } as unknown as Stripe.Price }),
+    );
+    expect(tiered.items[0]?.amountMinor).toBeNull();
+  });
+
   it("reads the period off the ITEM, which is where it lives now", () => {
     const snapshot = subscriptionSnapshot(subscription());
     expect(snapshot.currentPeriodStart).toEqual(new Date("2026-03-01T00:00:00Z"));

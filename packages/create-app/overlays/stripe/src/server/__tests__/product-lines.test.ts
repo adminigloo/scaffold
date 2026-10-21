@@ -3,8 +3,6 @@ import { and, eq, sql } from "drizzle-orm";
 import type { Principal } from "__SCOPE__/auth";
 import { users } from "__SCOPE__/auth/schema";
 import { entitlements, plans as planTable, subscriptions } from "__SCOPE__/billing/schema";
-import { productGrants, products, productVariants } from "__SCOPE__/catalog/schema";
-import { FIRM_WIDE } from "__SCOPE__/permissions";
 import { addLineIdempotencyKey, subscriptionSnapshot, type StripeSubscriptionSnapshot } from "__SCOPE__/stripe";
 import { tenants } from "__SCOPE__/tenancy/schema";
 import { createScaffoldContext } from "__SCOPE__/trpc";
@@ -35,8 +33,9 @@ import { createCallerFactory } from "@/server/trpc";
  *   (review fixes) a dropped line added back is a NEW add, never a replay of
  *     the first one's stored answer; a line is granted only from a fresh
  *     read; a line on a repriced tier's old Price is never ended while Stripe
- *     bills it; a shop subscription never blocks a plan; a member's own
- *     billing never lands on a company's customer
+ *     bills it; a person's own Stripe customer is adopted only for
+ *     their own account, never as a company's (a shop's recurring products,
+ *     in a project with a shop: src/server/__tests__/shop-lines.test.ts)
  *
  * Every rule is shown with its negative control beside it.
  */
@@ -580,16 +579,6 @@ async function ownWorkspace(o: Owner): Promise<boolean> {
   return row?.kind === "personal" && row.owner === o.principal.userId;
 }
 
-/** A shop product sold monthly, as the catalog admin would make it. */
-async function monthlyBox(slug: string): Promise<string> {
-  const [product] = await db.insert(products).values({ tenantId: FIRM_WIDE, slug, name: "Monthly box", kind: "subscription", status: "active" }).returning({ id: products.id });
-  const [variant] = await db
-    .insert(productVariants)
-    .values({ productId: product!.id, name: "Monthly", priceMinor: 900n, currency: "usd", interval: "month", stripePriceId: `price_${slug}` })
-    .returning({ id: productVariants.id });
-  await db.insert(productGrants).values({ variantId: variant!.id, kind: "entitlement", config: { feature: "box_access", limit: 1 } });
-  return variant!.id;
-}
 
 describe("REVIEW FIX: adding a dropped line back is a new add — never the first add's replayed answer", () => {
   it("add, drop, re-add WITH THE FIRST PREVIEW'S DATE: Stripe really adds (and charges) the item, and only then is Sports granted", async () => {
@@ -770,57 +759,7 @@ describe("REVIEW FIX: a paid line on a repriced tier's OLD Price is never ended 
   });
 });
 
-describe("REVIEW FIX: a shop subscription never shuts anyone out of a plan", () => {
-  it("someone with a monthly box from the shop can still subscribe to a plan; a live PLAN at Stripe still refuses (never two)", async () => {
-    const p = await owner("ext_fix_shop", "shop@fix.test");
-    fake.client = stripeWithIdempotency();
-    const variantId = await monthlyBox("fix-shop-box");
-    const caller = createCaller(createScaffoldContext({ principal: p.principal }));
-    expect((await caller.checkout.createIntent({ variantId, quantity: 1 })).status).toBe("requires_payment");
-    const created = fake.calls.find((c) => c.method === "subscriptions.create")!.args[0] as { customer: string };
-    // In a person's own workspace the box is on the workspace's one customer, the one plans use;
-    // anywhere else, on the person's own.
-    expect(created.customer).toBe((await ownWorkspace(p)) ? `cus_${p.tenantId}` : `cus_person_${p.principal.userId}`);
-    for (const each of fake.subs.values()) if ((each as FakeSub).customer === created.customer) (each as FakeSub).status = "active";
-
-    const out = await caller.billing.subscribeToPlan({ tenantId: p.tenantId, tierKey: "weather-basic", interval: "month", currency: "usd" });
-    expect(out.url).toContain("checkout.stripe.test");
-    const session = fake.calls.find((c) => c.method === "checkout.sessions.create")!.args[0] as { customer: string };
-    expect(session.customer).toBe(`cus_${p.tenantId}`);
-
-    // NEGATIVE CONTROL: a live plan subscription on that customer at Stripe (paid, webhook not in yet) still refuses.
-    stripeSubscription("sub_fix_shop_plan", p.tenantId, [["si_fsp", "weather-basic:month:usd"]]).customer = `cus_${p.tenantId}`;
-    fake.calls.length = 0;
-    await expect(
-      caller.billing.subscribeToPlan({ tenantId: p.tenantId, tierKey: "weather-basic", interval: "month", currency: "usd" }),
-    ).rejects.toMatchObject({ code: "CONFLICT" });
-    expect(fake.calls.some((c) => c.method === "checkout.sessions.create")).toBe(false);
-  });
-});
-
 describe("REVIEW FIX: a company's Stripe customer is the company's, never a member's own", () => {
-  it("(companies) a member's own monthly box goes on the member's customer, and the owner can subscribe the company", async (ctx) => {
-    const o = await owner("ext_fix_co_owner", "owner@fixco.test");
-    if (await ownWorkspace(o)) ctx.skip(); // a personal workspace has no other members to buy for themselves
-    const [mrow] = await db.insert(users).values({ externalId: "ext_fix_co_member", email: "member@fixco.test", displayName: "Member" }).returning();
-    await tenancy.provisionUser({ userId: mrow!.id, email: "member@fixco.test" });
-    const invite = await tenancy.sendInvitation({ actorUserId: o.principal.userId, tenantId: o.tenantId, email: "member@fixco.test", roleKey: "member" });
-    expect((await tenancy.acceptInvitation({ token: invite.token, userId: mrow!.id })).status).toBe("accepted");
-    const member = { userId: mrow!.id, externalId: "ext_fix_co_member", email: "member@fixco.test" };
-
-    fake.client = stripeWithIdempotency();
-    const variantId = await monthlyBox("fix-co-box");
-    await createCaller(createScaffoldContext({ principal: member })).checkout.createIntent({ variantId, quantity: 1 });
-    const created = fake.calls.find((c) => c.method === "subscriptions.create")!.args[0] as { customer: string };
-    expect(created.customer).toBe(`cus_person_${member.userId}`);
-    expect(created.customer).not.toBe(`cus_${o.tenantId}`);
-    for (const each of fake.subs.values()) if ((each as FakeSub).customer === created.customer) (each as FakeSub).status = "active";
-
-    const out = await createCaller(createScaffoldContext({ principal: o.principal })).billing.subscribeToPlan({ tenantId: o.tenantId, tierKey: "weather-basic", interval: "month", currency: "usd" });
-    expect(out.url).toContain("checkout.stripe.test");
-    expect((fake.calls.find((c) => c.method === "checkout.sessions.create")!.args[0] as { customer: string }).customer).toBe(`cus_${o.tenantId}`);
-  });
-
   it("a person's own pre-0.6 shop customer is adopted only for their OWN workspace — never as a company's", async () => {
     const o = await owner("ext_fix_adopt", "adopt@fix.test");
     const own = await ownWorkspace(o);

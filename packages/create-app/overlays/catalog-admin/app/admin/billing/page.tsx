@@ -1,4 +1,4 @@
-import { formatMinor } from "__SCOPE__/catalog";
+import { formatMinor } from "__SCOPE__/billing";
 import { isDbConfigured } from "__SCOPE__/db";
 import { Badge, Card, CardBody, CardHeader, Notice, PageHeader, Table, TBody, TD, TH, THead, TR } from "@/components/ui";
 import { BillingSync } from "@/components/admin/BillingSync";

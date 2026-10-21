@@ -34,6 +34,10 @@ export type { SubscriptionStatus } from "./status.js";
 export {
   definePlans,
   planLineRefs,
+  planOnSale,
+  notOnSaleReason,
+  freeGrantRows,
+  FREE_TIER_REF,
   DEFAULT_PLAN_LINE,
   planAllows,
   planRowKey,
@@ -54,6 +58,8 @@ export type {
   PlanFeatureValueFor,
   PlanFlag,
   PlanFlagDecl,
+  PlanFreeInput,
+  PlanFreeTier,
   PlanLine,
   PlanLineInput,
   PlanLineShape,
@@ -114,6 +120,19 @@ export type { BillingPermission } from "./permissions.js";
  * ./schema.js re-exports it so "@adminigloo/billing/schema" is unchanged.
  */
 export type { PlanInterval } from "./plans.js";
+
+// Billing 0.6: plan prices without the shop's catalog package, and how a plan is shown.
+export { formatMinor, formatPrice } from "./money.js";
+export {
+  planColumns,
+  planIntervals,
+  defaultPlanInterval,
+  planIntervalName,
+  planFeatureBullet,
+  monthsFree,
+  PLAN_LOCALE,
+} from "./presentation.js";
+export type { PlanBullet, PlanColumn, PlanColumnPrice, PlanColumnsOptions } from "./presentation.js";
 
 /**
  * Billing 0.3: where a company stands with its plan, and the one gate every
