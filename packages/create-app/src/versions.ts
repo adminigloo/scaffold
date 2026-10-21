@@ -119,7 +119,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.3.0: title={false} and locale on the store screens (create-app 0.36, the showroom).
   // 0.4.0 (polish 3): `<StoreAdmin actionsInHeader>` — the store page puts "See your store" in its own header.
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company, and sales recorded by hand.
-  commerce: "0.4.0",
+  commerce: "0.4.1",
   // 0.2.0 for the typed plan record. `src/plans.ts` is emitted into every
   // project that sells something and calls `definePlans`, which does not exist
   // in 0.1.x — so a project resolving the old line fails to compile on a file
@@ -236,7 +236,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // inline, which put a fourteenth version in a place no drift test looked at —
   // the exact arrangement the rest of this table exists to replace.
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company (./forget, the proof's planter).
-  testing: "0.3.0",
+  testing: "0.3.1",
   // Field service — first releases, pinned at the workspace versions the drift
   // test reads. The emitted routers/handlers import from each unconditionally
   // for the config that selects it, so a caret over anything older can resolve
