@@ -95,3 +95,16 @@ export type { ConnectAuthorizeResult, CreateConnectAdminHandlersOptions, Payment
 export { CONNECT_COUNTRIES } from "./connect-handlers.js";
 export { STRIPE_CONNECT_ADMIN_ROUTES, STRIPE_CONNECT_ADMIN_ROUTE_PERMISSIONS, stripeConnectPermissions } from "./connect-routes.js";
 export type { StripeConnectAdminRouteKind, StripeConnectRoute } from "./connect-routes.js";
+// stripe 0.5: when Stripe says no — the owner's words, Stripe's own for staff, the fix link, and what to log.
+export {
+  CARD_PAYMENTS_SWITCHED_OFF,
+  SOMETHING_ON_OUR_SIDE,
+  STRIPE_BUSY,
+  STRIPE_NOT_ANSWERING,
+  STRIPE_REFUSED,
+  describeStripeFailure,
+  isStripeError,
+  stripeFailureWire,
+  stripeNotSetUp,
+} from "./failure.js";
+export type { StripeFailure, StripeFailureKind, StripeSetupProblem } from "./failure.js";

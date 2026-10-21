@@ -71,7 +71,7 @@ describe("createInvoicingClient", () => {
         throw new TypeError("offline");
       }) as unknown as typeof fetch,
     });
-    expect(await dead.status()).toEqual({ ok: false, error: { code: "network", message: "Couldn't reach the server.", status: 0 } });
+    expect(await dead.status()).toEqual({ ok: false, error: { code: "network", message: "Couldn't reach the server. Check your internet connection and try again.", status: 0 } });
     const signedOut = createInvoicingClient({ baseUrl: "/x", fetch: fakeFetch(() => ({ status: 401, text: "Sign in" })).fetch });
     expect((await signedOut.get("i")).ok === false && (await signedOut.get("i")).ok).toBe(false);
     const res = await signedOut.get("i");
@@ -79,6 +79,8 @@ describe("createInvoicingClient", () => {
     const html = createInvoicingClient({ baseUrl: "/x", fetch: fakeFetch(() => ({ status: 502, text: "<html>" })).fetch });
     const r2 = await html.get("i");
     expect(r2.ok ? null : r2.error.code).toBe("bad_response");
+    // A proxy's 502 page says what it means, never "Unexpected answer (502)" (polish 3).
+    expect(r2.ok ? null : r2.error.message).toBe("The site isn't answering right now. Please try again in a minute.");
     const odd = createInvoicingClient({ baseUrl: "/x", fetch: fakeFetch(() => ({ body: { nope: 1 } })).fetch });
     const r3 = await odd.get("i");
     expect(r3.ok ? null : r3.error.code).toBe("bad_response");

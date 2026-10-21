@@ -1,10 +1,14 @@
-import { InvoicesLedger } from "__SCOPE__/invoicing-widget/admin";
+import { InvoicesLedger, InvoicesLedgerActions } from "__SCOPE__/invoicing-widget/admin";
 import { PaymentsAttention } from "@/components/PaymentsAttention";
-import { PageHeader } from "@/components/ui";
+import { PageHeader, buttonClass } from "@/components/ui";
 import { currentPrincipal } from "@/server/auth";
 import { loadStaffPermissions } from "@/server/permissions";
 
 export const dynamic = "force-dynamic";
+
+/** The ledger's filters a link may open on (?status=…). */
+type InvoiceFilter = "draft" | "sent" | "viewed" | "partial" | "overdue" | "paid" | "void";
+const INVOICE_FILTERS: ReadonlySet<string> = new Set<InvoiceFilter>(["draft", "sent", "viewed", "partial", "overdue", "paid", "void"]);
 
 /**
  * The business's invoices: raise one (or open the one an accepted quote
@@ -25,16 +29,32 @@ export const dynamic = "force-dynamic";
  * already resolved (the Messages page's rule), so someone who may only look
  * isn't offered "New invoice"; the server refuses it anyway without the key.
  */
-export default async function InvoicesPage() {
+export default async function InvoicesPage({
+  searchParams,
+}: {
+  readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const principal = await currentPrincipal();
   const can = principal ? await loadStaffPermissions({ principal }) : null;
+  const manage = can?.can("staff.invoices.manage") ?? false;
+  // ?status=overdue (or any filter of the ledger's) opens on it.
+  const { status } = await searchParams;
+  const initialFilter = typeof status === "string" && INVOICE_FILTERS.has(status) ? (status as InvoiceFilter) : null;
   return (
     <>
-      <PageHeader title="Invoices" description="Raise an invoice, send it, and record what customers pay." />
+      {/* New invoice beside the title, like every page's primary action (polish 3). */}
+      <PageHeader
+        title="Invoices"
+        description="Raise an invoice, send it, and record what customers pay."
+        actions={manage ? <InvoicesLedgerActions className={buttonClass("primary")} /> : null}
+      />
       <InvoicesLedger
         baseUrl="/api/admin/invoices"
         invoiceHref="/admin/invoices/{id}"
-        canManage={can?.can("staff.invoices.manage") ?? false}
+        canManage={manage}
+        initialFilter={initialFilter}
+        actionsInHeader
+        title={false}
       />
       {/* Card payments that need you: refunds, disputes, money that couldn't be recorded as it was. */}
       {can?.can("staff.invoices.manage") ? (

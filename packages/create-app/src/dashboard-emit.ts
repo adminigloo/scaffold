@@ -77,19 +77,21 @@ export function renderDashboardNumbers(answers: Answers): string {
         // visit says "Done" in its place rather than moving to the bottom
         // (an 8:00 AM below a 4:00 PM read as a mistake).
         const shown = [...booked].sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
+        // The schedule opened on today's day, not wherever it was left.
+        const todayHref = \`/app/schedule?date=\${today}&view=day\`;
         return {
           number: {
             key: "today",
             label: "Today",
             value: count(visits),
             detail: waiting > 0 ? \`\${visits === 1 ? "visit" : "visits"} · \${count(waiting)} waiting for your answer\` : visits === 1 ? "visit on the schedule" : "visits on the schedule",
-            href: "/app/schedule",
+            href: todayHref,
           },
           list: {
             key: "visits",
             title: "Today's visits",
             empty: "No visits today",
-            href: "/app/schedule",
+            href: todayHref,
             rows: shown.slice(0, DASHBOARD_LIST_ROWS).map((visit) => {
               const note = VISIT_NOTES[visit.status];
               return {
@@ -126,13 +128,14 @@ export function renderDashboardNumbers(answers: Answers): string {
             label: "New leads",
             value: count(leads),
             detail: leads === 1 ? "estimate request waiting for a quote" : "estimate requests waiting for a quote",
-            href: "/app/estimates",
+            href: "/app/estimates?filter=leads",
           },
           list: {
             key: "leads",
             title: "Newest leads",
             empty: "No new leads",
-            href: "/app/estimates",
+            // "See all" opens the Estimates page on Leads, the same list.
+            href: "/app/estimates?filter=leads",
             rows: found.rows.map((row) => ({
               id: row.id,
               href: \`/app/estimates/\${encodeURIComponent(row.id)}\`,
@@ -215,7 +218,8 @@ export function renderDashboardNumbers(answers: Answers): string {
             key: "overdue",
             title: "Overdue invoices",
             empty: "No overdue invoices",
-            href: "/app/invoices",
+            // "See all" opens the ledger on Overdue, never the whole ledger.
+            href: "/app/invoices?status=overdue",
             rows: found.map((invoice) => {
               // Days on the ${noun}'s own calendar since the day it was due.
               const late = Math.max(1, daysBetween(todayInZone(invoice.dueDate, timeZone), today));

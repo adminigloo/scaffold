@@ -89,7 +89,7 @@ describe("createSchedulingClient", () => {
       }) as typeof fetch,
     });
     const result = await client.config();
-    expect(result).toEqual({ ok: false, error: { code: "network", message: "Couldn't reach the server.", status: 0 } });
+    expect(result).toEqual({ ok: false, error: { code: "network", message: "Couldn't reach the server. Check your internet connection and try again.", status: 0 } });
   });
 
   it("a proxy's HTML error page is bad_response, never a TypeError", async () => {

@@ -53,6 +53,7 @@ export const storeCss = `
 .aics-h1{font-size:1.5rem;font-weight:600;margin:0;color:var(--aics-ink)}
 .aics-h2{font-size:1.125rem;font-weight:600;margin:0 0 .5rem;color:var(--aics-ink)}
 .aics-muted{color:var(--aics-muted);font-size:.875rem}
+.aics-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0}
 .aics-row{display:flex;flex-wrap:wrap;gap:.75rem;align-items:center}
 .aics-stack{display:flex;flex-direction:column;gap:1rem}
 .aics-card{border:1px solid var(--aics-line);border-radius:var(--radius-card,.75rem);padding:1rem;background:var(--aics-surface);color:var(--aics-ink);box-shadow:var(--shadow-card,none)}

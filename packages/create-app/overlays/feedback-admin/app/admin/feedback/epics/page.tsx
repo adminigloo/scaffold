@@ -1,7 +1,8 @@
-import { FeedbackEpics } from "__SCOPE__/feedback/epics";
+import Link from "next/link";
+import { FeedbackEpics, FeedbackEpicsActions } from "__SCOPE__/feedback/epics";
 import { currentPrincipal } from "@/server/auth";
 import { loadStaffPermissions } from "@/server/permissions";
-import { Notice, PageHeader } from "@/components/ui";
+import { Notice, PageHeader, buttonClass } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -26,12 +27,24 @@ export default async function FeedbackEpicsPage() {
   }
   return (
     <>
-      <PageHeader title="Epics" description="Bigger pieces of work, each with the feedback tickets that belong to it." />
+      <PageHeader
+        title="Epics"
+        description="Bigger pieces of work, each with the feedback tickets that belong to it."
+        actions={
+          <>
+            <Link href="/admin/feedback" className={buttonClass("secondary")}>
+              Back to the board
+            </Link>
+            {can.can("staff.feedback.manage") ? <FeedbackEpicsActions className={buttonClass("primary")} /> : null}
+          </>
+        }
+      />
       <FeedbackEpics
         baseUrl="/api/admin/feedback"
         canManage={can.can("staff.feedback.manage")}
         epicsHref="/admin/feedback/epics"
         boardHref="/admin/feedback"
+        actionsInHeader
       />
     </>
   );

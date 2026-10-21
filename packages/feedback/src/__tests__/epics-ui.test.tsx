@@ -16,6 +16,7 @@ import {
   epicStatusChoices,
   FeedbackEpic,
   FeedbackEpics,
+  FeedbackEpicsActions,
   type FeedbackEpicDetailWire,
   type FeedbackEpicsTransport,
   type FeedbackEpicWire,
@@ -267,6 +268,22 @@ describe("./epics: the list", () => {
     await submit(container.querySelector(".aib-dialog form"));
     expect(transport.of("createEpic")[0]?.args[0]).toEqual({ name: "Gift cards", description: null, targetDate: null, color: "teal", ownerId: "u1" });
     expect(text(container.querySelector(".aib-notice"))).toContain("“Gift cards” is made");
+  });
+
+  it("actionsInHeader: no heading or buttons of its own; the page header's <FeedbackEpicsActions> opens New epic (polish 3)", async () => {
+    const transport = fake<FeedbackEpicsTransport>({ epics: () => [], people: () => ({ people: [], me: null }) });
+    const { container } = await mount(
+      <>
+        <header data-host="">
+          <FeedbackEpicsActions className="host-primary" />
+        </header>
+        <FeedbackEpics transport={transport.target} epicsHref="/app/feedback/epics" boardHref="/app/feedback" actionsInHeader />
+      </>,
+    );
+    expect(container.querySelector(".aib-epics-head")).toBeNull();
+    const header = container.querySelector<HTMLElement>("[data-host]")!;
+    await click(button(header, "New epic"));
+    expect(container.querySelector(".aib-dialog")).not.toBeNull();
   });
 
   it("the dialog keeps what was typed and shows the server's sentence when refused; Nobody yet sends no owner", async () => {

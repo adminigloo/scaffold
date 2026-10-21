@@ -93,7 +93,7 @@ describe("createEstimatorClient", () => {
 
   it("never throws: a dead network, an HTML page, a bad shape and the contract's error body each come back as a value", async () => {
     const dead = createEstimatorClient({ baseUrl: "/api/estimator", fetch: (async () => Promise.reject(new TypeError("Failed to fetch"))) as typeof fetch });
-    expect(await dead.config()).toEqual({ ok: false, error: { code: "network", message: "Couldn't reach the server.", status: 0 } });
+    expect(await dead.config()).toEqual({ ok: false, error: { code: "network", message: "Couldn't reach the server. Check your internet connection and try again.", status: 0 } });
 
     const html = createEstimatorClient({ baseUrl: "/api/estimator", fetch: (async () => new Response("<html>Bad gateway</html>", { status: 502 })) as typeof fetch });
     const h = await html.calculate({ productId: "p" });

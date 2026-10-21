@@ -2,7 +2,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { InvoicingTransport } from "../admin/client.js";
-import { InvoicesLedger } from "../admin/InvoicesLedger.js";
+import { InvoicesLedger, InvoicesLedgerActions } from "../admin/InvoicesLedger.js";
 import * as shared from "../admin/shared.js";
 import { parseDollars, parsePercent, percentText } from "../money.js";
 import type { CreateInvoiceBody } from "../types.js";
@@ -68,6 +68,45 @@ describe("<InvoicesLedger>", () => {
     await click(button(container, "Partly paid"));
     expect(fake.of("list").at(-1)!.args[0]).toEqual({ status: "partial" });
     expect(button(container, "Partly paid")!.getAttribute("aria-pressed")).toBe("true");
+    await unmount();
+  });
+
+  it("opens on the filter it's given (the dashboard's 'See all' → ?status=overdue), and an unknown one opens All (polish 3)", async () => {
+    const fake = ledger();
+    const { container, unmount } = await mount(<InvoicesLedger transport={fake.transport} initialFilter="overdue" />);
+    expect(fake.of("list")[0]!.args[0]).toEqual({ status: "overdue" });
+    expect(button(container, "Overdue")!.getAttribute("aria-pressed")).toBe("true");
+    await unmount();
+    const odd = ledger();
+    const other = await mount(<InvoicesLedger transport={odd.transport} initialFilter={"nonsense" as never} />);
+    expect(odd.of("list")[0]!.args[0]).toEqual({});
+    expect(button(other.container, "All")!.getAttribute("aria-pressed")).toBe("true");
+    await other.unmount();
+  });
+
+  it("actionsInHeader: no New invoice of its own; the page header's <InvoicesLedgerActions> opens the form (polish 3)", async () => {
+    const fake = ledger();
+    const { container, unmount } = await mount(
+      <>
+        <header data-host-header="">
+          <InvoicesLedgerActions className="host-primary" />
+        </header>
+        <InvoicesLedger transport={fake.transport} title={false} actionsInHeader />
+      </>,
+    );
+    const ledgerRoot = container.querySelector("[data-aiiw-ledger]")!;
+    expect(button(ledgerRoot as HTMLElement, "New invoice")).toBeNull();
+    expect(ledgerRoot.querySelector(".aiiw-spread")).toBeNull();
+    const header = container.querySelector<HTMLElement>("[data-host-header]")!;
+    const action = button(header, "New invoice")!;
+    expect(action.className).toBe("host-primary");
+    await click(action);
+    expect(container.querySelector("[data-aiiw-new]")).not.toBeNull();
+    // While the form is open the header's button waits.
+    expect(button(header, "New invoice")!.disabled).toBe(true);
+    await click(button(container.querySelector<HTMLElement>("[data-aiiw-new]")!, "Cancel"));
+    expect(container.querySelector("[data-aiiw-new]")).toBeNull();
+    expect(button(header, "New invoice")!.disabled).toBe(false);
     await unmount();
   });
 

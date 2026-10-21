@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ScheduleCalendar } from "__SCOPE__/scheduling-widget/admin";
+import { ScheduleCalendar, ScheduleCalendarActions } from "__SCOPE__/scheduling-widget/admin";
 import { CompanyGate } from "@/components/CompanyGate";
 import { PageHeader, WORK_MAIN, buttonClass } from "@/components/ui";
 import { companyLinksFor } from "@/server/company-links";
@@ -29,8 +29,10 @@ export const dynamic = "force-dynamic";
  *     server would refuse. The server still decides; this only stops offering.
  *
  * ?date=YYYY-MM-DD opens the calendar on that day (how a visit listed on an
- * estimate links here), and ?visit={id} opens that visit (how an alert about
- * it links here; Tenancy 2b-1). A visit's "Photos and files" opens its own
+ * estimate links here), ?view=day or ?view=week picks the view (the
+ * dashboard's "Today" opens today's day), and ?visit={id} opens that visit
+ * (how an alert about it links here; Tenancy 2b-1). "New visit" sits in the
+ * page header, beside the title, like every work page's primary action. A visit's "Photos and files" opens its own
  * page (VISIT_FILES_HREF, generated: nothing without file storage).
  */
 export default async function CompanySchedulePage({
@@ -38,8 +40,9 @@ export default async function CompanySchedulePage({
 }: {
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const { date, visit } = await searchParams;
+  const { date, visit, view } = await searchParams;
   const initialDate = typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : undefined;
+  const initialView = view === "day" || view === "week" ? view : undefined;
   // An id's shape only (1–128 of letters, digits, _ and -); the calendar asks
   // THIS company's routes for it, so another company's id is simply not found.
   const initialVisitId = typeof visit === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(visit) ? visit : undefined;
@@ -51,16 +54,21 @@ export default async function CompanySchedulePage({
             title="Schedule"
             description="Every crew's visits, in your time zone. Online requests wait in Requests for your answer; drag a visit to move it."
             actions={
-              <Link href="/app/schedule/settings" className={buttonClass("secondary")}>
-                Schedule settings
-              </Link>
+              <>
+                <Link href="/app/schedule/settings" className={buttonClass("secondary")}>
+                  Schedule settings
+                </Link>
+                {can.includes("schedule.manage") ? <ScheduleCalendarActions className={buttonClass("primary")} /> : null}
+              </>
             }
           />
           <ScheduleCalendar
             baseUrl={`/api/app/${company.id}/schedule`}
             bookingPageUrl={companyLinksFor(company.slug).bookVisit()}
             initialDate={initialDate}
+            initialView={initialView}
             initialVisitId={initialVisitId}
+            actionsInHeader
             visitFilesHref={VISIT_FILES_HREF}
             canManage={can.includes("schedule.manage")}
             showTechnical={isStaff}

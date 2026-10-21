@@ -9,7 +9,7 @@ export type { InvoiceViewProps } from "./InvoiceView.js";
 export { createInvoicePublicClient } from "./client.js";
 export type { InvoicePublicTransport } from "./client.js";
 export type { ClientError, Result, TransportOptions } from "./http.js";
-export { formatMoney, formatDate } from "./money.js";
+export { formatMoney, formatDate, paymentWords } from "./money.js";
 export { invoicingWidgetCss, injectInvoicingStyles } from "./styles.js";
 export type {
   BusinessWire,

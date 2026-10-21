@@ -181,7 +181,11 @@ describe("createTenancyClient", () => {
   it("an HTML error page or an unknown shape is bad_response, in plain words", async () => {
     const html = fakeFetch(() => new Response("<html>502 Bad Gateway</html>", { status: 502, headers: { "content-type": "text/html" } }));
     const a = await createTenancyClient({ baseUrl: "/x", fetch: html.fetchImpl }).team("t");
-    expect(a).toEqual({ ok: false, error: { code: "bad_response", message: BAD_RESPONSE_MESSAGE, status: 502 } });
+    // polish 3: a proxy's 502 says what it means; the generic sentence is left for a 500.
+    expect(a).toEqual({ ok: false, error: { code: "bad_response", message: "The site isn't answering right now. Please try again in a minute.", status: 502 } });
+    const crash = fakeFetch(() => new Response("<html>500</html>", { status: 500, headers: { "content-type": "text/html" } }));
+    const a2 = await createTenancyClient({ baseUrl: "/x", fetch: crash.fetchImpl }).team("t");
+    expect(a2).toEqual({ ok: false, error: { code: "bad_response", message: BAD_RESPONSE_MESSAGE, status: 500 } });
     const odd = fakeFetch(() => json({ members: "nope" }));
     const b = await createTenancyClient({ baseUrl: "/x", fetch: odd.fetchImpl }).team("t");
     expect(!b.ok && b.error.code).toBe("bad_response");

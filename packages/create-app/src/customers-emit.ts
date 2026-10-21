@@ -518,9 +518,9 @@ export const POST = handle;
 
 function renderCompanyPage(answers: Answers): string {
   const noun = tenantLabel(answers).toLowerCase();
-  return `import { CustomersAdmin } from "${answers.scope}/customers/admin";
+  return `import { CustomersActions, CustomersAdmin } from "${answers.scope}/customers/admin";
 import { CompanyGate } from "@/components/CompanyGate";
-import { PageHeader, WORK_MAIN } from "@/components/ui";
+import { PageHeader, WORK_MAIN, buttonClass } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -531,7 +531,8 @@ const RECORD_HREFS = ${recordHrefs(answers)};
  * The ${noun}'s customers (create-app 0.35): the list with search, and one
  * customer (?customer={id}) with everything of theirs on one timeline. The
  * package's screen over /api/app/{id}/customers, which checks the person's
- * permission on every call.
+ * permission on every call. Add customer, Import and Export sit in the page
+ * header, beside the title, like every work page's actions (polish 3).
  */
 export default async function CompanyCustomersPage({ searchParams }: { readonly searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const query = await searchParams;
@@ -546,6 +547,15 @@ export default async function CompanyCustomersPage({ searchParams }: { readonly 
             <PageHeader
               title="Customers"
               description="Everyone who has asked for a quote, booked, been invoiced or bought from you, each with their whole history."
+              actions={
+                can.includes("customers.manage") ? (
+                  <CustomersActions
+                    baseUrl={\`/api/app/\${company.id}/customers\`}
+                    primaryClassName={buttonClass("primary")}
+                    secondaryClassName={buttonClass("secondary")}
+                  />
+                ) : null
+              }
             />
           )}
           <CustomersAdmin
@@ -554,6 +564,7 @@ export default async function CompanyCustomersPage({ searchParams }: { readonly 
             customerId={customerId}
             recordHrefs={RECORD_HREFS}
             canManage={can.includes("customers.manage")}
+            actionsInHeader
             title={false}
             locale={locale}
           />

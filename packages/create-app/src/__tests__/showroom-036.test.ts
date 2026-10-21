@@ -218,6 +218,6 @@ describe("upgrading to 0.36", () => {
     expect(notes).toContain("Your public page");
     expect(notes).toContain("HEADLINE_FEATURES");
     expect(notes).toContain("sending allowance");
-    expect(upgradeNotesFor(answers(EVERYTHING), "0.36.1")).toEqual([]);
+    expect(upgradeNotesFor(answers(EVERYTHING), "0.36.2")).toEqual([]);
   });
 });

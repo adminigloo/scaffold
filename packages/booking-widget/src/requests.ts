@@ -600,6 +600,9 @@ export function friendlyError(error: BookingError, context: ErrorContext, facts?
       return "Something about this booking link isn't right. Please refresh the page.";
     case "server":
     default:
+      // A proxy's or platform's own answer says what it means (polish 3); the generic line is for a real crash.
+      if (error.status === 502 || error.status === 503) return "The booking service isn't answering right now. Please try again in a minute.";
+      if (error.status === 504 || error.status === 408) return "The booking service took too long to answer. Please try again in a minute.";
       return "Something went wrong on our side. Please try again.";
   }
 }

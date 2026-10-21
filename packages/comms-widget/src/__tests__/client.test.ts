@@ -95,6 +95,6 @@ describe("createCommsClient", () => {
       throw new TypeError("Failed to fetch");
     }) as unknown as typeof globalThis.fetch;
     const res = await createCommsClient({ baseUrl: "/x", fetch }).runDue();
-    expect(res).toEqual({ ok: false, error: { code: "network", message: "Couldn't reach the server.", status: 0 } });
+    expect(res).toEqual({ ok: false, error: { code: "network", message: "Couldn't reach the server. Check your internet connection and try again.", status: 0 } });
   });
 });

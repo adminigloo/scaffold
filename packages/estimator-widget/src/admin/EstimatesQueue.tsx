@@ -5,6 +5,7 @@ import { CameraIcon, Loading, Notice, SparkIcon, useMounted } from "../parts.js"
 import { ESTIMATE_FILTERS } from "./client.js";
 import { adminErrorText, FILTER_EMPTY, FILTER_LABEL, showsRange, SOURCE_LABEL, statusLabel, timeAgo } from "./helpers.js";
 import type { EstimateFilter, EstimateListRow } from "./types.js";
+import { pageActionChannel } from "./page-actions.js";
 import { AdminFrame, LoadError, useAdminBasics, useAdminTransport, type AdminChromeProps } from "./ui.js";
 import type { EstimateSource } from "../types.js";
 
@@ -34,8 +35,19 @@ export interface EstimatesQueueProps extends AdminChromeProps {
   estimateHref?: string | ((id: string) => string);
   /** Refresh when the window regains focus (someone answered a quote while you were away). Default true. */
   pollOnFocus?: boolean;
-  /** The filter to start on. Default "leads". */
+  /**
+   * The filter to start on. Default "leads". polish 3: a host page reads it
+   * from its URL (`/app/estimates?filter=leads`, the dashboard's "See all");
+   * a value that isn't one of the filters opens Leads, and a new value (the
+   * page's URL changed) moves the list to it.
+   */
   initialFilter?: EstimateFilter;
+  /**
+   * polish 3: the host page's header carries "New estimate" — render
+   * <EstimatesQueueActions> there — so the queue draws none of its own.
+   * Default false.
+   */
+  actionsInHeader?: boolean;
   /**
    * Default true; false = read-only (Tenancy 2a: a company's viewer, who may
    * look at estimates but not work them): no "New estimate". The server
@@ -54,13 +66,53 @@ export interface EstimatesQueueProps extends AdminChromeProps {
 
 const STATUS_ICON: Record<string, string> = { accent: "●", muted: "○", warn: "◔", ok: "✓", danger: "✕" };
 
+/** One of the filters, else Leads. */
+function filterFrom(value: string | null | undefined): EstimateFilter {
+  return (ESTIMATE_FILTERS as readonly string[]).includes(value ?? "") ? (value as EstimateFilter) : "leads";
+}
+
+/** The queue's header button, pressed in the host page's header (<EstimatesQueueActions>). */
+const queueActions = pageActionChannel<"new">("aiew-queue");
+
+export interface EstimatesQueueActionsProps {
+  /** The host's button class (its page header's primary button). Default the widget's own. */
+  className?: string;
+}
+
+/**
+ * "New estimate" for the host page's header (polish 3), beside its title like
+ * every other page's primary action. It starts a blank estimate through the
+ * queue below (which shows any refusal) and says "Starting…" while it does.
+ * Render it only for someone who may work estimates, with `actionsInHeader`
+ * on the <EstimatesQueue>.
+ */
+export function EstimatesQueueActions(props: EstimatesQueueActionsProps) {
+  const { state, press } = queueActions.useHeader();
+  const button = state.new ?? {};
+  if (button.hidden) return null;
+  return (
+    <button
+      type="button"
+      className={props.className ?? "aiew-btn aiew-btn-primary"}
+      disabled={button.busy === true || button.disabled === true}
+      aria-busy={button.busy || undefined}
+      data-aiew-header-action="new"
+      onClick={() => press("new")}
+    >
+      {button.busy ? "Starting…" : "New estimate"}
+    </button>
+  );
+}
+
 export function EstimatesQueue(props: EstimatesQueueProps) {
   const transport = useAdminTransport(props.transport, props.baseUrl);
   const basics = useAdminBasics(transport);
   const ids = useId();
   const mounted = useMounted();
   const locale = props.locale ?? basics.settings?.locale ?? "en-US";
-  const [filter, setFilter] = useState<EstimateFilter>(props.initialFilter ?? "leads");
+  const [filter, setFilter] = useState<EstimateFilter>(() => filterFrom(props.initialFilter));
+  // The host page moved to another ?filter= (a link on the same page): follow it.
+  useEffect(() => setFilter(filterFrom(props.initialFilter)), [props.initialFilter]);
   const [source, setSource] = useState<EstimateSource | "">("");
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
@@ -124,6 +176,7 @@ export function EstimatesQueue(props: EstimatesQueueProps) {
   };
 
   const newEstimate = async () => {
+    if (creating) return;
     setCreating(true);
     setCreateError(null);
     const res = await transport.createEstimate({});
@@ -137,17 +190,22 @@ export function EstimatesQueue(props: EstimatesQueueProps) {
   };
 
   const emptyText = debounced ? `Nothing matches “${debounced}”.` : FILTER_EMPTY[filter];
+  const inHeader = props.actionsInHeader === true;
+  queueActions.useScreen(inHeader && props.canManage !== false, () => void newEstimate(), { new: { busy: creating } });
 
   return (
     <AdminFrame chrome={props} basics={basics} data={{ "aiew-queue": rows ? "ready" : error ? "error" : "loading" }}>
-      <div className="aiew-admin-head" data-titled={props.title === false ? undefined : ""}>
-        {props.title === false ? null : <h2 className="aiew-admin-title">{props.title ?? "Estimates"}</h2>}
-        {props.canManage !== false ? (
-          <button type="button" className="aiew-btn aiew-btn-primary" onClick={() => void newEstimate()} disabled={creating} aria-busy={creating || undefined}>
-            {creating ? "Starting…" : "New estimate"}
-          </button>
-        ) : null}
-      </div>
+      {/* The heading and New estimate — unless the host page's header says both (polish 3). */}
+      {props.title !== false || (props.canManage !== false && !inHeader) ? (
+        <div className="aiew-admin-head" data-titled={props.title === false ? undefined : ""}>
+          {props.title === false ? null : <h2 className="aiew-admin-title">{props.title ?? "Estimates"}</h2>}
+          {props.canManage !== false && !inHeader ? (
+            <button type="button" className="aiew-btn aiew-btn-primary" onClick={() => void newEstimate()} disabled={creating} aria-busy={creating || undefined}>
+              {creating ? "Starting…" : "New estimate"}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {createError ? <Notice tone="error">{createError}</Notice> : null}
       <div className="aiew-search" role="search">
         <label className="aiew-sr" htmlFor={`${ids}-q`}>

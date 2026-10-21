@@ -5,6 +5,6 @@
  *
  *   <CustomersAdmin baseUrl pageHref customerId recordHrefs canManage />
  */
-export { CustomersAdmin, CustomersStyles, ImportPanel, customerBody, importProgressWords, kindWords, recordHref, type CustomersAdminProps } from "./admin/CustomersAdmin.js";
+export { CustomersActions, CustomersAdmin, CustomersStyles, ImportPanel, customerBody, importProgressWords, kindWords, recordHref, type CustomersActionsProps, type CustomersAdminProps } from "./admin/CustomersAdmin.js";
 export { customersCss } from "./admin/styles.js";
 export type * from "./wire.js";

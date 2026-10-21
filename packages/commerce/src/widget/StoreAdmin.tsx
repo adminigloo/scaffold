@@ -24,6 +24,12 @@ export interface StoreAdminProps {
   readonly canManage?: boolean;
   /** Dates in the company's locale. Default "en-US". */
   readonly locale?: string;
+  /**
+   * polish 3: the host page's header carries "See your store" (a link to
+   * `storefrontUrl` beside its title), so the screen draws none of its own.
+   * Default false.
+   */
+  readonly actionsInHeader?: boolean;
 }
 
 type Tab = "products" | "orders" | "settings" | "attention";
@@ -44,17 +50,21 @@ export function StoreAdmin(props: StoreAdminProps) {
   return (
     <section className="aics aics-stack" data-store-admin="">
       <StoreStyles />
-      <header className="aics-row" style={{ justifyContent: props.title === false ? "flex-end" : "space-between" }}>
-        {props.title === false ? null : (
-          <div>
-            <h1 className="aics-h1">{props.title ?? "Store"}</h1>
-            <p className="aics-muted">Sell your own products online. Customers pay by card into your own Stripe account.</p>
-          </div>
-        )}
-        <a className="aics-btn aics-btn-quiet" href={props.storefrontUrl} target="_blank" rel="noreferrer">
-          See your store
-        </a>
-      </header>
+      {props.title === false && props.actionsInHeader ? null : (
+        <header className="aics-row" style={{ justifyContent: props.title === false ? "flex-end" : "space-between" }}>
+          {props.title === false ? null : (
+            <div>
+              <h1 className="aics-h1">{props.title ?? "Store"}</h1>
+              <p className="aics-muted">Sell your own products online. Customers pay by card into your own Stripe account.</p>
+            </div>
+          )}
+          {props.actionsInHeader ? null : (
+            <a className="aics-btn aics-btn-quiet" href={props.storefrontUrl} target="_blank" rel="noopener noreferrer">
+              See your store ↗<span className="aics-sr"> (opens in a new tab)</span>
+            </a>
+          )}
+        </header>
+      )}
       <ErrorNote message={error} />
       {status && !status.takingOrders ? <p className="aics-note">{status.takingOrdersNote}</p> : null}
       <div className="aics-tabs" role="tablist">

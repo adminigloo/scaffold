@@ -78,15 +78,19 @@ function renderCompanyPayments(answers: Answers): string {
   createConnectAdminHandlers,
   createDirectCheckoutSession,
   createStripeClient,
+  describeStripeFailure,
   expireDirectCheckoutSession,
   type StripeClient,
+  type StripeFailure,
 } from "${scope}/stripe";
-${invoicing ? `import { expireCompanyCheckouts, type InvoiceCardPayments } from "${scope}/invoicing";\n` : ""}${store ? `import { expireCompanyStoreCheckouts, type StoreCardPayments } from "${scope}/commerce/store";\n` : ""}import { db } from "@/db";
+${invoicing ? `import { CardPaymentUnavailableError, expireCompanyCheckouts, type InvoiceCardPayments } from "${scope}/invoicing";\n` : ""}${store ? `import { StoreRefusal, expireCompanyStoreCheckouts, type StoreCardPayments } from "${scope}/commerce/store";\n` : ""}import { db } from "@/db";
 import { env } from "@/env";
 import { SITE_NAME } from "@/seo";
 import { companyLinks } from "@/server/company-links";
 import { companyAuthorizer, companyRoutes, type FeatureHandlerOverrides } from "@/server/company-routes";
 import { reportError } from "@/server/error-reporter";
+import { log } from "@/server/logger";
+import { operatorView } from "@/server/operator";
 import { tenancy } from "@/server/tenancy";
 
 /**
@@ -129,7 +133,7 @@ async function expirePage(input: { readonly accountId: string | null; readonly s
   const client = paymentsStripe();
   if (client) await expireDirectCheckoutSession(client, { accountId: input.accountId, sessionId: input.sessionId });
 }
-${invoicing ? `
+${stripeFailureHelpers(true)}${invoicing ? `
 /** Pay now's Stripe side, for @adminigloo/invoicing. */
 export const invoiceCardPayments: InvoiceCardPayments = {
   ready: readyFor,
@@ -149,6 +153,8 @@ export const invoiceCardPayments: InvoiceCardPayments = {
       customerEmail: input.customerEmail,
       expiresAt: input.expiresAt,
       idempotencyKey: \`invoice-checkout:\${input.checkoutId}\`,
+    }).catch((error: unknown) => {
+      throw new CardPaymentUnavailableError(customerWords(reportStripeFailure(error, { tenantId: input.tenantId, step: "invoice-checkout" })));
     });
     if (!session.url) throw new Error(\`Stripe opened checkout \${session.id} with no page to send the customer to.\`);
     return { id: session.id, url: session.url };
@@ -179,6 +185,8 @@ export const storeCardPayments: StoreCardPayments = {
       metadata: { storeCheckoutId: input.checkoutId },
       expiresAt: input.expiresAt,
       idempotencyKey: \`store-checkout:\${input.checkoutId}\`,
+    }).catch((error: unknown) => {
+      throw new StoreRefusal("unavailable", customerWords(reportStripeFailure(error, { tenantId: input.tenantId, step: "store-checkout" })));
     });
     if (!session.url) throw new Error(\`Stripe opened checkout \${session.id} with no page to send the customer to.\`);
     return { id: session.id, url: session.url };
@@ -211,8 +219,49 @@ export function buildPaymentsAdminHandlers(overrides: FeatureHandlerOverrides = 
       await expireCompanyCheckouts(db, invoiceCardPayments, tenantId, report);` : ""}${store ? `
       await expireCompanyStoreCheckouts(db, storeCardPayments, tenantId, report);` : ""}
     },
-    onError: (error, context) => void reportError({ error, source: "route", tenantId: context.tenantId, context: { feature: "payments", route: context.route } }),
+    // Staff of the site also read Stripe's own sentence and the link to fix it.
+    staffDetail: () => operatorView(),
+    // Every failure: a log line with Stripe's words and request id, and a row on /admin/errors.
+    onError: (error, context) => void reportStripeFailure(error, { tenantId: context.tenantId, step: context.route, stripe: context.stripe }),
   });
+}
+`;
+}
+
+/**
+ * The emitted helpers every Stripe call in src/server/payments.ts fails
+ * through (stripe 0.5): one log line (Stripe's own words, its request id) and
+ * one row on /admin/errors per failure — so the owner's "We've told whoever
+ * runs it" is true — and the sentence a CUSTOMER reads when Pay now or Check
+ * out can't open Stripe's page.
+ */
+function stripeFailureHelpers(companies: boolean): string {
+  return `
+/**
+ * A Stripe call failed (${companies ? "Connect Stripe, the payments screen, " : ""}Pay now, Check out): what it
+ * means (\`describeStripeFailure\`), in the log with Stripe's own words and
+ * request id, and on /admin/errors — every time, so whoever runs this site
+ * hears about it before a customer has to say so.
+ */
+export function reportStripeFailure(
+  error: unknown,
+  context: { readonly tenantId: string | null; readonly step: string; readonly stripe?: StripeFailure },
+): StripeFailure {
+  const found = context.stripe ?? describeStripeFailure(error);
+  const stripe = { kind: found.kind, setup: found.setup, message: found.stripeMessage, ...found.detail };
+  log.error(
+    { err: error instanceof Error ? { name: error.name, message: error.message } : String(error), tenantId: context.tenantId, step: context.step, stripe },
+    \`payments: \${context.step} failed (\${found.kind}\${found.setup ? \`: \${found.setup}\` : ""})\`,
+  );
+  void reportError({ error, source: "route", tenantId: context.tenantId, context: { feature: "payments", step: context.step, stripe } });
+  return found;
+}
+
+/** What a customer reads when Stripe's payment page can't open: nothing was charged, and what to do. */
+function customerWords(found: StripeFailure): string {
+  return found.kind === "outage" || found.kind === "busy"
+    ? "The card payment service isn't answering right now, so nothing was charged. Please try again in a few minutes."
+    : "Card payments aren't working here right now, so nothing was charged. Please try again later, or pay another way.";
 }
 `;
 }
@@ -222,8 +271,10 @@ function renderSinglePayments(answers: Answers): string {
   const invoicing = answers.includeInvoicing;
   const store = answers.includeStore;
   const what = [...(invoicing ? ['"Pay now" shows on an invoice'] : []), ...(store ? ["the store takes orders"] : [])].join(" and ");
-  return `import { createDirectCheckoutSession, createStripeClient, expireDirectCheckoutSession, type StripeClient } from "${scope}/stripe";
-${invoicing ? `import type { InvoiceCardPayments } from "${scope}/invoicing";\n` : ""}${store ? `import type { StoreCardPayments } from "${scope}/commerce/store";\n` : ""}import { env } from "@/env";
+  return `import { createDirectCheckoutSession, createStripeClient, describeStripeFailure, expireDirectCheckoutSession, type StripeClient, type StripeFailure } from "${scope}/stripe";
+${invoicing ? `import { CardPaymentUnavailableError, type InvoiceCardPayments } from "${scope}/invoicing";\n` : ""}${store ? `import { StoreRefusal, type StoreCardPayments } from "${scope}/commerce/store";\n` : ""}import { env } from "@/env";
+import { reportError } from "@/server/error-reporter";
+import { log } from "@/server/logger";
 
 /**
  * HOW CUSTOMERS PAY BY CARD (getting paid, parts 1 and 2): on this business's
@@ -249,7 +300,7 @@ async function expirePage(input: { readonly sessionId: string }): Promise<void> 
   const client = paymentsStripe();
   if (client) await expireDirectCheckoutSession(client, { accountId: null, sessionId: input.sessionId });
 }
-${invoicing ? `
+${stripeFailureHelpers(false)}${invoicing ? `
 /** Pay now's Stripe side, for @adminigloo/invoicing: the site's own account (accountId null). */
 export const invoiceCardPayments: InvoiceCardPayments = {
   ready: readyHere,
@@ -268,6 +319,8 @@ export const invoiceCardPayments: InvoiceCardPayments = {
       customerEmail: input.customerEmail,
       expiresAt: input.expiresAt,
       idempotencyKey: \`invoice-checkout:\${input.checkoutId}\`,
+    }).catch((error: unknown) => {
+      throw new CardPaymentUnavailableError(customerWords(reportStripeFailure(error, { tenantId: input.tenantId, step: "invoice-checkout" })));
     });
     if (!session.url) throw new Error(\`Stripe opened checkout \${session.id} with no page to send the customer to.\`);
     return { id: session.id, url: session.url };
@@ -293,6 +346,8 @@ export const storeCardPayments: StoreCardPayments = {
       metadata: { storeCheckoutId: input.checkoutId },
       expiresAt: input.expiresAt,
       idempotencyKey: \`store-checkout:\${input.checkoutId}\`,
+    }).catch((error: unknown) => {
+      throw new StoreRefusal("unavailable", customerWords(reportStripeFailure(error, { tenantId: input.tenantId, step: "store-checkout" })));
     });
     if (!session.url) throw new Error(\`Stripe opened checkout \${session.id} with no page to send the customer to.\`);
     return { id: session.id, url: session.url };
@@ -559,6 +614,31 @@ const COUNTRIES: ReadonlyArray<readonly [code: string, name: string]> = [
   ["NZ", "New Zealand"],
 ];
 
+/** A failed call: the server's sentence for the owner, and — for the site's staff only — Stripe's own words and the fix. */
+interface PanelError {
+  readonly message: string;
+  readonly staff?: { readonly message: string | null; readonly fixUrl: string | null; readonly fixLabel: string | null };
+}
+
+/** The server's own sentence for a failed call, or one of ours when there was no answer to read. */
+async function failureOf(res: Response | null): Promise<PanelError> {
+  if (!res) return { message: "We couldn't reach this site. Check your internet connection and try again." };
+  try {
+    const body = (await res.json()) as { error?: PanelError };
+    if (body?.error?.message) return body.error;
+  } catch {
+    // Not JSON (a proxy's error page): the status says enough.
+  }
+  return {
+    message:
+      res.status >= 500
+        ? "This site couldn't finish that, so nothing was changed. Please try again in a minute."
+        : res.status === 401
+          ? "You've been signed out. Sign in again and try once more."
+          : "That didn't go through. Reload the page and try again.",
+  };
+}
+
 /**
  * Card payments for this ${noun}, in plain words: connected or not, WHICH
  * Stripe account (its name and the last 4 of its id), whether Stripe has
@@ -566,6 +646,11 @@ const COUNTRIES: ReadonlyArray<readonly [code: string, name: string]> = [
  * own Stripe dashboard (payouts, refunds, disputes), Connect (with the
  * country) and Disconnect (confirmed first). The server decides everything;
  * this screen only asks.
+ *
+ * WHEN STRIPE SAYS NO (stripe 0.5): the owner reads the server's sentence
+ * ("Card payments aren't switched on for this site yet. We've told whoever
+ * runs it."); the site's staff also read Stripe's own words and the link to
+ * fix it — which the server sends to staff only.
  */
 export function PaymentsPanel(props: {
   readonly baseUrl: string;
@@ -574,43 +659,41 @@ export function PaymentsPanel(props: {
   readonly staff?: boolean;
 }) {
   const [status, setStatus] = useState<PaymentsStatusWire | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<PanelError | null>(null);
   const [busy, setBusy] = useState(false);
   const [country, setCountry] = useState("US");
   const [confirming, setConfirming] = useState(false);
 
   const load = useCallback(async () => {
-    try {
-      const res = await fetch(\`\${props.baseUrl}/v1/admin/status\`, { cache: "no-store" });
-      const body = (await res.json()) as PaymentsStatusWire & { error?: { message: string } };
-      if (!res.ok) throw new Error(body.error?.message ?? "Something went wrong.");
-      setStatus(body);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Something went wrong.");
+    const res = await fetch(\`\${props.baseUrl}/v1/admin/status\`, { cache: "no-store" }).catch(() => null);
+    if (!res || !res.ok) {
+      setError(await failureOf(res));
+      return;
     }
+    setStatus((await res.json()) as PaymentsStatusWire);
   }, [props.baseUrl]);
   useEffect(() => void load(), [load]);
 
   const post = async (action: "connect" | "disconnect") => {
     setBusy(true);
     setError(null);
-    try {
-      const res = await fetch(\`\${props.baseUrl}/v1/admin/\${action}\`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(action === "connect" ? { country } : {}),
-      });
-      const body = (await res.json()) as { url?: string; error?: { message: string } } & PaymentsStatusWire;
-      if (!res.ok) throw new Error(body.error?.message ?? "Something went wrong.");
-      if (action === "connect" && body.url) {
-        window.location.assign(body.url);
-        return;
-      }
-      setStatus(body);
-      setConfirming(false);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Something went wrong.");
+    const res = await fetch(\`\${props.baseUrl}/v1/admin/\${action}\`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(action === "connect" ? { country } : {}),
+    }).catch(() => null);
+    if (!res || !res.ok) {
+      setError(await failureOf(res));
+      setBusy(false);
+      return;
     }
+    const body = (await res.json()) as { url?: string } & PaymentsStatusWire;
+    if (action === "connect" && body.url) {
+      window.location.assign(body.url);
+      return;
+    }
+    setStatus(body);
+    setConfirming(false);
     setBusy(false);
   };
 
@@ -620,7 +703,22 @@ export function PaymentsPanel(props: {
 
   return (
     <section className="space-y-5">
-      {error ? <p role="alert" className="rounded-control bg-danger-soft p-3 text-sm text-danger">{error}</p> : null}
+      {error ? (
+        <div role="alert" className="space-y-2 rounded-control bg-danger-soft p-3 text-sm text-danger" data-payments-error="">
+          <p>{error.message}</p>
+          {props.staff === true && error.staff ? (
+            // Staff of the site only (the server sends this to nobody else): Stripe's own words and where to fix it.
+            <p className="text-xs text-ink-muted" data-payments-staff-detail="">
+              {error.staff.message ? <>Stripe said: &ldquo;{error.staff.message}&rdquo; </> : null}
+              {error.staff.fixUrl ? (
+                <a href={error.staff.fixUrl} target="_blank" rel="noreferrer" className="font-medium text-accent underline underline-offset-2">
+                  {error.staff.fixLabel ?? "Fix it in Stripe"}
+                </a>
+              ) : null}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
       {status && !status.configured ? (
         // The operator's job (this site's own Stripe keys), not the owner's:
         // one plain sentence, and the technical reason for staff only.
@@ -1013,31 +1111,27 @@ export function PaymentsAttention(props: { readonly baseUrl: string; readonly lo
   const [busy, setBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    try {
-      const res = await fetch(\`\${props.baseUrl}/v1/admin/attention\`, { cache: "no-store" });
-      if (res.status === 403) return setItems({ open: [], handled: [] });
-      const body = (await res.json()) as CardAlertsWire & { error?: { message: string } };
-      if (!res.ok) throw new Error(body.error?.message ?? "Something went wrong.");
-      setItems(body);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Something went wrong.");
+    const res = await fetch(\`\${props.baseUrl}/v1/admin/attention\`, { cache: "no-store" }).catch(() => null);
+    if (!res) return setError("We couldn't reach this site to load the payments that need you. Check your internet connection and reload the page.");
+    if (res.status === 403) return setItems({ open: [], handled: [] });
+    const body = (await res.json().catch(() => null)) as (CardAlertsWire & { error?: { message: string } }) | null;
+    if (!res.ok || !body) {
+      return setError(body?.error?.message ?? "The payments that need you couldn't be loaded just now. Reload the page in a minute.");
     }
+    setItems(body);
   }, [props.baseUrl]);
   useEffect(() => void load(), [load]);
 
   const handled = async (item: CardAlertWire) => {
     setBusy(item.id);
-    try {
-      const res = await fetch(\`\${props.baseUrl}/v1/admin/attention/\${encodeURIComponent(item.id)}/resolve\`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: "{}",
-      });
-      if (!res.ok) throw new Error("That didn't save. Please try again.");
-      await load();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Something went wrong.");
-    }
+    const res = await fetch(\`\${props.baseUrl}/v1/admin/attention/\${encodeURIComponent(item.id)}/resolve\`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    }).catch(() => null);
+    if (!res) setError("That didn't save: we couldn't reach this site. Check your internet connection and try again.");
+    else if (!res.ok) setError("That didn't save. Please try again.");
+    else await load();
     setBusy(null);
   };
 

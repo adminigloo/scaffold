@@ -114,6 +114,18 @@ a string with `{id}`: "/app/invoices/{id}", so a server page can pass it);
 invoices, a company's viewer: the ledger without "New invoice". The server
 refuses the create either way. Pass `can.includes("invoices.manage")`). Each
 invoice's page already offers only what the server says the person may do.
+`initialFilter` (0.4): the chip to open on — `"overdue"` for a page at
+`/app/invoices?status=overdue`; any status of the chips, else All.
+`actionsInHeader` (0.4): the host page's header carries **New invoice** —
+render `<InvoicesLedgerActions className={…} />` there, beside the title, like
+every page's primary action — and the ledger draws none of its own. A
+payment's line names its method once: "$810.81 · Check #1042"
+(`paymentWords(method, note)`).
+
+```tsx
+<PageHeader title="Invoices" actions={canManage ? <InvoicesLedgerActions className={buttonClass("primary")} /> : null} />
+<InvoicesLedger baseUrl={…} invoiceHref="/app/invoices/{id}" canManage={canManage} initialFilter={status} actionsInHeader title={false} />
+```
 
 **`<InvoiceEditor>`**: `invoiceId` (required), `baseUrl` or `transport`,
 `backHref`.

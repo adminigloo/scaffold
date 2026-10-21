@@ -132,7 +132,7 @@ export function toClientError(status: number, body: unknown): ClientError {
     };
   }
   if (status === 413) return { code: "file_too_big", message: "That file is too big to send.", status };
-  return { code: "bad_response", message: SOMETHING_WRONG_MESSAGE, status };
+  return { code: "bad_response", message: statusWords(status, SOMETHING_WRONG_MESSAGE), status };
 }
 
 export function networkError(message = NO_CONNECTION_MESSAGE): ClientError {
@@ -233,4 +233,33 @@ export function createRequester(options: TransportOptions): Requester {
     upload: (path, form, parse, onProgress) =>
       onProgress && typeof XMLHttpRequest !== "undefined" ? xhrUpload(path, form, parse, onProgress) : send("POST", path, form, false, parse),
   };
+}
+
+/**
+ * An answer that wasn't the package's own (a platform's error page, a proxy,
+ * a timeout): what its HTTP status says, in plain words. The generic sentence
+ * only when the status says nothing more (polish 3: no "Something went wrong"
+ * where the cause is knowable).
+ */
+export function statusWords(status: number, fallback = "Something went wrong. Try again in a minute."): string {
+  switch (status) {
+    case 401:
+      return "You've been signed out. Sign in again to keep working.";
+    case 403:
+      return "You don't have permission to do that.";
+    case 404:
+      return "That isn't here any more. Reload the page.";
+    case 408:
+    case 504:
+      return "The site took too long to answer. Please try again in a minute.";
+    case 413:
+      return "That's too big to send.";
+    case 429:
+      return "That's a lot of tries in a short time. Wait a minute, then try again.";
+    case 502:
+    case 503:
+      return "The site isn't answering right now. Please try again in a minute.";
+    default:
+      return fallback;
+  }
 }

@@ -25,6 +25,7 @@ import {
   type EpicStatus,
 } from "./epic-core";
 import { EpicBadge, EpicProgressBar, EpicStatusPill } from "./epic-parts";
+import { pageActionChannel } from "./page-actions";
 import { useDialogFocus } from "./ticket-dialog";
 
 export * from "./epic-core";
@@ -360,6 +361,37 @@ export interface FeedbackEpicsProps extends EpicScreenProps {
   epicsHref: string;
   /** The board (`/app/feedback`), for "Back to the board". */
   boardHref?: string | null;
+  /**
+   * polish 3: the host page's header says "Epics" and carries "New epic"
+   * (<FeedbackEpicsActions>) and its own "Back to the board", so the list
+   * draws no heading or buttons of its own. Default false.
+   */
+  actionsInHeader?: boolean;
+}
+
+/** The list's header button, pressed in the host page's header (<FeedbackEpicsActions>). */
+const epicsActions = pageActionChannel<"new">("aib-epics");
+
+export interface FeedbackEpicsActionsProps {
+  /** The host's button class (its page header's primary button). Default the board's own. */
+  className?: string;
+}
+
+/**
+ * "New epic" for the host page's header (polish 3), beside its title like
+ * every other page's primary action: it opens the list's own New epic.
+ * Render it only for someone who may change feedback (`feedback.manage`),
+ * with `actionsInHeader` on the <FeedbackEpics>.
+ */
+export function FeedbackEpicsActions(props: FeedbackEpicsActionsProps): ReactElement | null {
+  const { state, press } = epicsActions.useHeader();
+  const button = state.new ?? {};
+  if (button.hidden) return null;
+  return (
+    <button type="button" className={props.className ?? "aib-tool-btn aib-tool-primary"} disabled={button.disabled === true} data-aib-header-action="new" onClick={() => press("new")}>
+      New epic
+    </button>
+  );
 }
 
 /** The epics list after a Delete: `?deleted=N`, N its tickets (still on the board). */
@@ -384,6 +416,7 @@ export function FeedbackEpics(props: FeedbackEpicsProps): ReactElement {
   const [view, setView] = useState<EpicListView>("active");
   const [creating, setCreating] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  epicsActions.useScreen(props.actionsInHeader === true && canManage, () => setCreating(true), { new: { disabled: creating } });
   const refresh = useCallback(async () => {
     try {
       setEpics(await transport.epics());
@@ -417,6 +450,7 @@ export function FeedbackEpics(props: FeedbackEpicsProps): ReactElement {
   return (
     <Frame theme={props.theme ?? "auto"}>
       <section className="aib-admin-section">
+        {props.actionsInHeader ? null : (
         <div className="aib-epics-head">
           <h2 className="aib-admin-h">Epics</h2>
           {props.boardHref ? (
@@ -430,6 +464,7 @@ export function FeedbackEpics(props: FeedbackEpicsProps): ReactElement {
             </button>
           ) : null}
         </div>
+        )}
         <p className="aib-admin-sub">
           An epic groups tickets under a bigger piece of work. Its progress counts its tickets by the board&rsquo;s columns: done in
           a finished column (or archived), waiting in a column marked waiting, not started in the column new tickets land in.

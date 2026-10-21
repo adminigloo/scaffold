@@ -1,0 +1,7 @@
+---
+"@adminigloo/create-app": patch
+---
+
+Polish round 3, from walking a real back office. Connect Stripe on a site not signed up for Stripe Connect showed only "Something went wrong" and logged nothing: every failed Stripe call on the payments screen, Pay now and Check out is now a log line (Stripe's words, its request id) and a row on /admin/errors, the owner reads "Card payments aren't switched on for this site yet. We've told whoever runs it." (or a try-again sentence when Stripe isn't answering), the site's staff also read Stripe's own message with the link to fix it, and a customer whose payment page can't open is told nothing was charged. The payments screen's other messages say what happened. Every work page's primary action sits in its header beside the title — New invoice, New estimate, New visit, Add customer / Import / Export, New epic, See your store, Open the booking page — and the store page offers changes only to someone with store.manage. The dashboard's "See all" opens the page on the same list: Overdue invoices on `/app/invoices?status=overdue`, Newest leads on `/app/estimates?filter=leads`, today's visits on today's day (`/app/schedule?date=…&view=day`); the invoices page takes any `?status=`, the schedule `?view=day|week`.
+
+The header links match: "See your store" and "Open the booking page" are both secondary buttons with ↗, "(opens in a new tab)" for screen readers and rel="noopener noreferrer"; the estimates header's Price book and Estimate settings are secondary buttons beside New estimate.

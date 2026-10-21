@@ -264,6 +264,7 @@ way to "This visit starts within 24 hours, so it can't be changed online. Call
 | `onVisitChange(visit)` | | After any change made here. |
 | `initialVisitId` | | Tenancy 2b-1: open this visit's panel once it's loaded. One outside the days on screen is fetched and the calendar moves to its day; one that isn't found shows "That visit couldn't be found." and no panel. |
 | `visitFilesHref` | | Tenancy 2b-1: a pattern with `{id}` ("/app/schedule/visits/{id}/files"). The visit panel shows **Photos and files** linking there. Absent: no link. |
+| `actionsInHeader` | | 0.5: the host page's header carries **New visit** — render `<ScheduleCalendarActions className={…} />` there, beside its title — and the toolbar keeps only the day, the view and Requests. |
 | `locale`, `theme`, `nonce`, `className`, `style` | | |
 
 - **A banner says what's true about this deployment** (from `GET status`):

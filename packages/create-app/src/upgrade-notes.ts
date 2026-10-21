@@ -32,6 +32,44 @@ export function upgradeNotesFor(answers: Answers, fromVersion: string): string[]
   const companies = answers.tenantNoun !== "none";
   const noun = tenantLabel(answers).toLowerCase();
   const crossed = (version: string) => (compareVersions(fromVersion, version) ?? -1) < 0;
+  // 0.36.2 — polish 3: Stripe's refusals are reported and worded, primary
+  // actions sit in the page header, and "See all" opens the same list.
+  if (crossed("0.36.2")) {
+    const paid = answers.includeInvoicing || answers.includeStore;
+    if (paid) {
+      notes.push(
+        (companies
+          ? "Connect Stripe (and Pay now, and Check out) no longer fails as \"Something went wrong\": every Stripe refusal is now a line in the log " +
+            "and a row on /admin/errors with Stripe's own words, owners read \"Card payments aren't switched on for this site yet. We've told whoever runs it.\", " +
+            "and the site's staff see Stripe's message and the link to fix it on the payments screen (@adminigloo/stripe 0.5, `describeStripeFailure`). "
+          : "Pay now and Check out no longer fail as \"Something went wrong\": every Stripe refusal is now a line in the log and a row on /admin/errors " +
+            "with Stripe's own words (@adminigloo/stripe 0.5, `describeStripeFailure`), and the customer is told nothing was charged. ") +
+          (companies
+            ? "If a company's Connect Stripe failed before, look at /admin/errors after its next try: when Stripe says this site hasn't signed up for Connect, " +
+              "sign the platform's Stripe account up at https://dashboard.stripe.com/connect (and finish its platform profile), then press Connect Stripe again."
+            : "Nothing to do unless one shows up there."),
+      );
+    }
+    const headed = [
+      ...(answers.includeInvoicing ? ["New invoice"] : []),
+      ...(answers.includeEstimator ? ["New estimate"] : []),
+      ...(answers.includeScheduling ? ["New visit"] : []),
+      ...(companies && answers.includeCustomers ? ["Add customer"] : []),
+      ...(answers.includeFeedback && answers.adminShell !== "none" ? ["New epic"] : []),
+    ];
+    if (headed.length > 0 || companies) {
+      notes.push(
+        "Every work page's primary action now sits in its page header, beside the title" +
+          (headed.length > 0 ? ` (${headed.join(", ")})` : "") +
+          ": the screen below takes `actionsInHeader` and the page renders its companion (`<InvoicesLedgerActions>` and the like). " +
+          "A page you changed by hand keeps working as it was; to match, copy the header from the regenerated page." +
+          (companies && (answers.includeInvoicing || answers.includeEstimator || answers.includeScheduling)
+            ? ` The ${noun} dashboard's "See all" now opens the same list${answers.includeInvoicing ? " (/app/invoices?status=overdue)" : ""}${answers.includeEstimator ? " (/app/estimates?filter=leads)" : ""}${answers.includeScheduling ? " (today's day on the schedule)" : ""}.`
+            : "") +
+          " No database change.",
+      );
+    }
+  }
   // 0.36.1 — the dashboard keeps its numbers while setup is unfinished, and
   // lists the day's work under them. No database change; the files carry it.
   if (crossed("0.36.1") && companies) {

@@ -176,13 +176,13 @@ export function toClientError(status: number, body: unknown): ClientError {
       ...(issues.length > 0 ? { issues } : {}),
     };
   }
-  return { code: "bad_response", message: `Unexpected answer from the server (${status}).`, status };
+  return { code: "bad_response", message: statusWords(status), status };
 }
 
 /** What a staff screen says when the session behind it has ended. */
 export const SIGNED_OUT_MESSAGE = "You've been signed out. Sign in again to keep working.";
 
-export function networkError(message = "Couldn't reach the server."): ClientError {
+export function networkError(message = "Couldn't reach the server. Check your internet connection and try again."): ClientError {
   return { code: "network", message, status: 0 };
 }
 
@@ -247,12 +247,12 @@ export function createRequester(options: TransportOptions): Requester {
       }
       const data = parse(parsed);
       if (data === null) {
-        return { ok: false, error: { code: "bad_response", message: "The server's answer wasn't in the expected shape.", status: res.status } };
+        return { ok: false, error: { code: "bad_response", message: "This screen and the server don't match. Reload the page to get the latest version.", status: res.status } };
       }
       return { ok: true, data };
     } catch {
       // A fake or broken Response object (no .text, no .status): still an answer, never a throw.
-      return { ok: false, error: { code: "bad_response", message: "The server's answer couldn't be read.", status: 0 } };
+      return { ok: false, error: { code: "bad_response", message: "The server's answer couldn't be read. Reload the page and try again.", status: 0 } };
     }
   };
 
@@ -261,4 +261,33 @@ export function createRequester(options: TransportOptions): Requester {
     get: (path, parse) => send("GET", path, undefined, parse),
     post: (path, body, parse) => send("POST", path, body, parse),
   };
+}
+
+/**
+ * An answer that wasn't the package's own (a platform's error page, a proxy,
+ * a timeout): what its HTTP status says, in plain words. The generic sentence
+ * only when the status says nothing more (polish 3: no "Something went wrong"
+ * where the cause is knowable).
+ */
+export function statusWords(status: number, fallback = "Something went wrong. Please try again."): string {
+  switch (status) {
+    case 401:
+      return "You've been signed out. Sign in again to keep working.";
+    case 403:
+      return "You don't have permission to do that.";
+    case 404:
+      return "That isn't here any more. Reload the page.";
+    case 408:
+    case 504:
+      return "The site took too long to answer. Please try again in a minute.";
+    case 413:
+      return "That's too big to send.";
+    case 429:
+      return "That's a lot of tries in a short time. Wait a minute, then try again.";
+    case 502:
+    case 503:
+      return "The site isn't answering right now. Please try again in a minute.";
+    default:
+      return fallback;
+  }
 }

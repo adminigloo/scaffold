@@ -1,4 +1,4 @@
-import type { ClientError } from "./http.js";
+import { statusWords, type ClientError } from "./http.js";
 import type { PublicVisitStatus, VisitRequestBody, WireIssue } from "./types.js";
 
 /**
@@ -226,8 +226,7 @@ export function friendlyError(error: ClientError, context: ErrorContext): string
       if (context === "cancel") return "That cancellation couldn't be sent. Please try again.";
       return "Something about this page isn't right. Please refresh and try again.";
     case "bad_response":
-      if (error.status === 429) return "That's a lot of tries in a short time. Wait a minute, then try again.";
-      return "Something went wrong on our side. Please try again.";
+      return statusWords(error.status, "Something went wrong on our side. Please try again.");
     default:
       return "Something went wrong on our side. Please try again.";
   }

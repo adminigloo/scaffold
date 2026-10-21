@@ -9,6 +9,7 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { pageActionChannel } from "./page-actions.js";
 import type { ClientError } from "../http.js";
 import { useNow } from "../hooks.js";
 import { CheckIcon, ChevronIcon, ClockIcon, CrossIcon, Loading, Notice, PlayIcon, type ChromeProps } from "../parts.js";
@@ -91,6 +92,37 @@ export interface ScheduleCalendarProps extends ChromeProps {
   initialVisitId?: string;
   /** Pattern with {id}: the visit panel shows "Photos and files" linking here. Absent: no link. */
   visitFilesHref?: string;
+  /**
+   * polish 3: the host page's header carries "New visit" — render
+   * <ScheduleCalendarActions> there — so the calendar's toolbar keeps only
+   * its own controls (the day, the view, Requests). Default false.
+   */
+  actionsInHeader?: boolean;
+}
+
+/** The calendar's header button, pressed in the host page's header (<ScheduleCalendarActions>). */
+const calendarActions = pageActionChannel<"new">("aisw-calendar");
+
+export interface ScheduleCalendarActionsProps {
+  /** The host's button class (its page header's primary button). Default the widget's own. */
+  className?: string;
+}
+
+/**
+ * "New visit" for the host page's header (polish 3), beside its title like
+ * every other page's primary action: it opens the calendar's own New visit.
+ * Render it only for someone who may book (`schedule.manage`), with
+ * `actionsInHeader` on the <ScheduleCalendar>.
+ */
+export function ScheduleCalendarActions(props: ScheduleCalendarActionsProps) {
+  const { state, press } = calendarActions.useHeader();
+  const button = state.new ?? {};
+  if (button.hidden) return null;
+  return (
+    <button type="button" className={props.className ?? "aisw-btn aisw-btn-primary"} disabled={button.disabled === true} data-aisw-header-action="new" onClick={() => press("new")}>
+      New visit
+    </button>
+  );
 }
 
 type View = "day" | "week";
@@ -166,6 +198,7 @@ export function ScheduleCalendar(props: ScheduleCalendarProps) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [requestsOpen, setRequestsOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
+  calendarActions.useScreen(props.actionsInHeader === true && canManage, () => setNewOpen(true), { new: { disabled: newOpen } });
   const [prompt, setPrompt] = useState<ProposedMove | null>(null);
   const [services, setServices] = useState<ServiceWire[] | null>(null);
   const [preview, setPreview] = useState<{ id: string; target: Target } | null>(null);
@@ -821,7 +854,7 @@ export function ScheduleCalendar(props: ScheduleCalendarProps) {
           >
             Requests <span className="aisw-count">{pendingCount}</span>
           </button>
-          {canManage ? (
+          {canManage && props.actionsInHeader !== true ? (
             <button type="button" className="aisw-btn aisw-btn-primary" onClick={() => setNewOpen(true)}>
               New visit
             </button>

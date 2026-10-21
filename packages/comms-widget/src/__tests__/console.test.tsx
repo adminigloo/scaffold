@@ -281,10 +281,10 @@ describe("<MessagesConsole>", () => {
   it("a failed load is a sentence with Try again, never a throw", async () => {
     let calls = 0;
     const fake = console_({
-      templates: () => (++calls === 1 ? fail("network", "Couldn't reach the server.") : ok({ templates: TEMPLATES })),
+      templates: () => (++calls === 1 ? fail("network", "Couldn't reach the server. Check your internet connection and try again.") : ok({ templates: TEMPLATES })),
     });
     const { container, unmount } = await mount(<MessagesConsole transport={fake.transport} />);
-    expect(text(section(container, "templates"))).toContain("Couldn't reach the server.");
+    expect(text(section(container, "templates"))).toContain("Couldn't reach the server. Check your internet connection and try again.");
     await click(button(section(container, "templates"), "Try again"));
     expect(text(section(container, "templates"))).toContain("Visit reminder");
     await unmount();

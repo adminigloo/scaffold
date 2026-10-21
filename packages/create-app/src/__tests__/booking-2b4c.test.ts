@@ -129,7 +129,8 @@ describe("packages, versions and the upgrade notes", () => {
   it("installs both halves at 0.2, and tells a 0.31 project what to do", () => {
     expect(packagesFor(answers())).toEqual(expect.arrayContaining(["@adminigloo/booking", "@adminigloo/booking-widget"]));
     const versions = packageVersions();
-    expect([versions["booking"], versions["booking-widget"]]).toEqual(["0.2.0", "0.3.0"]);
+    // booking-widget 0.4 (polish 3): `actionsInHeader`, the calls page's header link. The line, not the patch.
+    expect([versions["booking"], versions["booking-widget"]].map((v) => v?.split(".").slice(0, 2).join("."))).toEqual(["0.2", "0.4"]);
     expect(upgradeNotesFor(answers(COMPANIES), "0.31.0").join("\n")).toContain("upgrade-0.1-to-0.2.sql");
     // Nothing more about booking for a 0.32 project (a later release's notes, e.g. 0.34's store, aren't this test's).
     expect(upgradeNotesFor(answers(COMPANIES), "0.32.0").filter((note) => /booking|calls/i.test(note))).toEqual([]);

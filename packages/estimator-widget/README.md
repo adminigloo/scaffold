@@ -444,6 +444,18 @@ return <EstimateTool baseUrl={`/api/t/${company.slug}/estimator`} accentColor={c
   <EstimatesQueue baseUrl={`/api/app/${company.id}/estimator`} estimateHref="/app/estimates/{id}" canManage={can.includes("estimator.estimates.manage")} />
   <EstimateEditor baseUrl={`/api/app/${company.id}/estimator`} estimateId={id} canManage={can.includes("estimator.estimates.manage")} />
   ```
+
+- **New estimate in the page's own header (0.7).** `<EstimatesQueue
+  actionsInHeader>` draws no button of its own; render
+  `<EstimatesQueueActions className={…} />` in the host page's header beside
+  its title (it says "Starting…" while the estimate starts). `initialFilter`
+  opens on a filter (`?filter=leads` from a dashboard) and follows a new one;
+  a value that isn't a filter opens Leads.
+
+  ```tsx
+  <PageHeader title="Estimates" actions={<EstimatesQueueActions className={buttonClass("primary")} />} />
+  <EstimatesQueue baseUrl={…} estimateHref="/app/estimates/{id}" initialFilter={filter} actionsInHeader title={false} />
+  ```
 - **The website snippets scroll by keyboard.** Each snippet box (wider than a
   phone, so it scrolls sideways) takes focus and is named by the line above
   it, so someone without a mouse can read the whole line they copy.

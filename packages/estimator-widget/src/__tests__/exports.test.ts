@@ -47,6 +47,7 @@ describe("estimator-widget entries", () => {
       "EstimatorAdmin",
       "PriceBook",
       "EstimatesQueue",
+      "EstimatesQueueActions",
       "EstimateEditor",
       "EmbedKeys",
       "EstimatorSettings",

@@ -69,7 +69,10 @@ describe("the epics pages", () => {
   it("a company's: thin pages over FeedbackEpics / FeedbackEpic on its own routes, gated on feedback.view, changes on feedback.manage", async () => {
     const p = await plan(COMPANIES);
     const list = file(p, ...COMPANY_LIST);
-    expect(list).toContain('import { FeedbackEpics } from "@adminigloo/feedback/epics";');
+    expect(list).toContain('import { FeedbackEpics, FeedbackEpicsActions } from "@adminigloo/feedback/epics";');
+    // polish 3: Back to the board and New epic in the page header, the list's own header off.
+    expect(code(list)).toContain('{can.includes("feedback.manage") ? <FeedbackEpicsActions className={buttonClass("primary")} /> : null}');
+    expect(code(list)).toContain("actionsInHeader");
     const listCode = code(list);
     expect(listCode).toContain('<CompanyGate path="/app/feedback/epics" permission="feedback.view">');
     expect(listCode).toContain("baseUrl={`/api/app/${company.id}/feedback`}");
@@ -154,8 +157,8 @@ describe("the isolation proof drives the epic routes", () => {
 });
 
 describe("the release", () => {
-  it("pins the feedback 0.12 line, whose ./epics entry the pages import", () => {
-    expect(packageVersions()["feedback"] ?? "").toMatch(/^\^?0\.12\.\d+$/);
+  it("pins the feedback 0.13 line, whose ./epics entry (with FeedbackEpicsActions, polish 3) the pages import", () => {
+    expect(packageVersions()["feedback"] ?? "").toMatch(/^\^?0\.13\.\d+$/);
   });
 
   it("the README says what the epics do and what isn't included; DEPLOYMENT says how to get there from 0.27", async () => {

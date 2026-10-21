@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
 import type { InvoicingTransport } from "../admin/client.js";
 import { InvoiceEditor } from "../admin/InvoiceEditor.js";
+import { paymentWords } from "../money.js";
 import { detail, FORMAT, response } from "./fixtures.js";
 import { button, click, fail, fakeTransport, labelled, mount, ok, submit, text, type } from "./dom.js";
 
@@ -241,5 +242,39 @@ describe("<InvoiceEditor> payments after a card refund (0.2)", () => {
     expect(text(b.container.querySelector("[data-aiiw-payment]"))).toContain("Reversed");
     expect(text(b.container)).not.toContain("Partly refunded");
     await b.unmount();
+  });
+});
+
+describe("a payment's line names its method once (polish 3)", () => {
+  it("a note that starts with the method reads alone; any other note follows the method", () => {
+    expect(paymentWords("check", "Check #1042")).toBe("Check #1042");
+    expect(paymentWords("check", "check 1042")).toBe("check 1042");
+    expect(paymentWords("check", "Cheque 88")).toBe("Cheque 88");
+    expect(paymentWords("check", "1043")).toBe("Check · 1043");
+    expect(paymentWords("check", "Checked by Sam")).toBe("Check · Checked by Sam");
+    expect(paymentWords("ach", "ACH from Chase")).toBe("ACH from Chase");
+    expect(paymentWords("ach", "Bank transfer, ref 77")).toBe("Bank transfer, ref 77");
+    expect(paymentWords("cash", "Paid at the door")).toBe("Cash · Paid at the door");
+    expect(paymentWords("card", "Paid online")).toBe("Card · Paid online");
+    expect(paymentWords("card", null)).toBe("Card");
+    expect(paymentWords("cash", "   ")).toBe("Cash");
+  });
+
+  it("on the invoice: $810.81 · Check #1042, not Check · Check #1042", async () => {
+    const fake = editor(
+      {},
+      response({
+        status: "paid",
+        storedStatus: "paid",
+        amountPaid: 81_081,
+        balanceDue: 0,
+        payments: [{ id: "p1", amount: 81_081, method: "check", reference: "Check #1042", paidAt: "2026-10-20T17:00:00.000Z", reversesPaymentId: null, reversed: false, reason: null, flag: null, reversedAmount: 0 }],
+      }),
+    );
+    const { container, unmount } = await mount(<InvoiceEditor transport={fake.transport} invoiceId="inv-1" />);
+    const line = text(container.querySelector("[data-aiiw-payment='p1']"));
+    expect(line).toContain("$810.81 · Check #1042");
+    expect(line).not.toContain("Check · Check");
+    await unmount();
   });
 });

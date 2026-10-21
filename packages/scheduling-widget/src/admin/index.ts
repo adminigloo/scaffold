@@ -12,7 +12,7 @@
 
 export { SCHEDULING_WIRE_VERSION } from "../version.js";
 
-export { ScheduleCalendar, type ScheduleCalendarProps } from "./ScheduleCalendar.js";
+export { ScheduleCalendar, ScheduleCalendarActions, type ScheduleCalendarActionsProps, type ScheduleCalendarProps } from "./ScheduleCalendar.js";
 export { CrewDay, type CrewDayProps } from "./CrewDay.js";
 export { SchedulingSettings, WeeklyEditor, type SchedulingSettingsProps, type SettingsSection } from "./SchedulingSettings.js";
 export { VisitPanel, type PanelChange } from "./VisitPanel.js";

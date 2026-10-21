@@ -139,7 +139,7 @@ export function InvoiceView(props: InvoiceViewProps) {
                   try {
                     return await transport.pay!(token, amount === undefined ? {} : { amount });
                   } catch {
-                    return { ok: false, error: { code: "network", message: "Something went wrong. Please try again.", status: 0 } };
+                    return { ok: false, error: { code: "network", message: "We couldn't reach the server. Check your internet connection and try again.", status: 0 } };
                   }
                 }
               : null

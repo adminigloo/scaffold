@@ -374,7 +374,8 @@ describe("answers, packages and the CLI", () => {
     expect(installed).toContain("@adminigloo/estimator");
     expect(installed).toContain("@adminigloo/estimator-widget");
     expect(versionRangeFor("@adminigloo/estimator")).toBe("^0.6.0");
-    expect(versionRangeFor("@adminigloo/estimator-widget")).toBe("^0.6.0");
+    // 0.7 (polish 3): <EstimatesQueueActions>. The line, not the patch.
+    expect(versionRangeFor("@adminigloo/estimator-widget")).toMatch(/^\^0\.7\.\d+$/);
   });
 
   it("brings comms, storage and email with the estimator unless each is declined", async () => {

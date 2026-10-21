@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type ChangeEvent, type FormEvent } from "react";
+import { pageActionChannel } from "./page-actions.js";
 import type {
   CustomerLinkKind,
   CustomerListResponse,
@@ -37,6 +38,12 @@ export interface CustomersAdminProps {
   readonly title?: string | false;
   /** Dates in the company's locale. Default "en-US". */
   readonly locale?: string;
+  /**
+   * polish 3: the host page's header carries Add customer, Import and Export
+   * — render <CustomersActions> there — so the list draws none of its own.
+   * Default false.
+   */
+  readonly actionsInHeader?: boolean;
 }
 
 export function CustomersStyles() {
@@ -59,7 +66,7 @@ export async function request<T>(url: string, init?: RequestInit): Promise<T> {
   }
   if (!res.ok) {
     const message = (body as { error?: { message?: unknown } } | null)?.error?.message;
-    throw new Error(typeof message === "string" && message ? message : "Something went wrong. Please try again.");
+    throw new Error(typeof message === "string" && message ? message : statusWords(res.status));
   }
   return body as T;
 }
@@ -107,6 +114,42 @@ function customerHref(pageHref: string, id: string): string {
   return `${pageHref}?customer=${encodeURIComponent(id)}`;
 }
 
+/** The list's header buttons, pressed in the host page's header (<CustomersActions>). */
+const listActions = pageActionChannel<"add" | "import">("aicu-list");
+
+export interface CustomersActionsProps {
+  /** The same `baseUrl` as the <CustomersAdmin> below: Export downloads from it. */
+  readonly baseUrl: string;
+  /** The host's button classes (its page header's primary and secondary buttons). Default the widget's own. */
+  readonly primaryClassName?: string;
+  readonly secondaryClassName?: string;
+}
+
+/**
+ * Add customer, Import and Export for the host page's header (polish 3),
+ * beside its title like every other page's primary action. Add and Import
+ * open the list's own panels below. Render it only for someone who may
+ * change customers (`customers.manage`), on the list (not one customer's
+ * page), with `actionsInHeader` on the <CustomersAdmin>.
+ */
+export function CustomersActions(props: CustomersActionsProps) {
+  const { press } = listActions.useHeader();
+  const secondary = props.secondaryClassName ?? "aicu-btn aicu-btn-quiet";
+  return (
+    <>
+      <button type="button" className={props.primaryClassName ?? "aicu-btn"} data-aicu-header-action="add" onClick={() => press("add")}>
+        Add customer
+      </button>
+      <button type="button" className={secondary} data-aicu-header-action="import" onClick={() => press("import")}>
+        Import
+      </button>
+      <a className={secondary} href={`${props.baseUrl}/v1/admin/export`} download>
+        Export
+      </a>
+    </>
+  );
+}
+
 export function CustomersAdmin(props: CustomersAdminProps) {
   const canManage = props.canManage ?? true;
   return (
@@ -129,6 +172,9 @@ function CustomerList(props: CustomersAdminProps & { readonly canManage: boolean
   const [rows, setRows] = useState<CustomerSummaryWire[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [panel, setPanel] = useState<"none" | "add" | "import">("none");
+  const inHeader = props.actionsInHeader === true;
+  // Pressed in the page header: the same toggles as the buttons here.
+  listActions.useScreen(inHeader && props.canManage, (action) => setPanel((open) => (open === action ? "none" : action)), {});
   const load = useCallback(
     (query: string, cursor: string | null) => {
       const params = new URLSearchParams();
@@ -150,6 +196,7 @@ function CustomerList(props: CustomersAdminProps & { readonly canManage: boolean
   }, [q, load]);
   return (
     <>
+      {props.title === false && (inHeader || !props.canManage) ? null : (
       <header className="aicu-row" style={{ justifyContent: props.title === false ? "flex-end" : "space-between" }}>
         {props.title === false ? null : (
           <div>
@@ -157,7 +204,7 @@ function CustomerList(props: CustomersAdminProps & { readonly canManage: boolean
             <p className="aicu-muted">Everyone who has asked for a quote, booked, been invoiced or bought from you, each with everything that is theirs.</p>
           </div>
         )}
-        {props.canManage ? (
+        {props.canManage && !inHeader ? (
           <div className="aicu-row">
             <button type="button" className="aicu-btn" onClick={() => setPanel(panel === "add" ? "none" : "add")}>
               Add customer
@@ -171,6 +218,7 @@ function CustomerList(props: CustomersAdminProps & { readonly canManage: boolean
           </div>
         ) : null}
       </header>
+      )}
       {panel === "add" ? <AddCustomer baseUrl={props.baseUrl} pageHref={props.pageHref} /> : null}
       {panel === "import" ? <ImportPanel baseUrl={props.baseUrl} onDone={() => load(q, null)} /> : null}
       <label className="aicu-label">
@@ -784,4 +832,33 @@ function Notices(props: {
       <ErrorNote message={error} />
     </div>
   );
+}
+
+/**
+ * An answer that wasn't the package's own (a platform's error page, a proxy,
+ * a timeout): what its HTTP status says, in plain words. The generic sentence
+ * only when the status says nothing more (polish 3: no "Something went wrong"
+ * where the cause is knowable).
+ */
+function statusWords(status: number, fallback = "Something went wrong. Please try again."): string {
+  switch (status) {
+    case 401:
+      return "You've been signed out. Sign in again to keep working.";
+    case 403:
+      return "You don't have permission to do that.";
+    case 404:
+      return "That isn't here any more. Reload the page.";
+    case 408:
+    case 504:
+      return "The site took too long to answer. Please try again in a minute.";
+    case 413:
+      return "That's too big to send.";
+    case 429:
+      return "That's a lot of tries in a short time. Wait a minute, then try again.";
+    case 502:
+    case 503:
+      return "The site isn't answering right now. Please try again in a minute.";
+    default:
+      return fallback;
+  }
 }

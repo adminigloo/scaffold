@@ -1,5 +1,5 @@
-import { ScheduleCalendar } from "__SCOPE__/scheduling-widget/admin";
-import { PageHeader } from "@/components/ui";
+import { ScheduleCalendar, ScheduleCalendarActions } from "__SCOPE__/scheduling-widget/admin";
+import { PageHeader, buttonClass } from "@/components/ui";
 import { schedulingUrls } from "@/server/scheduling";
 import { VISIT_FILES_HREF } from "@/server/visit-files";
 
@@ -35,8 +35,9 @@ export default async function SchedulePage({
 }: {
   readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const { date, visit } = await searchParams;
+  const { date, visit, view } = await searchParams;
   const initialDate = typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : undefined;
+  const initialView = view === "day" || view === "week" ? view : undefined;
   // An id's shape only; the calendar asks the business's routes for it.
   const initialVisitId = typeof visit === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(visit) ? visit : undefined;
   return (
@@ -44,12 +45,15 @@ export default async function SchedulePage({
       <PageHeader
         title="Schedule"
         description="Every crew's visits, in your business's time zone. Online requests wait in Requests until you accept or decline them; drag a visit to move it."
+        actions={<ScheduleCalendarActions className={buttonClass("primary")} />}
       />
       <ScheduleCalendar
         baseUrl="/api/admin/schedule"
         bookingPageUrl={schedulingUrls.book}
         initialDate={initialDate}
+        initialView={initialView}
         initialVisitId={initialVisitId}
+        actionsInHeader
         visitFilesHref={VISIT_FILES_HREF}
       />
     </>

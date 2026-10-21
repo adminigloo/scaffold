@@ -31,6 +31,12 @@ export interface BookingAdminProps {
   title?: string | false;
   /** Linked as "Open the booking page ↗" in the header. */
   bookingPageUrl?: string;
+  /**
+   * polish 3: the host page's header carries "Open the booking page" (a link
+   * to `bookingPageUrl` beside its title), so the screen's header draws none.
+   * Default false.
+   */
+  actionsInHeader?: boolean;
   /** The tab to open on. Default "upcoming". */
   initialTab?: AdminTab;
   /** Formatting locale. Default "en-US" (the copy is English). */
@@ -205,6 +211,7 @@ export function BookingAdmin(props: BookingAdminProps) {
   return (
     <div className={rootClass} style={props.style} data-theme={theme} data-aibk-admin={tab} ref={rootRef}>
       <div className="aibk-admin-inner">
+        {props.title === false && (props.actionsInHeader || !props.bookingPageUrl) ? null : (
         <header className="aibk-admin-head">
           {props.title === false ? (
             <span />
@@ -216,12 +223,13 @@ export function BookingAdmin(props: BookingAdminProps) {
               </p>
             </div>
           )}
-          {props.bookingPageUrl ? (
+          {props.bookingPageUrl && !props.actionsInHeader ? (
             <a href={props.bookingPageUrl} target="_blank" rel="noopener noreferrer">
               Open the booking page ↗<span className="aibk-sr"> (opens in a new tab)</span>
             </a>
           ) : null}
         </header>
+        )}
 
         {overview.loading && !data ? <Loading label="Loading…" /> : null}
         {overview.error && !data ? (

@@ -1,6 +1,7 @@
-import { FeedbackEpics } from "__SCOPE__/feedback/epics";
+import Link from "next/link";
+import { FeedbackEpics, FeedbackEpicsActions } from "__SCOPE__/feedback/epics";
 import { CompanyGate } from "@/components/CompanyGate";
-import { PageHeader, WORK_MAIN } from "@/components/ui";
+import { PageHeader, WORK_MAIN, buttonClass } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -20,12 +21,25 @@ export default async function CompanyEpicsPage() {
     <CompanyGate path="/app/feedback/epics" permission="feedback.view">
       {({ company, can }) => (
         <main className={WORK_MAIN}>
-          <PageHeader title="Epics" description="Bigger pieces of work, each with the feedback tickets that belong to it." />
+          {/* Back to the board and New epic beside the title, like every work page's actions (polish 3). */}
+          <PageHeader
+            title="Epics"
+            description="Bigger pieces of work, each with the feedback tickets that belong to it."
+            actions={
+              <>
+                <Link href="/app/feedback" className={buttonClass("secondary")}>
+                  Back to the board
+                </Link>
+                {can.includes("feedback.manage") ? <FeedbackEpicsActions className={buttonClass("primary")} /> : null}
+              </>
+            }
+          />
           <FeedbackEpics
             baseUrl={`/api/app/${company.id}/feedback`}
             canManage={can.includes("feedback.manage")}
             epicsHref="/app/feedback/epics"
             boardHref="/app/feedback"
+            actionsInHeader
           />
         </main>
       )}

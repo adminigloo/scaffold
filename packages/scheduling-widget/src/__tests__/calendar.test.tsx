@@ -2,7 +2,7 @@
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { PX_PER_MINUTE } from "../admin/layout.js";
-import { ScheduleCalendar } from "../admin/ScheduleCalendar.js";
+import { ScheduleCalendar, ScheduleCalendarActions } from "../admin/ScheduleCalendar.js";
 import type { AdminHandlers } from "./fakes.js";
 import { button, calendar, choose, click, fail, fakeAdmin, key, mount, ok, settingsWire, settle, snapshot, submit, text } from "./fakes.js";
 
@@ -272,6 +272,24 @@ describe("<ScheduleCalendar> day view", () => {
     expect(fake.of("reschedule")).toHaveLength(0);
     await click(block(container, "v1"));
     expect(container.querySelector("[data-aisw-panel] [data-action]")).toBeNull();
+    await unmount();
+  });
+
+  it("actionsInHeader: New visit leaves the toolbar for the page header's <ScheduleCalendarActions>, which opens it (polish 3)", async () => {
+    const fake = admin();
+    const { container, unmount } = await mount(
+      <>
+        <header data-host="">
+          <ScheduleCalendarActions className="host-primary" />
+        </header>
+        <ScheduleCalendar transport={fake.transport} initialView="day" initialDate="2026-11-02" pollMs={0} actionsInHeader />
+      </>,
+    );
+    expect(button(container.querySelector<HTMLElement>(".aisw-toolbar")!, "New visit")).toBeNull();
+    const header = container.querySelector<HTMLElement>("[data-host]")!;
+    await click(button(header, "New visit"));
+    expect(container.querySelector("[data-aisw-new-visit]")).not.toBeNull();
+    expect(button(header, "New visit")!.disabled).toBe(true);
     await unmount();
   });
 

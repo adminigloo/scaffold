@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createCustomersAdminHandlers } from "../admin-handlers.js";
-import { CustomersAdmin, customerBody, recordHref } from "../admin/CustomersAdmin.js";
+import { CustomersActions, CustomersAdmin, customerBody, recordHref } from "../admin/CustomersAdmin.js";
 import { findOrCreateCustomer, getCustomer, linkCustomer } from "../customers.js";
 import { CUSTOMERS_ADMIN_ROUTE_PERMISSIONS, CUSTOMERS_ADMIN_ROUTES } from "../routes.js";
 import { createTestDb, tenant, type TestDb } from "./pglite.js";
@@ -128,6 +128,17 @@ describe("the screens", () => {
     expect(readOnly).not.toContain("Add customer");
     const one = renderToStaticMarkup(<CustomersAdmin baseUrl="/x" pageHref="/app/customers" customerId="abc" />);
     expect(one).toContain("All customers");
+  });
+
+  it("actionsInHeader: the list draws no buttons of its own; <CustomersActions> carries them in the page header's classes (polish 3)", () => {
+    const list = renderToStaticMarkup(<CustomersAdmin baseUrl="/api/app/c1/customers" pageHref="/app/customers" title={false} actionsInHeader />);
+    expect(list).not.toContain("Add customer");
+    expect(list).not.toContain("/v1/admin/export");
+    const header = renderToStaticMarkup(<CustomersActions baseUrl="/api/app/c1/customers" primaryClassName="host-primary" secondaryClassName="host-secondary" />);
+    expect(header).toContain('class="host-primary"');
+    expect(header).toContain(">Add customer<");
+    expect(header).toContain(">Import<");
+    expect(header).toContain('href="/api/app/c1/customers/v1/admin/export"');
   });
 
   it("builds record links and the editor's body", () => {

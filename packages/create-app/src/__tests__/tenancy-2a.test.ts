@@ -166,7 +166,8 @@ describe("D12: a companies project contains no fixed business", () => {
         }
         if (!isFeatureFile(path)) continue;
         featureFiles += 1;
-        expect(source.includes('"primary"'), `${path} contains "primary"`).toBe(false);
+        // The page header's primary BUTTON (polish 3) is a style, not a business.
+        expect(source.replaceAll('buttonClass("primary")', "").includes('"primary"'), `${path} contains "primary"`).toBe(false);
         // The single business's office fallback (BOOTSTRAP_ADMIN_EMAIL) would
         // send one company's leads to the platform owner (D8). The email
         // proof names it on purpose, to assert nothing ever goes there.
@@ -715,9 +716,11 @@ describe("single-business mode (11.6, 11.9)", () => {
 
   it("moves invoicing and messages onto the package handlers and widgets, on a staff key per job", async () => {
     const p = await plan(SINGLE_FULL);
-    expect(code(file(p, "app", "admin", "invoices", "page.tsx"))).toMatch(
-      /<InvoicesLedger\s+baseUrl="\/api\/admin\/invoices"\s+invoiceHref="\/admin\/invoices\/\{id\}"\s+canManage=\{can\?\.can\("staff\.invoices\.manage"\) \?\? false\}\s*\/>/,
-    );
+    const invoicesPage = code(file(p, "app", "admin", "invoices", "page.tsx"));
+    expect(invoicesPage).toContain('const manage = can?.can("staff.invoices.manage") ?? false;');
+    expect(invoicesPage).toMatch(/<InvoicesLedger\s+baseUrl="\/api\/admin\/invoices"\s+invoiceHref="\/admin\/invoices\/\{id\}"\s+canManage=\{manage\}/);
+    // polish 3: New invoice beside the title, in the page header.
+    expect(invoicesPage).toContain('actions={manage ? <InvoicesLedgerActions className={buttonClass("primary")} /> : null}');
     expect(code(file(p, "app", "admin", "invoices", "[id]", "page.tsx"))).toContain('<InvoiceEditor baseUrl="/api/admin/invoices" invoiceId={id} backHref="/admin/invoices" />');
     expect(code(file(p, "app", "(site)", "invoice", "[token]", "page.tsx"))).toContain('<InvoiceView baseUrl="/api/invoices" token={token} preview={preview === "1"} returned={paid === "1"} />');
     expect(code(file(p, "app", "admin", "comms", "page.tsx"))).toContain('<MessagesConsole baseUrl="/api/admin/comms" canManage={can?.can("staff.comms.manage") ?? false} />');
@@ -1172,11 +1175,12 @@ describe("what the project claims and documents (11.13)", () => {
       ["tenancy", "^0.7.0"],
       ["tenancy-widget", "^0.4.0"],
       ["scheduling", "^0.6.1"],
-      ["scheduling-widget", "^0.4.0"],
+      // polish 3 (0.36.2) moved the widgets that hand their buttons to the page header.
+      ["scheduling-widget", "^0.5.0"],
       ["estimator", "^0.6.0"],
-      ["estimator-widget", "^0.6.0"],
+      ["estimator-widget", "^0.7.0"],
       ["invoicing", "^0.6.0"],
-      ["invoicing-widget", "^0.3.0"],
+      ["invoicing-widget", "^0.4.0"],
       ["comms", "^0.5.0"],
       ["comms-widget", "^0.2.0"],
       ["email", "^0.3.0"],

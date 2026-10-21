@@ -2,7 +2,7 @@
 import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { EstimateEditor } from "../admin/EstimateEditor.js";
-import { EstimatesQueue } from "../admin/EstimatesQueue.js";
+import { EstimatesQueue, EstimatesQueueActions } from "../admin/EstimatesQueue.js";
 import type { EstimateDetail, EstimateListResponse, EstimateListRow } from "../admin/types.js";
 import {
   blur,
@@ -134,6 +134,47 @@ describe("<EstimatesQueue>", () => {
     expect(fake.of("createEstimate")[0]!.args[0]).toEqual({});
     expect(onOpen).toHaveBeenCalledWith("est_new");
     await unmount();
+  });
+
+  it("actionsInHeader: the page header's <EstimatesQueueActions> starts the estimate and says Starting… while it does (polish 3)", async () => {
+    const onOpen = vi.fn();
+    let finish: (value: unknown) => void = () => {};
+    const fake = fakeAdmin({
+      listEstimates: () => ok(list([])),
+      createEstimate: () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }) as never,
+    });
+    const { container, unmount } = await mount(
+      <>
+        <header data-host="">
+          <EstimatesQueueActions className="host-primary" />
+        </header>
+        <EstimatesQueue transport={fake.transport} onOpen={onOpen} title={false} actionsInHeader />
+      </>,
+    );
+    const queue = container.querySelector<HTMLElement>("[data-aiew-queue]")!;
+    expect(button(queue, "New estimate")).toBeNull();
+    expect(queue.querySelector(".aiew-admin-head")).toBeNull();
+    const header = container.querySelector<HTMLElement>("[data-host]")!;
+    await click(button(header, "New estimate"));
+    expect(fake.of("createEstimate")).toHaveLength(1);
+    expect(button(header, "Starting…")!.disabled).toBe(true);
+    await act(async () => finish({ ok: true, data: { estimate: estimate({ id: "est_hdr", source: "staff", lines: [] }), warnings: [] } }));
+    expect(onOpen).toHaveBeenCalledWith("est_hdr");
+    await unmount();
+  });
+
+  it("opens on the filter it's given (?filter=leads from the dashboard), follows a new one, and an unknown one opens Leads (polish 3)", async () => {
+    const fake = fakeAdmin({ listEstimates: () => ok(list([])) });
+    const first = await mount(<EstimatesQueue transport={fake.transport} initialFilter="sent" />);
+    expect(fake.of("listEstimates")[0]!.args[0]).toMatchObject({ filter: "sent" });
+    await first.unmount();
+    const odd = fakeAdmin({ listEstimates: () => ok(list([])) });
+    const second = await mount(<EstimatesQueue transport={odd.transport} initialFilter={"nope" as never} />);
+    expect(odd.of("listEstimates")[0]!.args[0]).toMatchObject({ filter: "leads" });
+    await second.unmount();
   });
 
   it("with estimateHref, rows are links; sent quotes say how long they're good for", async () => {

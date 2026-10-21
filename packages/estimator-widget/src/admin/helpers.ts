@@ -1,5 +1,5 @@
 import { formatMoney } from "../format.js";
-import { SIGNED_OUT_MESSAGE, type ClientError } from "../http.js";
+import { SIGNED_OUT_MESSAGE, statusWords, type ClientError } from "../http.js";
 import type { EstimateSource, EstimateStatus, RecipeKey, UnitType } from "../types.js";
 import type {
   AreaRecipeConfig,
@@ -190,7 +190,7 @@ export function adminErrorText(error: ClientError): string {
     case "network":
       return "Couldn't reach the server. Check your connection and try again.";
     case "bad_response":
-      return error.status === 429 ? "That's a lot of changes in a short time. Wait a minute, then try again." : "Something went wrong on our side. Please try again.";
+      return error.status === 429 ? "That's a lot of changes in a short time. Wait a minute, then try again." : statusWords(error.status, "Something went wrong on our side. Please try again.");
     case "internal":
       return "Something went wrong on our side. Please try again.";
     case "forbidden":

@@ -18,7 +18,7 @@ export { ESTIMATOR_WIRE_VERSION } from "../version.js";
 export { EstimatorAdmin, type EstimatorAdminProps, type EstimatorAdminSection } from "./EstimatorAdmin.js";
 export { PriceBook, SuppliesLibrary, affectedText, SAMPLE_CONFIRM, type PriceBookProps } from "./PriceBook.js";
 export { ProductEditor, formFromProduct, formProblem, productInputFromForm, productPatch, type ProductEditorProps, type ProductForm } from "./ProductEditor.js";
-export { EstimatesQueue, type EstimatesQueueProps } from "./EstimatesQueue.js";
+export { EstimatesQueue, EstimatesQueueActions, type EstimatesQueueActionsProps, type EstimatesQueueProps } from "./EstimatesQueue.js";
 export { EstimateEditor, correctionText, type EstimateEditorProps } from "./EstimateEditor.js";
 export { EmbedKeys, embedSnippets, originsFromText, resolveEmbedBaseUrl, type EmbedKeysProps } from "./EmbedKeys.js";
 export { EstimatorSettings, type EstimatorSettingsProps, type EstimatorSettingsSection } from "./EstimatorSettings.js";

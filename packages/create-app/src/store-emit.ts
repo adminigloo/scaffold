@@ -438,7 +438,7 @@ function renderCompanyStorePage(answers: Answers): string {
   const noun = tenantLabel(answers).toLowerCase();
   return `import { StoreAdmin } from "${answers.scope}/commerce/widget";
 import { CompanyGate } from "@/components/CompanyGate";
-import { PageHeader, WORK_MAIN } from "@/components/ui";
+import { PageHeader, WORK_MAIN, buttonClass } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -446,20 +446,29 @@ export const dynamic = "force-dynamic";
  * The ${noun}'s store (getting paid, part 2): its products — name, price,
  * photo, for sale or not, stock — and the orders its customers placed. The
  * package's screen over /api/app/{id}/store, which checks the person's
- * permission on every call.
+ * permission on every call (and someone who may only look, without
+ * store.manage, isn't offered changes). "See your store" sits in the page
+ * header, beside the title, like every work page's actions (polish 3).
  */
 export default async function CompanyStorePage() {
   return (
     <CompanyGate path="/app/store" permission="store.view">
-      {({ company, locale }) => (
+      {({ company, can, locale }) => (
         <main className={WORK_MAIN}>
           <PageHeader
             title="Store"
             description="Sell your own products online. Customers pay by card into your own Stripe account, and every order lands here."
+            actions={
+              <a href={\`\${company.publicPath}/store\`} target="_blank" rel="noopener noreferrer" className={buttonClass("secondary")}>
+                See your store ↗<span className="sr-only"> (opens in a new tab)</span>
+              </a>
+            }
           />
           <StoreAdmin
             baseUrl={\`/api/app/\${company.id}/store\`}
             storefrontUrl={\`\${company.publicPath}/store\`}
+            canManage={can.includes("store.manage")}
+            actionsInHeader
             title={false}
             locale={locale}
           />

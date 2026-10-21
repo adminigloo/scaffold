@@ -92,7 +92,9 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // and the schema has stripe_connected_accounts. None exist in 0.3.x.
   // 0.4.1 (getting paid, part 2): createDirectCheckoutSession's `lines` — the
   // store's server-priced lines on Stripe's page. Not in 0.4.0.
-  stripe: "0.4.1",
+  // 0.5.0 (polish 3): `describeStripeFailure` — the emitted payments glue logs and reports every
+  // failed Stripe call and answers owners in plain words; none of it exists in 0.4.x.
+  stripe: "0.5.0",
   // 0.2.0 for the variant- and product-name rules. The product builder refuses
   // to start a save that `validateProduct` cannot clear, so a project resolving
   // 0.1.x gets a validator with no opinion about a blank variant name — which
@@ -106,7 +108,8 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // storePermissions, and the schema has store_checkouts and store_alerts.
   // None exist in 0.1.x.
   // 0.3.0: title={false} and locale on the store screens (create-app 0.36, the showroom).
-  commerce: "0.3.0",
+  // 0.4.0 (polish 3): `<StoreAdmin actionsInHeader>` — the store page puts "See your store" in its own header.
+  commerce: "0.4.0",
   // 0.2.0 for the typed plan record. `src/plans.ts` is emitted into every
   // project that sells something and calls `definePlans`, which does not exist
   // in 0.1.x — so a project resolving the old line fails to compile on a file
@@ -190,7 +193,8 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.12.0: epics. The emitted epics pages import the new ./epics entry, the
   // boards pass `epicsHref`, and the isolation proof plants an epic (createEpic,
   // setEpicTickets) for the epic routes — none of which exist in 0.11.
-  feedback: "0.12.1",
+  // 0.13.0 (polish 3): `<FeedbackEpicsActions>` — New epic in the epics page header.
+  feedback: "0.13.0",
   // 0.2.1 — 0.2.0 brought the "My reports" view the thread endpoints exist
   // to serve; the patch is the glacier re-skin with the widget's own dark
   // theme, which a caret would cover anyway. Pinned at the workspace version
@@ -245,7 +249,8 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // settings, so the old list isn't offered beside the new one.
   // 0.5.0 (getting paid, part 1): `depositHref`, the accepted quote's "Pay the deposit".
   // 0.6.0: the setup card, title={false}, estimatePageUrl, showTechnical and on/off switch help (create-app 0.36).
-  "estimator-widget": "0.6.0",
+  // 0.7.0 (polish 3): `<EstimatesQueueActions>` — New estimate in the page header.
+  "estimator-widget": "0.7.0",
   // 0.3.0: the emitted public procedures call findPublicSlots (PublicSlots only —
   // 0.2's slots route returned the previous customer's street address) and
   // requestPublicBooking with a requesterKey (server-derived times and crew,
@@ -283,7 +288,8 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.3.0 (Tenancy 2b-1): the calendar opens a visit from ?visit= and links
   // its photos and files, and today's route has a Photos button per stop.
   // 0.4.0: the setup card and showTechnical on the calendar and settings (create-app 0.36).
-  "scheduling-widget": "0.4.0",
+  // 0.5.0 (polish 3): `<ScheduleCalendarActions>` — New visit in the page header.
+  "scheduling-widget": "0.5.0",
   // Tenancy 1's screens (onboarding, the switcher, the team page, company
   // settings, the operator console). In the BASE set: the team page is in
   // every project, single-business ones included.
@@ -318,7 +324,9 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // and a payment's dispute/refund mark in the ledger, over invoicing 0.5's wire.
   // 0.2.1 (the customer list): its invoicing range moves to ^0.6.0 with invoicing 0.6.
   // 0.3.0: title={false} and showTechnical on the ledger (create-app 0.36).
-  "invoicing-widget": "0.3.0",
+  // 0.4.0 (polish 3): `<InvoicesLedgerActions>` and `initialFilter` — New invoice in the page header,
+  // ?status=overdue from the dashboard. Neither exists in 0.3.x.
+  "invoicing-widget": "0.4.0",
   // 0.2.0 (sweep): SMS compliance is required with an SMS sender, the queue is
   // bounded and cancellable, and the emitted router calls setTemplateActive and
   // requireEmailSubject — none exist in 0.1.x.
@@ -358,13 +366,15 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.2.0: the fetch adapter over booking 0.2's admin routes, the honeypot and
   // the "closed" sentence; pinned in step with the workspace.
   // 0.3.0: title={false} on the calls screen (create-app 0.36).
-  "booking-widget": "0.3.0",
+  // 0.4.0 (polish 3): `<BookingAdmin actionsInHeader>` — the calls page puts "Open the booking page" in its own header.
+  "booking-widget": "0.4.0",
   // First release (the customer list): one customer list per company —
   // find-or-create, the links every feature's glue writes, the timeline,
   // merge, CSV import and export, the directory seam, the backfill, the
   // handler and its route table, and the screens (./admin).
   // 0.2.0: title={false} and locale on the customer list (create-app 0.36).
-  customers: "0.2.0",
+  // 0.3.0 (polish 3): `<CustomersActions>` — Add customer, Import and Export in the page header.
+  customers: "0.3.0",
 };
 
 export class UnknownPackageVersionError extends Error {

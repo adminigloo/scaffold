@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useId, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
 import type { ClientError } from "../http.js";
 import { DEFAULT_FORMAT, formatDate, formatMoney, parseDollars, parsePercent, parseQuantity, STATUS_TONE, STATUS_WORDS } from "../money.js";
 import type { CreateInvoiceBody, InvoiceStatusWire, InvoiceSummaryWire, InvoicingStatusWire, MoneyFormatWire } from "../types.js";
 import { Field, fieldAria, Loading, Root, SetupCard, type ChromeProps } from "../ui.js";
 import type { InvoicingTransport } from "./client.js";
 import { InvoiceEditor } from "./InvoiceEditor.js";
+import { pageActionChannel } from "./page-actions.js";
 import { errorSentence, hrefFor, issueAt, navigate, safely, useAlive, useInvoicingTransport } from "./shared.js";
 
 /**
@@ -36,6 +37,50 @@ export interface InvoicesLedgerProps extends ChromeProps {
   title?: string | false;
   /** Staff of the SITE: the setup card also shows the technical detail of what only the operator can switch on. */
   showTechnical?: boolean;
+  /**
+   * polish 3: the filter to open on — "overdue" for the dashboard's "See all"
+   * under Overdue invoices; any status of the chips, or null for All (the
+   * default). A value that isn't one of them opens All. A host page reads it
+   * from its URL (`/app/invoices?status=overdue`).
+   */
+  initialFilter?: InvoiceStatusWire | null;
+  /**
+   * polish 3: the host page's header carries "New invoice" — render
+   * <InvoicesLedgerActions> there — so the ledger draws none of its own
+   * (the empty ledger's "Raise your first invoice" stays). Default false.
+   */
+  actionsInHeader?: boolean;
+}
+
+/** The ledger's header button, pressed in the host page's header (<InvoicesLedgerActions>). */
+const ledgerActions = pageActionChannel<"new">("aiiw-ledger");
+
+export interface InvoicesLedgerActionsProps {
+  /** The host's button class (its page header's primary button). Default the widget's own. */
+  className?: string;
+}
+
+/**
+ * "New invoice" for the host page's header (polish 3), beside its title like
+ * every other page's primary action: it opens the ledger's own form. Render
+ * it only for someone who may raise invoices (`invoices.manage`), with
+ * `actionsInHeader` on the <InvoicesLedger> below it.
+ */
+export function InvoicesLedgerActions(props: InvoicesLedgerActionsProps) {
+  const { state, press } = ledgerActions.useHeader();
+  const button = state.new ?? {};
+  if (button.hidden) return null;
+  return (
+    <button
+      type="button"
+      className={props.className ?? "aiiw-btn aiiw-btn-primary"}
+      disabled={button.disabled === true}
+      data-aiiw-header-action="new"
+      onClick={() => press("new")}
+    >
+      New invoice
+    </button>
+  );
 }
 
 const FILTERS: readonly { label: string; status: InvoiceStatusWire | null }[] = [
@@ -49,6 +94,11 @@ const FILTERS: readonly { label: string; status: InvoiceStatusWire | null }[] = 
   { label: "Void", status: "void" },
 ];
 
+/** One of the chips' statuses, or null (All) for anything else. */
+function filterFrom(value: InvoiceStatusWire | string | null | undefined): InvoiceStatusWire | null {
+  return FILTERS.find((f) => f.status !== null && f.status === value)?.status ?? null;
+}
+
 /** The invoice the default "?invoice={id}" href opened on this page, if any. */
 function openedHere(): string | null {
   if (typeof window === "undefined") return null;
@@ -60,7 +110,7 @@ function openedHere(): string | null {
 }
 
 export function InvoicesLedger(props: InvoicesLedgerProps) {
-  const { baseUrl, transport: given, invoiceHref, locale, canManage: _canManage, title: _title, showTechnical: _showTechnical, ...chrome } = props;
+  const { baseUrl, transport: given, invoiceHref, locale, canManage: _canManage, title: _title, showTechnical: _showTechnical, initialFilter: _initialFilter, actionsInHeader: _actionsInHeader, ...chrome } = props;
   const transport = useInvoicingTransport(given, baseUrl);
   // With the default href, an invoice opened from this page shows here.
   const [inline] = useState<string | null>(() => (invoiceHref === undefined ? openedHere() : null));
@@ -74,13 +124,32 @@ export function InvoicesLedger(props: InvoicesLedgerProps) {
 type ListState = { state: "loading" } | { state: "ready"; rows: InvoiceSummaryWire[]; next: string | null; format: MoneyFormatWire } | { state: "error"; error: ClientError };
 
 function Ledger(props: InvoicesLedgerProps & { transport: InvoicingTransport }) {
-  const { transport, invoiceHref = "?invoice={id}", locale, baseUrl: _baseUrl, canManage = true, title, showTechnical = false, ...chrome } = props;
+  const {
+    transport,
+    invoiceHref = "?invoice={id}",
+    locale,
+    baseUrl: _baseUrl,
+    canManage = true,
+    title,
+    showTechnical = false,
+    initialFilter,
+    actionsInHeader = false,
+    ...chrome
+  } = props;
   const alive = useAlive();
   const [status, setStatus] = useState<InvoicingStatusWire | null>(null);
-  const [filter, setFilter] = useState<InvoiceStatusWire | null>(null);
+  const [filter, setFilter] = useState<InvoiceStatusWire | null>(() => filterFrom(initialFilter));
+  // The host page moved to another ?status= (a link on the same page): follow it.
+  useEffect(() => setFilter(filterFrom(initialFilter)), [initialFilter]);
   const [list, setList] = useState<ListState>({ state: "loading" });
   const [more, setMore] = useState(false);
   const [creating, setCreating] = useState(false);
+  const newForm = useRef<HTMLDivElement | null>(null);
+  ledgerActions.useScreen(actionsInHeader && canManage, () => setCreating(true), { new: { disabled: creating } });
+  // Opened from the page header: bring the form into view.
+  useEffect(() => {
+    if (creating && actionsInHeader) newForm.current?.scrollIntoView?.({ block: "nearest" });
+  }, [creating, actionsInHeader]);
 
   useEffect(() => {
     void safely(() => transport.status()).then((res) => {
@@ -115,14 +184,17 @@ function Ledger(props: InvoicesLedgerProps & { transport: InvoicingTransport }) 
   return (
     <Root {...chrome} admin data={{ "aiiw-ledger": "" }}>
       <div className="aiiw-admin-inner">
-        <div className="aiiw-spread" data-titled={title === false ? undefined : ""}>
-          {title === false ? <span /> : <h2 className="aiiw-title">{title ?? "Invoices"}</h2>}
-          {canManage && !creating ? (
-            <button type="button" className="aiiw-btn aiiw-btn-primary" onClick={() => setCreating(true)}>
-              New invoice
-            </button>
-          ) : null}
-        </div>
+        {/* The heading and New invoice — unless the host page's header says both (polish 3). */}
+        {title !== false || (canManage && !creating && !actionsInHeader) ? (
+          <div className="aiiw-spread" data-titled={title === false ? undefined : ""}>
+            {title === false ? <span /> : <h2 className="aiiw-title">{title ?? "Invoices"}</h2>}
+            {canManage && !creating && !actionsInHeader ? (
+              <button type="button" className="aiiw-btn aiiw-btn-primary" onClick={() => setCreating(true)}>
+                New invoice
+              </button>
+            ) : null}
+          </div>
+        ) : null}
 
         {/* One setup card, never a stack of banners: how customers pay (the
             owner's job, with where to fill it in) and email (the operator's). */}
@@ -139,6 +211,7 @@ function Ledger(props: InvoicesLedgerProps & { transport: InvoicingTransport }) 
         ) : null}
 
         {creating ? (
+          <div ref={newForm}>
           <NewInvoice
             transport={transport}
             onCancel={() => setCreating(false)}
@@ -147,6 +220,7 @@ function Ledger(props: InvoicesLedgerProps & { transport: InvoicingTransport }) 
               navigate(open(id));
             }}
           />
+          </div>
         ) : null}
 
         <div className="aiiw-chips" role="group" aria-label="Show">
@@ -270,6 +344,10 @@ function NewInvoice({ transport, onCancel, onCreated }: { transport: InvoicingTr
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [serverError, setServerError] = useState<ClientError | null>(null);
   const [saving, setSaving] = useState(false);
+  // The form just opened: its first field is where the person starts typing.
+  useEffect(() => {
+    if (typeof document !== "undefined") document.getElementById(`${id}-name`)?.focus();
+  }, [id]);
 
   const preview = lines.reduce((sum, line) => {
     const q = parseQuantity(line.quantity);

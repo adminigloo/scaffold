@@ -1,7 +1,7 @@
 "use client";
 
-import { EstimatesQueue } from "__SCOPE__/estimator-widget/admin";
-import { PageHeader } from "@/components/ui";
+import { EstimatesQueue, EstimatesQueueActions } from "__SCOPE__/estimator-widget/admin";
+import { PageHeader, buttonClass } from "@/components/ui";
 
 /**
  * Leads and quotes: every estimate a customer saved on /estimate (or through
@@ -29,10 +29,14 @@ export default function EstimatesPage() {
       <PageHeader
         title="Estimates"
         description="New leads from your website and the quotes you've sent. Open one to see the customer's photo, edit the lines and send the quote."
+        actions={<EstimatesQueueActions className={buttonClass("primary")} />}
       />
+      {/* New estimate beside the title, like every page's primary action (polish 3). */}
       <EstimatesQueue
         baseUrl="/api/admin/estimator"
         estimateHref={(id) => `/admin/estimates/${encodeURIComponent(id)}`}
+        title={false}
+        actionsInHeader
       />
     </>
   );

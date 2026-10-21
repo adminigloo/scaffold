@@ -10,6 +10,7 @@ import {
   type StripeDb,
 } from "./connect.js";
 import { STRIPE_CONNECT_ADMIN_ROUTE_PERMISSIONS, type StripeConnectAdminRouteKind } from "./connect-routes.js";
+import { describeStripeFailure, stripeFailureWire, stripeNotSetUp, type StripeFailure } from "./failure.js";
 
 /**
  * The company's payments screen API (stripe 0.4), mounted at
@@ -23,6 +24,14 @@ import { STRIPE_CONNECT_ADMIN_ROUTE_PERMISSIONS, type StripeConnectAdminRouteKin
  * (STRIPE_CONNECT_ADMIN_ROUTE_PERMISSIONS) before anything else; a `Response`
  * is returned as is, `false` is 403. Same-origin only. With no Stripe key on
  * the site, status says so and connect answers 409 — never a 500.
+ *
+ * WHEN STRIPE SAYS NO (stripe 0.5): every failure is reported (`onError`, with
+ * what it means as `context.stripe`) and answered in the owner's words —
+ * "Card payments aren't switched on for this site yet. We've told whoever runs
+ * it." when the site's own Stripe setup is missing (not signed up for Connect,
+ * a wrong or restricted key, no key), a try-again sentence when Stripe didn't
+ * answer. The site's staff (`staffDetail`) also get Stripe's own sentence and
+ * the link to fix it, as `error.staff`; nobody else ever does.
  */
 
 export type ConnectAuthorizeResult = boolean | { userId?: string | number | null } | Response;
@@ -46,7 +55,13 @@ export interface CreateConnectAdminHandlersOptions {
   readonly siteName: string;
   /** The owner disconnected: close the company's open payment pages (invoicing's `expireCompanyCheckouts`). */
   readonly onDisconnect?: (tenantId: string) => void | Promise<void>;
-  readonly onError?: (error: unknown, context: { tenantId: string | null; route: string }) => void;
+  /**
+   * stripe 0.5: is the caller staff of the SITE (its operator)? They also read
+   * Stripe's own message and where to fix it when a call fails. Default: nobody.
+   */
+  readonly staffDetail?: (req: Request) => boolean | Promise<boolean>;
+  /** Every failure, with — when Stripe was involved — what it means (`stripe`): log it and put it where the operator reads errors. */
+  readonly onError?: (error: unknown, context: { tenantId: string | null; route: string; stripe?: StripeFailure }) => void;
 }
 
 export interface PaymentsStatusWire {
@@ -107,13 +122,22 @@ function route(method: string, pathname: string): StripeConnectAdminRouteKind | 
 }
 
 export function createConnectAdminHandlers(options: CreateConnectAdminHandlersOptions): { handle: (req: Request) => Promise<Response> } {
-  const report = (error: unknown, tenantId: string | null, kind: string) => {
+  const report = (error: unknown, tenantId: string | null, kind: string, stripe?: StripeFailure) => {
     try {
-      options.onError?.(error, { tenantId, route: kind });
+      options.onError?.(error, { tenantId, route: kind, ...(stripe ? { stripe } : {}) });
     } catch {
       /* never let a reporter break an answer */
     }
   };
+  const isStaff = async (req: Request): Promise<boolean> => {
+    try {
+      return options.staffDetail ? (await options.staffDetail(req)) === true : false;
+    } catch {
+      return false;
+    }
+  };
+  /** A failure in the owner's words, with Stripe's own for staff. */
+  const failed = async (req: Request, found: StripeFailure): Promise<Response> => json({ error: stripeFailureWire(found, await isStaff(req)) }, found.status);
   // Plain words for an owner: what is missing is the site's to fix, so the
   // owner is told whom to ask — never the name of a setting.
   const notConfigured = (): string | null =>
@@ -129,7 +153,7 @@ export function createConnectAdminHandlers(options: CreateConnectAdminHandlersOp
         await applyAccountUpdate(options.db, await client.stripe.accounts.retrieve(row.accountId), new Date());
         row = await connectedAccountFor(options.db, tenantId);
       } catch (error) {
-        report(error, tenantId, "status");
+        report(error, tenantId, "status", describeStripeFailure(error));
       }
     }
     const reason = notConfigured();
@@ -179,9 +203,14 @@ export function createConnectAdminHandlers(options: CreateConnectAdminHandlersOp
       } catch {
         /* no body: the default */
       }
-      const reason = notConfigured();
       const client = options.stripe();
-      if (reason !== null || !client) return refuse("unavailable", 409, reason ?? "Card payments aren't set up on this site.");
+      if (!client || !options.webhookReady) {
+        // The site's operator has to switch card payments on: tell them (the
+        // error log), and tell the owner they have been.
+        const found = stripeNotSetUp(!client ? "STRIPE_SECRET_KEY" : "STRIPE_CONNECT_WEBHOOK_SECRET");
+        report(new Error(`Connect Stripe was pressed, but ${found.stripeMessage}`), tenantId, kind, found);
+        return failed(req, found);
+      }
       const scoped = tenantId;
       const { url } = await startConnectOnboarding(options.db, client, {
         tenantId: scoped,
@@ -192,8 +221,9 @@ export function createConnectAdminHandlers(options: CreateConnectAdminHandlersOp
       });
       return json({ url });
     } catch (error) {
-      report(error, tenantId, kind);
-      return refuse("internal", 500, "Something went wrong. Please try again.");
+      const found = describeStripeFailure(error);
+      report(error, tenantId, kind, found);
+      return failed(req, found);
     }
   }
 

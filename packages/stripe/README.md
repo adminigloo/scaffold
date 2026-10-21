@@ -74,6 +74,20 @@ account is ignored) and runs `runLedgeredEvent` keyed by account + event
 connect, disconnect) on `payments.view` / `payments.manage`. Run
 `sql/upgrade-0.3-to-0.4.sql` before deploying.
 
+**When Stripe says no (0.5).** `describeStripeFailure(error)` reads a failed
+call: the site's own setup (not signed up for Connect — Stripe's 400 "You can
+only create new accounts if you've signed up for Connect…" — or its platform
+profile unfinished, a wrong or restricted key, or no key: `stripeNotSetUp`),
+Stripe not answering (5xx, or the SDK's own dropped connection), its rate
+limit, or any other refusal. Anything the Stripe SDK didn't raise — a database
+that is down ("fetch failed", ECONNREFUSED) included — is "something went
+wrong on our side", never Stripe's outage. It gives the owner one plain sentence ("Card payments aren't switched
+on for this site yet. We've told whoever runs it."), Stripe's own words and the
+fix link for the site's staff, and the type, code, status and request id for
+the log. `createConnectAdminHandlers` answers with it, reports every failure
+through `onError` (`context.stripe`), and adds Stripe's sentence and the link
+(`error.staff`) only for callers its `staffDetail(req)` says are staff.
+
 ## Not included
 
 - **Payouts to anyone but the company.** A company's card payments pay out to

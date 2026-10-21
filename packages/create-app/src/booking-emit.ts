@@ -697,6 +697,8 @@ export function CallsAdmin(props: {
   readonly emailsEnabled: boolean;
   /** The screen's own heading; \`false\` when the page's header already says it. */
   readonly title?: string | false;
+  /** The page's header carries "Open the booking page" (polish 3), so the screen draws none. */
+  readonly actionsInHeader?: boolean;
   /** Dates and times in the ${companiesMode(answers) ? "company's" : "business's"} locale. */
   readonly locale?: string;
 }) {
@@ -704,7 +706,15 @@ export function CallsAdmin(props: {
     () => createBookingAdminFetchAdapter({ baseUrl: props.baseUrl, emailsEnabled: props.emailsEnabled }),
     [props.baseUrl, props.emailsEnabled],
   );
-  return <BookingAdmin adapter={adapter} bookingPageUrl={props.bookingPageUrl} title={props.title ?? "Calls"} locale={props.locale ?? "en-US"} />;
+  return (
+    <BookingAdmin
+      adapter={adapter}
+      bookingPageUrl={props.bookingPageUrl}
+      title={props.title ?? "Calls"}
+      actionsInHeader={props.actionsInHeader === true}
+      locale={props.locale ?? "en-US"}
+    />
+  );
 }
 `;
 }
@@ -713,7 +723,7 @@ function renderCompanyCallsPage(answers: Answers): string {
   const noun = tenantLabel(answers).toLowerCase();
   return `import { CallsAdmin } from "@/components/CallsAdmin";
 import { CompanyGate } from "@/components/CompanyGate";
-import { PageHeader, WORK_MAIN } from "@/components/ui";
+import { PageHeader, WORK_MAIN, buttonClass } from "@/components/ui";
 import { bookingEmailsConfigured } from "@/server/booking";
 
 export const dynamic = "force-dynamic";
@@ -722,7 +732,8 @@ export const dynamic = "force-dynamic";
  * The ${noun}'s calls (Tenancy 2b-4c): the calls people booked on its booking
  * page, its people's hours and time off, its holidays and its call types —
  * all of them its own, through /api/app/{id}/calls, which checks the person's
- * permission on every call.
+ * permission on every call. "Open the booking page" sits in the page header,
+ * beside the title, like every work page's actions (polish 3).
  */
 export default async function CompanyCallsPage() {
   return (
@@ -732,11 +743,17 @@ export default async function CompanyCallsPage() {
           <PageHeader
             title="Calls"
             description="Calls people book with you: who's coming and how, when you can be booked, and the calendar behind it."
+            actions={
+              <a href={\`\${company.publicPath}/book\`} target="_blank" rel="noopener noreferrer" className={buttonClass("secondary")}>
+                Open the booking page ↗<span className="sr-only"> (opens in a new tab)</span>
+              </a>
+            }
           />
           <CallsAdmin
             baseUrl={\`/api/app/\${company.id}/calls\`}
             bookingPageUrl={\`\${company.publicPath}/book\`}
             emailsEnabled={bookingEmailsConfigured}
+            actionsInHeader
             title={false}
             locale={locale}
           />

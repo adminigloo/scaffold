@@ -362,4 +362,102 @@ describe("the payments screen API", () => {
     expect((await call(viewer, "co_screen", "disconnect")).status).toBe(403);
     expect((await call(viewer, "co_screen", "status")).status).toBe(200);
   });
+
+  it("not signed up for Connect: reported with what it means, the owner's sentence, and Stripe's own words plus the fix for staff only (stripe 0.5)", async () => {
+    const message = "You can only create new accounts if you've signed up for Connect, which you can do at https://dashboard.stripe.com/connect.";
+    const { client: stripe } = fakeStripe();
+    (stripe.stripe.accounts as unknown as { create: () => Promise<never> }).create = async () => {
+      throw Stripe.errors.StripeError.generate({ type: "invalid_request_error", message, statusCode: 400 } as never);
+    };
+    const reported: Array<{ route: string; kind?: string }> = [];
+    const build = (staff: boolean) =>
+      createConnectAdminHandlers({
+        db,
+        stripe: () => stripe,
+        resolveTenant: (req) => new URL(req.url).pathname.split("/")[3] ?? null,
+        authorize: () => true,
+        returnUrl: () => "https://app.test/app/payments?connected=1",
+        refreshUrl: () => "https://app.test/app/payments",
+        feeBps: 0,
+        webhookReady: true,
+        siteName: "Igloo Back Office",
+        staffDetail: () => staff,
+        onError: (_error, context) => void reported.push({ route: context.route, kind: context.stripe?.kind }),
+      });
+    const owner = await call(build(false), "co_noconnect", "connect");
+    expect(owner.status).toBe(409);
+    const ownerBody = (await owner.json()) as { error: { code: string; message: string; staff?: unknown } };
+    expect(ownerBody.error).toEqual({ code: "stripe_setup", message: "Card payments aren't switched on for this site yet. We've told whoever runs it." });
+    const staff = (await (await call(build(true), "co_noconnect", "connect")).json()) as { error: { staff: { message: string; fixUrl: string } } };
+    expect(staff.error.staff).toMatchObject({ message, fixUrl: "https://dashboard.stripe.com/connect" });
+    expect(reported).toEqual([
+      { route: "connect", kind: "setup" },
+      { route: "connect", kind: "setup" },
+    ]);
+  });
+
+  it("the database down is not 'Stripe isn't answering' (review): the generic sentence, reported as unknown, no Stripe status page", async () => {
+    const { client: stripe, calls } = fakeStripe();
+    const reported: Array<{ route: string; kind?: string; fixUrl?: string | null }> = [];
+    const build = (failWith: Error | null) =>
+      createConnectAdminHandlers({
+        db,
+        stripe: () => stripe,
+        // The tenant seam reads the database: here it is down (the Neon driver's failure).
+        resolveTenant: async (req) => {
+          if (failWith) throw failWith;
+          return new URL(req.url).pathname.split("/")[3] ?? null;
+        },
+        authorize: () => true,
+        returnUrl: () => "https://app.test/a",
+        refreshUrl: () => "https://app.test/b",
+        feeBps: 0,
+        webhookReady: true,
+        siteName: "Igloo Back Office",
+        staffDetail: () => true,
+        onError: (_error, context) => void reported.push({ route: context.route, kind: context.stripe?.kind, fixUrl: context.stripe?.fixUrl }),
+      });
+    for (const down of [new TypeError("fetch failed"), Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:5432"), { code: "ECONNREFUSED" })]) {
+      const res = await call(build(down), "co_dbdown", "connect");
+      expect(res.status).toBe(500);
+      const body = (await res.json()) as { error: { code: string; message: string; staff?: unknown } };
+      expect(body.error).toEqual({ code: "internal", message: "Something went wrong on our side, so nothing was changed. We've told whoever runs this site; please try again later." });
+    }
+    expect(reported).toEqual([
+      { route: "connect", kind: "unknown", fixUrl: null },
+      { route: "connect", kind: "unknown", fixUrl: null },
+    ]);
+    expect(calls).toEqual([]);
+    // NEGATIVE CONTROL: Stripe's own dropped connection on the same route is Stripe's outage.
+    (stripe.stripe.accounts as unknown as { create: () => Promise<never> }).create = async () => {
+      throw new Stripe.errors.StripeConnectionError({ message: "An error occurred with our connection to Stripe." } as never);
+    };
+    const outage = await call(build(null), "co_dbdown", "connect");
+    expect(outage.status).toBe(503);
+    expect(((await outage.json()) as { error: { code: string } }).error.code).toBe("stripe_unavailable");
+    expect(reported.at(-1)).toEqual({ route: "connect", kind: "outage", fixUrl: "https://status.stripe.com/" });
+  });
+
+  it("no Stripe key: connect is refused in the same owner's words and reported, never a 500", async () => {
+    const reported: string[] = [];
+    const h = createConnectAdminHandlers({
+      db,
+      stripe: () => null,
+      resolveTenant: (req) => new URL(req.url).pathname.split("/")[3] ?? null,
+      authorize: () => true,
+      returnUrl: () => "https://app.test/a",
+      refreshUrl: () => "https://app.test/b",
+      feeBps: 0,
+      webhookReady: true,
+      siteName: "Igloo Back Office",
+      staffDetail: () => true,
+      onError: (error) => void reported.push(error instanceof Error ? error.message : String(error)),
+    });
+    const res = await call(h, "co_nokey", "connect");
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: { message: string; staff: { message: string } } };
+    expect(body.error.message).toBe("Card payments aren't switched on for this site yet. We've told whoever runs it.");
+    expect(body.error.staff.message).toContain("STRIPE_SECRET_KEY");
+    expect(reported).toHaveLength(1);
+  });
 });

@@ -1,4 +1,4 @@
-import { SIGNED_OUT_MESSAGE, type ClientError } from "../http.js";
+import { SIGNED_OUT_MESSAGE, statusWords, type ClientError } from "../http.js";
 import { addDays, clockIn, formatClock, minutesOf, timeOf } from "../time.js";
 import type { VisitStatus } from "../types.js";
 import type { CalendarResource, TimeOffDay, VisitSnapshot, WeeklyWindow } from "./types.js";
@@ -136,6 +136,8 @@ export function adminErrorText(error: ClientError): string {
   switch (error.code) {
     case "network":
       return "Couldn't reach the server. Check your connection and try again.";
+    case "bad_response":
+      return statusWords(error.status, "Something went wrong on our side. Please try again.");
     case "forbidden":
       return "You don't have permission to do that.";
     case "not_found":

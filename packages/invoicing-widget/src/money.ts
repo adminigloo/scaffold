@@ -108,6 +108,31 @@ export const METHOD_WORDS: Readonly<Record<PaymentMethodWire, string>> = {
   other: "Other",
 };
 
+/** How a note can already name each method, at its start ("Check #1042" names a check). */
+const METHOD_NAMES: Readonly<Record<PaymentMethodWire, readonly string[]>> = {
+  card: ["card", "credit card", "debit card"],
+  cash: ["cash"],
+  check: ["check", "cheque", "chk"],
+  ach: ["bank transfer", "ach"],
+  other: ["other"],
+};
+
+/**
+ * A payment's method and its note on one line, never saying the method twice
+ * (polish 3): a note that already starts with the method reads alone —
+ * "Check #1042", not "Check · Check #1042" — and any other note follows the
+ * method: "Cash · Paid at the door". No note: the method alone.
+ */
+export function paymentWords(method: PaymentMethodWire, reference: string | null | undefined): string {
+  const word = METHOD_WORDS[method] ?? METHOD_WORDS.other;
+  const note = (reference ?? "").trim();
+  if (note === "") return word;
+  const lower = note.toLowerCase();
+  const names = [word.toLowerCase(), ...(METHOD_NAMES[method] ?? [])];
+  const named = names.some((name) => lower.startsWith(name) && !/[a-z0-9]/.test(lower.charAt(name.length)));
+  return named ? note : `${word} · ${note}`;
+}
+
 /** The move a staff member picks, in words. */
 export const MOVE_WORDS: Readonly<Record<"draft" | "sent" | "viewed" | "void", string>> = {
   draft: "Back to draft",

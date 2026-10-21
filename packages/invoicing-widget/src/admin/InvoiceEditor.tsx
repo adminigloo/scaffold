@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useState, type FormEvent, type ReactElement } from "react";
 import type { ClientError, Result } from "../http.js";
-import { dollarsInput, formatDate, formatMoney, METHOD_WORDS, MOVE_WORDS, parseDollars, parsePercent, parseQuantity, percentText, STATUS_TONE, STATUS_WORDS } from "../money.js";
+import { dollarsInput, formatDate, formatMoney, METHOD_WORDS, MOVE_WORDS, parseDollars, paymentWords, parsePercent, parseQuantity, percentText, STATUS_TONE, STATUS_WORDS } from "../money.js";
 import type {
   DepositBody,
   InvoiceDetailWire,
@@ -635,8 +635,7 @@ function Payments({
           <li key={payment.id} className="aiiw-item-card" data-aiiw-payment={payment.id}>
             <div className="aiiw-row">
               <span className={`aiiw-grow aiiw-num${payment.reversed ? " aiiw-reversed" : ""}`}>
-                {money(payment.amount)} · {METHOD_WORDS[payment.method]}
-                {payment.reference ? ` · ${payment.reference}` : ""}
+                {money(payment.amount)} · {paymentWords(payment.method, payment.reference)}
               </span>
               <span className="aiiw-small">{formatDate(payment.paidAt, format, locale)}</span>
             </div>
