@@ -31,8 +31,17 @@ export const TENANT_NOUNS = [
 ] as const;
 export const BUSINESS_MODELS = ["none", "one-time", "subscription", "both"] as const;
 export const ADMIN_SHELLS = ["none", "minimal", "full"] as const;
+/**
+ * WHO SIGNS UP to a project with no companies (`--tenant-noun none`), billing
+ * 0.5. "business": the people are one business's staff, working at /admin
+ * (every project made before 0.5 is this). "consumers": the people are the
+ * customers — each signs up as themselves, their own invisible workspace is
+ * what pays, plans are enforced per person, and nobody shares an account.
+ */
+export const AUDIENCES = ["business", "consumers"] as const;
 
 export type BusinessModel = (typeof BUSINESS_MODELS)[number];
+export type Audience = (typeof AUDIENCES)[number];
 export type AdminShell = (typeof ADMIN_SHELLS)[number];
 export type TenantNoun = (typeof TENANT_NOUNS)[number];
 
@@ -41,6 +50,15 @@ export interface Answers {
   readonly projectName: string;
   /** What a customer organisation is called throughout the UI. */
   readonly tenantNoun: TenantNoun;
+  /**
+   * Who signs up, in a project with no companies (`--tenant-noun none`):
+   * "business" (one business's staff, the default, and every project made
+   * before billing 0.5) or "consumers" (people who are the customers: each
+   * person's own workspace pays for plans, per person; there is no team page
+   * and nobody can invite anyone in; the founder sees them at
+   * /admin/billing/subscribers). Always "business" with companies.
+   */
+  readonly audience: Audience;
   readonly businessModel: BusinessModel;
   readonly adminShell: AdminShell;
   readonly includeAi: boolean;
@@ -239,6 +257,7 @@ export interface Answers {
 export const DEFAULT_ANSWERS: Answers = {
   projectName: "my-app",
   tenantNoun: "Organization",
+  audience: "business",
   businessModel: "none",
   adminShell: "minimal",
   includeAi: false,
@@ -292,6 +311,15 @@ export class IncompatibleAnswersError extends Error {
  * pages that 404.
  */
 export function assertAnswersCompatible(answers: Answers): void {
+  // CONSUMERS SIGN UP AS THEMSELVES (billing 0.5): a project whose customers
+  // are companies has no "consumers" — its people sign up into a company they
+  // name. Refused rather than ignored, so the flag never silently does nothing.
+  if (answers.audience === "consumers" && answers.tenantNoun !== "none") {
+    throw new IncompatibleAnswersError(
+      "--audience consumers is for a project whose customers sign up as themselves, with no companies: use it with --tenant-noun none. " +
+        `With --tenant-noun ${answers.tenantNoun} each customer is a ${answers.tenantNoun.toLowerCase()} that pays its own plan; leave --audience out (it is "business").`,
+    );
+  }
   // BOOK A CALL, ONE BUSINESS, NEEDS AN ADMIN PANEL: its calls, hours and call
   // types are worked at /admin/calls. (A company's are at /app/calls, which
   // needs no shell.)
@@ -694,12 +722,30 @@ export function optionalEnvFor(answers: Answers): readonly string[] {
   if (answers.tenantNoun !== "none" && (answers.businessModel === "subscription" || answers.businessModel === "both")) {
     vars.push("BILLING_TRIAL_DAYS", "PLANS_ENFORCED_FROM");
   }
+  // PERSONAL PLANS (billing 0.5), a consumers project that sells
+  // subscriptions: the optional free trial at Stripe (off unless set).
+  if (consumerProduct(answers) && (answers.businessModel === "subscription" || answers.businessModel === "both")) {
+    vars.push("BILLING_TRIAL_DAYS");
+  }
   // Deduped, not sorted: two features naming one variable (the blob token)
   // must not print it twice, and order is the order the reader meets them.
   return [...new Set(vars)];
 }
 
-/** Singular noun used in generated UI copy. `none` means a B2C project. */
+/**
+ * A project whose customers are PEOPLE (billing 0.5): no companies
+ * (`--tenant-noun none`) and `--audience consumers`. Each person's own
+ * workspace pays; plans are enforced per person; nobody shares an account.
+ */
+export function consumerProduct(answers: Pick<Answers, "tenantNoun" | "audience">): boolean {
+  return answers.tenantNoun === "none" && answers.audience === "consumers";
+}
+
+/**
+ * Singular noun used in generated UI copy. `none` is a project with no
+ * companies — one business's staff, or (with `--audience consumers`) people
+ * signing up as themselves; either way each person's invisible workspace.
+ */
 export function tenantLabel(answers: Answers): string {
   return answers.tenantNoun === "none" ? "Workspace" : answers.tenantNoun;
 }
@@ -780,6 +826,14 @@ export function overlayNamesFor(answers: Answers): readonly string[] {
   // deliberately declined one.
   if (answers.businessModel !== "none" && answers.adminShell !== "none") {
     names.push("catalog-admin");
+  }
+
+  // WHO PAYS FOR WHAT (billing 0.5): the founder's Subscribers page, in a
+  // project whose customers are people — on catalog-admin's condition (an
+  // admin shell to put it in), and only there: a companies project lists its
+  // companies' plans at /admin/billing/companies instead.
+  if (answers.businessModel !== "none" && answers.adminShell !== "none" && consumerProduct(answers)) {
+    names.push("subscribers-admin");
   }
 
   // The customer's own side of the line: `/account`, their orders, one order

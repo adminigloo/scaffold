@@ -138,7 +138,7 @@ describe("prepareCompanyCheckout (review H2)", () => {
   it("reuses the company's customer, finds a subscription Stripe holds before your tables know it, and closes other open checkouts", async () => {
     const { client, calls } = fakeCustomers({ found: "cus_a", liveStatus: "active", openSessions: 2 });
     const out = await prepareCompanyCheckout(client, { tenantId: "t_1", knownCustomerId: null, email: "o@a.test" });
-    expect(out).toEqual({ customerId: "cus_a", existingSubscription: { id: "sub_live", status: "active" }, expiredSessions: 2 });
+    expect(out).toEqual({ customerId: "cus_a", existingSubscription: { id: "sub_live", status: "active" }, expiredSessions: 2, hadSubscription: true });
     expect(calls.filter((c) => c.method === "checkout.sessions.expire")).toHaveLength(2);
     expect(calls.some((c) => c.method === "customers.create")).toBe(false);
   });
@@ -155,7 +155,7 @@ describe("prepareCompanyCheckout (review H2)", () => {
   it("a known customer skips the search", async () => {
     const { client, calls } = fakeCustomers({});
     const out = await prepareCompanyCheckout(client, { tenantId: "t_1", knownCustomerId: "cus_known", email: null });
-    expect(out).toEqual({ customerId: "cus_known", existingSubscription: null, expiredSessions: 0 });
+    expect(out).toEqual({ customerId: "cus_known", existingSubscription: null, expiredSessions: 0, hadSubscription: true });
     expect(calls.some((c) => c.method === "customers.search")).toBe(false);
   });
 });

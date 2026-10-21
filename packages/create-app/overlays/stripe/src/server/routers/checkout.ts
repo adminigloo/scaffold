@@ -34,6 +34,10 @@ import {
 // impossible to get wrong here; `checkout-mode.ts` imports it for the same
 // reason.
 import { stripe } from "@/server/stripe";
+import { companyStripeCustomer } from "__SCOPE__/billing/server";
+import { resolveStripeCustomer } from "__SCOPE__/stripe";
+import { tenants } from "__SCOPE__/tenancy/schema";
+import { currentTenantFor } from "@/server/tenant";
 import { createTRPCRouter, protectedProcedure, publicProcedure } from "../trpc";
 
 /**
@@ -394,28 +398,59 @@ export async function findStripeCustomerId(
 }
 
 /**
- * The Stripe Customer for this user, created if we have never seen them.
+ * Is this tenant the person's OWN personal workspace — kind `personal`, owned
+ * by them? Only then are the person and the tenant one payer, so only then do
+ * their shop purchases and their plans share one Stripe customer (review:
+ * companies mode).
+ */
+export async function isOwnPersonalWorkspace(tenantId: string, userId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ kind: tenants.kind, owner: tenants.ownerUserId })
+    .from(tenants)
+    .where(eq(tenants.id, tenantId))
+    .limit(1);
+  return row !== undefined && row.kind === "personal" && row.owner === userId;
+}
+
+/**
+ * The Stripe Customer this purchase is charged to, created if there is none.
  *
- * A Subscription requires one; a PaymentIntent does not, which is why the
- * one-time path skips this entirely rather than paying for a lookup on every
- * checkout.
+ * ONE CUSTOMER PER PAYER (stripe 0.6, review B5). A person subscribing to a
+ * plan in their OWN workspace and the same person buying a recurring product
+ * used to be two Stripe customers — two portals, two invoice lists, two saved
+ * cards. Now, when the tenant the buyer is in is their own personal workspace
+ * (every account in a consumers project), both go to that workspace's
+ * customer, through the same `resolveStripeCustomer` the plan checkout uses:
+ * the tenant's customer, else a customer this checkout made for the person
+ * before (adopted), else one made once.
  *
- * TWO LAYERS, because neither alone is enough. The search finds the customer we
- * made last month. Stripe's search index lags writes by up to a minute, so the
- * search alone would create a second Customer for anyone who checks out twice
- * in quick succession — hence the idempotency key on the create, which covers
- * exactly that window. The gap that remains is a returning customer whose
- * search read is stale AND whose 24-hour idempotency key has expired: that
- * duplicates a Customer record. Harmless to billing, untidy in the dashboard.
+ * NEVER A COMPANY'S CUSTOMER (review). A member buying something for
+ * themselves while working in a company is still paying for themselves: on
+ * the company's customer their card would be confirmed against it, their
+ * invoices would land in the company's list and portal, and the company's
+ * admins could cancel their subscription. So anyone not in their own
+ * workspace — and anyone with no tenant yet — keeps the per-person customer
+ * they always had.
  *
- * The real fix is a `stripe_customer_id` column on the user, so that neither
- * mechanism is load-bearing. That is a schema change and belongs to whoever
- * owns the schema.
+ * A Subscription requires a customer; a PaymentIntent does not, which is why
+ * the one-time path skips this entirely rather than paying for a lookup on
+ * every checkout.
  */
 async function ensureCustomer(
   client: NonNullable<typeof stripe>,
   principal: { readonly userId: string; readonly email: string | null },
 ): Promise<string> {
+  const tenant = await currentTenantFor(principal.userId);
+  if (tenant !== null && (await isOwnPersonalWorkspace(tenant.id, principal.userId))) {
+    const customerId = await resolveStripeCustomer(client, {
+      tenantId: tenant.id,
+      userId: principal.userId,
+      knownCustomerId: await companyStripeCustomer(db, tenant.id),
+      email: principal.email,
+    });
+    if (customerId !== null) return customerId;
+  }
+
   const existing = await findStripeCustomerId(client, principal.userId);
   if (existing !== null) return existing;
 
@@ -427,6 +462,28 @@ async function ensureCustomer(
     { idempotencyKey: `customer:${principal.userId}` },
   );
   return created.id;
+}
+
+/**
+ * The customer a person's own billing screens open: their tenant's (stripe
+ * 0.6) or, failing that, the one this checkout made for them. NEVER creates
+ * or stamps anything — a portal opened on an empty customer reads as lost
+ * billing history. A person's own customer from the shop is looked for as
+ * the TENANT's only in their own workspace, never a company's (review).
+ */
+export async function findBillingCustomerId(
+  client: NonNullable<typeof stripe>,
+  input: { readonly tenantId: string; readonly userId: string; readonly knownCustomerId: string | null },
+): Promise<string | null> {
+  const own = await isOwnPersonalWorkspace(input.tenantId, input.userId);
+  const viaTenant = await resolveStripeCustomer(client, {
+    tenantId: input.tenantId,
+    ...(own ? { userId: input.userId } : {}),
+    knownCustomerId: input.knownCustomerId ?? (await companyStripeCustomer(db, input.tenantId)),
+    email: null,
+    create: false,
+  });
+  return viaTenant ?? (await findStripeCustomerId(client, input.userId));
 }
 
 /**

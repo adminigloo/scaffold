@@ -4,7 +4,9 @@ import {
   decideSubscriptionWrite,
   isLiveStatus,
   LIVE_SUBSCRIPTION_STATUSES,
+  mapStripeSubscriptionStatus,
   planGrantDiff,
+  planLineRefs,
   planRowKey,
   subscriptionEntitlementWindow,
   type EntitlementWindow,
@@ -13,6 +15,8 @@ import {
   type SubscriptionStatus,
 } from "__SCOPE__/billing";
 import { entitlements, plans as planTable, subscriptions } from "__SCOPE__/billing/schema";
+import { lineOfStoredRow } from "__SCOPE__/billing/server";
+import type { StripeSubscriptionItemSnapshot, StripeSubscriptionSnapshot } from "__SCOPE__/stripe";
 import { auditEntry, defineAuditedActions } from "__SCOPE__/observability";
 import { auditLog } from "__SCOPE__/observability/schema";
 import { tenants } from "__SCOPE__/tenancy/schema";
@@ -212,6 +216,11 @@ export interface ApplySubscriptionInput {
   readonly planKey: string;
   /** `sub_…`, or NULL for a subscription with no Stripe object behind it. */
   readonly stripeSubscriptionId: string | null;
+  /**
+   * The Stripe ITEM that bills this line (`si_…`, billing 0.5). Omitted: the
+   * row keeps the item it already names (cancel and resume don't move it).
+   */
+  readonly stripeItemId?: string | null;
   readonly stripeCustomerId: string | null;
   /** Already mapped through `mapStripeSubscriptionStatus`. Never a raw Stripe string. */
   readonly status: SubscriptionStatus;
@@ -351,6 +360,10 @@ async function writeSubscription(
       `No tier in src/plans.ts is keyed "${input.tierKey}".`,
     );
   }
+  // THE LINE COMES FROM THE TIER (billing 0.5), never from a caller: the row,
+  // the one-live-per-line slot it takes and the entitlement rows it may touch
+  // are all that line's. A one-line catalog has one line, so every row is on it.
+  const line = tier.line;
 
   const [planRow] = await tx
     .select({ id: planTable.id, isActive: planTable.isActive })
@@ -366,7 +379,7 @@ async function writeSubscription(
   }
 
   // ---- 2. is this news? ---------------------------------------------------
-  const existing = await findSubscriptionRow(tx, input);
+  const existing = await findSubscriptionRow(tx, input, line);
 
   const decision = decideSubscriptionWrite({
     observedAt: input.observedAt,
@@ -399,7 +412,9 @@ async function writeSubscription(
   const values = {
     tenantId: input.tenantId,
     planId: planRow.id,
+    line,
     stripeSubscriptionId: input.stripeSubscriptionId,
+    ...(input.stripeItemId !== undefined ? { stripeItemId: input.stripeItemId } : {}),
     stripeCustomerId: input.stripeCustomerId,
     status: input.status,
     currentPeriodStart: input.currentPeriodStart,
@@ -420,7 +435,7 @@ async function writeSubscription(
   // observation wins and the displaced row is closed, which is also the only
   // outcome that leaves the two tables agreeing.
   const superseded = isLiveStatus(input.status)
-    ? await supersedeOtherLiveRows(tx, input.tenantId, existing?.id ?? null, input.observedAt)
+    ? await supersedeOtherLiveRows(tx, input.tenantId, line, existing?.id ?? null, input.observedAt)
     : [];
 
   let subscriptionId: string;
@@ -439,7 +454,7 @@ async function writeSubscription(
     const [row] = await tx
       .insert(subscriptions)
       .values(values)
-      .onConflictDoUpdate({ target: subscriptions.stripeSubscriptionId, set: values })
+      .onConflictDoUpdate({ target: [subscriptions.stripeSubscriptionId, subscriptions.line], set: values })
       .returning({ id: subscriptions.id });
     if (!row) {
       throw new Error(
@@ -466,6 +481,8 @@ async function writeSubscription(
     tenantId: input.tenantId,
     tier,
     window,
+    // This line's rows only: Weather's change never touches what Sports granted.
+    refs: planLineRefs(plans, line),
   });
 
   await tx.insert(auditLog).values(
@@ -486,6 +503,8 @@ async function writeSubscription(
         observedAt: input.observedAt.toISOString(),
         tierKey: input.tierKey,
         planKey: input.planKey,
+        line,
+        stripeItemId: input.stripeItemId ?? null,
         status: input.status,
         cancelAtPeriodEnd: input.cancelAtPeriodEnd,
         entitlements: outcome,
@@ -529,6 +548,7 @@ async function writeSubscription(
 async function findSubscriptionRow(
   tx: Tx,
   input: ApplySubscriptionInput,
+  line: string,
 ): Promise<
   | {
       readonly id: string;
@@ -541,20 +561,38 @@ async function findSubscriptionRow(
     id: subscriptions.id,
     status: subscriptions.status,
     lastEventAt: subscriptions.lastEventAt,
+    line: subscriptions.line,
+    stripeItemId: subscriptions.stripeItemId,
+    planKey: planTable.key,
   };
 
   if (input.stripeSubscriptionId !== null) {
-    const [row] = await tx
+    // One row per (Stripe subscription, LINE): Weather and Sports on one
+    // subscription are two rows. A row mirrored before lines existed says
+    // the implicit line and names no item; read by its tier, it is this
+    // line's row, and this write re-labels it rather than adding a second.
+    const rows = await tx
       .select(columns)
       .from(subscriptions)
+      .innerJoin(planTable, eq(planTable.id, subscriptions.planId))
       .where(eq(subscriptions.stripeSubscriptionId, input.stripeSubscriptionId))
-      .limit(1);
-    return row;
+      .limit(50);
+    return (
+      rows.find((row) => row.line === line) ??
+      rows.find(
+        (row) =>
+          lineOfStoredRow(plans, row.planKey, row.line) === line &&
+          (row.stripeItemId === null || input.stripeItemId === undefined || row.stripeItemId === input.stripeItemId),
+      )
+    );
   }
 
-  const [row] = await tx
+  // No Stripe object (simulated, or free months): the tenant's newest such row
+  // ON THIS LINE — the one-live-per-line index is what makes that one row.
+  const rows = await tx
     .select(columns)
     .from(subscriptions)
+    .innerJoin(planTable, eq(planTable.id, subscriptions.planId))
     .where(
       and(
         eq(subscriptions.tenantId, input.tenantId),
@@ -562,8 +600,8 @@ async function findSubscriptionRow(
       ),
     )
     .orderBy(desc(subscriptions.createdAt))
-    .limit(1);
-  return row;
+    .limit(50);
+  return rows.find((row) => lineOfStoredRow(plans, row.planKey, row.line) === line);
 }
 
 /**
@@ -577,12 +615,14 @@ async function findSubscriptionRow(
 async function supersedeOtherLiveRows(
   tx: Tx,
   tenantId: string,
+  line: string,
   keepId: string | null,
   at: Date,
 ): Promise<readonly string[]> {
-  const others = await tx
-    .select({ id: subscriptions.id, stripeId: subscriptions.stripeSubscriptionId })
+  const live = await tx
+    .select({ id: subscriptions.id, stripeId: subscriptions.stripeSubscriptionId, line: subscriptions.line, planKey: planTable.key })
     .from(subscriptions)
+    .innerJoin(planTable, eq(planTable.id, subscriptions.planId))
     .where(
       and(
         eq(subscriptions.tenantId, tenantId),
@@ -595,6 +635,10 @@ async function supersedeOtherLiveRows(
         ...(keepId === null ? [] : [ne(subscriptions.id, keepId)]),
       ),
     );
+  // THIS LINE'S live rows only (billing 0.5): a live Weather row never
+  // displaces Sports. The partial unique index is per (tenant, line), and a
+  // row written before lines (the implicit line) is read by its tier.
+  const others = live.filter((row) => row.line === line || lineOfStoredRow(plans, row.planKey, row.line) === line);
 
   if (others.length === 0) return [];
 
@@ -642,6 +686,8 @@ async function reconcileEntitlements(
     readonly tenantId: string;
     readonly tier: PlanTier;
     readonly window: EntitlementWindow;
+    /** The line's own `source_ref`s (`planLineRefs`); undefined in a one-line catalog, where every plan row is the line's. */
+    readonly refs: ReadonlySet<string> | undefined;
   },
 ): Promise<EntitlementOutcome> {
   const held = await tx
@@ -665,7 +711,7 @@ async function reconcileEntitlements(
     sourceRef: row.sourceRef ?? "",
   }));
 
-  const diff = planGrantDiff(current, input.window.holds ? input.tier : null);
+  const diff = planGrantDiff(current, input.window.holds ? input.tier : null, { refs: input.refs });
 
   for (const grant of diff.add) {
     await tx
@@ -702,13 +748,18 @@ async function reconcileEntitlements(
     await tx.delete(entitlements).where(identityOf(input.tenantId, grant));
   }
 
-  // The sweep. Every plan-sourced row the tenant holds now carries the same
-  // deadline, whether the diff touched it or not.
+  // The sweep. Every plan-sourced row of THIS LINE now carries the same
+  // deadline, whether the diff touched it or not — and no other line's: a
+  // cancelled Sports ends on its own date while Weather renews.
   await tx
     .update(entitlements)
     .set({ expiresAt: input.window.expiresAt, updatedAt: new Date() })
     .where(
-      and(eq(entitlements.tenantId, input.tenantId), eq(entitlements.source, "plan")),
+      and(
+        eq(entitlements.tenantId, input.tenantId),
+        eq(entitlements.source, "plan"),
+        ...(input.refs === undefined ? [] : [inArray(entitlements.sourceRef, [...input.refs])]),
+      ),
     );
 
   return {
@@ -758,6 +809,12 @@ export interface ResolvePlanInput {
   /** `metadata.variantId` — present on a subscription the STOREFRONT created. */
   readonly variantMetadata: string | null | undefined;
   readonly priceId: string | null;
+  /**
+   * The PRICE's own metadata: `ensurePlanPrice` has stamped `{ planKey,
+   * tierKey }` on every Price it ever made, so a Price from before a
+   * repricing still says which plan it bills.
+   */
+  readonly priceMetadata?: Readonly<Record<string, string>> | null;
   readonly interval: "month" | "year" | null;
   readonly currency: string | null;
 }
@@ -776,6 +833,11 @@ export interface ResolvePlanInput {
  *     wrote. This is what catches a subscription somebody created in the Stripe
  *     dashboard against a price we published, which carries no metadata of ours
  *     at all — and that subscription is real money, so it has to be mirrored.
+ *     Then THE PRICE'S OWN STAMP: the cache holds only the CURRENT price, and
+ *     a repriced tier gets a new Price while the people already on it keep the
+ *     old one (by design) — whose metadata, stamped by `ensurePlanPrice`, still
+ *     names its plan. Without it, that item resolved to nothing once a second
+ *     line was added, and the line it pays for was ended (review).
  *
  * WHAT "NOT A PLAN" MEANS, AND WHY IT IS NOT AN ERROR. A recurring PRODUCT in
  * the shop — @__SCOPE_NAME__/catalog's `product_variants` with an interval — is
@@ -822,6 +884,10 @@ export async function resolvePlanForSubscription(
       };
     }
   }
+
+  // The Price's own stamp: a Price we published before a repricing.
+  const stamped = planFromPriceMetadata(input);
+  if (stamped !== null) return stamped;
 
   const declared = input.planMetadata?.trim();
   if (declared !== undefined && declared.length > 0) {
@@ -877,6 +943,276 @@ export async function resolvePlanForSubscription(
   };
 }
 
+/**
+ * The plan a Price we published names in its own metadata (`ensurePlanPrice`
+ * stamps `{ planKey, tierKey }`), or null when it names none this catalog
+ * still sells on that cadence.
+ */
+function planFromPriceMetadata(input: ResolvePlanInput): PlanResolution | null {
+  const metadata = input.priceMetadata ?? {};
+  const rowKey = metadata[PLAN_METADATA_KEY]?.trim();
+  if (rowKey) {
+    const tier = plans.tierForRow(rowKey);
+    if (tier !== undefined && plans.rows.some((row) => row.key === rowKey)) {
+      return { kind: "plan", tierKey: tier.key, planKey: rowKey };
+    }
+  }
+  const tierKey = metadata["tierKey"]?.trim();
+  if (tierKey && input.interval !== null && input.currency !== null) {
+    const tier = plans.tier(tierKey);
+    const key = tier === undefined ? null : planRowKey(tier.key, input.interval, input.currency.toLowerCase());
+    if (tier !== undefined && key !== null && plans.rows.some((row) => row.key === key)) {
+      return { kind: "plan", tierKey: tier.key, planKey: key };
+    }
+  }
+  return null;
+}
+
+/**
+ * Which plan ONE item of a Stripe subscription bills — the mirror's own rule,
+ * shared with adding a line (so "is this line already on the subscription?"
+ * gets the same answer the mirror would give).
+ *
+ *   1. the item's price: the cached one, then the Price's own stamp;
+ *   2. the item's own `planKey` metadata (the subscription's, with one item);
+ *   3. a recurring product from the shop (`variantId` on the subscription);
+ *   4. OUR OWN ROW that already names this item (review): an item we have
+ *      mirrored before is still the line it was — a price we can no longer
+ *      read (one made by hand in the dashboard) never ends a line Stripe is
+ *      still billing.
+ */
+export async function resolveSubscriptionItem(
+  snapshot: StripeSubscriptionSnapshot,
+  item: Pick<StripeSubscriptionItemSnapshot, "priceId" | "interval" | "currency" | "metadata"> & {
+    readonly itemId: string | null;
+    readonly priceMetadata?: Readonly<Record<string, string>>;
+  },
+  handle: Db | Tx = db,
+): Promise<PlanResolution> {
+  const single = snapshot.items.length <= 1;
+  const resolution = await resolvePlanForSubscription(
+    {
+      planMetadata: item.metadata[PLAN_METADATA_KEY] ?? (single ? snapshot.metadata[PLAN_METADATA_KEY] : undefined),
+      variantMetadata: snapshot.metadata["variantId"],
+      priceId: item.priceId,
+      priceMetadata: item.priceMetadata ?? {},
+      interval: item.interval,
+      currency: item.currency,
+    },
+    handle,
+  );
+  if (resolution.kind !== "unknown" || item.itemId === null) return resolution;
+
+  const [stored] = await handle
+    .select({ planKey: planTable.key })
+    .from(subscriptions)
+    .innerJoin(planTable, eq(planTable.id, subscriptions.planId))
+    .where(
+      and(
+        eq(subscriptions.stripeSubscriptionId, snapshot.subscriptionId),
+        eq(subscriptions.stripeItemId, item.itemId),
+      ),
+    )
+    .orderBy(desc(subscriptions.updatedAt))
+    .limit(1);
+  const tier = stored ? plans.tierForRow(stored.planKey) : undefined;
+  if (stored && tier !== undefined) return { kind: "plan", tierKey: tier.key, planKey: stored.planKey };
+  return resolution;
+}
+
+// ---------------------------------------------------------------------------
+// A whole Stripe subscription, one line per item (billing 0.5)
+// ---------------------------------------------------------------------------
+
+export interface MirrorContext {
+  /** When this state was observed: `event.created` for a webhook, now for a live read. */
+  readonly observedAt: Date;
+  readonly observedBy: string;
+  readonly action?: SubscriptionAuditAction;
+  readonly actorUserId?: string | null;
+}
+
+export interface MirroredLine {
+  readonly line: string;
+  readonly tierKey: string;
+  readonly result: ApplySubscriptionResult;
+}
+
+export type MirrorOutcome =
+  /** Ours, but not a plan: a recurring PRODUCT from the shop (its own grants are windowed by the caller). */
+  | { readonly kind: "product"; readonly why: string }
+  /** Nothing here can say what this subscription is for. */
+  | { readonly kind: "unknown"; readonly why: string }
+  /** A plan subscription that names no tenant: there is nobody to record it against. */
+  | { readonly kind: "no_tenant"; readonly planKey: string }
+  | {
+      readonly kind: "mirrored";
+      /** One per product line the subscription bills. */
+      readonly lines: readonly MirroredLine[];
+      /** Lines whose item is no longer on the subscription, now ended (their rows removed). */
+      readonly closed: readonly MirroredLine[];
+      /** Items billing a line another item already bills — money for a line held twice. A person must look. */
+      readonly duplicates: readonly string[];
+      /** Items that aren't plans at all, mirrored by nothing here. */
+      readonly skipped: readonly { readonly itemId: string; readonly why: string }[];
+    };
+
+/**
+ * Mirror a Stripe subscription — ALL of its items — through the one writer.
+ *
+ * PRODUCT LINES (billing 0.5). A tenant on Weather Pro and Sports holds ONE
+ * Stripe subscription with TWO items, and this writes one row per line: each
+ * item resolves to its plan (`resolveSubscriptionItem`: by its PRICE first —
+ * the cached one, then the Price's own stamp — then its own `planKey`
+ * metadata; the subscription's `planKey` only when there is a single item,
+ * because with several it can only ever describe one of them; then our own
+ * row naming that item), and each line goes through `applySubscription` with
+ * its own watermark, item and period.
+ *
+ * A LINE WHOSE ITEM IS GONE has been dropped (`removeLine`, or by hand in the
+ * dashboard): its live row is ended through the same writer, so its rows go
+ * and the other lines' stay. Only when Stripe sent the whole item list — a
+ * truncated list (`has_more`) closes nothing, since an absent item there
+ * proves nothing — and NEVER a row whose own item is still on the
+ * subscription: Stripe is billing it, so it is not gone, whatever its price
+ * resolves to (review: a repriced tier).
+ *
+ * Called by the webhook, the staff resync, cancel and resume, and adding or
+ * changing a line: every Stripe-sourced write of a subscription.
+ */
+export async function mirrorStripeSubscription(
+  snapshot: StripeSubscriptionSnapshot,
+  context: MirrorContext,
+): Promise<MirrorOutcome> {
+  const items =
+    snapshot.items.length > 0
+      ? snapshot.items
+      : [
+          {
+            itemId: null as string | null,
+            priceId: snapshot.priceId,
+            interval: snapshot.interval,
+            currency: snapshot.currency,
+            quantity: snapshot.quantity,
+            currentPeriodStart: snapshot.currentPeriodStart,
+            currentPeriodEnd: snapshot.currentPeriodEnd,
+            metadata: {} as Readonly<Record<string, string>>,
+            priceMetadata: {} as Readonly<Record<string, string>>,
+          },
+        ];
+
+  const resolved: { readonly itemId: string | null; readonly item: (typeof items)[number]; readonly tierKey: string; readonly planKey: string }[] = [];
+  const skipped: { itemId: string; why: string }[] = [];
+  let first: PlanResolution | null = null;
+  for (const item of items) {
+    const resolution = await resolveSubscriptionItem(snapshot, item);
+    first ??= resolution;
+    if (resolution.kind === "plan") resolved.push({ itemId: item.itemId, item, tierKey: resolution.tierKey, planKey: resolution.planKey });
+    else skipped.push({ itemId: item.itemId ?? "", why: resolution.why });
+  }
+
+  if (resolved.length === 0) {
+    const nothing = first ?? { kind: "unknown" as const, why: "The subscription has no items." };
+    return nothing.kind === "product" ? { kind: "product", why: nothing.why } : { kind: "unknown", why: nothing.kind === "unknown" ? nothing.why : "" };
+  }
+
+  const tenantId = snapshot.metadata["tenantId"];
+  if (!tenantId) return { kind: "no_tenant", planKey: resolved[0]!.planKey };
+
+  const status = mapStripeSubscriptionStatus(snapshot.status);
+  const lines: MirroredLine[] = [];
+  const duplicates: string[] = [];
+  const seen = new Set<string>();
+  for (const each of resolved) {
+    const line = plans.tier(each.tierKey)?.line;
+    if (line === undefined) continue;
+    if (seen.has(line)) {
+      duplicates.push(each.itemId ?? each.planKey);
+      continue;
+    }
+    seen.add(line);
+    const result = await applySubscription({
+      tenantId,
+      tierKey: each.tierKey,
+      planKey: each.planKey,
+      stripeSubscriptionId: snapshot.subscriptionId,
+      ...(each.itemId !== null ? { stripeItemId: each.itemId } : {}),
+      stripeCustomerId: snapshot.customerId,
+      status,
+      currentPeriodStart: each.item.currentPeriodStart ?? snapshot.currentPeriodStart,
+      currentPeriodEnd: each.item.currentPeriodEnd ?? snapshot.currentPeriodEnd,
+      cancelAtPeriodEnd: snapshot.cancelAtPeriodEnd,
+      canceledAt: snapshot.canceledAt,
+      trialEndsAt: snapshot.trialEndsAt,
+      observedAt: context.observedAt,
+      observedBy: context.observedBy,
+      source: "stripe",
+      ...(context.action ? { action: context.action } : {}),
+      ...(context.actorUserId !== undefined ? { actorUserId: context.actorUserId } : {}),
+    });
+    lines.push({ line, tierKey: each.tierKey, result });
+  }
+
+  // The lines this subscription billed before and doesn't now.
+  const closed: MirroredLine[] = [];
+  if (snapshot.itemsComplete && !lines.some((line) => line.result.tenantGone)) {
+    // Every item Stripe is billing right now: a row naming one of them is
+    // being paid for, so it is never ended here — even if its price could not
+    // be read (review: a repriced tier ended a paid line, and "Add" then
+    // billed it twice).
+    const billedNow = new Set(items.map((item) => item.itemId).filter((id): id is string => id !== null));
+    const held = await db
+      .select({
+        line: subscriptions.line,
+        stripeItemId: subscriptions.stripeItemId,
+        status: subscriptions.status,
+        planKey: planTable.key,
+        currentPeriodStart: subscriptions.currentPeriodStart,
+        currentPeriodEnd: subscriptions.currentPeriodEnd,
+        trialEndsAt: subscriptions.trialEndsAt,
+      })
+      .from(subscriptions)
+      .innerJoin(planTable, eq(planTable.id, subscriptions.planId))
+      .where(
+        and(
+          eq(subscriptions.stripeSubscriptionId, snapshot.subscriptionId),
+          inArray(subscriptions.status, [...LIVE_SUBSCRIPTION_STATUSES]),
+        ),
+      );
+    for (const row of held) {
+      const tier = plans.tierForRow(row.planKey);
+      if (tier === undefined) continue;
+      const line = lineOfStoredRow(plans, row.planKey, row.line);
+      if (seen.has(line)) continue;
+      if (row.stripeItemId !== null && billedNow.has(row.stripeItemId)) continue;
+      const result = await applySubscription({
+        tenantId,
+        tierKey: tier.key,
+        planKey: row.planKey,
+        stripeSubscriptionId: snapshot.subscriptionId,
+        stripeCustomerId: snapshot.customerId,
+        status: "canceled",
+        currentPeriodStart: row.currentPeriodStart,
+        // ENDED NOW: an item taken off a subscription stops now (its unused
+        // time is credited to the next bill), so the line is not "ending" until
+        // a period end it no longer has.
+        currentPeriodEnd: context.observedAt,
+        cancelAtPeriodEnd: false,
+        canceledAt: context.observedAt,
+        trialEndsAt: row.trialEndsAt,
+        observedAt: context.observedAt,
+        observedBy: context.observedBy,
+        source: "stripe",
+        ...(context.action ? { action: context.action } : {}),
+        ...(context.actorUserId !== undefined ? { actorUserId: context.actorUserId } : {}),
+      });
+      closed.push({ line, tierKey: tier.key, result });
+    }
+  }
+
+  return { kind: "mirrored", lines, closed, duplicates, skipped };
+}
+
 // ---------------------------------------------------------------------------
 // Reading a subscription back
 // ---------------------------------------------------------------------------
@@ -890,7 +1226,11 @@ export async function resolvePlanForSubscription(
  * belongs to the buyer; a plan grant belongs to the organisation, which is the
  * tenant on the row, so here the tenant IS the authorisation.
  */
-export async function readPlanEntitlements(tenantId: string): Promise<
+export async function readPlanEntitlements(
+  tenantId: string,
+  /** One product line's rows only (billing 0.5): `planLineRefs(plans, line)`. Omitted: every plan row. */
+  refs?: ReadonlySet<string>,
+): Promise<
   readonly {
     readonly feature: string;
     readonly limitValue: number | null;
@@ -899,7 +1239,7 @@ export async function readPlanEntitlements(tenantId: string): Promise<
     readonly expiresAt: Date | null;
   }[]
 > {
-  return db
+  const rows = await db
     .select({
       feature: entitlements.feature,
       limitValue: entitlements.limitValue,
@@ -909,6 +1249,7 @@ export async function readPlanEntitlements(tenantId: string): Promise<
     })
     .from(entitlements)
     .where(and(eq(entitlements.tenantId, tenantId), eq(entitlements.source, "plan")));
+  return refs === undefined ? rows : rows.filter((row) => refs.has(row.sourceRef ?? ""));
 }
 
 /** Every subscription row the firm holds, newest first. The resync's before-picture. */
@@ -916,6 +1257,7 @@ export async function listMirroredSubscriptions(limit = 50): Promise<
   readonly {
     readonly id: string;
     readonly tenantId: string;
+    readonly line: string;
     readonly stripeSubscriptionId: string | null;
     readonly status: SubscriptionStatus;
     readonly planKey: string;
@@ -928,6 +1270,7 @@ export async function listMirroredSubscriptions(limit = 50): Promise<
     .select({
       id: subscriptions.id,
       tenantId: subscriptions.tenantId,
+      line: subscriptions.line,
       stripeSubscriptionId: subscriptions.stripeSubscriptionId,
       status: subscriptions.status,
       planKey: planTable.key,

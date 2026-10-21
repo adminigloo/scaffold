@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import {
   assertAnswersCompatible,
+  consumerProduct,
   deferredUntilDeployedFor,
   isPersonalWorkspaceOnly,
   optionalEnvFor,
@@ -42,7 +43,9 @@ import {
   renderTenantIsolationTest,
 } from "./tenancy-proofs-emit.js";
 import { renderProjectReadme } from "./readme-emit.js";
-import { plansEnforced, renderPlanBannerSlot, renderPlanGate } from "./plans-emit.js";
+import { personalPlans, plansEnforced, renderAccess, renderEntitled, renderPlanBannerSlot, renderPlanGate, sellsPlans } from "./plans-emit.js";
+import { renderConsumerPlanCatalog, renderConsumerTeamPage } from "./consumer-emit.js";
+import { renderPersonalPlansTest } from "./personal-plans-emit.js";
 import { renderCompanyPlansTest } from "./plans-proof-emit.js";
 import { renderDeploymentUpgradeNotes, UPGRADE_NOTES_MARKER } from "./upgrade-notes.js";
 import { assertNoPrerenderedAuthRoutes } from "./prerender.js";
@@ -621,6 +624,24 @@ export async function planEmit(
   if (plansEnforced(answers)) {
     files.set(join("src", "server", "__tests__", "company-plans.test.ts"), renderCompanyPlansTest(answers));
   }
+  // ONE QUESTION FOR EVERY PAID FEATURE (billing 0.5), wherever plans are
+  // sold — to companies or to people: `requireEntitlement(feature)` for pages,
+  // route handlers and tRPC, and <Entitled> around a part of a page.
+  if (sellsPlans(answers)) {
+    files.set(join("src", "server", "access.ts"), renderAccess(answers));
+    files.set(join("src", "components", "Entitled.tsx"), renderEntitled(answers));
+  }
+  // PERSONAL PLANS (billing 0.5): the proof that each person's plans hold per
+  // product line, on this project's own src/plans.ts.
+  if (personalPlans(answers)) {
+    files.set(join("src", "server", "__tests__", "personal-plans.test.ts"), renderPersonalPlansTest(answers));
+  }
+  // NOBODY SHARES AN ACCOUNT (billing 0.5): a consumers project has no team.
+  // The page stays (old links, /members) and says so; the seat limit of one
+  // (src/server/plan-gate.ts) refuses every invitation on the server.
+  if (consumerProduct(answers)) {
+    files.set(join("app", "(site)", "settings", "team", "page.tsx"), renderConsumerTeamPage(answers));
+  }
   // EACH COMPANY RUNS THE FEATURES ITSELF (Tenancy 2a), companies only: whose
   // request a feature route is (the company id or web address in its path),
   // each company's links on this deployment, its first-time setup, and the
@@ -751,7 +772,9 @@ export async function planEmit(
   // import from copied source, so a record living there would be invisible to
   // the entitlement check that has to honour what the page advertises.
   if (answers.businessModel !== "none") {
-    files.set(join("src", "plans.ts"), renderPlanCatalog(answers));
+    // A consumers project sells PERSONAL plans (billing 0.5): flags and quotas
+    // a person buys, two product lines that stack, and no team members.
+    files.set(join("src", "plans.ts"), consumerProduct(answers) ? renderConsumerPlanCatalog(answers) : renderPlanCatalog(answers));
   }
   // THE ORIENTATION PAGE, AND WHERE IT GOES.
   //
@@ -1610,6 +1633,16 @@ export function renderEnvLocal(answers: Answers): string {
     );
   }
 
+  if (personalPlans(answers)) {
+    lines.push(
+      "",
+      "# --- Plans ------------------------------------------------------------------",
+      "# A free trial at checkout, in days, for someone who has never had a plan",
+      "# (Stripe takes the card and charges it when the trial ends). Off when unset.",
+      "# BILLING_TRIAL_DAYS=7",
+    );
+  }
+
   if (plansEnforced(answers)) {
     lines.push(
       "",
@@ -2080,6 +2113,15 @@ export function renderEnvModule(answers: Answers): string {
       `{ name: "Company logos", vars: ["BLOB_READ_WRITE_TOKEN"], disables: "Company logos (and feedback screenshots): the one public store. It must be a different store from the private one, with its own token." }`,
       `{ name: "Storage allowance", vars: ["FILES_ALLOWANCE_MB"], disables: "Nothing. How much each company may store, in MB (5120, 5 GB, when unset). The billing chunk will set this per plan." }`,
       `{ name: "File links", vars: ["FILES_LINK_SECRET"], disables: "Nothing while CLERK_SECRET_KEY is set: Copy link signs with a key made from it. With neither, links to files can't be made; everything else works." }`,
+    );
+  }
+
+  // PERSONAL PLANS (billing 0.5): the optional free trial at Stripe's checkout.
+  if (personalPlans(answers)) {
+    serverSpreads.push('BILLING_TRIAL_DAYS: z.coerce.number().int("a whole number of days").min(0).max(365).optional()');
+    runtime.push("BILLING_TRIAL_DAYS: process.env.BILLING_TRIAL_DAYS");
+    features.push(
+      `{ name: "Free trial", vars: ["BILLING_TRIAL_DAYS"], disables: "Nothing. How many days someone who has never had a plan tries it free at checkout (Stripe takes the card and charges when it ends). Off when unset." }`,
     );
   }
 
@@ -5790,7 +5832,11 @@ export function renderSiteNav(answers: Answers): string {
     });
   }
   const app: GeneratedLink[] =
-    single
+    single && consumerProduct(answers)
+      ? // Customers sign up as themselves (billing 0.5): no team, so no link.
+        // Their own things are under /account (the account overlay's links).
+        []
+      : single
       ? [
           {
             href: "/settings/team",
@@ -6191,6 +6237,21 @@ export function renderAdminNav(answers: Answers): string {
         },
         // Where each company stands with its plan, and Give free months
         // (billing 0.3). Companies only: one business has no plans to list.
+        // Who pays for what, per person and product line, and Give free
+        // months (billing 0.5), in a project whose customers are people.
+        ...(consumerProduct(answers)
+          ? [
+              {
+                href: "/admin/billing/subscribers",
+                label: "Subscribers",
+                permission: "staff.tenants.view",
+                why:
+                  "Who's on which plan of each product line, and until when, with " +
+                  "Give free months (billing 0.5). From catalog-admin, on the " +
+                  "same condition as the billing screen.",
+              },
+            ]
+          : []),
         ...(isCompanies(answers)
           ? [
               {
@@ -7598,13 +7659,15 @@ export function renderPlanCatalog(answers: Answers): string {
  * those subscribers holding rows no diff can reconcile. \`isActive: false\` takes
  * it off the pricing page and leaves everything else able to reason about it.
  *
- * ADD-ONS ARE NOT MODELLED HERE, deliberately. A seat pack is a PRODUCT in
- * ${scope}/catalog with an \`entitlement\` grant on it — it already has a price, a
- * Stripe sync and an admin screen. A second catalog of purchasable things inside
- * this record would give you two of each, and \`resolveEntitlements\` would sum
- * rows from both while only one of them had a receipt. What billing owes an
- * add-on is that a plan change never revokes it, and \`planGrantDiff\` only ever
- * removes rows whose source is \`plan\`.
+ * SOMETHING SOLD ON ITS OWN, BESIDE THE PLAN, IS A PRODUCT LINE (billing 0.5):
+ * \`definePlans({ lines: { main: {...}, extras: {...} } })\`. Each line has its
+ * own tiers; a ${label} holds one tier of each line at once, all on ONE Stripe
+ * subscription (one card, one invoice), and a change, an addition or a
+ * cancellation of one line never touches another's entitlement rows. A
+ * one-off pack (seats bought once) can still be a PRODUCT in ${scope}/catalog
+ * with an \`entitlement\` grant; a RECURRING product's grant now follows its
+ * subscription and ends when it does. Either way a plan change never revokes
+ * it: \`planGrantDiff\` only ever removes rows whose source is \`plan\`.
  */
 export const plans = definePlans({
   /**

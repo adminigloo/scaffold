@@ -21,8 +21,11 @@
  * its public pages are closed, its billing still opens, and the company next
  * door is untouched.
  */
-import { tenantLabel, type Answers } from "./answers.js";
+import { consumerProduct, tenantLabel, type Answers } from "./answers.js";
+import { personalPlans, renderPersonalPlanBannerSlot, renderPersonalPlanGate } from "./personal-plans-emit.js";
 import { companiesMode } from "./tenancy-emit.js";
+
+export { personalPlans } from "./personal-plans-emit.js";
 
 /** Does this project charge each company a plan? */
 export function plansEnforced(answers: Answers): boolean {
@@ -35,6 +38,8 @@ export function plansEnforced(answers: Answers): boolean {
 
 export function renderPlanGate(answers: Answers): string {
   const scope = answers.scope;
+  // PERSONAL PLANS (billing 0.5): each person pays for their own.
+  if (personalPlans(answers)) return renderPersonalPlanGate(answers);
   if (!plansEnforced(answers)) {
     const why = companiesMode(answers)
       ? `this project's ${tenantLabel(answers).toLowerCase()}s aren't sold a plan (it was generated with --model ${answers.businessModel})`
@@ -48,9 +53,22 @@ export function renderPlanGate(answers: Answers): string {
 
 /** Spread into createCompanyRouteSeams / createPublicCompanySeams: nothing to add. */
 export const companyPlanOption = {} as const;
-
+${consumerProduct(answers) ? `
+/**
+ * Spread into the tenancy service's options: ONE PERSON PER ACCOUNT (billing
+ * 0.5). This project's customers sign up as themselves, so nobody invites
+ * anyone into their account: the owner fills the only seat.
+ */
+export const seatLimitOption = {
+  seats: {
+    limitFor: async (): Promise<number> => 1,
+  },
+} as const;` : `
 /** Spread into the tenancy service's options: no seat limit. */
-export const seatLimitOption = {} as const;
+export const seatLimitOption = {} as const;`}
+
+/** No free trial at checkout: there are no plans to try here. */
+export const CHECKOUT_TRIAL_DAYS = 0;
 
 /** The permission loaders, unchanged. */
 export function gateLoaders<L>(loaders: L): L {
@@ -179,6 +197,12 @@ import { plans } from "@/plans";
 export const TRIAL_DAYS = env.BILLING_TRIAL_DAYS ?? 14;
 
 /**
+ * No trial at Stripe's checkout: a ${noun}'s free trial is the app's own
+ * (above), from the day it was made, with no card.
+ */
+export const CHECKOUT_TRIAL_DAYS = 0;
+
+/**
  * When this ${noun}'s free trial started: when it was made, or
  * PLANS_ENFORCED_FROM if that's later. Read straight off the companies table
  * with the caller's own handle, so the seat check (which runs inside the
@@ -213,7 +237,33 @@ export async function companyPlan(tenantId: string, executor: BillingDb = db): P
     tenantId,
     trialStartedAt: await trialStartedAt(executor, tenantId),
     trialDays: TRIAL_DAYS,
+    // Per product line (billing 0.5): open while any line is paid for.
+    plans,
   });
+}
+
+/**
+ * Everything the ${noun}'s plan allows, one answer per feature — what
+ * \`requireEntitlement\` reads (src/server/access.ts). On the free trial, the
+ * highlighted plan's allowances for anything it doesn't already hold, so it
+ * tries what most people buy.
+ */
+export async function tenantEntitlements(tenantId: string): Promise<CompanyPlan["entitlements"]> {
+  const plan = await companyPlan(tenantId);
+  if (plan.standing.state !== "trial") return plan.entitlements;
+  const tier = trialTier();
+  if (!tier) return plan.entitlements;
+  const merged = new Map(plan.entitlements);
+  for (const grant of grantsForPlan(tier)) {
+    if (merged.has(grant.feature)) continue;
+    merged.set(grant.feature, {
+      limit: grant.limitValue,
+      used: 0,
+      remaining: grant.limitValue,
+      unlimited: grant.limitValue === null,
+    });
+  }
+  return merged;
 }
 
 /**
@@ -426,6 +476,7 @@ export async function estimateQuota(
 // ---------------------------------------------------------------------------
 
 export function renderPlanBannerSlot(answers: Answers): string {
+  if (personalPlans(answers)) return renderPersonalPlanBannerSlot(answers);
   if (!plansEnforced(answers)) {
     return `import type { ReactNode } from "react";
 
@@ -528,6 +579,209 @@ export function bannerSentence(standing: PlanStanding, companyName: string, now:
     case "none":
       return \`\${companyName}'s free trial has ended. You can still see everything, but new work is paused until there's a plan.\`;
   }
+}
+`;
+}
+
+// ---------------------------------------------------------------------------
+// src/server/access.ts and src/components/Entitled.tsx (billing 0.5)
+// ---------------------------------------------------------------------------
+
+/** Does this project sell plans at all — to companies, or to people — and so get the entitlement checks? */
+export function sellsPlans(answers: Answers): boolean {
+  return plansEnforced(answers) || personalPlans(answers);
+}
+
+export function renderAccess(answers: Answers): string {
+  const scope = answers.scope;
+  const who = personalPlans(answers) ? "person" : tenantLabel(answers).toLowerCase();
+  return `import { checkEntitlement, type EntitlementCheck } from "${scope}/billing";
+import { plans } from "@/plans";
+import { currentPrincipal } from "./auth";
+import { tenantEntitlements } from "./plan-gate";
+import { currentTenantFor } from "./tenant";
+import { requireTenant, TRPCError } from "./trpc";
+
+/**
+ * ONE QUESTION FOR EVERY PAID FEATURE (billing 0.5): may this ${who} use
+ * \`feature\` right now? Asked from a page, a route handler or a tRPC
+ * procedure, always the same way, always with the sentence to show when the
+ * answer is no — "Pro tools come with Weather Pro. See plans to add it."
+ *
+ * The answer comes from the entitlement rows the ${who}'s plans wrote
+ * (src/plans.ts says what each tier grants; billing keeps the rows in step
+ * with Stripe), so the pricing page and the check can never disagree.
+ *
+ *   page           \`await pageEntitlement("weather_tools")\`, or wrap the part
+ *                  in \`<Entitled feature="weather_tools">\` (it shows the
+ *                  upsell instead of the children)
+ *   route handler  \`export const GET = withEntitlement("weather_tools", handler)\`:
+ *                  401 signed out, 403 { error: { code: "upgrade_required" } }
+ *   tRPC           \`requireEntitlement("weather_tools").query(...)\`: a tenant
+ *                  procedure (it takes \`tenantId\`) that also needs the feature
+ *
+ * A quota is asked with an amount: \`entitlementOf(tenantId, "alert_rules", 1)\`
+ * before adding one more.
+ */
+
+/** Where "see plans" goes. */
+export const UPGRADE_HREF = "/account/billing";
+
+export interface Entitlement extends EntitlementCheck {
+  /** The sentence to show when the answer is no; null when it's yes. */
+  readonly message: string | null;
+  /** Where to send someone to change that. */
+  readonly upgradeHref: string;
+}
+
+function capitalised(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** "A", "A or B", "A, B or C". */
+function either(names: readonly string[]): string {
+  if (names.length <= 1) return names[0] ?? "";
+  return \`\${names.slice(0, -1).join(", ")} or \${names[names.length - 1]}\`;
+}
+
+/** Which plans on sale include a feature (a flag that's on, a quota above zero). */
+function plansWith(feature: string): string[] {
+  return plans.tiers
+    .filter((tier) => {
+      if (!tier.isActive) return false;
+      const held = tier.features[feature];
+      if (held === undefined) return false;
+      if (held.kind === "flag") return held.included;
+      if (held.kind === "quota") return held.limit === null || held.limit > 0;
+      return false;
+    })
+    .map((tier) => tier.name);
+}
+
+/** The sentence for a refusal, from the reason and the plan record. */
+export function refusalFor(feature: string, check: Pick<EntitlementCheck, "reason">): string {
+  const heading = plans.features.find((candidate) => candidate.feature === feature);
+  const label = heading?.label ?? feature;
+  const sellers = plansWith(feature);
+  // A flag at 0 is "withheld by the plan", which reads like not having it at all.
+  if (check.reason === "limit-reached" && heading?.kind !== "flag") {
+    return sellers.length > 0 ? \`You've used all of your \${label}. A bigger plan has more.\` : \`You've used all of your \${label}.\`;
+  }
+  if (sellers.length === 0) return \`\${capitalised(label)} isn't on any plan right now.\`;
+  return \`\${capitalised(label)} comes with \${either(sellers)}. See plans to add it.\`;
+}
+
+/** May this ${who} use \`amount\` of \`feature\` now? With the sentence for a no. */
+export async function entitlementOf(tenantId: string, feature: string, amount = 1): Promise<Entitlement> {
+  const check = checkEntitlement(await tenantEntitlements(tenantId), feature, amount);
+  return { ...check, message: check.allowed ? null : refusalFor(feature, check), upgradeHref: UPGRADE_HREF };
+}
+
+export interface PageEntitlement extends Entitlement {
+  readonly signedIn: boolean;
+  /** Whose plans were asked (null when nobody is signed in, or they have no workspace yet). */
+  readonly tenantId: string | null;
+}
+
+/** For a page (a server component): the signed-in ${who}'s answer. Signed out is a no that says to sign in. */
+export async function pageEntitlement(feature: string, amount = 1): Promise<PageEntitlement> {
+  const principal = await currentPrincipal();
+  if (!principal) {
+    return { allowed: false, remaining: 0, reason: "no-entitlement", message: "Sign in to use this.", upgradeHref: "/sign-in", signedIn: false, tenantId: null };
+  }
+  const tenant = await currentTenantFor(principal.userId);
+  if (!tenant) {
+    return { allowed: false, remaining: 0, reason: "no-entitlement", message: refusalFor(feature, { reason: "no-entitlement" }), upgradeHref: UPGRADE_HREF, signedIn: true, tenantId: null };
+  }
+  return { ...(await entitlementOf(tenant.id, feature, amount)), signedIn: true, tenantId: tenant.id };
+}
+
+/** Who the request is for, handed to a route handler that passed. */
+export interface Access {
+  readonly tenantId: string;
+  readonly userId: string;
+}
+
+/**
+ * For a route handler: answers 401 signed out, 403 \`upgrade_required\` (with
+ * the sentence and where to upgrade) when the ${who}'s plans don't include
+ * it, and otherwise runs \`handler\` with who it's for.
+ */
+export function withEntitlement<Context = unknown>(
+  feature: string,
+  handler: (req: Request, context: Context, access: Access) => Response | Promise<Response>,
+  amount = 1,
+): (req: Request, context: Context) => Promise<Response> {
+  return async (req, context) => {
+    const principal = await currentPrincipal();
+    if (!principal) {
+      return Response.json({ error: { code: "unauthenticated", message: "Sign in to use this." } }, { status: 401 });
+    }
+    const tenant = await currentTenantFor(principal.userId);
+    if (!tenant) {
+      return Response.json({ error: { code: "upgrade_required", message: refusalFor(feature, { reason: "no-entitlement" }), upgradeHref: UPGRADE_HREF } }, { status: 403 });
+    }
+    const answer = await entitlementOf(tenant.id, feature, amount);
+    if (!answer.allowed) {
+      return Response.json({ error: { code: "upgrade_required", message: answer.message, upgradeHref: answer.upgradeHref } }, { status: 403 });
+    }
+    return handler(req, context, { tenantId: tenant.id, userId: principal.userId });
+  };
+}
+
+/**
+ * The tRPC rung: a tenant procedure (it takes \`tenantId\`, checked against
+ * \`permission\` like every tenant procedure) that also needs \`feature\` from
+ * that ${who}'s plans. Refused as FORBIDDEN with the sentence.
+ */
+export function requireEntitlement(feature: string, permission = "tenant.view") {
+  return requireTenant(permission).use(async (opts) => {
+    const answer = await entitlementOf(opts.ctx.tenantId, feature);
+    if (!answer.allowed) {
+      throw new TRPCError({ code: "FORBIDDEN", message: answer.message ?? "Your plan doesn't include this." });
+    }
+    return opts.next();
+  });
+}
+`;
+}
+
+export function renderEntitled(answers: Answers): string {
+  void answers;
+  return `import Link from "next/link";
+import type { ReactNode } from "react";
+import { Notice } from "@/components/ui";
+import { pageEntitlement } from "@/server/access";
+
+/**
+ * Show \`children\` only to someone whose plans include \`feature\` (billing
+ * 0.5); everyone else sees why not and where to go — or \`fallback\`, when
+ * given (a teaser, a blurred preview). Asks on the server, every render.
+ *
+ *   <Entitled feature="weather_tools"><PayoutCalculator /></Entitled>
+ */
+export async function Entitled({
+  feature,
+  amount = 1,
+  fallback,
+  children,
+}: {
+  readonly feature: string;
+  readonly amount?: number;
+  readonly fallback?: ReactNode;
+  readonly children: ReactNode;
+}): Promise<ReactNode> {
+  const access = await pageEntitlement(feature, amount);
+  if (access.allowed) return <>{children}</>;
+  if (fallback !== undefined) return <>{fallback}</>;
+  return (
+    <Notice tone="info" title={access.signedIn ? "Not on your plan yet" : "Sign in to use this"}>
+      {access.message}{" "}
+      <Link href={access.upgradeHref} className="font-medium text-accent underline underline-offset-2">
+        {access.signedIn ? "See plans" : "Sign in"}
+      </Link>
+    </Notice>
+  );
 }
 `;
 }

@@ -127,13 +127,13 @@ describe("LIVE_SUBSCRIPTION_STATUSES", () => {
     }
   });
 
-  it("matches the predicate on subscriptions_tenant_live_idx, byte for byte", () => {
+  it("matches the predicate on subscriptions_tenant_line_live_idx, byte for byte", () => {
     // Read as TEXT, not imported: importing schema.ts would drag drizzle-orm
     // into a test that exists to stay pure, and the coupling is textual anyway
     // because the predicate is raw SQL. Enforced rather than commented, because
     // the two lists live in different files and only one of them is executable.
     const schema = readFileSync(new URL("../schema.ts", import.meta.url), "utf8");
-    const predicate = schema.slice(schema.indexOf("subscriptions_tenant_live_idx"));
+    const predicate = schema.slice(schema.indexOf("subscriptions_tenant_line_live_idx"));
     const inList = /in \(([^)]+)\)/.exec(predicate)?.[1] ?? "";
     const statuses = [...inList.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
 

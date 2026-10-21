@@ -129,6 +129,44 @@ export function planStanding(input: PlanStandingInput): PlanStanding {
   return { state: "none", open: false, until: null, tierKey };
 }
 
+/** How good a standing is, best first: what `combineStandings` keeps. */
+const STANDING_RANK: Readonly<Record<PlanStandingState, number>> = {
+  active: 0,
+  grace: 1,
+  ending: 2,
+  trial: 3,
+  ended: 4,
+  none: 5,
+};
+
+/**
+ * One standing for a tenant that holds several PRODUCT LINES (billing 0.5):
+ * the best of them. A company paying for Weather and lapsed on Sports is open
+ * (its Weather work goes on); the per-line standings say what each line
+ * allows. Between two equally good ones the later `until` wins (NULL — it
+ * doesn't stop by itself — is the latest). An empty list is "none".
+ */
+export function combineStandings(standings: readonly PlanStanding[]): PlanStanding {
+  let best: PlanStanding | undefined;
+  for (const standing of standings) {
+    if (best === undefined) {
+      best = standing;
+      continue;
+    }
+    const rank = STANDING_RANK[standing.state];
+    const bestRank = STANDING_RANK[best.state];
+    if (rank < bestRank) best = standing;
+    else if (rank === bestRank) {
+      const later =
+        standing.until === null
+          ? best.until !== null
+          : best.until !== null && standing.until.getTime() > best.until.getTime();
+      if (later) best = standing;
+    }
+  }
+  return best ?? { state: "none", open: false, until: null, tierKey: null };
+}
+
 /**
  * What stays usable while a company's plan is closed: everything needed to
  * see its own work and to come back. Reading (`*.view`, and a crew member's

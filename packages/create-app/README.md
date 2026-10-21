@@ -47,6 +47,19 @@ generated app misbehaves.
    route. With `--tenant-noun none` the same features run for your one
    business, at `/admin`.
 
+   **Customers who sign up as themselves** (billing 0.5): add
+   `--audience consumers` to `--tenant-noun none`. With `--model subscription`
+   each person pays for their own plans — several product lines on one bill
+   (`definePlans({ lines })` in `src/plans.ts`), gated feature by feature with
+   `requireEntitlement(feature)` (src/server/access.ts) — nobody can share an
+   account (no team, no invitations), and you see who pays for what at
+   `/admin/billing/subscribers`:
+
+   ```
+   pnpm dlx @adminigloo/create-app weather-terminal --tenant-noun none --audience consumers \
+     --model subscription --admin full --email --marketing --seo --analytics
+   ```
+
    **Alerts and files** (Tenancy 2b-1, `--notifications` and `--storage`):
    each company gets a bell in the header and an alerts page (`/app/alerts`)
    for its new visit requests, leads, accepted quotes, invoices opened, paid

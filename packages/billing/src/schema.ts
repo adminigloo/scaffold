@@ -11,7 +11,7 @@ import {
 import { amountMinor, createdAt, idColumn, updatedAt } from "@adminigloo/db";
 import { FIRM_WIDE } from "@adminigloo/permissions";
 import type { EntitlementSource } from "./entitlements.js";
-import type { PlanInterval } from "./plans.js";
+import { DEFAULT_PLAN_LINE, type PlanInterval } from "./plans.js";
 import type { SubscriptionStatus } from "./status.js";
 
 /**
@@ -114,7 +114,7 @@ export const plans = pgTable(
 /**
  * What a tenant is currently paying for.
  *
- * At most one LIVE row per tenant, enforced by the partial unique index below
+ * At most one LIVE row per tenant and product line, enforced by the partial unique index below
  * rather than by a check in the code that creates them — the check that matters
  * runs during a double-clicked checkout, from two instances, in the same
  * millisecond.
@@ -138,7 +138,25 @@ export const subscriptions = pgTable(
     planId: text("plan_id")
       .notNull()
       .references(() => plans.id, { onDelete: "restrict" }),
+    /**
+     * THE PRODUCT LINE this row is about (billing 0.5). A row is one line of
+     * what a tenant pays: Weather Pro and Sports Basic on one Stripe
+     * subscription are TWO rows sharing `stripe_subscription_id`, each with
+     * its own item, status watermark and period. Written by the mirror from
+     * the tier (`plans.tier(key).line`), never taken from a caller.
+     *
+     * Defaults to the implicit line, so every row written before lines
+     * existed already names the line a one-line catalog resolves to.
+     */
+    line: text("line").notNull().default(DEFAULT_PLAN_LINE),
     stripeSubscriptionId: text("stripe_subscription_id"),
+    /**
+     * The Stripe subscription ITEM that bills this line (`si_…`), so a plan
+     * change swaps exactly that item and a line's cancellation removes exactly
+     * that item. NULL on a row with no Stripe object, and on a row mirrored
+     * before 0.5 (the next event fills it in).
+     */
+    stripeItemId: text("stripe_item_id"),
     stripeCustomerId: text("stripe_customer_id"),
     /**
      * Written only by `mapStripeSubscriptionStatus`, never copied out of a
@@ -194,14 +212,17 @@ export const subscriptions = pgTable(
   },
   (t) => [
     /**
-     * One row per Stripe subscription. Nullable because a comped subscription
+     * One row per Stripe subscription AND LINE (billing 0.5: lines stack as
+     * items of one subscription, one row each). Nullable because a comped subscription
      * an admin granted has no Stripe object, and Postgres treats NULLs as
      * distinct in a unique index — so those rows do not collide with each
      * other, which is exactly the behaviour wanted.
      */
-    uniqueIndex("subscriptions_stripe_subscription_id_idx").on(t.stripeSubscriptionId),
+    uniqueIndex("subscriptions_stripe_subscription_line_idx").on(t.stripeSubscriptionId, t.line),
     /**
-     * AT MOST ONE LIVE SUBSCRIPTION PER TENANT.
+     * AT MOST ONE LIVE SUBSCRIPTION PER TENANT, PER PRODUCT LINE (billing 0.5:
+     * Weather and Sports may both be live; two Weathers may not). A one-line
+     * catalog has one line, so this is "one per tenant" exactly as before.
      *
      * Raw SQL because Drizzle has no builder for a partial index over an IN
      * list, and both alternatives are worse: `status <> 'canceled'` would
@@ -220,8 +241,8 @@ export const subscriptions = pgTable(
      * database protects, or the invariant is enforced on one list and read
      * through another.
      */
-    uniqueIndex("subscriptions_tenant_live_idx")
-      .on(t.tenantId)
+    uniqueIndex("subscriptions_tenant_line_live_idx")
+      .on(t.tenantId, t.line)
       .where(sql`${t.status} in ('trialing', 'active', 'past_due', 'unpaid', 'incomplete')`),
     /**
      * Billing history reads every row for a tenant, cancelled ones included,

@@ -1,4 +1,25 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+/**
+ * A fixed plan record, not this project's own src/plans.ts: the mirror's
+ * rules are about the shape of a catalog (an active tier, a retired one, two
+ * currencies), and a project editing its own plans must not break them.
+ */
+vi.mock("@/plans", async () => {
+  const { definePlans } = await import("__SCOPE__/billing");
+  return {
+    plans: definePlans({
+      features: { seats: { kind: "quota", label: "team members" } },
+      tiers: [
+        { key: "pro", name: "Pro", prices: { month: { usd: 9900n, gbp: 7900n } }, features: { seats: 10 } },
+        { key: "starter-legacy", name: "Starter (2024)", isActive: false, prices: { month: { usd: 3900n, gbp: 2900n } }, features: { seats: 3 } },
+      ],
+    }),
+    HEADLINE_FEATURES: [],
+    DEFAULT_CURRENCY: "usd",
+  };
+});
+
 import {
   applySubscription,
   resolvePlanForSubscription,

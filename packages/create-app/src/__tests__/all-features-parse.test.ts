@@ -88,4 +88,8 @@ describe("every feature at once", () => {
   it("one business: the same", async () => {
     expect(await problems({ tenantNoun: "none", businessModel: "one-time" })).toEqual([]);
   }, 120_000);
+
+  it("a project whose customers are people, selling them plans (billing 0.5): the same", async () => {
+    expect(await problems({ tenantNoun: "none", audience: "consumers", businessModel: "subscription" })).toEqual([]);
+  }, 120_000);
 });

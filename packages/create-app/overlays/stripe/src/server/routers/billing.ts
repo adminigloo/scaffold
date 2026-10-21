@@ -1,5 +1,5 @@
 import { TRPCError } from "@trpc/server";
-import { eq } from "drizzle-orm";
+import { and, count, desc, eq, exists, ilike, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
   mapStripeSubscriptionStatus,
@@ -7,34 +7,49 @@ import {
   priceFor,
   type PlanInterval,
 } from "__SCOPE__/billing";
-import { plans as planTable } from "__SCOPE__/billing/schema";
-import { companyStripeCustomer, liveStripeSubscription } from "__SCOPE__/billing/server";
+import { plans as planTable, subscriptions } from "__SCOPE__/billing/schema";
+import { users } from "__SCOPE__/auth/schema";
+import {
+  companyStripeCustomer,
+  lineOfStoredRow,
+  liveStripeLines,
+  liveStripeSubscription,
+  loadCompanyPlan,
+  type LiveStripeLine,
+} from "__SCOPE__/billing/server";
 import { formatMinor } from "__SCOPE__/catalog";
 import { createLogger } from "__SCOPE__/observability";
 import {
+  addLine as addStripeLine,
+  addLineIdempotencyKey,
   changePlan as changeStripePlan,
   checkoutReturnUrls,
   createCheckoutSession,
   ensurePlanPrice,
   PlanChangeError,
   prepareCompanyCheckout,
+  previewAddLine as previewStripeAddLine,
   previewPlanChange as previewStripePlanChange,
   subscriptionSnapshot,
 } from "__SCOPE__/stripe";
+import { tenants } from "__SCOPE__/tenancy/schema";
 import { db } from "@/db";
 import { env } from "@/env";
 import { plans } from "@/plans";
 import { checkoutMode } from "@/server/checkout-mode";
-import { planStandingOf } from "@/server/plan-gate";
+import { windowProductGrants } from "@/server/fulfilment";
+import { CHECKOUT_TRIAL_DAYS, planStandingOf } from "@/server/plan-gate";
 import { stripe } from "@/server/stripe";
 import { tenancy } from "@/server/tenancy";
 import {
   applySubscription,
   listMirroredSubscriptions,
-  resolvePlanForSubscription,
+  mirrorStripeSubscription,
+  resolveSubscriptionItem,
   simulatedSubscriptionRef,
   PLAN_METADATA_KEY,
 } from "@/server/subscription";
+import { isOwnPersonalWorkspace } from "./checkout";
 import { requestContext } from "../request-context";
 import { createTRPCRouter, requireStaff, requireTenant } from "../trpc";
 
@@ -183,22 +198,43 @@ export const billingRouter = createTRPCRouter({
       // NEVER A SECOND SUBSCRIPTION (billing 0.3). A __TENANT_LABEL_LOWER__ that already pays
       // changes its plan in place (`previewPlanChange` / `changePlan`);
       // a new checkout here would make a second subscription and charge for both.
+      // PRODUCT LINES (billing 0.5): a second line is an ITEM added to the
+      // subscription this __TENANT_LABEL_LOWER__ already pays (`addLine`), never a second
+      // subscription — so "already pays" is refused here whichever line it is.
+      const multiLine = plans.lines.length > 1;
       const live = await liveStripeSubscription(db, ctx.tenantId);
-      if (live) throw alreadyPaysRefusal(live.status);
+      if (live) throw alreadyPaysRefusal(live.status, multiLine);
       // ...and ask STRIPE too (review H2): your copy of a new subscription
       // arrives by webhook seconds later, and in that gap (a second tab, or
       // paying and coming straight back) a check of the tables alone says "no
       // plan". This also finds or makes the __TENANT_LABEL_LOWER__'s ONE Stripe customer (a
-      // returning one keeps its saved card and invoices) and closes its other
-      // open checkouts, so two tabs can never both be paid.
+      // returning one keeps its saved card and invoices; one the shop made for
+      // this person is reused, review B5) and closes its other open checkouts,
+      // so two tabs can never both be paid. A person's own customer from the
+      // shop is adopted only for their OWN workspace — never a company's
+      // (review: the company's invoices would go to that member's email).
+      const ownWorkspace = await isOwnPersonalWorkspace(ctx.tenantId, ctx.principal.userId);
       const prepared = await prepareCompanyCheckout(client, {
         tenantId: ctx.tenantId,
+        ...(ownWorkspace ? { userId: ctx.principal.userId } : {}),
         knownCustomerId: await companyStripeCustomer(db, ctx.tenantId),
         email: ctx.principal.email,
       });
-      if (prepared.existingSubscription) throw alreadyPaysRefusal(prepared.existingSubscription.status);
+      if (prepared.existingSubscription) throw alreadyPaysRefusal(prepared.existingSubscription.status, multiLine);
 
       const { tier, row, priceMinor } = planRowOrThrow(input);
+
+      // A FREE TRIAL AT STRIPE (billing 0.5, a personal-plans project with
+      // BILLING_TRIAL_DAYS set): only for someone who has never had a
+      // subscription — not here, and not on this Stripe customer — so ending
+      // one and starting again is not a second free trial. The card is taken
+      // up front, so the first charge on the trial's last day just happens.
+      const [anyBefore] = await db
+        .select({ id: subscriptions.id })
+        .from(subscriptions)
+        .where(eq(subscriptions.tenantId, ctx.tenantId))
+        .limit(1);
+      const trialDays = CHECKOUT_TRIAL_DAYS > 0 && !prepared.hadSubscription && anyBefore === undefined && priceMinor > 0n ? CHECKOUT_TRIAL_DAYS : 0;
 
       // The cached Stripe ids, read from the TABLE. The record projects the
       // row's name, amount and interval; only the two ids live in the database,
@@ -264,13 +300,16 @@ export const billingRouter = createTRPCRouter({
           customer: prepared.customerId,
           // A free tier is a real tier and a real subscription. Without this
           // Stripe demands a card for a £0 subscription and the checkout dead-ends.
-          payment_method_collection: "if_required",
+          // A trial takes the card now, so it can be charged when the trial ends.
+          payment_method_collection: trialDays > 0 ? "always" : "if_required",
           subscription_data: {
+            ...(trialDays > 0 ? { trial_period_days: trialDays } : {}),
             metadata: {
               // THE TIER KEY, read back by `resolvePlanForSubscription` on every
               // event this subscription will ever emit.
               [PLAN_METADATA_KEY]: tier.key,
               planRowKey: row.key,
+              planLine: tier.line,
               userId: ctx.principal.userId,
             },
           },
@@ -446,18 +485,14 @@ export const billingRouter = createTRPCRouter({
     )
     .mutation(async ({ ctx, input }) => {
       const client = stripeOrThrow();
-      const live = await liveStripeSubscription(db, ctx.tenantId);
-      if (!live) {
-        throw new TRPCError({
-          code: "PRECONDITION_FAILED",
-          message: "This __TENANT_LABEL_LOWER__ has no paid plan to change yet. Choose a plan to subscribe.",
-        });
-      }
       const { tier, row, priceMinor } = planRowOrThrow(input);
+      // The LINE's own item (billing 0.5): a change to Weather never touches Sports.
+      const live = lineToChange(await liveStripeLines(db, ctx.tenantId), tier, input);
       const published = await publishedPlanPrice(client, tier, row, priceMinor);
       try {
         const preview = await previewStripePlanChange(client, {
           subscriptionId: live.stripeSubscriptionId,
+          ...(live.stripeItemId !== null ? { itemId: live.stripeItemId } : {}),
           newPriceId: published.priceId,
         });
         return {
@@ -496,21 +531,16 @@ export const billingRouter = createTRPCRouter({
     )
     .mutation(async ({ ctx, input }): Promise<{ readonly applied: boolean }> => {
       const client = stripeOrThrow();
-      const live = await liveStripeSubscription(db, ctx.tenantId);
-      if (!live) {
-        throw new TRPCError({
-          code: "PRECONDITION_FAILED",
-          message: "This __TENANT_LABEL_LOWER__ has no paid plan to change yet. Choose a plan to subscribe.",
-        });
-      }
       const { tier, row, priceMinor } = planRowOrThrow(input);
+      const live = lineToChange(await liveStripeLines(db, ctx.tenantId), tier, input);
       const published = await publishedPlanPrice(client, tier, row, priceMinor);
       try {
         const result = await changeStripePlan(client, {
           subscriptionId: live.stripeSubscriptionId,
+          ...(live.stripeItemId !== null ? { itemId: live.stripeItemId } : {}),
           newPriceId: published.priceId,
           prorationDate: input.prorationDate,
-          metadata: { [PLAN_METADATA_KEY]: tier.key, planRowKey: row.key, userId: ctx.principal.userId },
+          metadata: { [PLAN_METADATA_KEY]: tier.key, planRowKey: row.key, planLine: tier.line, userId: ctx.principal.userId },
           // One change per plan per preview: a double click changes the plan once.
           idempotencyKey: `plan_change:${ctx.tenantId}:${row.key}:${input.prorationDate}`,
         });
@@ -520,6 +550,141 @@ export const billingRouter = createTRPCRouter({
         );
         return { applied: result.applied };
       } catch (error) {
+        throw planChangeRefusal(error);
+      }
+    }),
+
+  /**
+   * What ADDING a product line costs today (billing 0.5), before anything
+   * changes: "Sports: you'll pay $2.40 today, then $5.00 a month".
+   *
+   * A second line is an ITEM on the subscription this __TENANT_LABEL_LOWER__ already pays —
+   * one customer, one invoice, one billing date — prorated to the rest of the
+   * period and charged now. Never a second checkout or a second subscription.
+   * Every line on one subscription is billed on the same cadence and in the
+   * same currency (Stripe's rule), so the line is added on the plan's own.
+   */
+  previewAddLine: requireTenant("subscriptions.manage")
+    .meta({ scope: "tenant" })
+    .input(
+      z.object({
+        tierKey: z.string().min(1),
+        interval: subscribableInterval,
+        currency: z.string().trim().toLowerCase().min(3).max(3),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const client = stripeOrThrow();
+      const { tier, row, priceMinor } = planRowOrThrow(input);
+      const paying = lineToAddTo(await liveStripeLines(db, ctx.tenantId), tier, input);
+      // Stripe's own items too, read the way the mirror reads them: a line
+      // whose item is still billed is on the plan, whatever our rows say.
+      await assertLineNotAtStripe(client, paying.stripeSubscriptionId, tier);
+      const published = await publishedPlanPrice(client, tier, row, priceMinor);
+      try {
+        const preview = await previewStripeAddLine(client, {
+          subscriptionId: paying.stripeSubscriptionId,
+          newPriceId: published.priceId,
+        });
+        return {
+          planName: tier.name,
+          lineName: lineName(tier.line),
+          samePrice: preview.samePrice,
+          prorationDate: preview.prorationDate,
+          today: preview.dueNowMinor > 0 ? ("charge" as const) : preview.dueNowMinor < 0 ? ("credit" as const) : ("none" as const),
+          dueNow: formatMinor(BigInt(Math.abs(preview.dueNowMinor)), preview.currency),
+          then: formatMinor(priceMinor, row.currency),
+          interval: input.interval,
+        };
+      } catch (error) {
+        throw planChangeRefusal(error);
+      }
+    }),
+
+  /**
+   * Add a product line to the plan this __TENANT_LABEL_LOWER__ already pays (billing 0.5).
+   *
+   * MONEY RULES, the same ones a plan change keeps: the price is the record's
+   * (published through `ensurePlanPrice`, never the browser's); the proration
+   * date is the preview's and no older than half an hour; and the charge is
+   * `pending_if_incomplete`, so a declined card adds nothing. Stripe is read
+   * first, so a line added a second ago in another tab (whose webhook hasn't
+   * arrived) is refused rather than added twice — and two tabs adding from
+   * the same state share one idempotency key, so Stripe adds ONE item.
+   *
+   * THE KEY NEVER COMES ROUND AGAIN (review). It names the subscription's
+   * latest invoice and the items this line held before, so adding a line
+   * back after dropping it is a new request — never a replay of the first
+   * add's stored answer, which added and charged nothing. And what is
+   * mirrored is a FRESH READ of the subscription after the add (the package's
+   * `addLine` reads it again), never the update's own answer: the line is
+   * granted only if Stripe holds its new item.
+   */
+  addLine: requireTenant("subscriptions.manage")
+    .meta({ scope: "tenant" })
+    .input(
+      z.object({
+        tierKey: z.string().min(1),
+        interval: subscribableInterval,
+        currency: z.string().trim().toLowerCase().min(3).max(3),
+        prorationDate: z.number().int().positive(),
+      }),
+    )
+    .mutation(async ({ ctx, input }): Promise<{ readonly applied: boolean }> => {
+      const client = stripeOrThrow();
+      const { tier, row, priceMinor } = planRowOrThrow(input);
+      const paying = lineToAddTo(await liveStripeLines(db, ctx.tenantId), tier, input);
+      // The items this line held on this subscription before (one row per
+      // subscription and line, which keeps the last item's id): every add
+      // makes a new item, so a re-add after a drop gets a key of its own.
+      // READ BEFORE STRIPE IS, on purpose: a second tab whose read of Stripe
+      // predates the first tab's add must also predate that add's mirror, so
+      // both derive ONE key and Stripe refuses the second (a different tier of
+      // the same line collides instead of billing the line twice); a tab that
+      // reads Stripe after the add is refused by the item it finds there.
+      const before = await db
+        .select({ itemId: subscriptions.stripeItemId })
+        .from(subscriptions)
+        .where(and(eq(subscriptions.stripeSubscriptionId, paying.stripeSubscriptionId), eq(subscriptions.line, tier.line)));
+      const published = await publishedPlanPrice(client, tier, row, priceMinor);
+      const current = await assertLineNotAtStripe(client, paying.stripeSubscriptionId, tier);
+      try {
+        const result = await addStripeLine(client, {
+          subscriptionId: current.id,
+          newPriceId: published.priceId,
+          prorationDate: input.prorationDate,
+          itemMetadata: { [PLAN_METADATA_KEY]: tier.key, planRowKey: row.key, planLine: tier.line, userId: ctx.principal.userId },
+          idempotencyKey: addLineIdempotencyKey(current, tier.line, { previousItemIds: before.map((each) => each.itemId) }),
+        });
+        if (result.applied && result.itemId !== null) {
+          // Mirrored at once from the FRESH read `addLine` made after the
+          // update (never the update's own answer, which a replay can make
+          // stale), so the billing page shows the new line on the reload
+          // rather than after the webhook. A failure here changes nothing at
+          // Stripe: logged, and the webhook mirrors it a moment later.
+          try {
+            await mirrorStripeSubscription(subscriptionSnapshot(result.subscription), {
+              observedAt: new Date(),
+              observedBy: `line-add:${ctx.principal.userId}`,
+              actorUserId: ctx.principal.userId,
+            });
+          } catch (error) {
+            logger.error({ err: error, tenantId: ctx.tenantId, planKey: row.key }, "a line was added at Stripe and couldn't be mirrored yet; the webhook will");
+          }
+        }
+        logger.info(
+          { tenantId: ctx.tenantId, userId: ctx.principal.userId, planKey: row.key, line: tier.line, applied: result.applied },
+          result.applied ? "product line added to the existing subscription" : "product line held: the prorated charge didn't go through",
+        );
+        return { applied: result.applied };
+      } catch (error) {
+        if (isIdempotencyConflict(error)) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "Your plan was just changed from another window. Reload the page to see what it is now.",
+            cause: error,
+          });
+        }
         throw planChangeRefusal(error);
       }
     }),
@@ -579,15 +744,22 @@ export const billingRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      if (await liveStripeSubscription(db, input.tenantId)) {
-        throw new TRPCError({
-          code: "CONFLICT",
-          message: "This __TENANT_LABEL_LOWER__ already pays through Stripe. Change or cancel that plan first.",
-        });
-      }
       const tier = plans.tier(input.tierKey);
       if (tier === undefined) {
         throw new TRPCError({ code: "NOT_FOUND", message: `There is no plan called "${input.tierKey}".` });
+      }
+      // Refused where it would sit beside a paid line: on the SAME product
+      // line (billing 0.5). Free months of Sports for someone paying for
+      // Weather are fine; free months of Weather for someone paying for it
+      // would be a second Weather.
+      const paidLines = await liveStripeLines(db, input.tenantId);
+      if (paidLines.some((paid) => lineOfStoredRow(plans, paid.planKey, paid.line) === tier.line)) {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: plans.lines.length > 1
+            ? `This __TENANT_LABEL_LOWER__ already pays for ${lineName(tier.line)} through Stripe. Change or cancel that first.`
+            : "This __TENANT_LABEL_LOWER__ already pays through Stripe. Change or cancel that plan first.",
+        });
       }
       const row =
         plans.rows.find((candidate) => candidate.tierKey === tier.key && candidate.interval === "month") ??
@@ -624,6 +796,69 @@ export const billingRouter = createTRPCRouter({
         "FREE MONTHS GIVEN — no money collected",
       );
       return { status: result.status, endsAt: endsAt.toISOString() };
+    }),
+
+  /**
+   * WHO PAYS, AND FOR WHAT (billing 0.5): the people who signed up, each with
+   * where they stand on every product line — for the Subscribers page of a
+   * project whose customers are people (`--audience consumers`), and its Give
+   * free months. With no search, only people who have (or had) a plan; a
+   * search finds anyone by name or email, so free months can go to someone
+   * who never paid.
+   */
+  subscribers: requireStaff("staff.tenants.view")
+    .meta({ scope: "staff" })
+    .input(
+      z.object({
+        q: z.string().trim().max(100).optional(),
+        page: z.number().int().min(1).max(1000).default(1),
+      }),
+    )
+    .query(async ({ input }) => {
+      const pageSize = 25;
+      const pattern = input.q && input.q.length > 0 ? `%${input.q.replace(/[\\%_]/g, (c) => `\\${c}`)}%` : null;
+      const where = and(
+        eq(tenants.kind, "personal"),
+        isNull(tenants.deletedAt),
+        pattern !== null
+          ? or(ilike(users.email, pattern), ilike(users.displayName, pattern), ilike(tenants.name, pattern))
+          : exists(db.select({ one: sql`1` }).from(subscriptions).where(eq(subscriptions.tenantId, tenants.id))),
+      );
+      const [total] = await db
+        .select({ n: count() })
+        .from(tenants)
+        .leftJoin(users, eq(users.id, tenants.ownerUserId))
+        .where(where);
+      const rows = await db
+        .select({ id: tenants.id, name: tenants.name, createdAt: tenants.createdAt, email: users.email, displayName: users.displayName })
+        .from(tenants)
+        .leftJoin(users, eq(users.id, tenants.ownerUserId))
+        .where(where)
+        .orderBy(desc(tenants.createdAt))
+        .limit(pageSize)
+        .offset((input.page - 1) * pageSize);
+      const people = await Promise.all(
+        rows.map(async (row) => {
+          const plan = await loadCompanyPlan(db, { tenantId: row.id, trialStartedAt: null, trialDays: 0, plans });
+          return {
+            tenantId: row.id,
+            name: row.displayName ?? row.name,
+            email: row.email,
+            joinedAt: row.createdAt.toISOString(),
+            lines: [...plan.lines.values()].map((line) => ({
+              line: line.line,
+              lineName: plans.line(line.line)?.name ?? line.line,
+              state: line.standing.state,
+              open: line.standing.open,
+              tierKey: line.standing.tierKey,
+              tierName: line.standing.tierKey ? (plans.tier(line.standing.tierKey)?.name ?? line.standing.tierKey) : null,
+              until: line.standing.until?.toISOString() ?? null,
+              paidByCard: (line.subscription?.stripeSubscriptionId ?? null) !== null,
+            })),
+          };
+        }),
+      );
+      return { people, total: Number(total?.n ?? 0), page: input.page, pageSize };
     }),
 
   /**
@@ -767,21 +1002,33 @@ export const billingRouter = createTRPCRouter({
 
       for (const subscription of listed.data) {
         const snapshot = subscriptionSnapshot(subscription);
-        const resolution = await resolvePlanForSubscription({
-          planMetadata: snapshot.metadata[PLAN_METADATA_KEY],
-          variantMetadata: snapshot.metadata["variantId"],
-          priceId: snapshot.priceId,
-          interval: snapshot.interval,
-          currency: snapshot.currency,
+        // Every item, one product line each (billing 0.5), through the one
+        // writer — and a line whose item is gone is ended, as the webhook does.
+        const outcome = await mirrorStripeSubscription(snapshot, {
+          // NOW, not an event time. A live read is newer than every delivery.
+          observedAt: new Date(),
+          observedBy: `resync:${ctx.principal.userId}`,
+          action: "billing.subscription.resynced",
+          actorUserId: ctx.principal.userId,
         });
 
-        if (resolution.kind !== "plan") {
-          skipped.push({ id: snapshot.subscriptionId, why: resolution.why });
+        if (outcome.kind === "product") {
+          // A recurring product's grants follow its subscription (review B4).
+          await windowProductGrants({
+            subscriptionId: snapshot.subscriptionId,
+            status: mapStripeSubscriptionStatus(snapshot.status),
+            cancelAtPeriodEnd: snapshot.cancelAtPeriodEnd,
+            currentPeriodEnd: snapshot.currentPeriodEnd,
+            at: new Date(),
+          });
+          skipped.push({ id: snapshot.subscriptionId, why: outcome.why });
           continue;
         }
-
-        const tenantId = snapshot.metadata["tenantId"];
-        if (!tenantId) {
+        if (outcome.kind === "unknown") {
+          skipped.push({ id: snapshot.subscriptionId, why: outcome.why });
+          continue;
+        }
+        if (outcome.kind === "no_tenant") {
           // Reported rather than thrown, and this is the one place the two
           // differ. In the webhook an unattributable subscription must stay in
           // Stripe's failed queue until a human fixes it; here a human IS
@@ -794,28 +1041,14 @@ export const billingRouter = createTRPCRouter({
           continue;
         }
 
-        const result = await applySubscription({
-          tenantId,
-          tierKey: resolution.tierKey,
-          planKey: resolution.planKey,
-          stripeSubscriptionId: snapshot.subscriptionId,
-          stripeCustomerId: snapshot.customerId,
-          status: mapStripeSubscriptionStatus(snapshot.status),
-          currentPeriodStart: snapshot.currentPeriodStart,
-          currentPeriodEnd: snapshot.currentPeriodEnd,
-          cancelAtPeriodEnd: snapshot.cancelAtPeriodEnd,
-          canceledAt: snapshot.canceledAt,
-          trialEndsAt: snapshot.trialEndsAt,
-          // NOW, not an event time. A live read is newer than every delivery.
-          observedAt: new Date(),
-          observedBy: `resync:${ctx.principal.userId}`,
-          source: "stripe",
-          action: "billing.subscription.resynced",
-          actorUserId: ctx.principal.userId,
-        });
-
-        if (result.applied) mirrored += 1;
-        else skipped.push({ id: snapshot.subscriptionId, why: result.why });
+        if ([...outcome.lines, ...outcome.closed].some((line) => line.result.applied)) mirrored += 1;
+        else skipped.push({ id: snapshot.subscriptionId, why: outcome.lines[0]?.result.why ?? "nothing to write" });
+        if (outcome.duplicates.length > 0) {
+          skipped.push({
+            id: snapshot.subscriptionId,
+            why: `bills one product line twice (${outcome.duplicates.join(", ")}): remove the extra item in Stripe`,
+          });
+        }
       }
 
       logger.info(
@@ -997,7 +1230,13 @@ function planChangeRefusal(error: unknown): unknown {
           ? "This plan can't be changed right now because the subscription isn't active. Choose a plan to start a new one."
           : error.code === "stale_preview"
             ? error.message
-            : "This plan can't be switched here. Contact support and we'll change it for you.",
+            : error.code === "no_such_item"
+              ? "Your plan was just changed somewhere else. Reload the page and try again."
+              : error.code === "already_on_price"
+                ? "That's already on your plan."
+                : error.code === "not_added"
+                  ? "Nothing was added or charged. Reload the page and try again."
+                  : "This plan can't be switched here. Contact support and we'll change it for you.",
       cause: error,
     });
   }
@@ -1009,7 +1248,7 @@ function planChangeRefusal(error: unknown): unknown {
  * plan whose payment failed is fixed by updating the card, not by a second
  * checkout or a plan change.
  */
-function alreadyPaysRefusal(status: string): TRPCError {
+function alreadyPaysRefusal(status: string, multiLine = false): TRPCError {
   if (status === "past_due" || status === "unpaid") {
     return new TRPCError({
       code: "CONFLICT",
@@ -1022,8 +1261,137 @@ function alreadyPaysRefusal(status: string): TRPCError {
       message: "A checkout for this plan was started but not finished. Finish it, or wait a few minutes and try again.",
     });
   }
+  if (multiLine) {
+    // PRODUCT LINES (billing 0.5): another line is added to the plan already
+    // paid for — one subscription, one bill — never a second checkout.
+    return new TRPCError({
+      code: "CONFLICT",
+      message: "This __TENANT_LABEL_LOWER__ already pays for a plan here. Add this one to it (or use Change plan on the same line), so it's one bill and never charged twice.",
+    });
+  }
   return new TRPCError({
     code: "CONFLICT",
     message: "This __TENANT_LABEL_LOWER__ already pays for a plan. Use Change plan, so it's never charged twice.",
   });
 }
+
+// ---------------------------------------------------------------------------
+// Product lines (billing 0.5)
+// ---------------------------------------------------------------------------
+
+/** A product line's name ("Weather"); "this plan" for the one line of a catalog without lines. */
+function lineName(key: string): string {
+  const line = plans.line(key);
+  return line !== undefined && !line.implicit ? line.name : "this plan";
+}
+
+/** The cadence and currency a live line is billed on, read off its `plans.key`. */
+function cadenceOf(planKey: string | null): { readonly interval: string; readonly currency: string } | null {
+  const row = planKey === null ? undefined : plans.rows.find((candidate) => candidate.key === planKey);
+  return row ? { interval: row.interval, currency: row.currency } : null;
+}
+
+/**
+ * Everything on one Stripe subscription is billed together: one cadence, one
+ * currency (Stripe refuses a monthly and a yearly item side by side). So with
+ * other lines on the plan, a line is added or changed on the plan's own.
+ */
+function assertSameCadence(lines: readonly LiveStripeLine[], input: { readonly interval: string; readonly currency: string }): void {
+  const cadence = cadenceOf(lines[0]?.planKey ?? null);
+  if (cadence === null) return;
+  if (cadence.interval !== input.interval || cadence.currency !== input.currency.toLowerCase()) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message:
+        `Your plan is billed ${cadence.interval === "year" ? "yearly" : "monthly"} in ${cadence.currency.toUpperCase()}, ` +
+        `and everything on it is billed together. Choose the ${cadence.interval === "year" ? "yearly" : "monthly"} ${cadence.currency.toUpperCase()} price.`,
+    });
+  }
+}
+
+/**
+ * The live line a change of tier swaps: the one ON THE TIER'S OWN LINE. A
+ * __TENANT_LABEL_LOWER__ paying for another line only is told to add this one instead.
+ */
+function lineToChange(
+  lines: readonly LiveStripeLine[],
+  tier: NonNullable<ReturnType<typeof plans.tier>>,
+  input: { readonly interval: string; readonly currency: string },
+): LiveStripeLine {
+  const mine = lines.find((paid) => lineOfStoredRow(plans, paid.planKey, paid.line) === tier.line);
+  if (mine === undefined) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message:
+        lines.length > 0
+          ? `${tier.name} isn't on your plan yet. Add it, so it's on the same bill.`
+          : "This __TENANT_LABEL_LOWER__ has no paid plan to change yet. Choose a plan to subscribe.",
+    });
+  }
+  const others = lines.filter((paid) => paid !== mine);
+  if (others.length > 0) assertSameCadence(others, input);
+  return mine;
+}
+
+/** The paid subscription a new line is added to, refused in words when it can't be. */
+function lineToAddTo(
+  lines: readonly LiveStripeLine[],
+  tier: NonNullable<ReturnType<typeof plans.tier>>,
+  input: { readonly interval: string; readonly currency: string },
+): LiveStripeLine {
+  const first = lines[0];
+  if (first === undefined) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: "There's no paid plan to add this to yet. Choose a plan to subscribe.",
+    });
+  }
+  if (lines.some((paid) => lineOfStoredRow(plans, paid.planKey, paid.line) === tier.line)) {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: `${lineName(tier.line)} is already on your plan. Use Change plan to move to ${tier.name}.`,
+    });
+  }
+  if (first.status === "past_due" || first.status === "unpaid") {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "The last payment for your plan didn't go through. Update the card under Payment methods first, then add this.",
+    });
+  }
+  assertSameCadence(lines, input);
+  return first;
+}
+
+/**
+ * Refuse to add `tier`'s line when Stripe already bills it on this
+ * subscription — read item by item the way the MIRROR reads them
+ * (`resolveSubscriptionItem`: the cached price, the Price's own stamp, the
+ * item's metadata, our own row for the item). Not the cached price alone
+ * (review): an item still on a Price from before a repricing isn't the cached
+ * one, and reading it as "not a plan" let the same line be added — and billed
+ * — twice. Answers the subscription it read.
+ */
+async function assertLineNotAtStripe(
+  client: NonNullable<typeof stripe>,
+  subscriptionId: string,
+  tier: NonNullable<ReturnType<typeof plans.tier>>,
+) {
+  const current = await client.stripe.subscriptions.retrieve(subscriptionId);
+  const snapshot = subscriptionSnapshot(current);
+  for (const item of snapshot.items) {
+    const resolution = await resolveSubscriptionItem(snapshot, item);
+    if (resolution.kind === "plan" && plans.tier(resolution.tierKey)?.line === tier.line) {
+      throw new TRPCError({
+        code: "CONFLICT",
+        message: `${lineName(tier.line)} is already on your plan. Use Change plan to move to ${tier.name}.`,
+      });
+    }
+  }
+  return current;
+}
+
+/** Stripe's answer to one idempotency key reused with different parameters — another tab got there first. */
+function isIdempotencyConflict(error: unknown): boolean {
+  return typeof error === "object" && error !== null && (error as { type?: unknown }).type === "idempotency_error";
+}
+

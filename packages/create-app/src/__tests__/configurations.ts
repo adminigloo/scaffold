@@ -17,6 +17,7 @@
 import { join } from "node:path";
 import {
   ADMIN_SHELLS,
+  AUDIENCES,
   BUSINESS_MODELS,
   DEFAULT_ANSWERS,
   TENANT_NOUNS,
@@ -37,6 +38,9 @@ const BOTH = [true, false] as const;
 
 export const EVERY_CONFIGURATION: readonly Configuration[] = TENANT_NOUNS.flatMap(
   (tenantNoun) =>
+    // Who signs up (billing 0.5) is a question only with no companies: both
+    // audiences there, and the one answer a companies project has elsewhere.
+    (tenantNoun === "none" ? AUDIENCES : (["business"] as const)).flatMap((audience) =>
     BUSINESS_MODELS.flatMap((businessModel) =>
       ADMIN_SHELLS.flatMap((adminShell) =>
         BOTH.flatMap((includeAi) =>
@@ -67,6 +71,7 @@ export const EVERY_CONFIGURATION: readonly Configuration[] = TENANT_NOUNS.flatMa
                   const flags = [
                     "--tenant-noun",
                     tenantNoun,
+                    ...(tenantNoun === "none" ? ["--audience", audience] : []),
                     "--model",
                     businessModel,
                     "--admin",
@@ -114,6 +119,7 @@ export const EVERY_CONFIGURATION: readonly Configuration[] = TENANT_NOUNS.flatMa
                       ...DEFAULT_ANSWERS,
                       projectName: "acme",
                       tenantNoun,
+                      audience,
                       businessModel,
                       adminShell,
                       includeAi,
@@ -142,6 +148,7 @@ export const EVERY_CONFIGURATION: readonly Configuration[] = TENANT_NOUNS.flatMa
           ),
         ),
       ),
+    ),
     ),
 );
 

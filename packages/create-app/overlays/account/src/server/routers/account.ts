@@ -1,16 +1,16 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
-import { isLiveStatus, mapStripeSubscriptionStatus } from "__SCOPE__/billing";
+import { isLiveStatus } from "__SCOPE__/billing";
 import { auditEntry, defineAuditedActions } from "__SCOPE__/observability";
 import { auditLog } from "__SCOPE__/observability/schema";
-import { createBillingPortalSession, subscriptionSnapshot } from "__SCOPE__/stripe";
+import { createBillingPortalSession, PlanChangeError, removeLine, subscriptionSnapshot } from "__SCOPE__/stripe";
 import { db } from "@/db";
 import { plans } from "@/plans";
-import { readSubscriptionForTenant, type AccountSubscription } from "@/server/account";
+import { readSubscriptionForTenant, readSubscriptionsForTenant, type AccountSubscription } from "@/server/account";
 import { stripe } from "@/server/stripe";
-import { applySubscription } from "@/server/subscription";
+import { applySubscription, mirrorStripeSubscription } from "@/server/subscription";
 import { requestContext } from "../request-context";
-import { findStripeCustomerId } from "./checkout";
+import { findBillingCustomerId } from "./checkout";
 import { createTRPCRouter, requireTenant } from "../trpc";
 
 /**
@@ -148,9 +148,11 @@ export const accountRouter = createTRPCRouter({
        * an account that has never been charged.
        */
       const subscription = await readSubscriptionForTenant(ctx.tenantId);
+      // The tenant's ONE Stripe customer (stripe 0.6): its plans and its shop
+      // purchases share it, so one portal shows every card and invoice.
       const customerId =
         subscription?.stripeCustomerId ??
-        (await findStripeCustomerId(client, ctx.principal.userId));
+        (await findBillingCustomerId(client, { tenantId: ctx.tenantId, userId: ctx.principal.userId, knownCustomerId: null }));
 
       if (customerId === null) return { status: "no_customer" };
 
@@ -208,7 +210,13 @@ export const accountRouter = createTRPCRouter({
    */
   cancelSubscription: requireTenant("subscriptions.manage")
     .meta({ scope: "tenant" })
-    .mutation(async ({ ctx }) => scheduleCancellation(ctx, true)),
+    // PRODUCT LINES (billing 0.5): which line to stop. With other lines on
+    // the same subscription that one line ends now, its unused time invoiced
+    // at once as a credit on the account (it comes off the next bill, and
+    // stays on the account even if nothing is billed again); the last (or
+    // only) line ends with the paid period.
+    .input(z.object({ line: z.string().min(1).max(64).optional() }))
+    .mutation(async ({ ctx, input }) => scheduleCancellation(ctx, true, input.line)),
 
   /**
    * Undo a scheduled cancellation.
@@ -222,7 +230,8 @@ export const accountRouter = createTRPCRouter({
    */
   resumeSubscription: requireTenant("subscriptions.manage")
     .meta({ scope: "tenant" })
-    .mutation(async ({ ctx }) => scheduleCancellation(ctx, false)),
+    .input(z.object({ line: z.string().min(1).max(64).optional() }))
+    .mutation(async ({ ctx, input }) => scheduleCancellation(ctx, false, input.line)),
 
   /**
    * Past invoices, FROM STRIPE'S API AND NEVER FROM A LOCAL TABLE.
@@ -251,7 +260,7 @@ export const accountRouter = createTRPCRouter({
       const subscription = await readSubscriptionForTenant(ctx.tenantId);
       const customerId =
         subscription?.stripeCustomerId ??
-        (await findStripeCustomerId(client, ctx.principal.userId));
+        (await findBillingCustomerId(client, { tenantId: ctx.tenantId, userId: ctx.principal.userId, knownCustomerId: null }));
       if (customerId === null) return { status: "no_customer", invoices: [] };
 
       try {
@@ -335,8 +344,12 @@ async function scheduleCancellation(
     readonly principal: { readonly userId: string };
   },
   cancelAtPeriodEnd: boolean,
-): Promise<{ readonly changed: boolean; readonly cancelAtPeriodEnd: boolean }> {
-  const subscription = await readSubscriptionForTenant(ctx.tenantId);
+  line?: string,
+): Promise<{ readonly changed: boolean; readonly cancelAtPeriodEnd: boolean; readonly endedNow?: true }> {
+  if (line !== undefined && plans.line(line) === undefined) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "There is no such plan here." });
+  }
+  const subscription = await readSubscriptionForTenant(ctx.tenantId, line);
   if (subscription === null) {
     throw new TRPCError({
       code: "NOT_FOUND",
@@ -384,36 +397,71 @@ async function scheduleCancellation(
   const now = new Date();
 
   if (stripe !== null && subscription.stripeSubscriptionId !== null) {
+    const action = cancelAtPeriodEnd ? "billing.subscription.cancelled" : "billing.subscription.resumed";
+    // PRODUCT LINES (billing 0.5): stopping ONE line while others stay on the
+    // same subscription takes its item off now — Stripe can only end a whole
+    // subscription at the period's end — with the unused part of the period
+    // invoiced at once as a credit on the customer's balance (`removeLine`),
+    // so nothing paid for is lost even if the last line is cancelled later.
+    if (cancelAtPeriodEnd && line !== undefined) {
+      const lines = await readSubscriptionsForTenant(ctx.tenantId);
+      const others = [...lines.values()].filter(
+        (other) => other.line !== line && other.live && other.stripeSubscriptionId === subscription.stripeSubscriptionId,
+      );
+      if (others.length > 0) {
+        if (subscription.stripeItemId === null) {
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: "This plan's billing hasn't caught up yet. Try again in a minute.",
+          });
+        }
+        let left;
+        try {
+          left = await removeLine(stripe, {
+            subscriptionId: subscription.stripeSubscriptionId,
+            itemId: subscription.stripeItemId,
+            idempotencyKey: `plan_line_remove:${subscription.stripeSubscriptionId}:${subscription.stripeItemId}`,
+          });
+        } catch (error) {
+          if (error instanceof PlanChangeError) {
+            throw new TRPCError({ code: "CONFLICT", message: "Your plan was just changed somewhere else. Reload the page to see it.", cause: error });
+          }
+          throw error;
+        }
+        // The line is gone from the subscription, so the mirror ends it (its
+        // rows go) and leaves the others exactly as they were.
+        await mirrorStripeSubscription(subscriptionSnapshot(left), {
+          // NOW: a live read of what Stripe just did, newer than any event.
+          observedAt: now,
+          observedBy: `portal:${ctx.principal.userId}`,
+          action,
+          actorUserId: ctx.principal.userId,
+        });
+        return { changed: true, cancelAtPeriodEnd: true, endedNow: true };
+      }
+    }
+
     const updated = await stripe.stripe.subscriptions.update(
       subscription.stripeSubscriptionId,
       { cancel_at_period_end: cancelAtPeriodEnd },
     );
     const snapshot = subscriptionSnapshot(updated);
 
-    await applySubscription({
-      tenantId: ctx.tenantId,
-      tierKey: tier.key,
-      planKey: subscription.planKey,
-      stripeSubscriptionId: snapshot.subscriptionId,
-      stripeCustomerId: snapshot.customerId,
-      status: mapStripeSubscriptionStatus(snapshot.status),
-      currentPeriodStart: snapshot.currentPeriodStart,
-      currentPeriodEnd: snapshot.currentPeriodEnd,
-      cancelAtPeriodEnd: snapshot.cancelAtPeriodEnd,
-      canceledAt: snapshot.canceledAt,
-      trialEndsAt: snapshot.trialEndsAt,
+    // Every line on the subscription (one, in a one-line catalog), through
+    // the one writer.
+    await mirrorStripeSubscription(snapshot, {
       // NOW rather than an event time. This is a live read of what Stripe just
       // did, so it is newer than anything the event stream can deliver — and it
       // has to win, or the webhook for this very change would arrive a second
       // later and be refused as stale.
       observedAt: now,
       observedBy: `portal:${ctx.principal.userId}`,
-      source: "stripe",
-      action: cancelAtPeriodEnd
-        ? "billing.subscription.cancelled"
-        : "billing.subscription.resumed",
+      action,
       actorUserId: ctx.principal.userId,
     });
+    // `tier` is the row's own: kept so a plan deleted from src/plans.ts is
+    // still refused above rather than mirrored as nothing.
+    void tier;
 
     return { changed: true, cancelAtPeriodEnd: snapshot.cancelAtPeriodEnd };
   }

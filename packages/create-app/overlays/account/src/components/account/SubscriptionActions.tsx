@@ -40,6 +40,10 @@ export interface SubscriptionActionsProps {
    * presentation and not the boundary.
    */
   readonly canManage: boolean;
+  /** The product line this button acts on (billing 0.5), or null in a one-line catalog. */
+  readonly line?: string | null;
+  /** The sentence under the button, when the page knows better (stopping one line of several ends it now). */
+  readonly hint?: string;
 }
 
 export function SubscriptionActions(props: SubscriptionActionsProps) {
@@ -79,6 +83,8 @@ export function SubscriptionActions(props: SubscriptionActionsProps) {
 
   const mutation = props.action.kind === "cancel" ? cancel : resume;
   const busy = cancel.isPending || resume.isPending;
+  const hint = props.hint ?? props.action.hint;
+  const target = props.line ? { tenantId: props.tenantId, line: props.line } : { tenantId: props.tenantId };
 
   if (!props.canManage) {
     return (
@@ -102,12 +108,12 @@ export function SubscriptionActions(props: SubscriptionActionsProps) {
           {/* A confirm step only on the actions that change what is charged.
               Everything else goes straight through: a confirmation on a
               harmless control teaches people to click past confirmations. */}
-          <p className="max-w-[62ch] text-sm text-ink">{props.action.hint}</p>
+          <p className="max-w-[62ch] text-sm text-ink">{hint}</p>
           <div className="flex flex-wrap items-center gap-2">
             <Button
               variant="primary"
               disabled={busy}
-              onClick={() => mutation.mutate({ tenantId: props.tenantId })}
+              onClick={() => mutation.mutate(target)}
             >
               {busy ? "Saving…" : `Yes — ${props.action.label.toLowerCase()}`}
             </Button>
@@ -125,12 +131,12 @@ export function SubscriptionActions(props: SubscriptionActionsProps) {
             onClick={() =>
               props.action.consequential
                 ? setConfirming(true)
-                : mutation.mutate({ tenantId: props.tenantId })
+                : mutation.mutate(target)
             }
           >
             {props.action.label}
           </Button>
-          <p className="max-w-[62ch] text-sm text-ink-muted">{props.action.hint}</p>
+          <p className="max-w-[62ch] text-sm text-ink-muted">{hint}</p>
         </>
       )}
 

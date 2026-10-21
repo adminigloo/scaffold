@@ -27,9 +27,10 @@ What a company sees as its plan changes:
 | You install | You get | You wire yourself |
 | --- | --- | --- |
 | `@adminigloo/billing` | `definePlans` (the plan record: quotas, on/off features, options, prices per interval and currency), `grantsForPlan` / `planGrantDiff` (what a plan entitles, and moving between plans without losing what's been used), `resolveEntitlements` / `checkEntitlement`, `planStanding`, `createPlanGate`, `gatePermissionLoaders`, `billingPermissions`, and the `plans`, `subscriptions` and `entitlements` tables (`./schema`) | Your plan record, the tables, and where your checkpoints ask the gate |
-| + `./server` | `loadCompanyPlan` (a company's standing and every limit, from its rows), `loadPlanStanding`, `liveStripeSubscription`, `companyStripeCustomer` | A database handle (drizzle, Postgres) |
+| + `./server` | `loadCompanyPlan` (a company's standing and every limit, from its rows — per product line too), `loadPlanStanding`, `liveStripeSubscription`, `liveStripeLines`, `lineOfStoredRow`, `companyStripeCustomer` | A database handle (drizzle, Postgres) |
 | + `@adminigloo/stripe` | Checkout, the Stripe event ledger, and changing a plan on the company's existing subscription | Stripe keys and the webhook route |
 | + `@adminigloo/create-app` (`--model subscription`, with companies) | All of it wired: the plan check at every checkpoint, a free trial for every new company, plan limits for team members, storage and online estimates, Billing with "change plan" (a price preview, never a second subscription), a banner saying where the company stands, and the operator's Company plans page with Give free months | Your prices in `src/plans.ts`, and `BILLING_TRIAL_DAYS` if 14 days isn't right |
+| + `@adminigloo/create-app` (`--tenant-noun none --audience consumers --model subscription`) | Personal plans: each person who signs up pays for their own, per product line, on one bill; `requireEntitlement(feature)` for pages, route handlers and tRPC; a banner about the person's own plans; one person per account (no team, no invitations); the founder's Subscribers page with Give free months; an optional free trial at checkout | Your lines, tiers and features in `src/plans.ts`, and where each feature asks `requireEntitlement` |
 
 What is **not** included is listed at the end.
 
@@ -59,6 +60,45 @@ export const plans = definePlans({
 Prices are whole minor units (cents) as `bigint`. A limit of `null` is
 unlimited. Only sell what something checks: a feature on the pricing page
 that nothing enforces is selling something that doesn't exist.
+
+## Product lines (0.5): several things that stack on one bill
+
+```ts
+export const plans = definePlans({
+  lines: {
+    weather: {
+      name: "Weather",
+      features: { weather_live: { kind: "flag", label: "Live prices" }, alert_rules: { kind: "quota", label: "alert rules" } },
+      tiers: [
+        { key: "weather-basic", name: "Weather Basic", prices: { month: { usd: 500n } }, features: { weather_live: true, alert_rules: 0 } },
+        { key: "weather-pro", name: "Weather Pro", highlight: true, prices: { month: { usd: 2000n } }, features: { weather_live: true, alert_rules: 25 } },
+      ],
+    },
+    sports: {
+      name: "Sports",
+      features: { sports_live: { kind: "flag", label: "Live scores" } },
+      tiers: [{ key: "sports", name: "Sports", prices: { month: { usd: 500n } }, features: { sports_live: true } }],
+    },
+  },
+});
+```
+
+Tiers inside a line replace each other (Basic to Pro); lines stack (Weather
+and Sports at once). A tenant holds at most one live tier per line — the
+database refuses a second (`subscriptions_tenant_line_live_idx`) — and with
+`@adminigloo/stripe` they are items of ONE Stripe subscription: one card, one
+invoice, one billing date. Each line has its own vocabulary, checked per tier
+at compile time; tier keys are unique across the whole catalog.
+
+A catalog written without `lines` is one implicit line (`DEFAULT_PLAN_LINE`,
+`"main"`), and every existing subscription row is already on it.
+
+Changing or cancelling one line must not touch another's rows, so scope the
+diff: `planGrantDiff(current, nextTier, { refs: planLineRefs(plans, line) })`
+(`undefined` for a one-line catalog: every plan row is the line's). And read
+standing per line: `loadCompanyPlan(db, { tenantId, trialStartedAt, trialDays,
+plans })` returns `lines` (each line's standing and newest subscription) and
+`standing`, the best of them.
 
 ## The plan check at your checkpoints
 
@@ -94,6 +134,10 @@ company's trial from the day you deploy (create-app's `PLANS_ENFORCED_FROM`
 does this), or they're closed the moment you turn the check on.
 
 ## Not included
+
+- **Several Stripe subscriptions for one tenant.** Product lines are items of
+  one subscription; a line on a separate subscription (made by hand in the
+  dashboard) is mirrored, but never created by this package's flows.
 
 - **Your customers paying you through Stripe.** That's `@adminigloo/stripe`;
   this package keeps the records and answers the questions.

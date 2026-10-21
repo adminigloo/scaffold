@@ -18,7 +18,7 @@ export type SubscriptionStatus =
 /**
  * The statuses that occupy a tenant's one live-subscription slot.
  *
- * Must match the predicate on `subscriptions_tenant_live_idx` exactly. The
+ * Must match the predicate on `subscriptions_tenant_line_live_idx` exactly. The
  * database enforces "at most one" over that set; if the query that loads "the
  * current subscription" selects a different set, the invariant is enforced on
  * one list and read through another, and the row the code picks is not

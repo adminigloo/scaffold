@@ -4,6 +4,7 @@ import { users } from "__SCOPE__/auth/schema";
 import { grantConfigSchemas } from "__SCOPE__/catalog";
 import type { GrantKind } from "__SCOPE__/catalog";
 import { productGrants, products, productVariants } from "__SCOPE__/catalog/schema";
+import { subscriptionEntitlementWindow, type SubscriptionStatus } from "__SCOPE__/billing";
 import { entitlements } from "__SCOPE__/billing/schema";
 import { formatOrderNumber } from "__SCOPE__/commerce";
 import { orderItems, orderShipments, orders } from "__SCOPE__/commerce/schema";
@@ -328,6 +329,13 @@ export interface FulfilPurchaseInput {
   /** `pi_…` for a Stripe payment, `sim_…` for a simulated one. */
   readonly reference: string;
   readonly source: FulfilmentSource;
+  /**
+   * The Stripe subscription a RECURRING product's first payment started
+   * (`sub_…`), or null for a one-time sale. Kept on the order line so the
+   * subscription's later events can window what this order granted — ended
+   * when the subscription ends, not kept for ever (review B4).
+   */
+  readonly subscriptionId?: string | null;
 }
 
 /** What a grant actually did, so a caller can show it to the buyer. */
@@ -556,6 +564,7 @@ async function bookOrder(
 
   const applied: AppliedGrant[] = [];
   const lineMetadata: Record<string, string> = {};
+  if (input.subscriptionId) lineMetadata["subscriptionId"] = input.subscriptionId;
 
   for (const grant of grantRows) {
     const result = await applyGrant(tx, {
@@ -629,6 +638,76 @@ async function bookOrder(
     currency,
     grants: applied,
   };
+}
+
+// ---------------------------------------------------------------------------
+// A recurring product's grants follow its subscription (review B4)
+// ---------------------------------------------------------------------------
+
+export interface ProductSubscriptionState {
+  /** `sub_…`: the subscription a recurring product's checkout started. */
+  readonly subscriptionId: string;
+  /** Already mapped through `mapStripeSubscriptionStatus`. */
+  readonly status: SubscriptionStatus;
+  readonly cancelAtPeriodEnd: boolean;
+  readonly currentPeriodEnd: Date | null;
+  /** When this state was read — a live read of Stripe, so it is the newest there is. */
+  readonly at: Date;
+}
+
+/**
+ * Make the entitlements a RECURRING product granted follow its subscription.
+ *
+ * THE GAP THIS CLOSES (review B4). A recurring product's purchase granted its
+ * entitlement once, with no end, and its cancellation was never applied: the
+ * webhook skipped every product subscription ("not a plan — the order path
+ * owns it"), and the order path never looked again. So a subscriber who
+ * cancelled kept what they had bought for ever.
+ *
+ * The window is the plan's own (`subscriptionEntitlementWindow`): renewing,
+ * no end; scheduled to cancel, the end of the paid period; a failed payment,
+ * the 14-day grace; unpaid, now. A cancelled one ends NOW — the row is kept
+ * (with its `used_value`, for the receipt the account area shows) and simply
+ * stops counting. Only `grant` rows of the orders this subscription paid for
+ * are touched: the order line remembers the subscription (`subscriptionId`).
+ *
+ * Returns how many grant rows were moved.
+ */
+export async function windowProductGrants(state: ProductSubscriptionState): Promise<number> {
+  const lines = await db
+    .select({ tenantId: orders.tenantId, idempotencyKey: orders.idempotencyKey })
+    .from(orderItems)
+    .innerJoin(orders, eq(orders.id, orderItems.orderId))
+    .where(sql`${orderItems.metadata} ->> 'subscriptionId' = ${state.subscriptionId}`);
+  if (lines.length === 0) return 0;
+
+  const window = subscriptionEntitlementWindow({
+    status: state.status,
+    cancelAtPeriodEnd: state.cancelAtPeriodEnd,
+    currentPeriodEnd: state.currentPeriodEnd,
+    at: state.at,
+  });
+  // Ended: stops counting now, row kept. Otherwise the window's own deadline.
+  const expiresAt = window.holds ? window.expiresAt : state.at;
+
+  let moved = 0;
+  for (const line of lines) {
+    const reference = referenceOfKey(line.idempotencyKey);
+    if (reference === null) continue;
+    const updated = await db
+      .update(entitlements)
+      .set({ expiresAt, updatedAt: new Date() })
+      .where(
+        and(
+          eq(entitlements.tenantId, line.tenantId),
+          eq(entitlements.source, "grant"),
+          sql`split_part(${entitlements.sourceRef}, ':', 1) = ${reference}`,
+        ),
+      )
+      .returning({ id: entitlements.id });
+    moved += updated.length;
+  }
+  return moved;
 }
 
 // ---------------------------------------------------------------------------

@@ -8,7 +8,7 @@
  * laptop and in CI, with no database to set up.
  */
 
-import { tenantLabelPlural, type Answers } from "./answers.js";
+import { consumerProduct, tenantLabelPlural, type Answers } from "./answers.js";
 import { companiesMode } from "./tenancy-emit.js";
 
 export type RouterScope = "public" | "authenticated" | "tenant" | "staff";
@@ -63,6 +63,9 @@ export const ROUTER_SCOPES: readonly RouterScopeRow[] = [
   // Changing plan on the company's one subscription (billing 0.3).
   { key: "billing.previewPlanChange", scope: "tenant", installedBy: sells, source: "stripe/src/server/routers/billing.ts" },
   { key: "billing.changePlan", scope: "tenant", installedBy: sells, source: "stripe/src/server/routers/billing.ts" },
+  // Adding a product line to the one subscription (billing 0.5).
+  { key: "billing.previewAddLine", scope: "tenant", installedBy: sells, source: "stripe/src/server/routers/billing.ts" },
+  { key: "billing.addLine", scope: "tenant", installedBy: sells, source: "stripe/src/server/routers/billing.ts" },
 ];
 
 /**
@@ -102,8 +105,17 @@ export const TENANT_PROCEDURES: readonly {
     allow: { days: "a number of days to look back over the caller's own company's spend; it names no row" },
   },
   { path: "account.billingPortal", installedBy: sells },
-  { path: "account.cancelSubscription", installedBy: sells },
-  { path: "account.resumeSubscription", installedBy: sells },
+  // Billing 0.5: which of B's OWN product lines (a key from src/plans.ts).
+  {
+    path: "account.cancelSubscription",
+    installedBy: sells,
+    allow: { line: "a product line's key from src/plans.ts, on the caller's own company's subscription; it names no row" },
+  },
+  {
+    path: "account.resumeSubscription",
+    installedBy: sells,
+    allow: { line: "a product line's key from src/plans.ts, on the caller's own company's subscription; it names no row" },
+  },
   {
     path: "account.invoices",
     installedBy: sells,
@@ -119,6 +131,14 @@ export const TENANT_PROCEDURES: readonly {
     globals: { tierKey: "starter", interval: "month", currency: "usd", prorationDate: 1800000000 },
     allow: { prorationDate: "the Unix time the caller's own preview gave, so the charge matches it; it names no row" },
   },
+  // Billing 0.5: a line added to B's OWN subscription (looked up by ctx.tenantId).
+  { path: "billing.previewAddLine", installedBy: sells, globals: { tierKey: "starter", interval: "month", currency: "usd" } },
+  {
+    path: "billing.addLine",
+    installedBy: sells,
+    globals: { tierKey: "starter", interval: "month", currency: "usd", prorationDate: 1800000000 },
+    allow: { prorationDate: "the Unix time the caller's own preview gave, so the charge matches it; it names no row" },
+  },
   {
     path: "billing.simulateSubscription",
     installedBy: sells,
@@ -130,6 +150,26 @@ export const TENANT_PROCEDURES: readonly {
     },
   },
 ];
+
+/**
+ * A consumers project (billing 0.5) lets nobody invite anyone (one person per
+ * account: the plan gate's seat limit of one, proved in
+ * personal-plans.test.ts). These proofs build a team to prove the invitation
+ * machinery and the isolation around it, so they lift that limit — for the
+ * machinery, not for the product.
+ */
+function consumerSeatLift(answers: Answers): string {
+  if (!consumerProduct(answers)) return "";
+  return `
+// One person per account in this project (billing 0.5): lifted here only so
+// the team these cases need can be built. personal-plans.test.ts proves the
+// limit itself.
+vi.mock("@/server/plan-gate", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/server/plan-gate")>()),
+  seatLimitOption: {},
+}));
+`;
+}
 
 export function renderProcedureScopesTest(answers: Answers): string {
   const rows = ROUTER_SCOPES.filter((row) => row.installedBy(answers));
@@ -246,7 +286,7 @@ vi.mock("@/db", async () => {
   const { createAppPglite } = await import("@/test/pglite");
   return { db: (await createAppPglite()).db };
 });
-
+${consumerSeatLift(answers)}
 interface Person {
   readonly id: string;
   readonly email: string;
@@ -831,7 +871,7 @@ vi.mock("@/db", async () => {
   const { createAppPglite } = await import("@/test/pglite");
   return { db: (await createAppPglite()).db };
 });
-
+${consumerSeatLift(answers)}
 /** Clerk keys present, so the route signs the caller in instead of answering "signed out". */
 vi.mock("@/env", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/env")>();
@@ -982,7 +1022,7 @@ vi.mock("@/db", async () => {
   const { createAppPglite } = await import("@/test/pglite");
   return { db: (await createAppPglite()).db };
 });
-
+${consumerSeatLift(answers)}
 /** No RESEND_API_KEY, whatever this laptop's .env.local says: nothing here may send real mail. */
 vi.mock("@/env", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/env")>();

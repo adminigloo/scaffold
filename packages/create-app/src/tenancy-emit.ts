@@ -24,7 +24,7 @@
  * at load time.
  */
 
-import { tenantLabel, tenantLabelPlural, type Answers } from "./answers.js";
+import { consumerProduct, tenantLabel, tenantLabelPlural, type Answers } from "./answers.js";
 import { tenancyDeletionOption } from "./forget-company-emit.js";
 
 /** True for every noun except `none`: the customer is a company somebody names. */
@@ -460,6 +460,16 @@ export function renderTenancyServer(answers: Answers): string {
   // two variants, and this spread is empty in the open one.
   ...seatLimitOption,`
     : "";
+  // NOBODY SHARES AN ACCOUNT (billing 0.5): a consumers project's people sign
+  // up as themselves, so the plan gate's seat limit of one refuses every
+  // invitation into a person's workspace.
+  const consumerOptions = consumerProduct(answers)
+    ? `
+  // One person per account (billing 0.5): this project's customers sign up
+  // as themselves, so nobody can invite anyone in to share what they pay for.
+  // The limit is src/server/plan-gate.ts's \`seatLimitOption\`.
+  ...seatLimitOption,`
+    : "";
   return `import { resolveAppEnv } from "${scope}/env";
 import { auditEntry } from "${scope}/observability";
 import { auditLog } from "${scope}/observability/schema";
@@ -470,7 +480,7 @@ import { env } from "@/env";
 import { tenantCatalog } from "@/permissions/catalog";${companies ? `\nimport { TENANT_ROLES } from "@/permissions/roles";` : ""}
 import { NOUN } from "@/tenancy";
 import { auditRegistry } from "./audit";
-import { log } from "./logger";${companies ? `
+import { log } from "./logger";${companies || consumerProduct(answers) ? `
 import { seatLimitOption } from "./plan-gate";` : ""}
 import { setupChecklist } from "./setup-checklist";
 import { tenancyLogoStore } from "./tenancy-logo";
@@ -544,7 +554,7 @@ export const tenancy = createTenancyService({
   // The platform's own name is not a customer's web address (review T1-07).
   reservedSlugs: ${JSON.stringify(reserved)},
   invitations: { expiresInHours: INVITATION_EXPIRY_HOURS },
-  audit: auditSink,${companyOptions}${tenancyDeletionOption(answers)}
+  audit: auditSink,${companyOptions}${consumerOptions}${tenancyDeletionOption(answers)}
   onEventError: (error, event) => {
     log.error({ err: error, event: event.type }, "a tenancy event listener failed");
   },

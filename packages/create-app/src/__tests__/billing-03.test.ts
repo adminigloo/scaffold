@@ -165,9 +165,9 @@ describe("the proof ships with the projects that need it", () => {
 describe("never charged twice (the double-charge fix)", () => {
   it("a company that pays changes its plan in place; a second checkout is refused; a returning company keeps its Stripe customer", async () => {
     const router = await readFile(join(OVERLAYS_DIR, "stripe", "src", "server", "routers", "billing.ts"), "utf8");
-    expect(router).toContain("if (live) throw alreadyPaysRefusal(live.status);");
+    expect(router).toContain("if (live) throw alreadyPaysRefusal(live.status, multiLine);");
     // Stripe is asked too (review H2): a subscription paid but not yet mirrored, and every other open checkout closed.
-    expect(router).toContain("if (prepared.existingSubscription) throw alreadyPaysRefusal(prepared.existingSubscription.status);");
+    expect(router).toContain("if (prepared.existingSubscription) throw alreadyPaysRefusal(prepared.existingSubscription.status, multiLine);");
     expect(router).toContain("Use Change plan, so it's never charged twice.");
     expect(router).toContain("customer: prepared.customerId,");
     expect(router).toContain("previewPlanChange: requireTenant(\"subscriptions.manage\")");

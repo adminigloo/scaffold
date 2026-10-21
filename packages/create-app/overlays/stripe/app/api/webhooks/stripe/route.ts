@@ -26,13 +26,10 @@ import { db } from "@/db";
 import { env } from "@/env";
 import { reportError } from "@/server/error-reporter";
 import { limiter } from "@/server/rate-limit";
-import { fulfilPurchase } from "@/server/fulfilment";
+import { fulfilPurchase, windowProductGrants } from "@/server/fulfilment";
+import { plans } from "@/plans";
 import { stripe } from "@/server/stripe";
-import {
-  applySubscription,
-  resolvePlanForSubscription,
-  PLAN_METADATA_KEY,
-} from "@/server/subscription";
+import { mirrorStripeSubscription } from "@/server/subscription";
 
 /**
  * Deliveries this route decided not to act on go to the same structured sink as
@@ -179,6 +176,9 @@ registry.on("payment_intent.succeeded", async (event) => {
     // carries a different id, so keying on it would book the same sale twice.
     reference: intent.id,
     source: "stripe",
+    // A recurring product's first payment names its subscription, so the
+    // subscription's later events can end what this order granted (review B4).
+    subscriptionId: metadata["subscriptionId"] || null,
   });
 });
 
@@ -214,33 +214,54 @@ registry.on("payment_intent.succeeded", async (event) => {
 async function mirrorSubscription(
   subscription: Stripe.Subscription,
   event: Stripe.Event,
+  /** True when `subscription` was just retrieved from Stripe (the invoice events). */
+  fresh: boolean,
 ): Promise<void> {
-  const snapshot = subscriptionSnapshot(subscription);
-  const resolution = await resolvePlanForSubscription({
-    planMetadata: snapshot.metadata[PLAN_METADATA_KEY],
-    variantMetadata: snapshot.metadata["variantId"],
-    priceId: snapshot.priceId,
-    interval: snapshot.interval,
-    currency: snapshot.currency,
+  // PRODUCT LINES (billing 0.5): with several lines, a line is ENDED by its
+  // item being absent — and an older event, delivered late, would still list
+  // an item dropped since. So the subscription is read as Stripe holds it now
+  // (one retrieve) and stamped with this event's time: the watermark still
+  // refuses a stale event, and a late one can no longer bring a dropped line
+  // back. A one-line catalog mirrors the event's own object, as it always did.
+  let current = subscription;
+  if (!fresh && plans.lines.length > 1 && stripe) {
+    current = await stripe.stripe.subscriptions.retrieve(subscription.id);
+  }
+  const snapshot = subscriptionSnapshot(current);
+  const outcome = await mirrorStripeSubscription(snapshot, {
+    // THE WATERMARK. Seconds since the epoch, as Stripe stamped the event.
+    observedAt: new Date(event.created * 1000),
+    observedBy: event.id,
   });
 
-  if (resolution.kind !== "plan") {
-    // Recorded and skipped, never thrown. A recurring PRODUCT is somebody
-    // else's mechanism and an unattributable subscription is somebody's
-    // dashboard experiment; failing either would retry for three days and cost
-    // the endpoint. `warn` for the unknown one because it is the one that might
-    // be a mistake worth chasing.
-    const line = {
-      subscriptionId: snapshot.subscriptionId,
-      eventId: event.id,
-      eventType: event.type,
-      why: resolution.why,
-    };
-    if (resolution.kind === "product") {
-      logger.info(line, "Not a plan subscription — the order path owns it.");
-    } else {
-      logger.warn(line, "A subscription this application cannot attribute.");
-    }
+  const line = {
+    subscriptionId: snapshot.subscriptionId,
+    eventId: event.id,
+    eventType: event.type,
+  };
+
+  if (outcome.kind === "product") {
+    // A recurring PRODUCT from the shop: its order was booked by
+    // `payment_intent.succeeded`, and what it granted now follows this
+    // subscription (review B4) — read live, so a late event can't reopen a
+    // cancelled one. Never thrown: it is somebody else's mechanism.
+    const live = fresh || !stripe ? current : await stripe.stripe.subscriptions.retrieve(subscription.id);
+    const state = subscriptionSnapshot(live);
+    const moved = await windowProductGrants({
+      subscriptionId: state.subscriptionId,
+      status: mapStripeSubscriptionStatus(state.status),
+      cancelAtPeriodEnd: state.cancelAtPeriodEnd,
+      currentPeriodEnd: state.currentPeriodEnd,
+      at: new Date(),
+    });
+    logger.info({ ...line, why: outcome.why, grantsMoved: moved }, "Not a plan subscription — its order's grants follow it.");
+    return;
+  }
+  if (outcome.kind === "unknown") {
+    // `warn`: the one that might be a mistake worth chasing (a dashboard
+    // experiment). Recorded and skipped, never thrown — failing it would
+    // retry for three days and cost the endpoint.
+    logger.warn({ ...line, why: outcome.why }, "A subscription this application cannot attribute.");
     return;
   }
 
@@ -259,50 +280,33 @@ async function mirrorSubscription(
    * in the dashboard's failed queue until a human either fixes the metadata or
    * mirrors it by hand from the resync screen. That is the intended outcome.
    */
-  const tenantId = snapshot.metadata["tenantId"];
-  if (!tenantId) {
+  if (outcome.kind === "no_tenant") {
     throw new Error(
       `${event.type} for ${snapshot.subscriptionId} resolves to plan ` +
-        `"${resolution.planKey}" and carries no tenantId, so there is nobody to ` +
+        `"${outcome.planKey}" and carries no tenantId, so there is nobody to ` +
         `record it against. It was not created by subscribeToPlan — reconcile ` +
         `it by hand before the customer notices.`,
     );
   }
 
-  const result = await applySubscription({
-    tenantId,
-    tierKey: resolution.tierKey,
-    planKey: resolution.planKey,
-    stripeSubscriptionId: snapshot.subscriptionId,
-    stripeCustomerId: snapshot.customerId,
-    // Mapped, never copied. `mapStripeSubscriptionStatus` is total over every
-    // string Stripe can send, including the ones it has not invented yet, and
-    // its default DENIES service rather than granting it.
-    status: mapStripeSubscriptionStatus(snapshot.status),
-    currentPeriodStart: snapshot.currentPeriodStart,
-    currentPeriodEnd: snapshot.currentPeriodEnd,
-    cancelAtPeriodEnd: snapshot.cancelAtPeriodEnd,
-    canceledAt: snapshot.canceledAt,
-    trialEndsAt: snapshot.trialEndsAt,
-    // THE WATERMARK. Seconds since the epoch, as Stripe stamped the event.
-    observedAt: new Date(event.created * 1000),
-    observedBy: event.id,
-    source: "stripe",
-  });
-
-  if (result.tenantGone) {
-    // Acknowledged, written nowhere: the company was deleted. Logged loudly
-    // because a live subscription at Stripe for a deleted company is money
-    // somebody should stop taking.
-    logger.warn(
-      { subscriptionId: snapshot.subscriptionId, eventId: event.id, tenantId, status: snapshot.status, why: result.why },
-      "A subscription event for a deleted company — nothing written. Cancel it in Stripe if it is still charging.",
-    );
-  } else if (!result.applied) {
-    logger.info(
-      { subscriptionId: snapshot.subscriptionId, eventId: event.id, why: result.why },
-      "Stale subscription event ignored — the row already holds a newer state.",
-    );
+  if (outcome.duplicates.length > 0) {
+    // Two items billing ONE line: the customer pays twice for one thing. The
+    // first item is mirrored; the rest need a person (remove them in Stripe).
+    logger.error({ ...line, duplicates: outcome.duplicates }, "A subscription bills one product line twice — remove the extra item in Stripe.");
+  }
+  for (const mirrored of [...outcome.lines, ...outcome.closed]) {
+    const result = mirrored.result;
+    if (result.tenantGone) {
+      // Acknowledged, written nowhere: the company was deleted. Logged loudly
+      // because a live subscription at Stripe for a deleted company is money
+      // somebody should stop taking.
+      logger.warn(
+        { ...line, line: mirrored.line, tenantId: snapshot.metadata["tenantId"], status: snapshot.status, why: result.why },
+        "A subscription event for a deleted company — nothing written. Cancel it in Stripe if it is still charging.",
+      );
+    } else if (!result.applied) {
+      logger.info({ ...line, line: mirrored.line, why: result.why }, "Stale subscription event ignored — the row already holds a newer state.");
+    }
   }
 }
 
@@ -322,7 +326,7 @@ for (const type of [
   "customer.subscription.deleted",
 ] as const) {
   registry.on(type, async (event) => {
-    await mirrorSubscription(event.data.object, event);
+    await mirrorSubscription(event.data.object, event, false);
   });
 }
 
@@ -356,7 +360,7 @@ for (const type of ["invoice.paid", "invoice.payment_failed"] as const) {
     // `resolvePlanForSubscription` matches on when a subscription carries no
     // metadata of ours.
     const subscription = await stripe.stripe.subscriptions.retrieve(subscriptionId);
-    await mirrorSubscription(subscription, event);
+    await mirrorSubscription(subscription, event, true);
   });
 }
 

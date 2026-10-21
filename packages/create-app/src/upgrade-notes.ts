@@ -32,6 +32,40 @@ export function upgradeNotesFor(answers: Answers, fromVersion: string): string[]
   const companies = answers.tenantNoun !== "none";
   const noun = tenantLabel(answers).toLowerCase();
   const crossed = (version: string) => (compareVersions(fromVersion, version) ?? -1) < 0;
+  // 0.38.0 — billing 0.5: product lines and personal plans. Two columns and
+  // two per-line indexes on subscriptions; existing rows satisfy both.
+  if (crossed("0.38.0") && answers.businessModel !== "none") {
+    notes.push(
+      "Run `pnpm db:generate` and `pnpm db:migrate` (billing 0.5, product lines): `subscriptions` gains `line` — every existing row " +
+        "lands on the one line a plan record without lines has (`main`) — and `stripe_item_id`, and its two unique indexes become per " +
+        "line (at most one live subscription per company and line; one row per Stripe subscription and line). Existing rows already " +
+        "fit both, so nothing else moves. A one-line src/plans.ts keeps working exactly as it did.",
+      "To sell several things that stack on one bill (Weather and Sports, say), declare them as product lines: " +
+        "`definePlans({ lines: { weather: { name, features, tiers }, sports: { … } } })`. A " +
+        (companies ? noun : "customer") +
+        " then holds one tier of each line on ONE Stripe subscription; /account/billing shows a card per line, adding a line is " +
+        "prorated and charged that day, and stopping one line puts its unused time on the account as credit toward the next bill. " +
+        "Keep your tier keys as they are: a tier moved " +
+        "into a named line is read by its key, and its rows are re-labelled by their next Stripe event.",
+    );
+    if ((answers.businessModel === "subscription" || answers.businessModel === "both") && companies) {
+      notes.push(
+        "New: src/server/access.ts and src/components/Entitled.tsx — `requireEntitlement(feature)` for a tRPC procedure, " +
+          "`withEntitlement(feature, handler)` for a route handler, and `<Entitled feature>` (or `pageEntitlement`) on a page — one " +
+          `question for any paid feature, with the sentence to show when a ${noun}'s plan doesn't include it.`,
+      );
+    }
+    notes.push(
+      "The shop's recurring products: what a product's subscription grants now ends when that subscription does (it used to last " +
+        "for ever). Purchases made before this release don't know their subscription, so they keep what they were granted (end one " +
+        "by setting `expires_at` on its `entitlements` row). " +
+        (companies
+          ? `A ${noun}'s plans are on the ${noun}'s one Stripe customer; what a member buys for themselves in the shop stays on ` +
+            "their own customer, never the " + noun + "'s."
+          : "Plan and shop checkouts now share each account's one Stripe customer, so one portal shows every card and invoice; a " +
+            "box from the shop never counts as a plan, nor uses up a free trial."),
+    );
+  }
   // 0.37.0 — history and housekeeping: deleting a company, past records with
   // their real dates, past visits brought in, and sales recorded by hand. New
   // nullable columns only; the files carry the rest.

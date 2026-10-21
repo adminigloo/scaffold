@@ -269,9 +269,78 @@ export interface PlanTierInput<F extends PlanFeatureDecls> {
   readonly features: { readonly [K in keyof F]: PlanFeatureValueFor<F[K]> };
 }
 
+/**
+ * What a `definePlans({ lines })` call supplies for one PRODUCT LINE (billing
+ * 0.5): a thing sold on its own — "Weather", "Sports" — with its own tiers and
+ * its own vocabulary.
+ *
+ * WHY A LINE AND NOT AN ADD-ON. A person can hold ONE tier of each line at
+ * once, on ONE Stripe subscription (one customer, one invoice): Weather Pro and
+ * Sports Basic are two items of the same subscription, and moving from Weather
+ * Basic to Weather Pro swaps that line's item and leaves Sports alone. Tiers
+ * inside a line REPLACE each other; lines STACK. That is the whole difference,
+ * and it is why the vocabulary is per line — a Sports tier has no business
+ * declaring Weather's features.
+ *
+ * Each tier is CHECKED against its line's vocabulary: a feature forgotten on
+ * one tier is a compile error, exactly as in the one-line form, and a feature
+ * from another line's vocabulary is refused when the catalog is built.
+ */
+export interface PlanLineInput<F extends PlanFeatureDecls> {
+  /** What the billing page heads this line's card with: "Weather". */
+  readonly name: string;
+  readonly description?: string;
+  readonly features: F;
+  readonly tiers: readonly PlanTierInput<F>[];
+}
+
+/** The loose shape a line is inferred against, before its tiers are checked. */
+export interface PlanLineShape {
+  readonly name: string;
+  readonly description?: string;
+  readonly features: PlanFeatureDecls;
+  readonly tiers: readonly {
+    readonly key: string;
+    readonly name: string;
+    readonly description?: string;
+    readonly isActive?: boolean;
+    readonly highlight?: boolean;
+    readonly prices: PlanPrices;
+    readonly features: Readonly<Record<string, unknown>>;
+  }[];
+}
+
+/**
+ * The line a catalog declared WITHOUT `lines` puts every tier on.
+ *
+ * Every project generated before billing 0.5 has exactly this one line, and
+ * `subscriptions.line` defaults to it, so an existing project's rows already
+ * name the line its catalog resolves to — no data to move.
+ */
+export const DEFAULT_PLAN_LINE = "main";
+
+/** One product line, resolved. */
+export interface PlanLine {
+  readonly key: string;
+  readonly name: string;
+  readonly description: string | null;
+  /** True for the one line of a catalog declared without `lines`. */
+  readonly implicit: boolean;
+  /** This line's vocabulary, in declaration order. */
+  readonly features: readonly PlanFeatureHeading[];
+  /** This line's tiers, retired ones included, in declaration order. */
+  readonly tiers: readonly PlanTier[];
+}
+
 /** One tier, resolved: every feature carries its kind, its label and its value. */
 export interface PlanTier {
   readonly key: string;
+  /**
+   * The product line this tier belongs to (billing 0.5). `DEFAULT_PLAN_LINE`
+   * for a catalog declared without `lines`. A tenant holds at most one live
+   * tier per line.
+   */
+  readonly line: string;
   readonly name: string;
   readonly description: string | null;
   readonly isActive: boolean;
@@ -313,6 +382,8 @@ export interface PlanTier {
 export interface PlanRow {
   readonly key: string;
   readonly tierKey: string;
+  /** The tier's product line (billing 0.5). */
+  readonly line: string;
   readonly name: string;
   readonly description: string | null;
   readonly interval: PlanInterval;
@@ -333,6 +404,14 @@ export interface PlanCatalog {
   readonly intervals: readonly PlanInterval[];
   /** The `plans` rows this catalog projects to, in pricing-page order. */
   readonly rows: readonly PlanRow[];
+  /**
+   * The product lines (billing 0.5), in declaration order. ONE line — the
+   * implicit `DEFAULT_PLAN_LINE` — for a catalog declared without `lines`,
+   * which is every catalog written before 0.5.
+   */
+  readonly lines: readonly PlanLine[];
+  /** A line by its key. `undefined` for a key no line declares. */
+  line(key: string): PlanLine | undefined;
   /** A tier by its own key. `undefined` for a key no tier declares. */
   tier(key: string): PlanTier | undefined;
   /**
@@ -451,9 +530,236 @@ export function planAllows(
 export function definePlans<const F extends PlanFeatureDecls>(input: {
   readonly features: F;
   readonly tiers: readonly PlanTierInput<F>[];
-}): PlanCatalog {
+}): PlanCatalog;
+/**
+ * PRODUCT LINES (billing 0.5): several things sold on their own, each with its
+ * own tiers, stacked on one subscription. Tier keys stay unique across the
+ * WHOLE catalog — a webhook carrying `planKey=pro` arrives with no line to
+ * disambiguate it, exactly as it arrives with no tenant.
+ */
+export function definePlans<const L extends Readonly<Record<string, PlanLineShape>>>(input: {
+  // Inferred whole (so `const` keeps every kind and value literal), then each
+  // line's tiers CHECKED against that line's own vocabulary: a feature
+  // forgotten on a tier, or an option value nobody declared, is a compile
+  // error exactly as in the one-line form.
+  readonly lines: L & { readonly [K in keyof L]: { readonly tiers: readonly PlanTierInput<L[K]["features"]>[] } };
+}): PlanCatalog;
+export function definePlans(
+  input:
+    | { readonly features: PlanFeatureDecls; readonly tiers: readonly PlanTierInput<PlanFeatureDecls>[] }
+    | { readonly lines: Readonly<Record<string, PlanLineShape>> },
+): PlanCatalog {
+  const declaredLines: readonly {
+    readonly key: string;
+    readonly name: string;
+    readonly description: string | null;
+    readonly implicit: boolean;
+    readonly features: PlanFeatureDecls;
+    readonly tiers: readonly PlanLineShape["tiers"][number][];
+  }[] =
+    "lines" in input
+      ? Object.entries(input.lines).map(([key, line]) => ({
+          key,
+          name: line.name,
+          description: line.description ?? null,
+          implicit: false,
+          features: line.features,
+          tiers: line.tiers,
+        }))
+      : [
+          {
+            key: DEFAULT_PLAN_LINE,
+            name: "Plan",
+            description: null,
+            implicit: true,
+            features: input.features,
+            tiers: input.tiers,
+          },
+        ];
+
+  if (declaredLines.length === 0) {
+    throw new InvalidPlanCatalogError(
+      "it declares `lines: {}` — no product line at all, so there is nothing " +
+        "to sell and no tier any subscription could be on.",
+    );
+  }
+
+  // The catalog's vocabulary: every line's headings, first declaration wins
+  // the order. A feature two lines both declare must mean the same KIND of
+  // thing in both: their rows sum in resolveEntitlements (a Weather flag and a
+  // Sports flag of the same name make one switch), and a quota summed with a
+  // flag is a number nobody can interpret.
+  const catalogHeadings: PlanFeatureHeading[] = [];
+  const headingByFeature = new Map<string, PlanFeatureHeading>();
+  const tiers: PlanTier[] = [];
+  const lines: PlanLine[] = [];
+  const seenKeys = new Set<string>();
+  let index = 0;
+
+  for (const declaredLine of declaredLines) {
+    if (!declaredLine.implicit && !TIER_KEY_PATTERN.test(declaredLine.key)) {
+      throw new InvalidPlanCatalogError(
+        `product line "${declaredLine.key}" is not a usable key: use lowercase ` +
+          `letters, digits and single hyphens between them. It is stored in ` +
+          `subscriptions.line and names the line's card on the billing page.`,
+      );
+    }
+    const lineHeadings = vocabularyOf(declaredLine.features);
+    for (const heading of lineHeadings) {
+      const earlier = headingByFeature.get(heading.feature);
+      if (earlier === undefined) {
+        headingByFeature.set(heading.feature, heading);
+        catalogHeadings.push(heading);
+      } else if (earlier.kind !== heading.kind) {
+        throw new InvalidPlanCatalogError(
+          `feature "${heading.feature}" is a ${earlier.kind} in one product line ` +
+            `and a ${heading.kind} in "${declaredLine.key}". Rows for one feature ` +
+            `sum across lines, and a ${earlier.kind} summed with a ` +
+            `${heading.kind} is a number nothing can read. Give one of them ` +
+            `another name.`,
+        );
+      }
+    }
+
+    const lineTiers: PlanTier[] = [];
+    let highlighted: string | undefined;
+    for (const declared of declaredLine.tiers) {
+      const key = declared.key;
+      if (key.length === 0) throw new InvalidPlanKeyError(key, "it is empty.");
+      if (!TIER_KEY_PATTERN.test(key)) {
+        throw new InvalidPlanKeyError(
+          key,
+          "use lowercase letters, digits and single hyphens between them. The " +
+            "colon in particular is reserved, because it separates the three " +
+            "parts of a plans.key.",
+        );
+      }
+      if (seenKeys.has(key)) {
+        throw new InvalidPlanKeyError(
+          key,
+          declaredLines.length > 1
+            ? "two tiers declare it — tier keys are unique across every product line, because a webhook names a tier with no line beside it."
+            : "two tiers declare it.",
+        );
+      }
+      seenKeys.add(key);
+
+      // At most one "most popular" per LINE: each line is its own card on the
+      // billing page and its own section of the pricing page.
+      if (declared.highlight === true) {
+        if (highlighted !== undefined) {
+          throw new InvalidPlanCatalogError(
+            `both "${highlighted}" and "${key}" are highlighted. Two "most ` +
+              `popular" badges on one pricing page is not a recommendation, and ` +
+              `which one a reader believes depends on where their eye lands.`,
+          );
+        }
+        highlighted = key;
+      }
+
+      for (const named of Object.keys(declared.features)) {
+        if (declaredLine.features[named] === undefined) {
+          throw new InvalidPlanCatalogError(
+            `"${key}" gives a value for "${named}", which ` +
+              (declaredLines.length > 1
+                ? `the "${declaredLine.key}" line does not declare. Each line sells its own vocabulary; declare it in this line's features, or move the tier.`
+                : `the catalog does not declare. Declare it in features, or remove it from the tier.`),
+          );
+        }
+      }
+
+      const features: Record<string, PlanFeature> = {};
+      for (const heading of lineHeadings) {
+        const decl = declaredLine.features[heading.feature];
+        // Present for every heading — the loop is over the same object. The guard
+        // is for `noUncheckedIndexedAccess`, not for a case that can occur.
+        if (decl === undefined) continue;
+        const value = (declared.features as Readonly<Record<string, unknown>>)[
+          heading.feature
+        ];
+        features[heading.feature] = resolveFeature(key, heading.feature, decl, value);
+      }
+
+      const tier: PlanTier = {
+        key,
+        line: declaredLine.key,
+        name: declared.name,
+        description: declared.description ?? null,
+        isActive: declared.isActive ?? true,
+        highlight: declared.highlight ?? false,
+        // Spaced by ten, so a plan added to the database by hand can be slipped
+        // between two of these without renumbering the catalog. Counted across
+        // every line, so the plans table sorts in pricing-page order.
+        sortOrder: index * 10,
+        prices: declared.prices,
+        features,
+      };
+      index += 1;
+      lineTiers.push(tier);
+      tiers.push(tier);
+    }
+
+    lines.push({
+      key: declaredLine.key,
+      name: declaredLine.name,
+      description: declaredLine.description,
+      implicit: declaredLine.implicit,
+      features: lineHeadings,
+      tiers: lineTiers,
+    });
+  }
+
+  const currencies = collectCurrencies(tiers);
+  assertEveryPriceIsComplete(tiers, currencies);
+
+  const intervals = INTERVAL_ORDER.filter((interval) =>
+    tiers.some((tier) => tier.prices[interval] !== undefined),
+  );
+
+  const rows = projectRows(tiers);
+  const byKey = new Map(tiers.map((tier) => [tier.key, tier]));
+  const byLine = new Map(lines.map((line) => [line.key, line]));
+  // Built FROM the projection rather than by taking a row key apart. Parsing
+  // would be a second implementation of `planRowKey`, and the two would disagree
+  // the first time the key format moved.
+  const byRowKey = new Map(rows.map((row) => [row.key, row.tierKey]));
+
+  return {
+    features: catalogHeadings,
+    tiers,
+    currencies,
+    intervals,
+    rows,
+    lines,
+    line: (key) => byLine.get(key),
+    tier: (key) => byKey.get(key),
+    tierForRow: (rowKey) => {
+      const tierKey = byRowKey.get(rowKey);
+      return tierKey === undefined ? undefined : byKey.get(tierKey);
+    },
+  };
+}
+
+/**
+ * Which `entitlements.source_ref` values belong to one product line — the
+ * line's tier keys — or `undefined` when the catalog has a single line, in
+ * which case every plan-sourced row is that line's (exactly how billing
+ * behaved before lines existed, so a one-line project reconciles the same rows
+ * it always did, orphans of deleted tiers included).
+ *
+ * The scope `planGrantDiff` and the expiry sweep take, so changing or
+ * cancelling Weather never touches the rows Sports granted.
+ */
+export function planLineRefs(catalog: Pick<PlanCatalog, "lines">, lineKey: string): ReadonlySet<string> | undefined {
+  if (catalog.lines.length <= 1) return undefined;
+  const line = catalog.lines.find((candidate) => candidate.key === lineKey);
+  return new Set((line?.tiers ?? []).map((tier) => tier.key));
+}
+
+/** The vocabulary of one line, checked, in declaration order. */
+function vocabularyOf(declarations: PlanFeatureDecls): PlanFeatureHeading[] {
   const headings: PlanFeatureHeading[] = [];
-  for (const [feature, decl] of Object.entries(input.features)) {
+  for (const [feature, decl] of Object.entries(declarations)) {
     if (feature.length === 0) {
       throw new InvalidPlanCatalogError(
         "a feature is declared under an empty name. It would become " +
@@ -477,90 +783,7 @@ export function definePlans<const F extends PlanFeatureDecls>(input: {
     }
     headings.push({ feature, kind: decl.kind, label: decl.label });
   }
-
-  const tiers: PlanTier[] = [];
-  const seenKeys = new Set<string>();
-  let highlighted: string | undefined;
-
-  for (const [index, declared] of input.tiers.entries()) {
-    const key = declared.key;
-    if (key.length === 0) throw new InvalidPlanKeyError(key, "it is empty.");
-    if (!TIER_KEY_PATTERN.test(key)) {
-      throw new InvalidPlanKeyError(
-        key,
-        "use lowercase letters, digits and single hyphens between them. The " +
-          "colon in particular is reserved, because it separates the three " +
-          "parts of a plans.key.",
-      );
-    }
-    if (seenKeys.has(key)) {
-      throw new InvalidPlanKeyError(key, "two tiers declare it.");
-    }
-    seenKeys.add(key);
-
-    if (declared.highlight === true) {
-      if (highlighted !== undefined) {
-        throw new InvalidPlanCatalogError(
-          `both "${highlighted}" and "${key}" are highlighted. Two "most ` +
-            `popular" badges on one pricing page is not a recommendation, and ` +
-            `which one a reader believes depends on where their eye lands.`,
-        );
-      }
-      highlighted = key;
-    }
-
-    const features: Record<string, PlanFeature> = {};
-    for (const heading of headings) {
-      const decl = input.features[heading.feature];
-      // Present for every heading — the loop is over the same object. The guard
-      // is for `noUncheckedIndexedAccess`, not for a case that can occur.
-      if (decl === undefined) continue;
-      const value = (declared.features as Readonly<Record<string, unknown>>)[
-        heading.feature
-      ];
-      features[heading.feature] = resolveFeature(key, heading.feature, decl, value);
-    }
-
-    tiers.push({
-      key,
-      name: declared.name,
-      description: declared.description ?? null,
-      isActive: declared.isActive ?? true,
-      highlight: declared.highlight ?? false,
-      // Spaced by ten, so a plan added to the database by hand can be slipped
-      // between two of these without renumbering the catalog.
-      sortOrder: index * 10,
-      prices: declared.prices,
-      features,
-    });
-  }
-
-  const currencies = collectCurrencies(tiers);
-  assertEveryPriceIsComplete(tiers, currencies);
-
-  const intervals = INTERVAL_ORDER.filter((interval) =>
-    tiers.some((tier) => tier.prices[interval] !== undefined),
-  );
-
-  const rows = projectRows(tiers);
-  const byKey = new Map(tiers.map((tier) => [tier.key, tier]));
-  // Built FROM the projection rather than by taking a row key apart. Parsing
-  // would be a second implementation of `planRowKey`, and the two would disagree
-  // the first time the key format moved.
-  const byRowKey = new Map(rows.map((row) => [row.key, row.tierKey]));
-
-  return {
-    features: headings,
-    tiers,
-    currencies,
-    intervals,
-    rows,
-    tier: (key) => byKey.get(key),
-    tierForRow: (rowKey) => {
-      const tierKey = byRowKey.get(rowKey);
-      return tierKey === undefined ? undefined : byKey.get(tierKey);
-    },
-  };
+  return headings;
 }
 
 function resolveFeature(
@@ -732,6 +955,7 @@ function projectRows(tiers: readonly PlanTier[]): readonly PlanRow[] {
         rows.push({
           key: planRowKey(tier.key, interval, currency),
           tierKey: tier.key,
+          line: tier.line,
           name: tier.name,
           description: tier.description,
           interval,

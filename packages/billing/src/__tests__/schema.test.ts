@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { getTableConfig } from "drizzle-orm/pg-core";
 import type { PgTable } from "drizzle-orm/pg-core";
 import { FIRM_WIDE } from "@adminigloo/permissions";
+import { DEFAULT_PLAN_LINE } from "../plans.js";
 import { billingSchema, entitlements, plans, subscriptions } from "../schema.js";
 
 function columnsOf(table: PgTable) {
@@ -56,6 +57,31 @@ describe("entitlements", () => {
     expect(uniqueIndexNames(entitlements)).toContain(
       "entitlements_tenant_feature_source_ref_idx",
     );
+  });
+});
+
+describe("subscriptions, per product line (billing 0.5)", () => {
+  const indexColumns = (name: string) =>
+    getTableConfig(subscriptions)
+      .indexes.find((i) => i.config.name === name)
+      ?.config.columns.map((c) => ("name" in c ? c.name : null));
+
+  it("at most one LIVE row per (tenant, line): Weather and Sports may both be live, two Weathers may not", () => {
+    expect(indexColumns("subscriptions_tenant_line_live_idx")).toEqual(["tenant_id", "line"]);
+    // NEGATIVE CONTROL: the old per-tenant index would refuse the second line.
+    expect(uniqueIndexNames(subscriptions)).not.toContain("subscriptions_tenant_live_idx");
+  });
+
+  it("one row per (Stripe subscription, line): lines are items of ONE subscription", () => {
+    expect(indexColumns("subscriptions_stripe_subscription_line_idx")).toEqual(["stripe_subscription_id", "line"]);
+    expect(uniqueIndexNames(subscriptions)).not.toContain("subscriptions_stripe_subscription_id_idx");
+  });
+
+  it("an existing row lands on the implicit line, which a one-line catalog resolves to", () => {
+    const line = columnsOf(subscriptions).get("line");
+    expect(line?.notNull).toBe(true);
+    expect(line?.default).toBe(DEFAULT_PLAN_LINE);
+    expect(columnsOf(subscriptions).get("stripe_item_id")?.notNull).toBe(false);
   });
 });
 

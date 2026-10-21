@@ -55,7 +55,7 @@ export {
   subscriptionIdFromInvoice,
   SUBSCRIPTION_EVENT_TYPES,
 } from "./subscription.js";
-export type { StripeSubscriptionSnapshot } from "./subscription.js";
+export type { StripeSubscriptionSnapshot, StripeSubscriptionItemSnapshot } from "./subscription.js";
 
 /** Publishing a plan row to Stripe so there is a Price to bill against. */
 export { ensurePlanPrice, PlanPriceMismatchError } from "./plan-price.js";
@@ -68,6 +68,9 @@ export { stripePermissions } from "./permissions.js";
 // stripe 0.3: change a company's plan on its existing subscription (never a second one).
 export { previewPlanChange, changePlan, PlanChangeError, prepareCompanyCheckout, PRORATION_DATE_MAX_AGE_SECONDS } from "./plan-change.js";
 export type { PlanChangeInput, PlanChangePreview, ChangePlanInput, ChangePlanResult, CompanyCheckout, CompanyCheckoutInput } from "./plan-change.js";
+// stripe 0.6: product lines — one subscription, one item per line — and one Stripe customer per tenant.
+export { previewAddLine, addLine, addLineIdempotencyKey, removeLine, resolveStripeCustomer, isPlanSubscriptionFor, APP_USER_METADATA_KEY } from "./plan-change.js";
+export type { AddLineInput, AddLineCallInput, AddLineKeyOptions, AddLineResult, RemoveLineInput, ResolveCustomerInput } from "./plan-change.js";
 
 // stripe 0.4: companies take card payments from their own customers (Connect).
 export {

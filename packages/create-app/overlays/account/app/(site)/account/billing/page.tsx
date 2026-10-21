@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { formatMinor } from "__SCOPE__/catalog";
 import { isDbConfigured } from "__SCOPE__/db";
-import { priceFor, type PlanTier } from "__SCOPE__/billing";
+import { planLineRefs, priceFor, type PlanTier } from "__SCOPE__/billing";
 import {
   Badge,
   Card,
@@ -28,7 +28,7 @@ import {
   type GrantedEntitlement,
 } from "@/account";
 import {
-  readSubscriptionForTenant,
+  readSubscriptionsForTenant,
   type AccountSubscription,
 } from "@/server/account";
 // The invoice shape is declared beside the procedure that builds it, because
@@ -137,29 +137,45 @@ export default async function AccountBillingPage() {
     );
   }
 
-  const subscription = await readSubscriptionForTenant(tenant.id);
-  const currentTier =
-    subscription === null ? null : (plans.tierForRow(subscription.planKey) ?? null);
+  // ONE CARD PER PRODUCT LINE (billing 0.5). A one-line catalog has one, and
+  // reads exactly as before; with Weather and Sports, each line has its own
+  // plan, its own meters and its own chooser — and they stack on one bill.
+  const byLine = await readSubscriptionsForTenant(tenant.id);
+  const multiLine = plans.lines.length > 1;
+  const paid = [...byLine.values()].filter((row) => row.live && row.stripeSubscriptionId !== null);
+  // The cadence everything on the bill shares (Stripe's rule): a line added or
+  // changed beside others is priced on it.
+  const sharedCadence = paid[0] ? { interval: paid[0].interval as "month" | "year", currency: paid[0].planCurrency } : null;
 
-  // The rows the plan actually wrote. Rendered because "you are on Pro" and
-  // "Pro's grants reached your account" are different claims, and only the
-  // second one is what the product enforces — this is the screen where a
-  // mirror that half-worked becomes visible instead of staying a support call.
-  const granted = await readPlanEntitlements(tenant.id);
-  const meters = metersFor(
-    granted.map(
-      (row): GrantedEntitlement => ({
-        feature: row.feature,
-        limitValue: row.limitValue,
-        usedValue: row.usedValue,
-        source: "plan",
-        expiresAt: row.expiresAt,
-        // `source_ref` on a plan row is the TIER key rather than a fulfilment
-        // reference. Carried through so the shape matches; nothing on this
-        // screen reads it, because the tier is already known from the row.
-        reference: row.sourceRef ?? "",
-      }),
-    ),
+  const lineViews = await Promise.all(
+    plans.lines.map(async (line) => {
+      const subscription = byLine.get(line.key) ?? null;
+      // The rows the plan actually wrote. Rendered because "you are on Pro" and
+      // "Pro's grants reached your account" are different claims, and only the
+      // second one is what the product enforces — this is the screen where a
+      // mirror that half-worked becomes visible instead of staying a support call.
+      const granted = await readPlanEntitlements(tenant.id, planLineRefs(plans, line.key));
+      const meters = metersFor(
+        granted.map(
+          (row): GrantedEntitlement => ({
+            feature: row.feature,
+            limitValue: row.limitValue,
+            usedValue: row.usedValue,
+            source: "plan",
+            expiresAt: row.expiresAt,
+            // `source_ref` on a plan row is the TIER key rather than a fulfilment
+            // reference. Carried through so the shape matches; nothing on this
+            // screen reads it, because the tier is already known from the row.
+            reference: row.sourceRef ?? "",
+          }),
+        ),
+      );
+      const linePaid = subscription?.live === true && subscription.stripeSubscriptionId !== null;
+      // Other lines live on the same Stripe subscription: stopping this one ends it now (credited).
+      const sharesBill =
+        linePaid && paid.some((other) => other.line !== line.key && other.stripeSubscriptionId === subscription?.stripeSubscriptionId);
+      return { line, subscription, meters, linePaid, sharesBill };
+    }),
   );
 
   // Through `api()` rather than a direct Stripe call, so the read runs the same
@@ -177,59 +193,86 @@ export default async function AccountBillingPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      {subscription === null ? (
-        <NoSubscription tenantName={tenant.name} />
-      ) : (
-        <SubscriptionCard
-          subscription={subscription}
-          tenantId={tenant.id}
-          tenantName={tenant.name}
-          canManage={canManage}
-          freeMonths={subscription.freeMonths === true}
-        />
-      )}
+      {lineViews.map(({ line, subscription, meters, linePaid, sharesBill }) => {
+        const currentTier = subscription === null ? null : (plans.tierForRow(subscription.planKey) ?? null);
+        // Adding this line to a plan already paid: one subscription, one bill.
+        const addsToPlan = multiLine && !linePaid && paid.length > 0;
+        return (
+          <section key={line.key} className="flex flex-col gap-6" aria-label={multiLine ? line.name : undefined}>
+            {multiLine ? <h2 className="text-xl font-semibold tracking-tight text-ink">{line.name}</h2> : null}
+            {subscription === null ? (
+              <NoSubscription tenantName={tenant.name} lineName={multiLine ? line.name : null} />
+            ) : (
+              <SubscriptionCard
+                subscription={subscription}
+                tenantId={tenant.id}
+                tenantName={tenant.name}
+                canManage={canManage}
+                freeMonths={subscription.freeMonths === true}
+                line={multiLine ? line.key : null}
+                sharesBill={sharesBill}
+              />
+            )}
 
-      {meters.length > 0 && (
-        <Card>
-          <CardHeader title="What your plan includes" hint="And how much of each you've used." />
-          <CardBody className="flex flex-col gap-1">
-            {meters.map((meter) => (
-              <Detail key={meter.feature} label={featureName(meter.feature)}>
-                {meter.resolved.unlimited
-                  ? "Unlimited"
-                  : `${meter.resolved.used} of ${meter.resolved.limit} used`}
-              </Detail>
-            ))}
-          </CardBody>
-        </Card>
-      )}
+            {meters.length > 0 && (
+              <Card>
+                <CardHeader title={multiLine ? `What ${line.name} includes` : "What your plan includes"} hint="And how much of each you've used." />
+                <CardBody className="flex flex-col gap-1">
+                  {meters.map((meter) => (
+                    <Detail key={meter.feature} label={featureName(meter.feature)}>
+                      {meter.resolved.unlimited
+                        ? "Unlimited"
+                        : `${meter.resolved.used} of ${meter.resolved.limit} used`}
+                    </Detail>
+                  ))}
+                </CardBody>
+              </Card>
+            )}
 
-      {/* The chooser is rendered whenever there is no live subscription — which
-          covers "never subscribed", "cancelled" and "lapsed" — and beside an
-          existing one so a change of plan is a click rather than a support
-          request. The mutation refuses the tier they are already on. */}
-      <Card>
-        <CardHeader
-          title={subscription?.live === true ? "Change plan" : "Choose a plan"}
-          hint="Every plan includes everything. They differ in how much: people, storage and requests."
-        />
-        <CardBody>
-          <PlanChooser
-            tenantId={tenant.id}
-            tiers={choosableTiers()}
-            intervals={subscribableIntervals()}
-            currencies={plans.currencies}
-            mode={mode}
-            canManage={canManage}
-            contactHref={contact ? `mailto:${contact}` : null}
-            staff={staff}
-            currentTierKey={currentTier?.key ?? null}
-            // A __TENANT_LABEL_LOWER__ that already pays through Stripe changes its plan in
-            // place (billing 0.3), never through a second checkout.
-            hasPaidPlan={subscription?.live === true && subscription.stripeSubscriptionId !== null}
-          />
-        </CardBody>
-      </Card>
+            {/* The chooser is rendered whenever there is no live subscription — which
+                covers "never subscribed", "cancelled" and "lapsed" — and beside an
+                existing one so a change of plan is a click rather than a support
+                request. The mutation refuses the tier they are already on. */}
+            <Card>
+              <CardHeader
+                title={
+                  subscription?.live === true
+                    ? multiLine ? `Change your ${line.name} plan` : "Change plan"
+                    : addsToPlan
+                      ? `Add ${line.name}`
+                      : multiLine ? `Choose a ${line.name} plan` : "Choose a plan"
+                }
+                hint={
+                  addsToPlan
+                    ? "Added to the plan you already pay for: one bill, one date. You pay for the rest of this period today."
+                    : multiLine
+                      ? (line.description ?? "Change it whenever you like.")
+                      : "Every plan includes everything. They differ in how much: people, storage and requests."
+                }
+              />
+              <CardBody>
+                <PlanChooser
+                  tenantId={tenant.id}
+                  tiers={choosableTiers(line.key)}
+                  intervals={subscribableIntervals()}
+                  currencies={plans.currencies}
+                  mode={mode}
+                  canManage={canManage}
+                  contactHref={contact ? `mailto:${contact}` : null}
+                  staff={staff}
+                  currentTierKey={currentTier?.key ?? null}
+                  // A __TENANT_LABEL_LOWER__ that already pays through Stripe changes its plan in
+                  // place (billing 0.3), never through a second checkout.
+                  hasPaidPlan={linePaid}
+                  addsToPlan={addsToPlan}
+                  // Everything on one bill shares a cadence: fixed when other lines are on it.
+                  cadence={multiLine && sharedCadence !== null && (addsToPlan || sharesBill) ? sharedCadence : null}
+                />
+              </CardBody>
+            </Card>
+          </section>
+        );
+      })}
 
       <Card>
         <CardHeader title="Card, invoices and cancelling" hint="On Stripe's secure billing page, where your card details live." />
@@ -290,8 +333,14 @@ function SubscriptionCard({
   tenantName,
   canManage,
   freeMonths,
+  line,
+  sharesBill,
 }: {
   readonly subscription: AccountSubscription;
+  /** The product line this card is (billing 0.5), or null in a one-line catalog. */
+  readonly line: string | null;
+  /** Other lines are on the same subscription, so stopping this one ends it now (credited). */
+  readonly sharesBill: boolean;
   /** Free months an operator gave: they end on their own date (billing 0.3). */
   readonly freeMonths: boolean;
   /**
@@ -361,6 +410,13 @@ function SubscriptionCard({
             tenantId={tenantId}
             action={action}
             canManage={canManage}
+            line={line}
+            {...(sharesBill && action.kind === "cancel"
+              ? {
+                  hint:
+                    "This stops now. The unused part of this period is kept as credit on your account, and comes off your next bill. Everything else on your plan carries on as it is.",
+                }
+              : {})}
           />
         </CardBody>
       </Card>
@@ -448,10 +504,10 @@ function Invoices({
  * that `customer.subscription.*` is mirrored, no longer the state a developer
  * lands in after buying one. The plan chooser below is the action.
  */
-function NoSubscription({ tenantName }: { readonly tenantName: string }) {
+function NoSubscription({ tenantName, lineName }: { readonly tenantName: string; readonly lineName: string | null }) {
   return (
-    <EmptyState title="You're not on a plan yet">
-      Nothing is being charged to {tenantName}. Choose a plan below and everything it includes switches on straight away.
+    <EmptyState title={lineName ? `You're not on ${lineName} yet` : "You're not on a plan yet"}>
+      Nothing is being charged to {tenantName}{lineName ? ` for ${lineName}` : ""}. Choose a plan below and everything it includes switches on straight away.
     </EmptyState>
   );
 }
@@ -489,9 +545,9 @@ function subscribableIntervals(): readonly ("month" | "year")[] {
  * plan name, because that comes from the `plans` row their subscription points
  * at rather than from this list.
  */
-function choosableTiers(): readonly ChoosableTier[] {
+function choosableTiers(line: string): readonly ChoosableTier[] {
   return plans.tiers
-    .filter((tier) => tier.isActive)
+    .filter((tier) => tier.isActive && tier.line === line)
     .map((tier) => ({
       key: tier.key,
       name: tier.name,

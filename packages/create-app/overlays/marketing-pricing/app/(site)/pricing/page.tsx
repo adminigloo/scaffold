@@ -187,15 +187,38 @@ export default async function PricingPage({
           </div>
         ) : null}
 
-        <PlanColumns tiers={onSale} interval={interval} currency={currency} />
+        {plans.lines.length > 1 ? (
+          // PRODUCT LINES (billing 0.5): each sold on its own, so each gets its
+          // own row of plans. They stack — one of each, on one bill.
+          plans.lines.map((line) => (
+            <div key={line.key} className="mt-12">
+              <h2 className="text-2xl font-semibold tracking-tight text-ink">{line.name}</h2>
+              {line.description ? <p className="mt-2 max-w-[56ch] text-ink-muted">{line.description}</p> : null}
+              <PlanColumns tiers={onSale.filter((tier) => tier.line === line.key)} interval={interval} currency={currency} />
+            </div>
+          ))
+        ) : (
+          <PlanColumns tiers={onSale} interval={interval} currency={currency} />
+        )}
       </section>
 
-      <div className="mt-16">
-        <Section label="Side by side">
-          <SectionHeading title="Compare the plans">Every allowance, side by side.</SectionHeading>
-          <ComparisonTable catalog={plans} tiers={onSale} />
-        </Section>
-      </div>
+      {plans.lines.length > 1 ? (
+        plans.lines.map((line) => (
+          <div key={line.key} className="mt-16">
+            <Section label="Side by side">
+              <SectionHeading title={`Compare ${line.name}`}>Every allowance, side by side.</SectionHeading>
+              <ComparisonTable catalog={{ ...plans, features: line.features }} tiers={onSale.filter((tier) => tier.line === line.key)} />
+            </Section>
+          </div>
+        ))
+      ) : (
+        <div className="mt-16">
+          <Section label="Side by side">
+            <SectionHeading title="Compare the plans">Every allowance, side by side.</SectionHeading>
+            <ComparisonTable catalog={plans} tiers={onSale} />
+          </Section>
+        </div>
+      )}
 
       <Section label="Questions">
         <SectionHeading title="About plans and billing" />

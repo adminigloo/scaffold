@@ -33,6 +33,8 @@ export type { SubscriptionStatus } from "./status.js";
  */
 export {
   definePlans,
+  planLineRefs,
+  DEFAULT_PLAN_LINE,
   planAllows,
   planRowKey,
   priceFor,
@@ -52,6 +54,9 @@ export type {
   PlanFeatureValueFor,
   PlanFlag,
   PlanFlagDecl,
+  PlanLine,
+  PlanLineInput,
+  PlanLineShape,
   PlanOption,
   PlanOptionDecl,
   PlanPrices,
@@ -85,7 +90,7 @@ export type {
 } from "./mirror.js";
 
 export { grantsForPlan, planGrantDiff } from "./grants.js";
-export type { PlanGrant, PlanGrantChange, PlanGrantDiff } from "./grants.js";
+export type { PlanGrant, PlanGrantChange, PlanGrantDiff, PlanGrantDiffOptions } from "./grants.js";
 
 export { billingPermissions } from "./permissions.js";
 export type { BillingPermission } from "./permissions.js";
@@ -117,6 +122,7 @@ export type { PlanInterval } from "./plans.js";
  */
 export {
   planStanding,
+  combineStandings,
   openWhilePlanClosed,
   planClosedMessage,
   planClosedPublicMessage,

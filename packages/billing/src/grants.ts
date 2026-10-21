@@ -170,10 +170,38 @@ function rowIdentity(grant: PlanGrant): string {
  *
  * Re-applying the same tier yields three empty lists.
  */
+export interface PlanGrantDiffOptions {
+  /**
+   * PRODUCT LINES (billing 0.5): the `source_ref`s that belong to the line
+   * being changed — `planLineRefs(catalog, line)`. Plan rows with any other
+   * ref belong to another line and are neither matched nor removed, so moving
+   * Weather from Basic to Pro, or cancelling it, never touches what Sports
+   * granted. Omitted (or `undefined`, which `planLineRefs` answers for a
+   * one-line catalog): every plan row is this diff's, exactly as before lines.
+   */
+  readonly refs?: ReadonlySet<string> | undefined;
+}
+
 export function planGrantDiff(
   current: readonly PlanGrant[],
   next: PlanTier | null,
+  options: PlanGrantDiffOptions = {},
 ): PlanGrantDiff {
+  const refs = options.refs;
+  if (refs !== undefined && next !== null && !refs.has(next.key)) {
+    // A tier from another line handed to this line's diff would match that
+    // line's rows by (source, feature) and rewrite them: refused, loudly.
+    throw new InvalidPlanKeyError(
+      next.key,
+      "it is not one of the tiers of the product line this diff is scoped to.",
+    );
+  }
+  // Another line's plan rows are invisible to this diff. Non-plan rows never
+  // match a plan grant (the identity includes the source) and are never
+  // removed, so they need no filter.
+  if (refs !== undefined) {
+    current = current.filter((grant) => grant.source !== "plan" || refs.has(grant.sourceRef));
+  }
   const target = next === null ? [] : grantsForPlan(next);
   const nextByIdentity = new Map(target.map((grant) => [rowIdentity(grant), grant]));
 

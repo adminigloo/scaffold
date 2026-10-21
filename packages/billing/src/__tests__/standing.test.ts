@@ -190,7 +190,7 @@ describe("loadCompanyPlan (PGlite)", () => {
         stripe_product_id text, stripe_price_id text, is_active boolean not null default true, sort_order integer not null default 0,
         created_at timestamptz not null default now(), updated_at timestamptz not null default now());
       create table subscriptions (id text primary key, tenant_id text not null, plan_id text not null references plans(id),
-        stripe_subscription_id text, stripe_customer_id text, status text not null, current_period_start timestamptz,
+        line text not null default 'main', stripe_subscription_id text, stripe_item_id text, stripe_customer_id text, status text not null, current_period_start timestamptz,
         current_period_end timestamptz, cancel_at_period_end boolean not null default false, canceled_at timestamptz,
         trial_ends_at timestamptz, last_event_at timestamptz, last_event_id text,
         created_at timestamptz not null default now(), updated_at timestamptz not null default now());

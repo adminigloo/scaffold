@@ -2,9 +2,11 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { LIVE_SUBSCRIPTION_STATUSES } from "__SCOPE__/billing";
 import type { SubscriptionStatus } from "__SCOPE__/billing";
 import { entitlements, plans, subscriptions } from "__SCOPE__/billing/schema";
+import { lineOfStoredRow } from "__SCOPE__/billing/server";
 import { orderShipments } from "__SCOPE__/commerce/schema";
 import { deliveryStageOf, type Delivery, type GrantedEntitlement } from "@/account";
 import { db } from "@/db";
+import { plans as planRecord } from "@/plans";
 
 /**
  * WHOSE THINGS THE ACCOUNT AREA SHOWS, AND WHY THAT IS TWO DIFFERENT ANSWERS.
@@ -198,6 +200,10 @@ export interface AccountSubscription {
   readonly stripeCustomerId: string | null;
   /** NULL for a subscription with no Stripe object — a simulated or comped one. */
   readonly stripeSubscriptionId: string | null;
+  /** The product line this row is (billing 0.5): `plans.line(key)`. */
+  readonly line: string;
+  /** The Stripe item that bills the line; NULL with no Stripe object, or on a row from before 0.5. */
+  readonly stripeItemId: string | null;
   /** True while this row occupies the tenant's one live-subscription slot. */
   readonly live: boolean;
   /**
@@ -236,7 +242,32 @@ export interface AccountSubscription {
  */
 export async function readSubscriptionForTenant(
   tenantId: string,
+  /** One product line's subscription (billing 0.5). Omitted: the tenant's, whichever line — exactly the one-line read. */
+  line?: string,
 ): Promise<AccountSubscription | null> {
+  const rows = await readRows(tenantId);
+  const onLine = line === undefined ? rows : rows.filter((row) => row.line === line);
+  return chooseRow(onLine);
+}
+
+/**
+ * Every product line's subscription for `/account/billing` (billing 0.5),
+ * keyed by line in the record's order: the live one if there is one,
+ * otherwise the most recent. A line never subscribed to is absent.
+ */
+export async function readSubscriptionsForTenant(tenantId: string): Promise<ReadonlyMap<string, AccountSubscription>> {
+  const rows = await readRows(tenantId);
+  const byLine = new Map<string, AccountSubscription>();
+  for (const line of planRecord.lines) {
+    const chosen = chooseRow(rows.filter((row) => row.line === line.key));
+    if (chosen !== null) byLine.set(line.key, chosen);
+  }
+  return byLine;
+}
+
+type StoredRow = Omit<AccountSubscription, "live" | "freeMonths"> & { readonly lastEventId: string | null };
+
+async function readRows(tenantId: string): Promise<readonly StoredRow[]> {
   const rows = await db
     .select({
       id: subscriptions.id,
@@ -248,6 +279,8 @@ export async function readSubscriptionForTenant(
       trialEndsAt: subscriptions.trialEndsAt,
       stripeCustomerId: subscriptions.stripeCustomerId,
       stripeSubscriptionId: subscriptions.stripeSubscriptionId,
+      stripeItemId: subscriptions.stripeItemId,
+      storedLine: subscriptions.line,
       lastEventId: subscriptions.lastEventId,
       planKey: plans.key,
       planName: plans.name,
@@ -259,8 +292,12 @@ export async function readSubscriptionForTenant(
     .innerJoin(plans, eq(plans.id, subscriptions.planId))
     .where(eq(subscriptions.tenantId, tenantId))
     .orderBy(desc(subscriptions.createdAt))
-    .limit(10);
+    .limit(50);
+  // The line by the row's TIER, so a row written before lines sits on the right card.
+  return rows.map(({ storedLine, ...row }) => ({ ...row, line: lineOfStoredRow(planRecord, row.planKey, storedLine) }));
+}
 
+function chooseRow(rows: readonly StoredRow[]): AccountSubscription | null {
   const live: readonly string[] = LIVE_SUBSCRIPTION_STATUSES;
   const chosen = rows.find((row) => live.includes(row.status)) ?? rows[0];
   if (chosen === undefined) return null;

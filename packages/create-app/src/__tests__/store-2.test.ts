@@ -248,9 +248,10 @@ describe("docs, versions and the upgrade notes", () => {
   });
 
   it("pins commerce 0.2 (0.3 since the showroom) and stripe 0.4.1, and tells a 0.33 project what to run", () => {
-    // The release lines (commerce 0.4: sales by hand; catalog 0.4: its server entry's forgetTenant).
+    // The release lines (commerce 0.4: sales by hand; catalog 0.4: its server entry's forgetTenant;
+    // stripe 0.6: product lines on one subscription and one customer per tenant).
     expect(packageVersions()["commerce"]).toMatch(/^0\.4\.\d+$/);
-    expect(packageVersions()["stripe"]).toMatch(/^0\.5\.\d+$/);
+    expect(packageVersions()["stripe"]).toMatch(/^0\.6\.\d+$/);
     expect(packageVersions()["catalog"]).toMatch(/^0\.4\.\d+$/);
     const notes = upgradeNotesFor(answers(COMPANIES), "0.33.0").join("\n");
     expect(notes).toContain("upgrade-0.1-to-0.2.sql");

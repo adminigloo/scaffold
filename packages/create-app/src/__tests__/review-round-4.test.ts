@@ -82,7 +82,15 @@ describe("TB2-01 (round 4): a tenant-only procedure takes nothing it can't expla
 
   it("the template's own procedures say why each extra input is safe — a number, a flag or a fixed choice, never an id", async () => {
     const withExtras = TENANT_PROCEDURES.filter((p) => p.allow);
-    expect(withExtras.map((p) => p.path).sort()).toEqual(["account.invoices", "ai.spend", "billing.changePlan", "billing.simulateSubscription"]);
+    expect(withExtras.map((p) => p.path).sort()).toEqual([
+      "account.cancelSubscription",
+      "account.invoices",
+      "account.resumeSubscription",
+      "ai.spend",
+      "billing.addLine",
+      "billing.changePlan",
+      "billing.simulateSubscription",
+    ]);
     for (const p of withExtras) {
       for (const [field, why] of Object.entries(p.allow!)) {
         expect(why.length, `${p.path}.${field}`).toBeGreaterThanOrEqual(10);

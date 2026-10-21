@@ -75,10 +75,24 @@ export interface PlanChooserProps {
    * second one — the double charge billing 0.3 fixed.
    */
   readonly hasPaidPlan: boolean;
+  /**
+   * PRODUCT LINES (billing 0.5): this line isn't on the plan yet but another
+   * line is, so choosing a tier ADDS it to that subscription (preview, then
+   * confirm: prorated, charged now, one bill) — never a second checkout.
+   */
+  readonly addsToPlan?: boolean;
+  /**
+   * The cadence and currency everything on the bill shares, when other lines
+   * are on it: the toggle is fixed to it (Stripe bills one subscription on
+   * one cadence). Null: the person chooses.
+   */
+  readonly cadence?: { readonly interval: "month" | "year"; readonly currency: string } | null;
 }
 
 /** What a plan change costs, as the server worked it out. */
 interface ChangePreview {
+  /** A change of tier on this line, or a new line added to the plan. */
+  readonly kind: "change" | "add";
   readonly tierKey: string;
   /** The currency the preview was priced in: the change is confirmed in the same one. */
   readonly currency: string;
@@ -92,11 +106,14 @@ interface ChangePreview {
 }
 
 export function PlanChooser(props: PlanChooserProps) {
+  const fixed = props.cadence ?? null;
   const [interval, setInterval] = useState<"month" | "year">(
-    props.intervals[0] ?? "month",
+    fixed?.interval ?? props.intervals[0] ?? "month",
   );
   // US dollars first when the plans are priced in them (the list is alphabetical).
-  const [currency, setCurrency] = useState<string>(props.currencies.includes("usd") ? "usd" : (props.currencies[0] ?? "usd"));
+  const [currency, setCurrency] = useState<string>(
+    fixed?.currency ?? (props.currencies.includes("usd") ? "usd" : (props.currencies[0] ?? "usd")),
+  );
   // Held separately from `isPending`: the mutation resolves the instant Stripe
   // answers and the navigation to the hosted checkout takes another beat, and a
   // button that re-enables during that beat invites a second session.
@@ -129,7 +146,26 @@ export function PlanChooser(props: PlanChooserProps) {
   const previewChange = api.billing.previewPlanChange.useMutation({
     onSuccess: (result, variables) => {
       setChangeNote(null);
-      setPreview({ ...result, tierKey: variables.tierKey, currency: variables.currency });
+      setPreview({ ...result, kind: "change", tierKey: variables.tierKey, currency: variables.currency });
+    },
+  });
+  // ADDING A LINE (billing 0.5): the same preview-then-confirm, on the one
+  // subscription this __TENANT_LABEL_LOWER__ already pays.
+  const previewAdd = api.billing.previewAddLine.useMutation({
+    onSuccess: (result, variables) => {
+      setChangeNote(null);
+      setPreview({ ...result, kind: "add", tierKey: variables.tierKey, currency: variables.currency });
+    },
+  });
+  const addLine = api.billing.addLine.useMutation({
+    onSuccess: (result) => {
+      setPreview(null);
+      setChangeNote(
+        result.applied
+          ? "Done. It's on your plan now, and on the same bill."
+          : "The payment didn't go through, so nothing was added. Update your card under Payment methods and try again.",
+      );
+      router.refresh();
     },
   });
   const changePlan = api.billing.changePlan.useMutation({
@@ -145,10 +181,17 @@ export function PlanChooser(props: PlanChooserProps) {
   });
 
   const busy =
-    subscribe.isPending || simulate.isPending || leaving || previewChange.isPending || changePlan.isPending;
+    subscribe.isPending ||
+    simulate.isPending ||
+    leaving ||
+    previewChange.isPending ||
+    changePlan.isPending ||
+    previewAdd.isPending ||
+    addLine.isPending;
   const simulated = props.mode.kind === "simulated";
   const changing = props.hasPaidPlan && !simulated;
-  const error = subscribe.error ?? simulate.error ?? previewChange.error ?? changePlan.error;
+  const adding = props.addsToPlan === true && !props.hasPaidPlan && !simulated;
+  const error = subscribe.error ?? simulate.error ?? previewChange.error ?? changePlan.error ?? previewAdd.error ?? addLine.error;
 
   return (
     <div className="flex flex-col gap-4">
@@ -156,7 +199,7 @@ export function PlanChooser(props: PlanChooserProps) {
         {/* Only rendered when there is a choice. A toggle with one option is a
             control that teaches the reader nothing and takes a click to find
             that out. */}
-        {props.intervals.length > 1 && (
+        {fixed === null && props.intervals.length > 1 && (
           <div className="flex items-center gap-1 rounded-md border border-line p-1">
             {props.intervals.map((option) => (
               <button
@@ -177,7 +220,7 @@ export function PlanChooser(props: PlanChooserProps) {
           </div>
         )}
 
-        {props.currencies.length > 1 && (
+        {fixed === null && props.currencies.length > 1 && (
           <label className="flex items-center gap-2 text-sm text-ink-muted">
             Currency
             <select
@@ -211,7 +254,11 @@ export function PlanChooser(props: PlanChooserProps) {
       )}
 
       {error && (
-        <Notice tone="danger" title={changing ? "That plan couldn't be changed" : "That plan could not be started"} role="alert">
+        <Notice
+          tone="danger"
+          title={changing ? "That plan couldn't be changed" : adding ? "That couldn't be added" : "That plan could not be started"}
+          role="alert"
+        >
           {error.message}
         </Notice>
       )}
@@ -223,7 +270,7 @@ export function PlanChooser(props: PlanChooserProps) {
       )}
 
       {preview && (
-        <Notice tone="info" title={`Switch to ${preview.planName}?`} role="status">
+        <Notice tone="info" title={preview.kind === "add" ? `Add ${preview.planName}?` : `Switch to ${preview.planName}?`} role="status">
           <span className="block">
             {preview.samePrice
               ? "You're already on this plan."
@@ -239,7 +286,7 @@ export function PlanChooser(props: PlanChooserProps) {
                 variant="primary"
                 disabled={busy}
                 onClick={() =>
-                  changePlan.mutate({
+                  (preview.kind === "add" ? addLine : changePlan).mutate({
                     tenantId: props.tenantId,
                     tierKey: preview.tierKey,
                     interval: preview.interval,
@@ -248,7 +295,13 @@ export function PlanChooser(props: PlanChooserProps) {
                   })
                 }
               >
-                {changePlan.isPending ? "Changing…" : `Switch to ${preview.planName}`}
+                {preview.kind === "add"
+                  ? addLine.isPending
+                    ? "Adding…"
+                    : `Add ${preview.planName}`
+                  : changePlan.isPending
+                    ? "Changing…"
+                    : `Switch to ${preview.planName}`}
               </Button>
               <Button variant="secondary" disabled={busy} onClick={() => setPreview(null)}>
                 Keep my plan
@@ -344,6 +397,8 @@ export function PlanChooser(props: PlanChooserProps) {
                       onClick={() =>
                         changing
                           ? previewChange.mutate({ tenantId: props.tenantId, tierKey: tier.key, interval, currency })
+                          : adding
+                          ? previewAdd.mutate({ tenantId: props.tenantId, tierKey: tier.key, interval, currency })
                           : simulated
                           ? simulate.mutate({
                               tenantId: props.tenantId,
@@ -359,7 +414,7 @@ export function PlanChooser(props: PlanChooserProps) {
                             })
                       }
                     >
-                      {busy ? "Working…" : changing ? `Switch to ${tier.name}` : `Choose ${tier.name}`}
+                      {busy ? "Working…" : changing ? `Switch to ${tier.name}` : adding ? `Add ${tier.name}` : `Choose ${tier.name}`}
                     </Button>
                   )}
                 </div>

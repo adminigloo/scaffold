@@ -12,7 +12,7 @@ second checkout and charged for two plans.
 
 | You install | You get | You wire yourself |
 | --- | --- | --- |
-| `@adminigloo/stripe` | `createStripeClient`, `createCheckoutSession` (tenant-stamped), `createBillingPortalSession`, `verifyStripeSignature`, `assertEventLivemode`, the event ledger (`decideClaim`, `claimStatements`) and registry, `subscriptionSnapshot`, `ensurePlanPrice` (publishes a plan's price once, and a new one when you reprice), `previewPlanChange` / `changePlan`, `stripePermissions`, and the `stripe_events` table (`./schema`) | Stripe keys, the webhook route, and what each event does |
+| `@adminigloo/stripe` | `createStripeClient`, `createCheckoutSession` (tenant-stamped), `createBillingPortalSession`, `verifyStripeSignature`, `assertEventLivemode`, the event ledger (`decideClaim`, `claimStatements`) and registry, `subscriptionSnapshot`, `ensurePlanPrice` (publishes a plan's price once, and a new one when you reprice), `previewPlanChange` / `changePlan`, `previewAddLine` / `addLine` / `removeLine` (product lines as items of one subscription), `resolveStripeCustomer` (a tenant's one customer), `stripePermissions`, and the `stripe_events` table (`./schema`) | Stripe keys, the webhook route, and what each event does |
 | + `@adminigloo/billing` | The plan record and each company's subscription and limits | The tables |
 | + `@adminigloo/create-app` (`--model subscription`, `one-time` or `both`) | All of it wired: checkout, the webhook, the billing page with "change plan", a returning company's own Stripe customer reused, the re-sync screen, and a simulated mode that runs the whole flow before you have keys | Your Stripe keys and the webhook endpoint in the Stripe dashboard |
 
@@ -55,6 +55,53 @@ Before starting a checkout for a plan, check the company doesn't already have
 a live subscription (`liveStripeSubscription` in `@adminigloo/billing/server`)
 and reuse its Stripe customer (`companyStripeCustomer`) if it paid before.
 
+## Product lines on one subscription (0.6)
+
+A tenant on Weather Pro and Sports holds ONE subscription with two items. A
+change of tier names the line's item; a second line is added to the same
+subscription; dropping one line removes its item:
+
+```ts
+import { addLine, addLineIdempotencyKey, changePlan, previewAddLine, removeLine } from "@adminigloo/stripe";
+
+await changePlan(client, { subscriptionId, itemId: weatherItemId, newPriceId, prorationDate, metadata, idempotencyKey });
+
+const preview = await previewAddLine(client, { subscriptionId, newPriceId: sportsPrice });
+const current = await client.stripe.subscriptions.retrieve(subscriptionId);
+const { applied, itemId } = await addLine(client, {
+  subscriptionId,
+  newPriceId: sportsPrice,
+  prorationDate: preview.prorationDate,
+  itemMetadata: { planKey: "sports" },
+  // Two tabs from the same state add ONE item; a re-add after a drop is always a new request.
+  idempotencyKey: addLineIdempotencyKey(current, "sports", { previousItemIds: itemsThisLineHeldBefore }),
+});
+// `addLine` reads the subscription again after the update and answers THAT read
+// (a replayed answer can name an item that's gone): mirror `result.subscription`.
+
+await removeLine(client, { subscriptionId, itemId: sportsItemId, idempotencyKey: `plan_line_remove:${sportsItemId}` });
+// Invoices the unused time at once as a credit on the customer's balance (it comes off the
+// next bill, and isn't lost if the last line is cancelled later). The LAST item is refused:
+// cancel at the period's end instead.
+```
+
+Adding is prorated and charged now with `pending_if_incomplete` (a failed
+charge adds nothing), with the same proration-date bound as a change. Every
+item on one subscription bills on one cadence and in one currency (Stripe's
+rule), so add a line on the plan's own.
+
+`resolveStripeCustomer(client, { tenantId, userId, knownCustomerId, email })`
+is the tenant's ONE customer: its own, or the one with `metadata.tenantId`.
+Pass `userId` ONLY when the tenant is that person's own personal workspace:
+then a customer the shop made for them that belongs to no tenant yet is
+adopted, and their shop purchases and plans share it. Never for a company — a
+member's own card, invoices and subscriptions must not become the company's.
+`create: false` never writes — for a portal or an invoice list.
+
+`prepareCompanyCheckout` counts only PLAN subscriptions on that customer
+(`isPlanSubscriptionFor`: not the shop's, which carry `variantId`, and not
+another tenant's), both for "already pays" and for the one free trial.
+
 ## Companies taking card payments (Connect, 0.4)
 
 Each company connects ITS OWN Stripe account (Standard-style through the
@@ -96,5 +143,5 @@ through `onError` (`context.stripe`), and adds Stripe's sentence and the link
 - **SMS** payment links or receipts.
 - **Tax and coupons screens.** Turn on Stripe Tax and promotion codes in
   Stripe's hosted checkout.
-- **Changing a subscription with more than one priced item.** Plan
-  subscriptions have one; anything else is changed in the Stripe dashboard.
+- **Changing several items at once, or quantities.** Each call changes one
+  line's item, at quantity 1; anything else is changed in the Stripe dashboard.

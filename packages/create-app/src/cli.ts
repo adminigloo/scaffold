@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import {
   ADMIN_SHELLS,
+  AUDIENCES,
   BUSINESS_MODELS,
   DEFAULT_ANSWERS,
   TENANT_NOUNS,
@@ -13,6 +14,7 @@ import {
   validateProjectName,
   type AdminShell,
   type Answers,
+  type Audience,
   type BusinessModel,
   type TenantNoun,
 } from "./answers.js";
@@ -30,6 +32,8 @@ export interface CliFlags {
    * generated app misbehaves.
    */
   readonly tenantNoun?: TenantNoun;
+  /** Who signs up with --tenant-noun none (billing 0.5): business (default) or consumers. */
+  readonly audience?: Audience;
   readonly businessModel?: BusinessModel;
   readonly adminShell?: AdminShell;
   readonly ai?: boolean;
@@ -78,6 +82,7 @@ export function parseArgs(argv: readonly string[]): CliFlags {
   let help = false;
 
   let tenantNoun: TenantNoun | undefined;
+  let audience: Audience | undefined;
   let businessModel: BusinessModel | undefined;
   let adminShell: AdminShell | undefined;
   let ai: boolean | undefined;
@@ -150,6 +155,9 @@ export function parseArgs(argv: readonly string[]): CliFlags {
     } else if (arg === "--tenant-noun" || arg.startsWith("--tenant-noun=")) {
       const v = readValue(arg, "--tenant-noun", i);
       if (v !== undefined) tenantNoun = oneOf("tenant-noun", v, TENANT_NOUNS);
+    } else if (arg === "--audience" || arg.startsWith("--audience=")) {
+      const v = readValue(arg, "--audience", i);
+      if (v !== undefined) audience = oneOf("audience", v, AUDIENCES);
     } else if (arg === "--model" || arg.startsWith("--model=")) {
       const v = readValue(arg, "--model", i);
       if (v !== undefined) businessModel = oneOf("model", v, BUSINESS_MODELS);
@@ -162,6 +170,7 @@ export function parseArgs(argv: readonly string[]): CliFlags {
       const consumed =
         previous === "--dir" ||
         previous === "--tenant-noun" ||
+        previous === "--audience" ||
         previous === "--model" ||
         previous === "--admin";
       if (!consumed) name ??= arg;
@@ -174,6 +183,7 @@ export function parseArgs(argv: readonly string[]): CliFlags {
     yes,
     help,
     tenantNoun,
+    audience,
     businessModel,
     adminShell,
     ai,
@@ -209,6 +219,14 @@ export const HELP = `
                        TTY, so this never hangs waiting for input inside CI.
   --dir <path>         Generate into this directory instead of ./<name>.
   --tenant-noun <n>    Organization | Company | Workspace | Team | none
+  --audience <a>       business | consumers. Who signs up when there are no
+                       companies (--tenant-noun none). business (the default):
+                       one business's staff, working at /admin. consumers:
+                       people sign up as themselves and are the customers —
+                       with --model subscription each person pays for their own
+                       plans (one card, one bill, several product lines), there
+                       is no team page and no one can invite anyone in, and you
+                       see who pays for what at /admin/billing/subscribers.
   --model <m>          none | one-time | subscription | both
   --admin <a>          none | minimal | full
   --ai / --no-ai       Include streaming route conventions.
@@ -301,7 +319,8 @@ export const HELP = `
   With a --tenant-noun (companies), the estimator, scheduling, invoicing and
   messages are EACH COMPANY'S: its own screens at /app, its own public pages
   at /t/{web address}, emails under its own name, crons that serve every
-  company. With --tenant-noun none they run for your one business at /admin.
+  company. With --tenant-noun none they run for your one business at /admin
+  (with --audience consumers too: the people who sign up are its customers).
   --help, -h           Show this.
 
   Any flag given is used verbatim; only the rest are prompted for.
@@ -344,12 +363,31 @@ export async function collectAnswers(
       { value: "Team", label: "Team" },
       {
         value: "none",
-        label: "None — this is consumer-facing",
-        hint: "still tenanted, via an invisible personal workspace",
+        label: "None — one business",
+        hint: "staff, or customers signing up as themselves; each person gets an invisible workspace",
       },
     ],
     DEFAULT_ANSWERS.tenantNoun,
   ));
+
+  // WHO SIGNS UP (billing 0.5), asked only where it means something: with no
+  // companies. A companies project's people always sign up into a company.
+  const audience: Audience =
+    tenantNoun !== "none"
+      ? (flags.audience ?? DEFAULT_ANSWERS.audience)
+      : (flags.audience ??
+        (await prompter.select<Audience>(
+          "Who signs up?",
+          [
+            { value: "business", label: "Our own staff", hint: "one business, worked at /admin" },
+            {
+              value: "consumers",
+              label: "Our customers, as themselves",
+              hint: "each person pays for their own plans; no teams, no sharing",
+            },
+          ],
+          DEFAULT_ANSWERS.audience,
+        )));
 
   const businessModel = flags.businessModel ?? (await prompter.select<BusinessModel>(
     "Does it take money?",
@@ -525,6 +563,7 @@ export async function collectAnswers(
   const answers: Answers = {
     projectName,
     tenantNoun,
+    audience,
     businessModel,
     adminShell,
     includeAi,

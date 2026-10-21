@@ -97,7 +97,12 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.5.0 (polish 3): `describeStripeFailure` — the emitted payments glue logs and reports every
   // failed Stripe call and answers owners in plain words; none of it exists in 0.4.x.
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
-  stripe: "0.5.0",
+  // 0.6.0 (billing 0.5, product lines): the emitted billing router adds lines
+  // with previewAddLine/addLine/addLineIdempotencyKey, the account router drops
+  // one with removeLine, and both checkouts share resolveStripeCustomer; the
+  // mirror reads each item's Price stamp (`priceMetadata`) and the plan
+  // checkout counts only plans (`isPlanSubscriptionFor`). None exist in 0.5.x.
+  stripe: "0.6.0",
   // 0.2.0 for the variant- and product-name rules. The product builder refuses
   // to start a save that `validateProduct` cannot clear, so a project resolving
   // 0.1.x gets a validator with no opinion about a blank variant name — which
@@ -122,7 +127,11 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // `planGrantDiff` to take a `PlanTier`, and a caret over 0.1.x would resolve
   // to the signatures nothing here calls.
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
-  billing: "0.4.0",
+  // 0.5.0 (product lines): src/server/subscription.ts writes subscriptions.line
+  // and stripe_item_id and scopes its diff with planLineRefs; the plan gate and
+  // the billing router read loadCompanyPlan's lines, liveStripeLines and
+  // lineOfStoredRow. None exist in 0.4.x.
+  billing: "0.5.0",
   // 0.2.0 (Tenancy 2b-3): the ledger moved into the package — the emitted
   // src/server/ai.ts and src/server/assistant.ts import recordAiUsage,
   // aiSpendSince and checkAiAllowance from ./server, which 0.1.x doesn't have.

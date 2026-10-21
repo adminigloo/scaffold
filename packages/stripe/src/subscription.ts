@@ -55,6 +55,30 @@ export const SUBSCRIPTION_EVENT_TYPES = [
   "invoice.payment_failed",
 ] as const satisfies readonly Stripe.Event["type"][];
 
+/**
+ * One priced ITEM of a subscription (stripe 0.6): with product lines a
+ * subscription carries one item per line — Weather Pro and Sports Basic — and
+ * each has its own price, quantity and period.
+ */
+export interface StripeSubscriptionItemSnapshot {
+  readonly itemId: string;
+  readonly priceId: string | null;
+  readonly interval: "month" | "year" | null;
+  readonly currency: string | null;
+  readonly quantity: number;
+  readonly currentPeriodStart: Date | null;
+  readonly currentPeriodEnd: Date | null;
+  /** The item's own metadata (`planKey` once a line was added or changed through `addLine` / `changePlan`). */
+  readonly metadata: Readonly<Record<string, string>>;
+  /**
+   * The PRICE's own metadata (stripe 0.6.1): `ensurePlanPrice` has stamped
+   * `{ planKey, tierKey }` on every Price it ever made, so an item still on a
+   * Price from before a repricing (no longer the cached one, still billing the
+   * people on it) says which plan it is from the Price itself.
+   */
+  readonly priceMetadata: Readonly<Record<string, string>>;
+}
+
 /** One Stripe subscription, flattened, with no Stripe types left in it. */
 export interface StripeSubscriptionSnapshot {
   readonly subscriptionId: string;
@@ -87,6 +111,17 @@ export interface StripeSubscriptionSnapshot {
    * subscription event can be attributed to a tenant at all.
    */
   readonly metadata: Readonly<Record<string, string>>;
+  /**
+   * EVERY priced item, in Stripe's order (stripe 0.6). The single-item fields
+   * above are the FIRST item's, kept for a subscription that has one; a mirror
+   * of product lines reads this list instead, one line per item.
+   */
+  readonly items: readonly StripeSubscriptionItemSnapshot[];
+  /**
+   * Did Stripe send EVERY item (no `has_more`)? Only then does an absent item
+   * prove a line was dropped.
+   */
+  readonly itemsComplete: boolean;
 }
 
 /** Stripe's epoch seconds as a Date. NULL stays NULL; 0 is not a date. */
@@ -149,6 +184,26 @@ export function subscriptionSnapshot(
     // plan subscription, which is always a single seat of a single tier.
     quantity: item?.quantity ?? 1,
     metadata: subscription.metadata,
+    items: (subscription.items.data ?? []).map((each) => itemSnapshot(each)),
+    itemsComplete: subscription.items.has_more !== true,
+  };
+}
+
+function intervalOf(value: string | undefined): "month" | "year" | null {
+  return value === "month" ? "month" : value === "year" ? "year" : null;
+}
+
+function itemSnapshot(item: Stripe.SubscriptionItem): StripeSubscriptionItemSnapshot {
+  return {
+    itemId: item.id,
+    priceId: item.price?.id ?? null,
+    interval: intervalOf(item.price?.recurring?.interval),
+    currency: item.price?.currency ?? null,
+    quantity: item.quantity ?? 1,
+    currentPeriodStart: fromUnix(item.current_period_start),
+    currentPeriodEnd: fromUnix(item.current_period_end),
+    metadata: item.metadata ?? {},
+    priceMetadata: item.price?.metadata ?? {},
   };
 }
 
