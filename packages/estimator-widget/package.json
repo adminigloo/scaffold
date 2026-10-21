@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/estimator-widget",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "The client half of AdminIgloo's estimator: an instant estimate for the business's website (questions in plain words, an optional photo whose reading pre-fills the count, a live price with its working) and the quote page customers accept, plus the staff screens under ./admin (the leads and quotes queue, the estimate editor, a price book built from the business's own supplies with a live test quote, settings and embed keys). React is its only peer.",
   "license": "UNLICENSED",
   "type": "module",

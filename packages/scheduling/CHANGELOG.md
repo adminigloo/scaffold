@@ -1,5 +1,19 @@
 # @adminigloo/scheduling
 
+## 0.7.0
+
+### Minor Changes
+
+- ed86e90: Delete a company (create-app 0.37): `forgetTenant(db, tenantId)` from the root takes every row this package keeps for one company — its visits and their links, crews and their hours, and its settings, and every cached drive time that starts or ends within about 110 m of one of its visits or crews' home bases (the cache has no company column, but its points are job addresses rounded to about 11 m) — children first, each statement filtered by the company's id, on the caller's transaction. Returns the rows each table lost; refuses an empty id and the site's own ("*"). Proved per package on PGlite with `@adminigloo/testing/forget`: every table planted for two companies, the first forgotten, nothing of the second touched.
+- ed86e90: Past records with their real dates (staff and server paths only; no public route takes a date): `bookVisit(…, { bookedAt })` and `POST v1/admin/visits` with `bookedAt` save a visit as booked that day. History only when the visit itself is over: then it isn't held to today's hours and nobody is told; a visit still to come is checked like any booking (a taken slot, outside hours) and the customer told as usual, so a booked-on date never puts a second visit in a slot; `setBookingStatus(…, { occurredAt })` and `POST v1/admin/visits/{id}/status` with `occurredAt` record it done, cancelled or started that day (done, started or no-show never before the visit starts; on a visit still to come the move is checked and told as usual, and putting a cancelled one back re-claims its slot). Their events carry the real day and `enteredLater: true`; `schedulingAlertsFor` raises no alert for them. A date in the future, before 2000 or before the booking is refused (400 `invalid`, naming the field). A date alone ("2025-06-14") is that day where the company is (its time zone; noon there, never moved before the record it belongs to or past the moment it was typed in), and "today" is today there — a morning entry in Tokyo is not "in the future"; a full timestamp is the instant it names. A past date on the staff routes needs its own key, `schedule.history` ("Enter past records", owner and admin by default); without it, 403 in plain words. The visit's snapshot carries `enteredLater` (when, and by whom). New nullable `scheduling_bookings.entered_at`/`entered_by`.
+  
+  **Upgrading from 0.6:** two nullable columns (`pnpm db:generate`, or the README's "Upgrading from 0.6").
+
+### Patch Changes
+
+- Updated dependencies [ed86e90]
+  - @adminigloo/comms@0.6.0
+
 ## 0.6.1
 
 ### Patch Changes

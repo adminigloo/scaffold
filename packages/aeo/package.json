@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/aeo",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "AI mentions, per company: for the questions your customers ask an AI assistant, does the answer name you? Asked with web search, read by code (named or not, the quote, the sources, the competitors), metered against each company's AI allowance, and trended week by week.",
   "license": "UNLICENSED",
   "type": "module",

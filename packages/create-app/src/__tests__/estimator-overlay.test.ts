@@ -374,8 +374,8 @@ describe("answers, packages and the CLI", () => {
     expect(installed).toContain("@adminigloo/estimator");
     expect(installed).toContain("@adminigloo/estimator-widget");
     // The release lines: estimator 0.7 (forgetTenant, past records' dates), estimator-widget 0.7 (polish 3: <EstimatesQueueActions>).
-    expect(versionRangeFor("@adminigloo/estimator")).toMatch(/^^0.7.d+$/);
-    expect(versionRangeFor("@adminigloo/estimator-widget")).toMatch(/^^0.7.d+$/);
+    expect(versionRangeFor("@adminigloo/estimator")).toMatch(/^\^0\.7\.\d+$/);
+    expect(versionRangeFor("@adminigloo/estimator-widget")).toMatch(/^\^0\.7\.\d+$/);
   });
 
   it("brings comms, storage and email with the estimator unless each is declined", async () => {

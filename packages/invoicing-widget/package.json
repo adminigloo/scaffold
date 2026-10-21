@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/invoicing-widget",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "The screens for AdminIgloo invoices: the customer's own invoice page (open by its link, no account) and, under ./admin, the ledger a business works from (raise an invoice, edit its lines, record and reverse payments, email it to the customer). Talks to @adminigloo/invoicing's handlers. React is its only peer.",
   "license": "UNLICENSED",
   "type": "module",
@@ -34,7 +34,7 @@
   },
   "peerDependencies": {
     "react": "^18.0.0 || ^19.0.0",
-    "@adminigloo/invoicing": "^0.6.0"
+    "@adminigloo/invoicing": "^0.7.0"
   },
   "peerDependenciesMeta": {
     "@adminigloo/invoicing": {

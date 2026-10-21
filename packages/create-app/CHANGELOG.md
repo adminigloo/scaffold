@@ -1,5 +1,17 @@
 # create-adminigloo-app
 
+## 0.37.0
+
+### Minor Changes
+
+- ed86e90: History and housekeeping. **Delete a company** at /admin/companies/{id} (staff with "Delete companies for good", admin by default): src/server/forget-company.ts calls every installed package's `forgetTenant` on tenancy's deletion transaction, children first, deletes the company's files once it commits, and names a plan the company is still paying for; tenancy keeps one audit row. The proof (src/server/__tests__/forget-company.test.ts) plants a row for two companies in every table with a company column — read from the database, so a new table can't be missed — deletes one through the real service and checks that nothing of it is left (outside `COMPANY_ROWS_KEPT`, each with its reason) and nothing of the other is gone. The per-company coverage test requires every per-company package to say how its rows are forgotten. A Stripe event for a deleted company (a forced delete leaves the subscription live at Stripe) writes nothing back: src/server/subscription.ts acknowledges it (`tenantGone`) and the webhook logs a warning to cancel it there; the proof replays one. **Past records with their real dates** reach the generated projects through the packages' staff routes (estimator `occurredAt`, invoicing `issuedAt`/`paidAt`, scheduling `bookedAt`/`occurredAt`), behind their own "Enter past records" keys (a single business maps them to staff.estimates.settings, staff.invoices.manage and staff.schedule.settings) and `analytics.importVisits`. **The store's sales by hand** (`POST …/store/v1/admin/sales`) are told to the store's `onOrder`, so they reach the customer's timeline and the receipt goes the same way.
+
+### Patch Changes
+
+- 2de60cb: Polish round 3, from walking a real back office. Connect Stripe on a site not signed up for Stripe Connect showed only "Something went wrong" and logged nothing: every failed Stripe call on the payments screen, Pay now and Check out is now a log line (Stripe's words, its request id) and a row on /admin/errors, the owner reads "Card payments aren't switched on for this site yet. We've told whoever runs it." (or a try-again sentence when Stripe isn't answering), the site's staff also read Stripe's own message with the link to fix it, and a customer whose payment page can't open is told nothing was charged. The payments screen's other messages say what happened. Every work page's primary action sits in its header beside the title — New invoice, New estimate, New visit, Add customer / Import / Export, New epic, See your store, Open the booking page — and the store page offers changes only to someone with store.manage. The dashboard's "See all" opens the page on the same list: Overdue invoices on `/app/invoices?status=overdue`, Newest leads on `/app/estimates?filter=leads`, today's visits on today's day (`/app/schedule?date=…&view=day`); the invoices page takes any `?status=`, the schedule `?view=day|week`.
+  
+  The header links match: "See your store" and "Open the booking page" are both secondary buttons with ↗, "(opens in a new tab)" for screen readers and rel="noopener noreferrer"; the estimates header's Price book and Estimate settings are secondary buttons beside New estimate.
+
 ## 0.36.1
 
 ### Patch Changes

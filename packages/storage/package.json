@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/storage",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Tenant-scoped file storage as a business operation: rows in your own database, bytes behind a two-method adapter — uploads your product can list, authorize and delete instead of a bucket nobody can reason about.",
   "license": "UNLICENSED",
   "type": "module",

@@ -1,5 +1,22 @@
 # @adminigloo/analytics
 
+## 0.4.0
+
+### Minor Changes
+
+- ed86e90: Past visits brought in from records: `analytics.importVisits({ tenantId, visits })` (server-side only, no route). Each visit once by the importer's own `key` (unique per company; a new `import_key` column and index on sessions), filed under a visitor key hashed from the old tool's visitor id with the company (the raw id is never stored), its source classified by the live rules, its pages in order. Tracking-since moves back to the earliest visit, never forward. The audience still decides what counts: reports leave an imported visit out exactly as a live one, and with `userId` the audience's people rules are applied to it. A date in the future, before 2000 or older than `limits.retentionDays`, another company's website, or a missing key, visitor or page is refused per visit, in words; at most 1000 a call.
+  
+  Delete a company (create-app 0.37): `forgetTenant(db, tenantId, { tables })` takes every visit, page view, event, crawler visit, rate counter, website, chart note and the tracking-since row of one company, children first (the day salts are no company's).
+  
+  **Upgrading from 0.3:** run `sql/upgrade-0.3-to-0.4.sql` (one nullable column and its index; safe twice) or `pnpm db:generate`. A fresh install without drizzle-kit runs `sql/analytics-0.4.0.sql`.
+
+### Patch Changes
+
+- 2de60cb: No "Something went wrong" where the cause is knowable. An answer that isn't the package's own (a platform's error page, a proxy, a timeout) is read by its status — signed out (401), no permission (403), not here any more (404), too big (413), too many tries (429), the site not answering (502, 503) or too slow (504) — instead of "Unexpected answer from the server (502)." or the generic line; the generic sentence is left for a truly unknown failure. A dropped connection on the customer's invoice page says so, and "Couldn't reach the server." tells the person to check their internet connection.
+- Updated dependencies [ed86e90]
+- Updated dependencies [2de60cb]
+  - @adminigloo/audience@0.3.0
+
 ## 0.3.0
 
 ### Minor Changes

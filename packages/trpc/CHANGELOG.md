@@ -1,5 +1,12 @@
 # @adminigloo/trpc
 
+## 0.3.1
+
+### Patch Changes
+
+- Updated dependencies [ed86e90]
+  - @adminigloo/permissions@0.3.0
+
 ## 0.3.0
 
 ### Minor Changes

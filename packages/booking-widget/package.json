@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/booking-widget",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "The embeddable booking widget: a prospect picks a time in their own time zone, holds it while they fill in the form, and gets a full confirmation with calendar links and a manage page — plus a sandbox mode for live demos, and the host's admin screens (bookings, availability, calendar, call types) under ./admin. React is its only peer.",
   "license": "UNLICENSED",
   "type": "module",

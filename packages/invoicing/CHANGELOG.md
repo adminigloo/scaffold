@@ -1,5 +1,19 @@
 # @adminigloo/invoicing
 
+## 0.7.0
+
+### Minor Changes
+
+- ed86e90: Delete a company (create-app 0.37): `forgetTenant(db, tenantId)` from the root takes every row this package keeps for one company — its invoices, their lines and payments, card checkouts and card alerts — children first, each statement filtered by the company's id, on the caller's transaction. Returns the rows each table lost; refuses an empty id and the site's own ("*"). Proved per package on PGlite with `@adminigloo/testing/forget`: every table planted for two companies, the first forgotten, nothing of the second touched.
+- ed86e90: Past records with their real dates (staff and server paths only; no customer route takes a date): `createInvoice(…, { issuedAt })` and `POST v1/admin/invoices` with `issuedAt` save it as issued (sent) that day — emailing nobody, numbered that year, due from that day; `recordPayment(…, { paidAt })` and `POST v1/admin/invoices/{id}/payments` with `paidAt` keep the day it was paid in `paid_at` beside the day it was entered (`created_at`, `recorded_by`). A date in the future, before 2000, or a payment before its invoice is refused (400 `invalid`, naming the field). A date alone ("2025-06-14") is that day where the company is (its time zone; noon there, never moved before the record it belongs to or past the moment it was typed in), and "today" is today there — a morning entry in Tokyo is not "in the future"; a full timestamp is the instant it names. `createInvoice` and `recordPayment` take the business's `timeZone`; the staff routes pass the `business` seam's. A past date on the staff routes needs its own key, `invoices.history` ("Enter past records", owner and admin by default) — not raising invoices or recording payments; without it, 403 in plain words. The invoice detail says what was entered later: `enteredLater` (when, and by whom) on the invoice and on each payment recorded more than an hour after it was paid. Their events carry the real day and `enteredLater: true`, and `invoicingAlertsFor` raises no alert for them. `createInvoice` and `recordPayment` take a `now`. New nullable `invoices.entered_at`/`entered_by`.
+  
+  **Upgrading from 0.6:** run `sql/upgrade-0.6-to-0.7.sql` (safe twice) or `pnpm db:generate`.
+
+### Patch Changes
+
+- Updated dependencies [ed86e90]
+  - @adminigloo/comms@0.6.0
+
 ## 0.6.0
 
 ### Minor Changes

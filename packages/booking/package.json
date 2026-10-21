@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/booking",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Book-a-call for an app's own site: hosts in their own time zones, weekly hours with dated exceptions, a pure slot engine, ten-minute holds, manage-by-token reschedule and cancel, .ics invites, a subscribable host feed, and conflicts read from a host's real calendar through its secret iCal address.",
   "license": "UNLICENSED",
   "type": "module",

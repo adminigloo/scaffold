@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/comms-widget",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "The Messages screen for AdminIgloo comms, under ./admin: the emails a business sends (read, edit, switch off), who they went to and what happened (the delivery log), and Send due now. Talks to @adminigloo/comms's handlers. React is its only peer.",
   "license": "UNLICENSED",
   "type": "module",
@@ -34,7 +34,7 @@
   },
   "peerDependencies": {
     "react": "^18.0.0 || ^19.0.0",
-    "@adminigloo/comms": "^0.5.0"
+    "@adminigloo/comms": "^0.6.0"
   },
   "peerDependenciesMeta": {
     "@adminigloo/comms": {

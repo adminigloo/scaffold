@@ -1,5 +1,17 @@
 # @adminigloo/tenancy-widget
 
+## 0.5.0
+
+### Minor Changes
+
+- ed86e90: `<CompanyDetail>`: "Delete this company" for staff who may (tenancy 0.8's `can.delete`). It says plainly what goes and that it can't be undone, names a plan the company is still paying for before anyone types, asks for the web address typed again, and — for a company still paying — "delete it anyway" with a reason. After it: what was removed, and the way back to the list (or your `onDeleted`). The admin transport gains `deleteCompany`; the wire gains `DeleteCompanyBody`, `DeletedCompanyWire` and the `still_paying` code.
+
+### Patch Changes
+
+- 2de60cb: No "Something went wrong" where the cause is knowable. An answer that isn't the package's own (a platform's error page, a proxy, a timeout) is read by its status — signed out (401), no permission (403), not here any more (404), too big (413), too many tries (429), the site not answering (502, 503) or too slow (504) — instead of "Unexpected answer from the server (502)." or the generic line; the generic sentence is left for a truly unknown failure. A dropped connection on the customer's invoice page says so, and "Couldn't reach the server." tells the person to check their internet connection.
+- Updated dependencies [ed86e90]
+  - @adminigloo/tenancy@0.8.0
+
 ## 0.4.0
 
 ### Minor Changes

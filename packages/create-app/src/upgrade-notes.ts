@@ -59,6 +59,9 @@ export function upgradeNotesFor(answers: Answers, fromVersion: string): string[]
           (answers.includeAnalytics ? ", past visits brought in with `importVisits`" : "") +
           (answers.includeStore ? ", and how a sale recorded by hand was paid" : "") +
           ".",
+      );
+    }
+  }
   // 0.36.2 — polish 3: Stripe's refusals are reported and worded, primary
   // actions sit in the page header, and "See all" opens the same list.
   if (crossed("0.36.2")) {

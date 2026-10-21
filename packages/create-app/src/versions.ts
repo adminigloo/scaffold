@@ -74,7 +74,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.2.0 rather than 0.1.x because `requireTenant(...).input(...)` did not
   // compile before it. `^0.1.0` would resolve to a build a generated project
   // cannot typecheck against.
-  trpc: "0.3.0",
+  trpc: "0.3.1",
   // The same, and the one that was actually broken: `createErrorReporter` ships
   // in 0.2.0 and `src/server/error-reporter.ts` imports it unconditionally, so
   // a project resolving 0.1.x fails to compile on a file every project gets.
@@ -152,7 +152,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // First release (Tenancy 2b-1): the bell, the alerts page and Alert
   // settings, over notifications 0.2's wire. Pinned in step with the
   // workspace, as every first release here is.
-  "notifications-widget": "0.1.0",
+  "notifications-widget": "0.1.1",
   // 0.2.0 (Tenancy 2b-1): private files per company. The emitted
   // src/server/files.ts builds createStorage with two stores, purposes,
   // records, the allowance, signed links and the logo store, and the routes
@@ -162,7 +162,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   storage: "0.3.0",
   // First release (Tenancy 2b-1): photos and files on a record, the Files
   // screen and the usage meter, over storage 0.2's wire.
-  "storage-widget": "0.1.1",
+  "storage-widget": "0.1.2",
   // 0.2.0 was the answering engine (loop, registry, chat handler, conversations
   // + page-doc + pending-action tables); 0.2.1-0.2.2 hardened it; 0.3.x knowledge retrieval; 0.4.0 write-action confirm flow; 0.5.0 retention + erasure; 0.6.0 eval loop; 0.7.0 embeddings+RRF — valid history
   // replay for tool-using turns, type-based abort detection, neutral provider
@@ -180,7 +180,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   assistant: "0.10.0",
   // 0.3.0: the launcher, history, Stop, starters and the "ask before acting"
   // card, and the settings screen (./admin) the company pages mount.
-  "assistant-widget": "0.3.1",
+  "assistant-widget": "0.3.2",
   // 0.6.0 for the onEvent producer hook (optional, so the emitted route
   // needs no change); 0.5.0 was the column editor and unread marks. The emitted router imports
   // `createStatus`, `deleteStatus`, `markTicketRead` and friends; none exist
@@ -363,7 +363,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // alert email — pinned for the same lockfile reason.
   // 0.1.2 (the customer list): its comms range moves to ^0.5.0 with comms 0.5.
   // 0.2.0: showTechnical on the messages console (create-app 0.36).
-  "comms-widget": "0.2.0",
+  "comms-widget": "0.2.1",
   // 0.2.0 (Tenancy 2b-4b): AI mentions per company — the handlers and route
   // table, the metered runner, the Anthropic engine (./anthropic), the screen.
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.

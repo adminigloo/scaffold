@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/invoicing",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Invoices with line items and payments: server-owned totals in integer cents, part-payment tracking with automatic status, overdue detection, and a token so a customer can view and pay their invoice without an account.",
   "license": "UNLICENSED",
   "type": "module",
@@ -43,7 +43,7 @@
   "peerDependencies": {
     "drizzle-orm": "catalog:peers",
     "zod": "catalog:peers",
-    "@adminigloo/comms": "^0.5.0"
+    "@adminigloo/comms": "^0.6.0"
   },
   "devDependencies": {
     "@adminigloo/comms": "workspace:^",

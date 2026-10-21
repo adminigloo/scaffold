@@ -1,5 +1,16 @@
 # @adminigloo/catalog
 
+## 0.4.0
+
+### Minor Changes
+
+- ed86e90: Delete a company (create-app 0.37): `forgetTenant(db, tenantId)` from the new `@adminigloo/catalog/server` entry (the root stays importable in a browser) takes every row this package keeps for one company — its store's products, prices, stock and grants — children first, each statement filtered by the company's id, on the caller's transaction. Returns the rows each table lost; refuses an empty id and the site's own ("*"). Proved per package on PGlite with `@adminigloo/testing/forget`: every table planted for two companies, the first forgotten, nothing of the second touched.
+
+### Patch Changes
+
+- Updated dependencies [ed86e90]
+  - @adminigloo/permissions@0.3.0
+
 ## 0.3.0
 
 ### Minor Changes

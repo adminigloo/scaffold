@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/audience",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Keep staff, testers, automation and a named list of people out of an app's numbers — and clean the numbers already polluted. Stored rules, marks read as a NOT EXISTS anti-join (analytics rows are never rewritten), preview → apply → remove that restores counts exactly, an Excluded: N (by reason) line, display-only admin components, and a build-failing guard for reads that forget the predicate.",
   "license": "UNLICENSED",
   "type": "module",

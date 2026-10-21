@@ -1,5 +1,30 @@
 # @adminigloo/commerce
 
+## 0.4.0
+
+### Minor Changes
+
+- ed86e90: A sale recorded by hand (in person): `recordStoreSale(db, tenantId, { lines, method, reference, customer, sendReceipt, requestKey }, { recordedBy, onOrder })` and `POST v1/admin/sales` (`store.manage`; in `STORE_ADMIN_ROUTES`, so a companies project's isolation proof drives it). Products and quantities from the company's own catalog at the catalog's prices — a different price needs a reason, kept on the line with the catalog price; paid by cash, check, card terminal or other (`STORE_SALE_METHODS`); stock taken from free stock exactly once (a double press with the same `requestKey` is one sale); the company's next order number; on its orders list (`paidBy`, `paymentReference`, `inPerson`, `buyer` — the name and phone staff knew, kept as who paid, never as where to send it — and each line's `priceChanged`), where `<StoreAdmin>` reads it as "Paid in person · Check #1042" and offers no "Mark as sent"; and the store's `onOrder` told once (with `buyer`) (the customer's timeline, the receipt only when asked and there's an email). `createStoreAdminHandlers` takes `onOrder` and `orderPrefix`. New nullable `orders.payment_method`, `payment_reference`, `recorded_by`.
+  
+  **Upgrading from 0.3:** run `sql/upgrade-0.3-to-0.4.sql` (safe twice) or `pnpm db:generate`.
+- ed86e90: Delete a company (create-app 0.37): `forgetTenant(db, tenantId)` from `@adminigloo/commerce/store` takes every row this package keeps for one company — its orders with their items and shipments, checkouts, store alerts, discount codes and store settings — children first, each statement filtered by the company's id, on the caller's transaction. Returns the rows each table lost; refuses an empty id and the site's own ("*"). Proved per package on PGlite with `@adminigloo/testing/forget`: every table planted for two companies, the first forgotten, nothing of the second touched.
+- 2de60cb: A screen's primary action can sit in its host page's header, beside the page title, like every other page's. Each screen takes `actionsInHeader` and stops drawing its own buttons; the page renders the screen's companion in its header — `<InvoicesLedgerActions>` (New invoice), `<EstimatesQueueActions>` (New estimate, "Starting…" while it starts), `<ScheduleCalendarActions>` (New visit), `<CustomersActions>` (Add customer, Import, Export), `<FeedbackEpicsActions>` (New epic) — which opens the screen's own form below. The two halves talk through DOM events, so they need no shared parent (separate client islands on a server page). `<StoreAdmin>` and `<BookingAdmin>` take `actionsInHeader` to leave "See your store" and "Open the booking page" to the page's header. Each companion takes the host's button class.
+  
+  invoicing-widget also: `<InvoicesLedger initialFilter="overdue">` opens on a filter (any of the chips' statuses; anything else opens All) and follows a new one, so a page can open on `?status=overdue`; and a payment's line names its method once — "$810.81 · Check #1042", not "Check · Check #1042" (`paymentWords`, exported). estimator-widget's `initialFilter` now ignores a value that isn't a filter and follows a new one. The New invoice form puts the cursor in its first field.
+  
+  commerce also: `<StoreAdmin>`'s own "See your store" (without `actionsInHeader`) carries ↗, "(opens in a new tab)" for screen readers and rel="noopener noreferrer", like the booking page link.
+
+### Patch Changes
+
+- 2de60cb: No "Something went wrong" where the cause is knowable. An answer that isn't the package's own (a platform's error page, a proxy, a timeout) is read by its status — signed out (401), no permission (403), not here any more (404), too big (413), too many tries (429), the site not answering (502, 503) or too slow (504) — instead of "Unexpected answer from the server (502)." or the generic line; the generic sentence is left for a truly unknown failure. A dropped connection on the customer's invoice page says so, and "Couldn't reach the server." tells the person to check their internet connection.
+- Updated dependencies [ed86e90]
+- Updated dependencies [ed86e90]
+- Updated dependencies [ed86e90]
+- Updated dependencies [2de60cb]
+  - @adminigloo/catalog@0.4.0
+  - @adminigloo/permissions@0.3.0
+  - @adminigloo/stripe@0.5.0
+
 ## 0.3.0
 
 ### Minor Changes

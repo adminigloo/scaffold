@@ -1,5 +1,19 @@
 # @adminigloo/estimator
 
+## 0.7.0
+
+### Minor Changes
+
+- ed86e90: Past records with their real dates (staff and server paths only; no public route takes a date): `createEstimate(…, { occurredAt })` and `POST v1/admin/estimates` with `occurredAt` make the estimate on that day (its number is that year's); `setEstimateStatus(…, { occurredAt })` and `POST v1/admin/estimates/{id}/status` with `occurredAt` record it sent, accepted, declined or reopened that day — `"sent"` with a date emails nobody, and the customer is never told. A date in the future, before 2000 or before the estimate was made is refused (400 `invalid`, naming `occurredAt`). A date alone ("2025-06-14") is that day where the company is (its time zone; noon there, never moved before the record it belongs to or past the moment it was typed in), and "today" is today there — a morning entry in Tokyo is not "in the future"; a full timestamp is the instant it names. A past quote whose time ran out before it was typed in expires silently: the sweep (cron, POST admin expire, a link opened, the list) moves it to expired and emails nobody, never "your quote has expired" about last year's quote. A past date on the staff routes needs its own key, `estimator.history` ("Enter past records", owner and admin by default); without it, 403 in plain words. New nullable `entered_at`/`entered_by` say when and by whom it was typed in; the staff detail carries `enteredAt`/`enteredBy` and "Entered from past records" on its timeline. `HISTORY_EARLIEST`, `historyDateSchema` and `parseHistoryDate` are exported.
+  
+  **Upgrading from 0.6:** two nullable columns on `estimator_estimates` (`pnpm db:generate`, or the README's two `ALTER TABLE`s).
+- ed86e90: Delete a company (create-app 0.37): `forgetTenant(db, tenantId)` from the root takes every row this package keeps for one company — its price book, estimates and their lines, quote links, photos' records, measurements, website keys and settings — children first, each statement filtered by the company's id, on the caller's transaction. Returns the rows each table lost; refuses an empty id and the site's own ("*"). Proved per package on PGlite with `@adminigloo/testing/forget`: every table planted for two companies, the first forgotten, nothing of the second touched.
+
+### Patch Changes
+
+- Updated dependencies [ed86e90]
+  - @adminigloo/comms@0.6.0
+
 ## 0.6.0
 
 ### Minor Changes

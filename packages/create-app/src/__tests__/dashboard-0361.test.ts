@@ -202,9 +202,7 @@ describe("upgrading to 0.36.1", () => {
     expect(notes).toContain("@adminigloo/tenancy-widget 0.4");
     expect(upgradeNotesFor(answers({ tenantNoun: "Company" }), "0.36.0").join("\n")).not.toContain("Under the numbers");
     // Nothing about the dashboard for a single business (later releases' notes are their own tests').
-    expect(upgradeNotesFor(answers({ ...EVERYTHING, tenantNoun: "none" }), "0.36.0").join("
-")).not.toContain("dashboard no longer hides");
-    expect(upgradeNotesFor(answers(EVERYTHING), "0.36.1").join("
-")).not.toContain("2 things left to set up");
+    expect(upgradeNotesFor(answers({ ...EVERYTHING, tenantNoun: "none" }), "0.36.0").join("\n")).not.toContain("dashboard no longer hides");
+    expect(upgradeNotesFor(answers(EVERYTHING), "0.36.1").join("\n")).not.toContain("2 things left to set up");
   });
 });

@@ -34,8 +34,11 @@ describe("package.json", () => {
     }
   });
 
-  it("declares the audience as an OPTIONAL peer (^0.2: the row source's IS NULL filter), never a dependency — vendorable without it", () => {
-    expect(pkg.peerDependencies["@adminigloo/audience"]).toBe("^0.2.0");
+  it("declares the audience as an OPTIONAL peer (0.2 or later: the row source's IS NULL filter), never a dependency — vendorable without it", () => {
+    // The audience's current minor (a release moving it must not turn this red), and never below 0.2.
+    const [major, minor] = (JSON.parse(readFileSync(new URL("../../../audience/package.json", import.meta.url), "utf8")) as { version: string }).version.split(".");
+    expect(pkg.peerDependencies["@adminigloo/audience"]).toBe(`^${major}.${minor}.0`);
+    expect(Number(minor)).toBeGreaterThanOrEqual(2);
     expect(pkg.peerDependenciesMeta["@adminigloo/audience"]).toEqual({ optional: true });
     expect(pkg.dependencies["@adminigloo/audience"]).toBeUndefined();
   });

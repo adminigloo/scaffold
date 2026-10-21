@@ -1,5 +1,21 @@
 # @adminigloo/testing
 
+## 0.3.0
+
+### Minor Changes
+
+- ed86e90: `@adminigloo/testing/forget`: prove that forgetting one company takes its rows from EVERY table and nobody else's. `plantCompanyRows(db, [a, b], { links })` reads the database itself (pg_catalog) and plants one row per company in every table with `tenant_id` and every table hanging off one (an estimate's lines, an order's items — `links` names children with no foreign key); `companyRowCounts` and `forgetReport(db, planted, { forgotten, kept, before })` then name the tables still holding the forgotten company's rows (`left`) and the ones that lost another company's (`lost`). A table a package adds later is planted and checked without anyone listing it.
+
+### Patch Changes
+
+- Updated dependencies [ed86e90]
+- Updated dependencies [ed86e90]
+- Updated dependencies [ed86e90]
+- Updated dependencies [2de60cb]
+  - @adminigloo/permissions@0.3.0
+  - @adminigloo/stripe@0.5.0
+  - @adminigloo/tenancy@0.8.0
+
 ## 0.2.4
 
 ### Patch Changes

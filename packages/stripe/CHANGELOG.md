@@ -1,5 +1,17 @@
 # @adminigloo/stripe
 
+## 0.5.0
+
+### Minor Changes
+
+- ed86e90: Delete a company (create-app 0.37): `forgetTenant(db, tenantId)` from the root takes every row this package keeps for one company — its connected account's record here (the account itself stays at Stripe) and the card events recorded for it — children first, each statement filtered by the company's id, on the caller's transaction. Returns the rows each table lost; refuses an empty id and the site's own ("*"). Proved per package on PGlite with `@adminigloo/testing/forget`: every table planted for two companies, the first forgotten, nothing of the second touched.
+- 2de60cb: When Stripe says no, everyone hears it in their own words. `describeStripeFailure(error)` reads a failed call — the site not signed up for Connect (Stripe's 400 "You can only create new accounts if you've signed up for Connect…") or its platform profile unfinished, a wrong (401) or restricted (403) key, no key at all (`stripeNotSetUp`), Stripe not answering (5xx, or the SDK's own dropped connection — a database that is down, "fetch failed" or ECONNREFUSED from anything but the Stripe SDK, is "something went wrong on our side", never Stripe's outage), its rate limit, any other refusal — and gives the owner one plain sentence ("Card payments aren't switched on for this site yet. We've told whoever runs it."), Stripe's own words and the link to fix it for the site's staff, and the type, code, status and request id for the log. `createConnectAdminHandlers` answers Connect Stripe with it (never "Something went wrong" again), reports every failure through `onError` with what it means (`context.stripe`), and hands Stripe's sentence and the fix link (`error.staff`) only to callers its new `staffDetail` option says are the site's staff.
+
+### Patch Changes
+
+- Updated dependencies [ed86e90]
+  - @adminigloo/permissions@0.3.0
+
 ## 0.4.1
 
 ### Patch Changes

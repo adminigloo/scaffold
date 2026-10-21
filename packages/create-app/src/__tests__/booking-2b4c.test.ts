@@ -130,8 +130,8 @@ describe("packages, versions and the upgrade notes", () => {
     expect(packagesFor(answers())).toEqual(expect.arrayContaining(["@adminigloo/booking", "@adminigloo/booking-widget"]));
     const versions = packageVersions();
     // The release lines: booking 0.3 (forgetTenant), booking-widget 0.4 (polish 3: actionsInHeader). The lines, not the patches.
-    expect(versions["booking"]).toMatch(/^0.3.d+$/);
-    expect(versions["booking-widget"]).toMatch(/^0.4.d+$/);
+    expect(versions["booking"]).toMatch(/^0\.3\.\d+$/);
+    expect(versions["booking-widget"]).toMatch(/^0\.4\.\d+$/);
     expect(upgradeNotesFor(answers(COMPANIES), "0.31.0").join("\n")).toContain("upgrade-0.1-to-0.2.sql");
     // Nothing more about booking for a 0.32 project (a later release's notes, e.g. 0.34's store, aren't this test's).
     expect(upgradeNotesFor(answers(COMPANIES), "0.32.0").filter((note) => /booking|calls/i.test(note))).toEqual([]);

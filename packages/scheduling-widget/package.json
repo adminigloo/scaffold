@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/scheduling-widget",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "The client half of AdminIgloo scheduling, for a business whose crews drive to the customer: a visit picker for the business's website and the customer's manage-your-visit page, plus the staff screens under ./admin (a day/week calendar per crew with drag-to-move, today's route for a crew on a phone, and the business settings). React is its only peer.",
   "license": "UNLICENSED",
   "type": "module",
