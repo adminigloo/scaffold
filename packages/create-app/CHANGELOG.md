@@ -1,5 +1,11 @@
 # create-adminigloo-app
 
+## 0.37.1
+
+### Patch Changes
+
+- A generated project's unit tests no longer read keys from .env.local: the unit project's new src/test/setup-unit.ts copies only plain settings (NEXT_PUBLIC_APP_URL and the like) and never a key, token, secret or database address, so `pnpm test` behaves on a laptop as in CI. The integration project still loads all of it. Before, a developer's Stripe test keys reached the isolation proof and its Connect route called Stripe for real.
+
 ## 0.37.0
 
 ### Minor Changes
