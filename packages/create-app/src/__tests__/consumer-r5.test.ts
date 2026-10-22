@@ -124,6 +124,17 @@ describe("each person's own emails: what they do", () => {
     expect(mail).toContain("retryable: mayRetry(outcome.error)");
   });
 
+  it("the links are never signed with a key written in the project: with neither secret, one made when the server starts", async () => {
+    const p = await plan(ALMANAC);
+    const glue = code(file(p, "src/server/digest.ts"));
+    const linkSecret = glue.slice(glue.indexOf("function linkSecret()"), glue.indexOf("\n}", glue.indexOf("function linkSecret()")));
+    expect(linkSecret).toContain("if (env.EMAIL_LINK_SECRET) return env.EMAIL_LINK_SECRET;");
+    expect(linkSecret).toContain('return randomBytes(32).toString("hex");');
+    // A key in the file would be every project's: anyone could sign anybody's link.
+    expect(linkSecret).not.toMatch(/return\s*["'`]/);
+    expect(file(p, "src/server/__tests__/digest.test.ts")).toContain("is never signed with a key anybody can read");
+  });
+
   it("the cron ends by 50 seconds, refuses without CRON_SECRET, and says when people are still waiting", async () => {
     const p = await plan(ALMANAC);
     const cron = code(file(p, "app/api/cron/digest/route.ts"));
@@ -180,6 +191,7 @@ describe("each person's own emails: what they do", () => {
       "by the header: the provider's POST stops that one email and leaves the others",
       "by the link: the unsubscribe page's form, signed out",
       "another person's signed link is refused, and nobody's choice changes",
+      "is never signed with a key anybody can read",
       "is staff only",
       "renders any person's digest for a chosen day, and never sends it",
     ]) {

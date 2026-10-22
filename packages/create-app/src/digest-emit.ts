@@ -124,7 +124,7 @@ export const EMAIL_KINDS = defineEmailKinds({
 
 export function renderDigestGlue(answers: Answers): string {
   const scope = answers.scope;
-  return `import { createHmac } from "node:crypto";
+  return `import { createHmac, randomBytes } from "node:crypto";
 import { and, inArray, isNotNull, isNull } from "drizzle-orm";
 import { users } from "${scope}/auth/schema";
 import {
@@ -175,14 +175,18 @@ function appUrl(): string {
 /**
  * What every unsubscribe link is signed with: EMAIL_LINK_SECRET, else one
  * made from CLERK_SECRET_KEY (which a deployment already requires) —
- * HMAC-SHA256(CLERK_SECRET_KEY, "adminigloo:digest:v1") — else, on a laptop
- * with neither, a fixed local key. Changing it retires every link already
- * sent (the preferences page still works).
+ * HMAC-SHA256(CLERK_SECRET_KEY, "adminigloo:digest:v1") — else, with neither
+ * (a laptop, a server nobody has labelled a deployment), a key made when this
+ * server starts and written down nowhere. NEVER A KEY IN THIS FILE: it would
+ * be the same in every project, and anybody who read it could sign a link
+ * that stops, or starts, anybody's emails. Links that one signs stop working
+ * when the server restarts. Changing the key retires every link already sent
+ * (the preferences page still works).
  */
 function linkSecret(): string {
   if (env.EMAIL_LINK_SECRET) return env.EMAIL_LINK_SECRET;
   if (env.CLERK_SECRET_KEY) return createHmac("sha256", env.CLERK_SECRET_KEY).update("adminigloo:digest:v1").digest("hex");
-  return "local-only-email-link-key:7d2c9e4a1b6f3058aa41";
+  return randomBytes(32).toString("hex");
 }
 
 /** Every digest step that failed: the log, and /admin/errors. */
@@ -642,8 +646,11 @@ offered nowhere and sends nothing.
 
 export function renderDigestTest(answers: Answers): string {
   const scope = answers.scope;
-  return `import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+  return `import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { users } from "${scope}/auth/schema";
+import { signUnsubscribe } from "${scope}/digest";
 import { digestSends, digestSubscriptions } from "${scope}/digest/schema";
 import { db } from "@/db";
 import { seedPermissions } from "@/permissions/seed";
@@ -662,7 +669,8 @@ import { tenancy } from "@/server/tenancy";
  *   - no email provider: "skipped", never "failed", never reported
  *   - one-click unsubscribe by the header's POST and by the page's link, one
  *     email stopped and every other left alone
- *   - another person's signed link is refused
+ *   - another person's signed link is refused, and so is one signed with
+ *     any key written in src/server/digest.ts
  *   - the preview is staff only, and never sends
  */
 vi.mock("@/db", async () => {
@@ -863,6 +871,16 @@ describe("one-click unsubscribe", () => {
     expect(response.status).toBe(400);
     expect((await digests.preferencesOf(fx.bo)).choices.morning).toBe(true);
     expect((await digests.preferencesOf(fx.ann)).choices.morning).toBe(true);
+  });
+
+  it("is never signed with a key anybody can read: one written in src/server/digest.ts signs nothing here", async () => {
+    // With neither EMAIL_LINK_SECRET nor CLERK_SECRET_KEY (the unit tests
+    // never load a key), a key in the file would be every project's, and
+    // anyone could sign a link that stops or starts anybody's emails.
+    const source = readFileSync(fileURLToPath(new URL("../digest.ts", import.meta.url)), "utf8");
+    const written = [...source.matchAll(/"([^"\\\\\\n]{8,})"/g)].map((match) => match[1]!);
+    expect(written.length).toBeGreaterThan(0);
+    for (const key of written) expect(digests.readToken(signUnsubscribe(key, fx.ann, "morning")), key).toBeNull();
   });
 });
 

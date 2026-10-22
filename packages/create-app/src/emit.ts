@@ -2284,7 +2284,7 @@ export function renderEnvModule(answers: Answers): string {
     serverSpreads.push('EMAIL_LINK_SECRET: z.string().min(32, "at least 32 characters").optional()');
     runtime.push("EMAIL_LINK_SECRET: process.env.EMAIL_LINK_SECRET");
     features.push(
-      `{ name: "Unsubscribe links", vars: ["EMAIL_LINK_SECRET"], disables: "Nothing while CLERK_SECRET_KEY is set: the key is made from it. Rotating Clerk's key, or setting this later, retires the unsubscribe links in emails already sent (each person's preferences page still works)." }`,
+      `{ name: "Unsubscribe links", vars: ["EMAIL_LINK_SECRET"], disables: "Nothing while CLERK_SECRET_KEY is set: the key is made from it. With neither, a key is made each time the server starts, and the links it signs stop working when it restarts. Rotating Clerk's key, or setting this later, retires the unsubscribe links in emails already sent (each person's preferences page still works)." }`,
       `{ name: "Morning digests", vars: ["CRON_SECRET", "RESEND_API_KEY"], disables: "The daily digests: /api/cron/digest answers 401 until the secret is set, and without RESEND_API_KEY every digest is recorded as skipped and nothing goes out. People can still choose them at /account/email." }`,
     );
   }
