@@ -122,7 +122,9 @@ into a unique index. A replayed cron, two instances at once, a retried
 request: nobody gets two. With `idempotentSends`, a failure the provider may
 take later (`retryable`) and a send a crash cut off are tried again while the
 day lasts (three times in all, backing off from 5 minutes) with the same
-`idempotencyKey`; without it, each is tried once. **No provider configured**
+`idempotencyKey` (always 1 to 256 visible ASCII characters, what Resend
+takes: an alert key with a space, an accent or too much length is hashed,
+never cut); without it, each is tried once. **No provider configured**
 is `skipped`: recorded once, never retried, never reported.
 
 ## Unsubscribing

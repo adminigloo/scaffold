@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { and, eq, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import type { PgDatabase } from "drizzle-orm/pg-core";
 import { newId } from "@adminigloo/db";
@@ -40,7 +41,13 @@ export interface DigestOutgoing {
   readonly text: string;
   /** RFC 8058's one-click pair: List-Unsubscribe and List-Unsubscribe-Post. */
   readonly headers: Readonly<Record<string, string>>;
-  /** The same on every retry of this email (`digest:{kind}:{person}:{day}`): give it to a provider that drops repeats. */
+  /**
+   * The same on every retry of this email, and never shared by two: give it
+   * to a provider that drops repeats. `digest:{kind}:{person}:{day}` or
+   * `alert:{kind}:{person}:{key}` — or, when that isn't 1 to 256 visible
+   * ASCII characters (an alert key with a space or an accent, a long one),
+   * `{digest|alert}:{kind}:sha256:{hash of the person and the key}`.
+   */
   readonly idempotencyKey: string;
   /** For the delivery log: "digest:morning", "alert:price-alerts". */
   readonly template: string;
@@ -246,6 +253,20 @@ function validHour(value: unknown): value is number {
 
 function absolute(base: string, path: string): string {
   return new URL(path, base.endsWith("/") ? base : `${base}/`).toString();
+}
+
+/**
+ * The provider's idempotency key for one email. Resend takes 1 to 256
+ * visible ASCII characters (so does @adminigloo/email, which refuses any
+ * other key, and the email with it): an alert key like "AAPL above 200" or
+ * "Zürich:2026-10-21" is hashed instead, and so is one too long to fit —
+ * cutting it would give two different alerts one key, and the provider would
+ * drop the second as a repeat.
+ */
+function idempotencyKeyFor(type: "digest" | "alert", kind: string, userId: string, key: string): string {
+  const plain = `${type}:${kind}:${userId}:${key}`;
+  if (/^[\x21-\x7e]{1,256}$/.test(plain)) return plain;
+  return `${type}:${kind}:sha256:${createHash("sha256").update(`${userId}\n${key}`).digest("base64url")}`;
 }
 
 export function createDigests(options: CreateDigestsOptions): Digests {
@@ -629,7 +650,7 @@ export function createDigests(options: CreateDigestsOptions): Digests {
                 html: email.html,
                 text: email.text,
                 headers: headersFor(person.userId, digest.key),
-                idempotencyKey: `digest:${digest.key}:${person.userId}:${entry.window.day}`,
+                idempotencyKey: idempotencyKeyFor("digest", digest.key, person.userId, entry.window.day),
                 template: `digest:${digest.key}`,
                 userId: person.userId,
                 kind: digest.key,
@@ -727,7 +748,7 @@ export function createDigests(options: CreateDigestsOptions): Digests {
       html: email.html,
       text: email.text,
       headers: headersFor(person.userId, kind.key),
-      idempotencyKey: `alert:${kind.key}:${person.userId}:${dedupeKey}`.slice(0, 256),
+      idempotencyKey: idempotencyKeyFor("alert", kind.key, person.userId, dedupeKey),
       template: `alert:${kind.key}`,
       userId: person.userId,
       kind: kind.key,

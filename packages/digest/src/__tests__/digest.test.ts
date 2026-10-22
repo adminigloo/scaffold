@@ -478,6 +478,38 @@ describe("alert emails", () => {
     expect(await digests.sendAlert({ userId: "user_ann", ...alert, dedupeKey: "other" })).toEqual({ status: "no-person" });
   });
 
+  it("hand the provider an idempotency key it takes, whatever the alert's own key holds, the same on a retry", async () => {
+    const digests = instance();
+    // A long sign-in id, as a host that keys people by address has.
+    const long = "pat.morgan-whitfield+alerts@example-company-with-a-long-name.com";
+    people[long] = person(long, "Pat");
+    await digests.savePreferences("user_ann", { choices: { "price-alerts": true } });
+    await digests.savePreferences(long, { choices: { "price-alerts": true } });
+    const alert = { kind: "price-alerts", subject: "It moved", text: "It moved.", html: html`<p>It moved.</p>` };
+    // Two keys of the longest length allowed that differ only at the end.
+    const near = "nyc:2026-10-21:".padEnd(198, "x");
+    const cases: Array<[string, string]> = [
+      ["user_ann", "AAPL above 200"],
+      ["user_ann", "Zürich:2026-10-21"],
+      [long, `${near}:a`],
+      [long, `${near}:b`],
+    ];
+    for (const [userId, dedupeKey] of cases) expect(await digests.sendAlert({ ...alert, userId, dedupeKey })).toEqual({ status: "sent" });
+    const keys = sent.map((message) => message.idempotencyKey);
+    // Resend's rule, and @adminigloo/email's (it refuses any other key, so the
+    // alert could never go): 1 to 256 visible ASCII characters, no spaces.
+    for (const key of keys) expect(key).toMatch(/^[\x21-\x7e]{1,256}$/);
+    // Never one key for two emails: the provider would drop the second.
+    expect(new Set(keys).size).toBe(cases.length);
+
+    answer = () => ({ status: "failed", error: "503", retryable: true });
+    expect(await digests.sendAlert({ ...alert, userId: "user_ann", dedupeKey: "AAPL above 210" })).toMatchObject({ status: "failed" });
+    answer = () => ({ status: "sent" });
+    now = new Date(now.getTime() + 6 * 60_000);
+    expect(await digests.sendAlert({ ...alert, userId: "user_ann", dedupeKey: "AAPL above 210" })).toEqual({ status: "sent" });
+    expect(sent.at(-1)?.idempotencyKey).toBe(sent.at(-2)?.idempotencyKey);
+  });
+
   it("forgets a person's every row", async () => {
     const digests = instance();
     await subscribeBoth(digests);
