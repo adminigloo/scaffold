@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
 import { VisitPicker } from "__SCOPE__/scheduling-widget";
+import { metadataFor } from "@/seo";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = metadataFor({
+  path: "/book-visit",
   title: "Book a visit",
   description: "Pick a time that suits you and we'll come to you. Times are shown in our local time.",
-  alternates: { canonical: "/book-visit" },
-};
+});
 
 /**
  * The booking page: a customer picks a service, a day and a time, and leaves

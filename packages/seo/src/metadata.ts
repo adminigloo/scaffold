@@ -36,6 +36,14 @@ export interface PageInput {
   description?: string;
   /** The page's share image; falls back to the site default. */
   image?: ShareImageInput | readonly ShareImageInput[];
+  /**
+   * The page has a share image of its own from Next's file convention (an
+   * `opengraph-image.tsx` in its route segment), so no image list is written
+   * at all (0.3): any explicit list — the site default, or an empty one —
+   * would hide it. Almanac's per-city cards rendered at 200 and were never
+   * named in a single og:image tag until this. Not with `image`.
+   */
+  ownImage?: boolean;
   /** Open Graph type. Default "website". */
   type?: OpenGraphPageType;
   /** For `type: "article"`. */
@@ -123,6 +131,14 @@ export interface PageMetadata {
   robots: RobotsMeta;
 }
 
+type WithoutImages<T> = T extends unknown ? Omit<T, "images"> : never;
+
+/** `pageMetadata(site, { ownImage: true, … })`: the same, with no image lists for the route's own card to be found (0.3). */
+export interface PageMetadataWithOwnImage extends Omit<PageMetadata, "openGraph" | "twitter"> {
+  openGraph: WithoutImages<PageOpenGraph>;
+  twitter: Omit<PageTwitter, "images">;
+}
+
 /**
  * The title with the brand in it exactly once: "Pricing" → "Pricing | Brand".
  * A title that already names the brand (as a whole word, any case) gets no
@@ -188,11 +204,25 @@ function absoluteMap(site: Site, map: Readonly<Record<string, string>> | undefin
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-export function pageMetadata(site: Site, page: PageInput): PageMetadata {
+export function pageMetadata(site: Site, page: PageInput & { ownImage: true }): PageMetadataWithOwnImage;
+export function pageMetadata(site: Site, page: PageInput): PageMetadata;
+export function pageMetadata(site: Site, page: PageInput): PageMetadata | PageMetadataWithOwnImage {
   const issues = new Issues("pageMetadata");
   issues.check(typeof page.path === "string" && page.path.trim() !== "", "path is required: the canonical is the page itself");
   issues.check(typeof page.title === "string" && oneLine(page.title) !== "", "title is required");
+  issues.check(!(page.ownImage && page.image !== undefined), "ownImage and image together: a page with its own opengraph-image file names no image here");
   issues.throwIfAny();
+  const built = buildPageMetadata(site, page);
+  if (!page.ownImage) return built;
+  // The route's own opengraph-image is found by Next only when no list is
+  // given; the large card is still the one that shows it.
+  const { images: _og, ...openGraph } = built.openGraph;
+  const { images: _twitter, ...twitter } = built.twitter;
+  return { ...built, openGraph, twitter: { ...twitter, card: "summary_large_image" } };
+}
+
+function buildPageMetadata(site: Site, page: PageInput): PageMetadata {
+  const issues = new Issues("pageMetadata");
 
   const canonical = pageUrl(site, page.path);
   const title = brandTitle(site, page.title, { brand: page.brand });

@@ -901,12 +901,13 @@ function renderSingleBookPage(answers: Answers): string {
   const scope = answers.scope;
   return `import type { Metadata } from "next";
 import { BookingWidget } from "${scope}/booking-widget";
+import { metadataFor } from "@/seo";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = metadataFor({
+  path: "/book",
   title: "Book a call",
   description: "Pick a time that suits you for a call. Times are shown in your own time zone.",
-  alternates: { canonical: "/book" },
-};
+});
 
 /**
  * The booking page (Tenancy 2b-4c): a customer picks a call type, a day and a

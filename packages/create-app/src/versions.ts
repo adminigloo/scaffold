@@ -157,7 +157,14 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.3.0 (Tenancy 2a, D8): a per-message From name and Reply-To, so a
   // company's email carries its name on the platform's verified address.
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
-  email: "0.4.1",
+  // 0.5.0 (create-app 0.40): `headers` (RFC 8058's List-Unsubscribe pair) and
+  // `idempotencyKey` on a message — the digest's one-click unsubscribe and its
+  // retries that never send twice. src/server/mail.ts passes both.
+  email: "0.5.0",
+  // First release (create-app 0.40): each person's email choices, the daily
+  // digest in their own zone through a ledger, one-click unsubscribe, the
+  // staff preview and the screens (./ui).
+  digest: "0.1.0",
   // First releases, all three proven on adminigloo.com before they were
   // offered here — the same publish → dogfood → template rhythm feedback
   // followed. The emitted routers import from each unconditionally, so a
@@ -406,7 +413,9 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   audience: "0.3.0",
   // 0.2.0: a whole-segment * in the path list (a company's token pages,
   // /t/{web address}/quote/…) and a LocalBusiness without an address.
-  seo: "0.2.0",
+  // 0.3.0 (create-app 0.40): `dataset()`, `pageMetadata({ ownImage })` and
+  // robots.txt as one group (`combine: true`), which the generated robots.ts asks for.
+  seo: "0.3.0",
   // 0.2.0 (Tenancy 2b-4c): book a call per company — the admin and public
   // handlers and their route tables, the open/closed gate, the company caps,
   // reminders and the pinned calendar reader. 0.1 had none of these.

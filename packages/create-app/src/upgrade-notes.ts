@@ -1,4 +1,4 @@
-import { consumerProduct, tenantLabel, tenantLabelPlural, type Answers } from "./answers.js";
+import { consumerProduct, personEmails, tenantLabel, tenantLabelPlural, type Answers } from "./answers.js";
 import { cardPaymentsSetup } from "./payments-emit.js";
 import { personalPlans } from "./personal-plans-emit.js";
 
@@ -33,6 +33,48 @@ export function upgradeNotesFor(answers: Answers, fromVersion: string): string[]
   const companies = answers.tenantNoun !== "none";
   const noun = tenantLabel(answers).toLowerCase();
   const crossed = (version: string) => (compareVersions(fromVersion, version) ?? -1) < 0;
+  // 0.40.0 — SEO by default (every project), and each person's own emails
+  // (a consumers project with --email).
+  if (crossed("0.40.0")) {
+    notes.push(
+      "SEO by default: new files give every project a tab icon and home-screen icons (app/icon.tsx, app/apple-icon.tsx, " +
+        "/icon-192.png, /icon-512.png, /manifest.webmanifest) and a share card at a fixed address (/og.png, named by src/seo.ts) " +
+        "drawn from your name and src/brand.ts — keep src/brand.ts in step with --color-accent in app/globals.css, or put your own " +
+        "art in app/ and delete the generated files. ONE list of public pages (src/site-pages.ts) now feeds the sitemap, /llms.txt " +
+        "and the new /llms-full.txt, and `dynamicPages()` in src/dynamic-pages.ts adds database-backed pages to all three: if you " +
+        "added pages to app/sitemap.ts or wrote your own llms.txt, move them there and take the generated version (or keep yours " +
+        "and delete the generated file). The sitemap and both llms files are cached for an hour (they were built once, at build).",
+      "proxy.ts is generated now: every answer under a private route (sign-in, sign-up, /account, /admin, /api, /setup, /welcome …) " +
+        "carries X-Robots-Tag, from src/seo-paths.ts — the same list robots.txt reads" +
+        (answers.includeAnalytics ? ", and every AI crawler's read of any page is logged after the answer (app/llms.txt no longer logs its own)" : "") +
+        ". If you had changed proxy.ts (redirects, a sign-in check), it comes back as proxy.ts.new: move your additions into `handle`. " +
+        "The generated public pages export `metadataFor({ path, title, description })` (src/seo.ts) for their canonical and share card.",
+    );
+    if (answers.includeSeo) {
+      notes.push(
+        "With --seo (seo 0.3): the path list moved from src/seo.ts to src/seo-paths.ts (src/seo.ts re-exports `paths`), so the proxy " +
+          "can read it; its public paths are src/site-pages.ts's. robots.txt is ONE group now (`combine: true`): the AI crawlers are " +
+          "named in the `*` group and the private rules written once — the same answer for every bot and path. New in the package: " +
+          "`dataset()` for a page that publishes a table of data, and `pageMetadata(site, { ownImage: true })` for a page with its own " +
+          "opengraph-image.tsx.",
+      );
+    }
+    if (personEmails(answers)) {
+      notes.push(
+        "Each person's own emails (@adminigloo/digest 0.1, email 0.5): run `pnpm db:generate` and `pnpm db:migrate` — three new " +
+          "tables (digest_preferences, digest_subscriptions, digest_sends) and nothing else moves. Everyone starts with every email OFF. " +
+          "Write your morning digest's sections in src/digests.ts (a server function of the person and the day returning " +
+          "{ title, text, html } or null); until a digest has one it is offered nowhere. /account/email is each person's preferences " +
+          "page (a new Email tab), the sign-up page offers each digest unticked (app/(site)/sign-up renders <SignUpEmailSlot />: if " +
+          "you changed that page, add the slot under Clerk's form), and /welcome keeps what they ticked. /api/cron/digest sends one " +
+          "email per person per local day (vercel.json runs it daily; hourly on Vercel Pro) and needs CRON_SECRET; every email has " +
+          "one-click unsubscribe, and staff with \"Preview people's emails\" see anybody's digest at /api/email/v1/preview. " +
+          "src/server/mail.ts's sendEmail takes `headers` and `idempotencyKey` and answers { status, error, retryable } on a failure " +
+          "(code reading `.status` is unchanged). Set EMAIL_LINK_SECRET (32+ characters) if you'd rather the unsubscribe links not " +
+          "be signed with a key made from CLERK_SECRET_KEY.",
+      );
+    }
+  }
   // 0.39.0 — consumer fit: plans without a shop, one person per account,
   // crawlable public pages, one plan presentation, conversions.
   if (crossed("0.39.0")) {

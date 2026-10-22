@@ -206,14 +206,37 @@ describe("per class and per bot", () => {
     expect(body).toBe(txt({ ai: { training: "deny" } }));
   });
 
-  it("combine: one group per rule set, agents listed together, same answers", () => {
+  it("combine: one group per rule set, the allowed bots in the * group, same answers", () => {
     const options: RobotsPolicyOptions = { ai: { training: "deny" }, combine: true };
     const policy = robotsPolicy(site, options);
     const separate = txt({ ai: { training: "deny" } });
     const combined = robotsTxt(policy);
-    expect(policy.rules).toHaveLength(3);
+    // The * group with every allowed bot named in it, and the refused bots' Disallow: / group.
+    expect(policy.rules).toHaveLength(2);
+    expect(policy.rules[0]?.userAgent).toEqual(expect.arrayContaining(["*", "OAI-SearchBot", "Claude-User"]));
+    expect(policy.rules[1]).toMatchObject({ disallow: ["/"] });
     for (const bot of [...TRAINING, ...AI_SEARCH, ...USER_FETCH, "Googlebot"]) {
       for (const path of ["/", "/admin", "/admin-guide", "/elm-street-church/spring-hunt"]) {
+        expect([bot, path, isAllowedByRobots(combined, bot, path)]).toEqual([bot, path, isAllowedByRobots(separate, bot, path)]);
+      }
+    }
+  });
+});
+
+describe("combine with every bot allowed: ONE group (0.3)", () => {
+  it("is a single group naming * and every AI bot, its rules written once, with the same answers as one group per token", () => {
+    const crawlers = [...KNOWN_CRAWLERS, ...ROBOTS_CONTROL_TOKENS];
+    const policy = robotsPolicy(site, { crawlers, combine: true });
+    expect(policy.rules).toHaveLength(1);
+    const agents = policy.rules[0]!.userAgent as string[];
+    expect(agents[0]).toBe("*");
+    for (const bot of [...TRAINING, ...AI_SEARCH, ...USER_FETCH]) expect(agents).toContain(bot);
+    const combined = robotsTxt(policy);
+    const separate = robotsTxt(robotsPolicy(site, { crawlers }));
+    expect(combined.split(/\r?\n/).filter((line) => line.startsWith("Disallow:")).length).toBe(policy.rules[0]!.disallow!.length);
+    expect(combined.length).toBeLessThan(separate.length / 5);
+    for (const bot of [...TRAINING, ...AI_SEARCH, ...USER_FETCH, "Googlebot", "SomeNewBot"]) {
+      for (const path of ["/", "/admin", "/admin/x", "/admin-guide", "/elm-street-church/spring-hunt", "/e?code=1"]) {
         expect([bot, path, isAllowedByRobots(combined, bot, path)]).toEqual([bot, path, isAllowedByRobots(separate, bot, path)]);
       }
     }

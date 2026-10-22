@@ -1881,10 +1881,10 @@ describe("every generated link points at a route in the same plan", () => {
     // whole property rather than against the one page.
     const plan = await planEmit(TEMPLATE_DIR, "/out", answers(overrides));
     const patterns = routePatternsIn(plan);
-    const paths = quotedStringsIn(
-      plan.files.get(join("app", "sitemap.ts")) ?? "",
-      "PUBLIC_PAGES",
-    );
+    // The list moved to src/site-pages.ts (create-app 0.40): the sitemap and
+    // both llms files read it. Each entry's `path`, never its words.
+    const pages = plan.files.get(join("src", "site-pages.ts")) ?? "";
+    const paths = [...pages.slice(pages.indexOf("const SITE_PAGES")).matchAll(/path: "([^"]+)"/g)].flatMap((m) => m[1] ?? []);
 
     expect(paths, "the sitemap lists nothing at all").not.toEqual([]);
     for (const path of paths) {
@@ -1904,9 +1904,11 @@ describe("every generated link points at a route in the same plan", () => {
     // beneath it, and `/api/` covers route handlers that are not pages at all.
     const plan = await planEmit(TEMPLATE_DIR, "/out", answers(overrides));
     const patterns = routePatternsIn(plan);
+    // The list moved to src/seo-paths.ts (create-app 0.40): robots.txt and
+    // the proxy's X-Robots-Tag both read it.
     const disallowed = quotedStringsIn(
-      plan.files.get(join("app", "robots.ts")) ?? "",
-      "DISALLOWED",
+      plan.files.get(join("src", "seo-paths.ts")) ?? "",
+      "PRIVATE_PATHS",
     );
 
     expect(disallowed).not.toEqual([]);
@@ -2502,6 +2504,19 @@ const UNLINKED_BY_DESIGN: Readonly<Record<string, string>> = {
     "are — those two escape this list only because Next emits them from " +
     "metadata files instead of a route handler. A nav link to a plain-text " +
     "routing table would be a link to a page no person wants.",
+  "/llms-full.txt":
+    "llms.txt's full text (create-app 0.40), read by answer engines and " +
+    "linked from llms.txt itself, never from a page a person reads.",
+  "/og.png":
+    "the site's share card (create-app 0.40): every page names it in its " +
+    "og:image tag, which is how a link preview finds it.",
+  "/icon-192.png":
+    "the install manifest's icon (create-app 0.40), named by " +
+    "/manifest.webmanifest, never by a page.",
+  "/icon-512.png": "the same, at 512 px.",
+  "/unsubscribe":
+    "the page every email's unsubscribe link opens (create-app 0.40): the " +
+    "link carries that person's signed token, so there is no href to put in a nav.",
   "/invite/[token]":
     "arrives in an email. The URL carries a one-time token, so there is no " +
     "stable href to put in a nav, and a link to it in the header would be a " +
@@ -2631,7 +2646,14 @@ describe("every generated page is reachable from somewhere", () => {
       // With --analytics, whose /welcome is excused too (create-app 0.39).
       answers({ businessModel: "both", adminShell: "full", includeEmail: true, includeAnalytics: true }),
     );
-    const routes = new Set(routeKeysIn(plan));
+    // And a project whose customers are people, with email: its /unsubscribe
+    // page is excused too (create-app 0.40).
+    const people = await planEmit(
+      TEMPLATE_DIR,
+      "/out",
+      answers({ tenantNoun: "none", audience: "consumers", businessModel: "subscription", adminShell: "full", includeEmail: true }),
+    );
+    const routes = new Set([...routeKeysIn(plan), ...routeKeysIn(people)]);
     for (const key of Object.keys(UNLINKED_BY_DESIGN)) {
       expect(routes.has(key), `${key} is excused and no longer exists`).toBe(true);
     }

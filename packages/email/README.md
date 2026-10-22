@@ -63,7 +63,36 @@ didn't get a receipt.
 `email.send(message)` never throws for a delivery problem; it returns an
 outcome with `status` (`sent`, `skipped`, `failed`) and `log` (the row to
 insert). A message has `to`, `subject`, `text` and/or `html`, and optionally
-`template`, `tenantId`, `metadata`, and (0.3) `fromName` and `replyTo`.
+`template`, `tenantId`, `metadata`, (0.3) `fromName` and `replyTo`, and (0.5)
+`headers` and `idempotencyKey`.
+
+### Extra headers and retries (0.5)
+
+- **`headers`** adds message headers, such as RFC 8058's one-click
+  unsubscribe pair that Gmail and Yahoo ask bulk senders for:
+
+  ```ts
+  await email.send({
+    to, subject, text, html,
+    headers: {
+      "List-Unsubscribe": `<${oneClickUrl}>`,
+      "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+    },
+  });
+  ```
+
+  Names are letters, digits and hyphens; each value is one line (a CR or LF
+  would start a header you never wrote) of at most 2,000 characters; at most
+  20. The headers the message's own fields write (From, To, Cc, Bcc, Subject,
+  Reply-To, Sender, Date, Message-ID and the MIME headers) are refused with
+  `EmailMessageInvalidError` (`field: "headers"`), on a laptop with no key as
+  well, so the mistake is found before it ships.
+- **`idempotencyKey`** makes a repeat of the same message a no-op at the
+  provider: Resend's `Idempotency-Key`, honoured for 24 hours. Give it the
+  same key on every retry of one message (`digest:morning:{person}:{day}`),
+  and a retry after a timeout never sends it twice.
+
+A message with neither reaches a custom transport exactly as before.
 
 ## Companies (Tenancy 2a)
 

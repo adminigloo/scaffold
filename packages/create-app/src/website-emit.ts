@@ -312,10 +312,13 @@ export function buildPlatformAudienceHandlers() {
 }
 
 /**
- * A crawler reading one of this site's own pages (the llms.txt route asks),
- * recorded for this site. Never fails the request it describes.
+ * A crawler reading one of this site's own pages (the proxy asks, after the
+ * answer has gone — create-app 0.40), recorded for this site. Never fails the
+ * request it describes; with no database there is nothing to record it in,
+ * and nothing to report.
  */
 export async function recordSiteCrawlerHit(input: { userAgent: string | null; path: string; ip: string | null; country: string | null }): Promise<void> {
+  if (!isDbConfigured(db)) return;
   try {
     await analytics.recordCrawlerHit({ tenantId: SITE_ANALYTICS, ...input, pathPatterns: PATH_PATTERNS });
   } catch (error) {
@@ -418,6 +421,7 @@ function imports(answers: Answers, extra: { tenancy: boolean }): string {
   type AudienceUser,
 } from "${scope}/audience";`,
     `import { users } from "${scope}/auth/schema";`,
+    `import { isDbConfigured } from "${scope}/db";`,
     `import { isDeployed } from "${scope}/env";`,
     `import { clientIpFromHeaders } from "${scope}/observability/request";`,
     `import { FIRM_WIDE } from "${scope}/permissions";`,

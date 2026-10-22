@@ -451,9 +451,12 @@ describe("the rest of the project knows the estimator is there", () => {
   it("puts /estimate in the public nav, the sitemap and llms.txt, and keeps /quote/ out of every index", async () => {
     const p = await plan();
     expect(file(p, "src", "nav.ts")).toContain('{ href: "/estimate", label: "Get an estimate" }');
-    expect(file(p, "app", "sitemap.ts")).toContain('"/estimate"');
-    expect(file(p, "app", "llms.txt", "route.ts")).toContain("/estimate");
-    expect(file(p, "app", "robots.ts")).toContain('"/quote/"');
+    // One list each (create-app 0.40): src/site-pages.ts for the sitemap and
+    // both llms files, src/seo-paths.ts for robots.txt and the proxy's header.
+    expect(file(p, "src", "site-pages.ts")).toContain('"/estimate"');
+    expect(file(p, "app", "sitemap.ts")).toContain("SITE_PAGES");
+    expect(file(p, "src", "llms.ts")).toContain("SITE_PAGES");
+    expect(file(p, "src", "seo-paths.ts")).toContain('"/quote/"');
     const nav = file(p, "src", "components", "admin", "AdminNav.tsx");
     expect(nav).toContain("/admin/estimates");
     expect(nav).toContain("/admin/estimator/settings");

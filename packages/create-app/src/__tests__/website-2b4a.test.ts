@@ -61,10 +61,11 @@ describe("packages, overlays, versions and capabilities", () => {
     expect(packagesFor(answers({ includeSeo: true }))).toContain("@adminigloo/seo");
     expect(packagesFor(answers()).filter((name) => /\/(analytics|audience|seo)$/.test(name))).toEqual([]);
     const versions = packageVersions();
-    // The release lines (analytics 0.5: a conversion that counts once; audience 0.3: forgetTenant).
+    // The release lines (analytics 0.5: a conversion that counts once; audience 0.3: forgetTenant;
+    // seo 0.3: dataset(), ownImage and robots.txt as one group, create-app 0.40).
     expect(versions.analytics).toMatch(/^0\.5\.\d+$/);
     expect(versions.audience).toMatch(/^0\.3\.\d+$/);
-    expect(versions.seo).toMatch(/^0\.2\.\d+$/);
+    expect(versions.seo).toMatch(/^0\.3\.\d+$/);
   });
 
   it("selects the analytics overlays by their conditions", () => {
@@ -236,11 +237,14 @@ describe("this site's own numbers, and a single business", () => {
 describe("search basics", () => {
   it("--seo: one path list on the package, each company's token pages private, its pages listed", async () => {
     const p = await plan({ ...COMPANIES, ...FIELD });
-    const seo = file(p, "src", "seo.ts");
+    // The one path list, beside src/seo.ts where the proxy can read it (create-app 0.40).
+    const seo = file(p, "src", "seo-paths.ts");
     expect(seo).toContain("definePaths({");
     for (const path of ['"/t/*/quote"', '"/t/*/visit"', '"/t/*/invoice"']) expect(seo).toContain(path);
     expect(code(seo)).not.toContain('"/t/",');
-    expect(file(p, "app", "robots.ts")).toContain("robotsPolicy(site, { crawlers: [...KNOWN_CRAWLERS, ...ROBOTS_CONTROL_TOKENS] })");
+    expect(file(p, "src", "seo.ts")).toContain('import { paths } from "@/seo-paths";');
+    // robots.txt as ONE group (create-app 0.40, seo 0.3's combine).
+    expect(file(p, "app", "robots.ts")).toContain("robotsPolicy(site, { crawlers: [...KNOWN_CRAWLERS, ...ROBOTS_CONTROL_TOKENS], combine: true })");
     const sitemap = file(p, "app", "sitemap.ts");
     expect(sitemap).toContain("PUBLIC_COMPANY_PAGES");
     expect(sitemap).toContain("isNull(tenants.suspendedAt)");
@@ -254,7 +258,8 @@ describe("search basics", () => {
   it("without --seo: today's files, and company pages stay out of search", async () => {
     const p = await plan({ ...COMPANIES, ...FIELD, includeSeo: false });
     expect(file(p, "src", "seo.ts")).not.toContain("@adminigloo/seo");
-    expect(file(p, "app", "robots.ts")).toContain('"/t/"');
+    // The list robots.txt reads (create-app 0.40: src/seo-paths.ts).
+    expect(file(p, "src", "seo-paths.ts")).toContain('"/t/"');
     const gate = file(p, "src", "components", "PublicCompanyGate.tsx");
     expect(gate).toContain("robots: { index: false, follow: false }");
     expect(gate).not.toContain("localBusiness");
@@ -262,9 +267,13 @@ describe("search basics", () => {
 
   it("--seo in a single business keeps its own pages listed and robots on the package", async () => {
     const p = await plan({ ...SINGLE, ...FIELD });
-    expect(file(p, "src", "seo.ts")).toContain('"/book-visit"');
+    // The public list is src/site-pages.ts's (create-app 0.40), read by src/seo-paths.ts.
+    expect(file(p, "src", "site-pages.ts")).toContain('"/book-visit"');
+    expect(file(p, "src", "seo-paths.ts")).toContain("public: SITE_PAGES.map((page) => page.path)");
     expect(file(p, "app", "sitemap.ts")).not.toContain("tenants");
-    expect(file(p, "app", "llms.txt", "route.ts")).toContain("recordSiteCrawlerHit(facts)");
+    // Every AI crawler's read is logged by the proxy now, on every page (create-app 0.40).
+    expect(file(p, "proxy.ts")).toContain("recordSiteCrawlerHit(facts)");
+    expect(file(p, "app", "llms.txt", "route.ts")).not.toContain("recordSiteCrawlerHit");
   });
 });
 

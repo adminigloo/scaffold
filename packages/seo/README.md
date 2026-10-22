@@ -29,7 +29,7 @@ No tables, so nothing can clash with an app's own (Riddler Go already has `aeo_q
 | `@adminigloo/seo` | `defineSite`, `definePaths`, `isIndexable`; `pageMetadata` / `siteMetadata`; the JSON-LD builders, `graph`, `serializeJsonLd`, `unresolvedRefs`; `robotsPolicy` / `robotsTxt` / `robotsHeader`; `sitemapEntries`, `toNextSitemap`, `buildSitemaps`; `llmsTxt` / `llmsFullTxt`; `submitUrls` / `indexNowKeyFile` | One `site.ts` (your URL, name, share image, path list, `indexable`). Then one line per Next metadata file: `app/robots.ts`, `app/sitemap.ts`, `generateMetadata` on each page, `app/llms.txt/route.ts`, `app/llms-full.txt/route.ts`. One `X-Robots-Tag` line in your proxy. The content registry (from the lists your pages already render). `INDEXNOW_KEY`, the key-file route and a `submitUrls` call where you publish |
 | `+ @adminigloo/analytics` (if the app runs it) | robots.txt that follows the installed analytics' bot list exactly | Pass analytics' list as `robotsPolicy(site, { crawlers })` (section 3) |
 | `+ ./react` | `<JsonLd/>` | Put it in your layout (Organization, WebSite) and on each page (that page's graph) |
-| `+ ./og` | A 1200×630 share card with brand, eyebrow, title, description, badge, footer, an optional hero image and an optional gradient background; fonts fetched once (or passed as bytes), falling back to the default font | `app/opengraph-image.tsx` (and `twitter-image.tsx` re-exporting it), with your colours and font |
+| `+ ./og` | A 1200×630 share card with brand, eyebrow, title, description, badge, footer, an optional hero image and an optional gradient background; fonts fetched once (or passed as bytes), falling back to the default font | `app/og.png/route.ts` for the site's card, at a fixed address `defineSite({ image })` can name (0.3), and a route's own `opengraph-image.tsx` for a page's card, with your colours and font |
 
 ### Not included
 
@@ -96,7 +96,8 @@ export const site = defineSite({
   url: process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
   name: "Riddler Go",
   description: "Host puzzle events for any occasion. Guests join with a QR code and race the leaderboard on their phones.",
-  image: { url: "/opengraph-image", width: 1200, height: 630, alt: "Riddler Go" },
+  // A FIXED address (section 7): Next 16 serves a root opengraph-image.tsx under a hashed name.
+  image: { url: "/og.png", width: 1200, height: 630, alt: "Riddler Go" },
   twitter: { site: "@riddlergo" },
   paths,
   // PRODUCTION ONLY. Never NODE_ENV: it is "production" in every build, previews included.
@@ -155,7 +156,7 @@ export const metadata = pageMetadata(site, {
             path: "/pricing",
             id: `plan-${plan.key}`,
             name: plan.name,
-            image: "/opengraph-image",
+            image: "/og.png",
             offers: { price: plan.monthly, currency: "USD", billing: "month" },
           }),
     ),
@@ -171,6 +172,7 @@ The rules `pageMetadata` enforces:
 - **noindex is decided in one place.** `noindex: true` on the page, a `noindex` or `private` path in the list, or `indexable: false` on the site. Off production the page also asks Bing to keep no cached copy (`nocache`; Google ignores it).
 - **The layout sets no canonical and no `og:url`.** A layout's values are inherited by every page that does not set its own, so either one would point those pages at the homepage.
 - **Bad data throws.** An empty title, or an article time with no time zone, is a `SeoError`. In a `generateMetadata` fed by database rows, catch it and fall back, or one bad row is a 500.
+- **A page with its own card** (an `opengraph-image.tsx` in its route segment) passes `ownImage: true` (0.3): no image list is written, so Next names the route's own card. Any explicit list, even the site default or an empty one, hides it.
 
 ### 3. robots.txt and the noindex header
 
@@ -203,7 +205,7 @@ What `robotsPolicy` writes:
   - `search`: OAI-SearchBot, Claude-SearchBot, PerplexityBot, YouBot, Amzn-SearchBot, Meta-WebIndexer, Google-CloudVertexBot.
   - `userFetch`: ChatGPT-User, Claude-User, Perplexity-User, MistralAI-User, DuckAssistBot, Meta-ExternalFetcher, Amzn-User. These fetch because a person asked an assistant about you. **A deny here is mostly a request:** OpenAI says robots.txt may not apply to ChatGPT-User, Perplexity says Perplexity-User generally ignores it, Meta says Meta-ExternalFetcher may bypass it, and Amazon says Amzn-User may not follow it. It binds Claude-User and DuckAssistBot.
 
-  A bot named in its own group ignores the `*` group, so an allowed bot's group repeats every private rule. Each token gets its own group, so even a parser that mishandles several `User-agent` lines in one group reads it right. Pass `combine: true` for the compact form. `nameAiBots: false` leaves allowed bots unnamed.
+  A bot named in its own group ignores the `*` group, so an allowed bot's group repeats every private rule. Each token gets its own group by default, so even a parser that mishandles several `User-agent` lines in one group reads it right. `combine: true` writes one group per distinct rule set, the allowed bots named in the `*` group itself (0.3): with every bot allowed, robots.txt is ONE group (a 900-line file becomes about 40 lines), with the same answer for every bot and path. `nameAiBots: false` leaves allowed bots unnamed.
 - **Per bot:** `bots: { GPTBot: "deny", "Google-Extended": "deny" }`, by analytics name or robots token. This beats the bot's class. A token the list does not know gets its own group (letters, digits, `_` and `-` only). A bot the list knows that has no token (WhatsApp, "Other bot") is refused, since nothing could be written for it.
 - **Classic crawlers:** `searchEngines`, `social` and `seoTools` work the same way. Allowed (the default), they are covered by `*`. GoogleOther, Google's general research fetcher, is "other": no group, covered by `*`.
 - **Sitemap:** `Sitemap: https://…/sitemap.xml`, or `sitemaps: [...]`, or `false`.
@@ -326,8 +328,27 @@ await submitUrls(site, [`/templates/${slug}`], { key: process.env.INDEXNOW_KEY! 
 
 ### 7. The share image
 
+**The site's default card goes at a fixed address** (0.3): a route handler at
+`app/og.png/route.ts`, named in `defineSite({ image: "/og.png" })`. Next 16
+serves a root `opengraph-image.tsx` under a hashed name
+(`/opengraph-image-2bab54?…`), so the site record can't name it and
+`"/opengraph-image"` is a 404.
+
+```ts
+// app/og.png/route.ts — built once, at build time
+import { shareImageResponse } from "@adminigloo/seo/og";
+export const dynamic = "force-static";
+export function GET() {
+  return shareImageResponse({ brand: "Riddler Go", title: "Puzzle events for any occasion", footer: "riddlergo.com" });
+}
+```
+
+A page's OWN card can use the file convention (it is found for that route
+only), with `pageMetadata(site, { ownImage: true, … })` so no image list
+hides it:
+
 ```tsx
-// app/opengraph-image.tsx
+// app/templates/[slug]/opengraph-image.tsx
 import { shareImageResponse, SHARE_IMAGE_SIZE } from "@adminigloo/seo/og";
 export const size = SHARE_IMAGE_SIZE;
 export const contentType = "image/png";
@@ -409,6 +430,7 @@ Every builder takes `(site, input)`, checks its input and throws one `SeoError` 
 | `faqPage` | `{page}#faq` | question and answer each, no repeated question. For a page with no `webPage()` node; otherwise use `webPage({ faq })` |
 | `article`, `blogPosting` | `{page}#article` | at least one author, publish date, modified not before published; `mainEntityOfPage` → `{page}#webpage`, publisher → organization |
 | `itemList` | `{page}#itemlist` | each item links to its own page |
+| `dataset` (0.3) | `{page}#dataset` | a table the page publishes: name, a description of 50 to 5,000 characters (`richResult: false` lifts it), its files as DataDownloads (`distribution`, or `csv: "/path.csv"`) with a MIME type each, `variables` (text or `{ name, unitText, description }`), ISO 8601 `temporalCoverage` (`"2026-08-14/.."` while it grows), `spatialCoverage`, `dateModified` not before `datePublished`. `creator` and `publisher` default to the site's organization written inline with its name, so the page alone says who made it; `isAccessibleForFree` and `license` are never defaulted |
 | `person` | `{origin}/#person-{key}` | name; `sameAs` on other sites only; `worksFor` → organization |
 | `place` | `{page}#place` or `{origin}/#place-{name}` | type and `additionalType` from a closed list of real types; coordinates in range |
 | `touristAttraction` | `{page}#attraction` | as `place`, plus rating and reviews on the same node: one node per attraction |

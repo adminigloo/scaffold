@@ -235,13 +235,14 @@ export function websiteSection(answers: ProjectManifest["answers"]): string[] {
     lines.push(
       "### Search",
       "",
-      "- **One path list** (src/seo.ts, `paths`) drives robots.txt, the noindex tags and the sitemap, through @adminigloo/seo. Nothing is indexed off production. Replace SITE_DESCRIPTION: it is what search results and AI answers quote.",
+      "- **One path list** (src/seo-paths.ts, `paths`; its public pages are src/site-pages.ts's) drives robots.txt, the noindex tags, the proxy's X-Robots-Tag and the sitemap, through @adminigloo/seo. Nothing is indexed off production. Replace SITE_DESCRIPTION: it is what search results and AI answers quote.",
       ...(companies
         ? [
             `- **Each ${noun}'s public pages are in search**: its own title, canonical address and business details (LocalBusiness, from its company settings — fill in the address for a local result), and every active ${noun}'s pages in /sitemap.xml. Token pages (quotes, visits, invoices) stay out.`,
           ]
         : []),
-      "- **robots.txt names the AI crawlers** and lets them in, so AI assistants can find and quote the site. To keep AI training out, see app/robots.ts.",
+      "- **robots.txt names the AI crawlers** and lets them in, so AI assistants can find and quote the site, in ONE group (its rules written once). To keep AI training out, see app/robots.ts.",
+      "- **Page metadata:** every generated public page exports `metadataFor({ path, title, description })` (src/seo.ts): its own canonical, the brand in the title once, the share card. A page with its own opengraph-image.tsx passes `ownImage: true`; a page that publishes a table of data can add `dataset()` JSON-LD with its CSV.",
       "",
     );
   }
@@ -257,6 +258,21 @@ export const WEBSITE_2B4B_NOT_INCLUDED: readonly string[] = [
   "**Checking a page on a laptop's own address** (localhost and private networks are never fetched, for safety). Check a deployed address.",
   "**Fixing the problems for you.** The search check lists what to change; the changes are yours to make.",
 ];
+
+/** SEO by default (create-app 0.40), in every project. */
+export function seoDefaultsSection(answers: ProjectManifest["answers"]): string[] {
+  return [
+    "### Search basics",
+    "",
+    "- **Icons and a share card from your name and brand colour** (src/brand.ts): the tab icon, the home-screen icons, /manifest.webmanifest and /og.png, the card every page without its own shows. Keep src/brand.ts in step with app/globals.css when you rebrand.",
+    "- **One list of public pages** (src/site-pages.ts) for /sitemap.xml, /llms.txt and /llms-full.txt, and **one hook for database-backed pages** (`dynamicPages()` in src/dynamic-pages.ts): a page per row lands in all three. The sitemap and both llms files are cached for an hour.",
+    "- **X-Robots-Tag** on every answer under a private route (sign-in, sign-up, /account, /admin, /api, /setup, /welcome …), from the same list robots.txt reads (src/seo-paths.ts), sent by proxy.ts.",
+    ...(answers.includeAnalytics
+      ? ["- **Every AI crawler's read is logged** by proxy.ts, on every page (not only /llms.txt), after the answer has gone: a person's request costs one user-agent test, and never loads the database there."]
+      : []),
+    "",
+  ];
+}
 
 /** The "Book a call" section (Tenancy 2b-4c). Empty without the answer. */
 export function bookingSection(answers: ProjectManifest["answers"]): string[] {
@@ -603,6 +619,19 @@ export function renderProjectReadme(manifest: ProjectManifest): string {
             ...(shell ? ["- Who pays for what: /admin (subscribers by plan, MRR and ARR, new and cancelled, failed payments, free to paid) and /admin/billing/subscribers (each person, and Give free months)."] : []),
           ]
         : []),
+      ...(answers.includeEmail
+        ? [
+            "",
+            "### Each person's emails",
+            "",
+            "- **Their choice, off until they say yes.** At /account/email each person ticks the digests and alert kinds they want (src/digests.ts), and picks the hour their digests come in their own time zone (7 AM, the zone from their browser at sign-up, else `SITE_TIME_ZONE`). The sign-up page offers each digest beside the form, unticked.",
+            "- **Your digest's sections** go in src/digests.ts: each a server function of the person and the day returning `{ title, text, html }` (made with the escaping `html` tag), or null when it has nothing to say. A day where every section is null sends nothing; a digest with no section is offered nowhere.",
+            "- **One email per person per local day**, at or after their hour: /api/cron/digest (vercel.json, daily on Hobby; run it hourly on Pro). A second run sends nobody anything (the `digest_sends` ledger), it ends by 50 seconds, and with no RESEND_API_KEY every digest is recorded as skipped, never an error.",
+            "- **Alert emails:** `digests.sendAlert({ userId, kind, dedupeKey, subject, text, html })` (src/server/digest.ts) emails only the people who chose that kind, once per key.",
+            "- **One-click unsubscribe** on every email (RFC 8058's List-Unsubscribe headers, which Gmail and Yahoo show as their own button) and a signed link to /unsubscribe that works without signing in. Each stops only that one email.",
+            `- **The preview:** /api/email/v1/preview?person={id}&digest=morning&day=2026-10-21 renders anybody's digest for any day, exactly as it would go, and sends nothing${shell ? " (staff with \"Preview people's emails\", admin and cs_lead)" : " (staff with staff.digest.preview)"}.`,
+          ]
+        : []),
       "",
     );
   } else {
@@ -626,6 +655,7 @@ export function renderProjectReadme(manifest: ProjectManifest): string {
     );
   }
 
+  lines.push(...seoDefaultsSection(answers));
   lines.push(...feedbackSection(answers));
   lines.push(...assistantSection(answers));
   lines.push(...alertsAndFilesSection(answers));

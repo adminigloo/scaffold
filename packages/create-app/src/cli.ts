@@ -703,6 +703,17 @@ export function nextSteps(answers: Answers, targetDir: string): string {
       ...(answers.adminShell !== "none" && answers.businessModel !== "none"
         ? ["You see who pays for what on /admin and at /admin/billing/subscribers."]
         : []),
+      // Each person's emails (create-app 0.40).
+      ...(answers.includeEmail
+        ? [
+            "",
+            "Each person chooses their own emails at /account/email (every one off",
+            "until they tick it, at sign-up or there). Write your morning digest's",
+            "sections in src/digests.ts; /api/cron/digest sends one per person per",
+            "day at their hour, and every email has one-click unsubscribe. Preview",
+            "anyone's at /api/email/v1/preview?person=<id>&digest=morning.",
+          ]
+        : []),
       "",
     );
   } else {

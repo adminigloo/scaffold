@@ -1262,6 +1262,163 @@ export function itemList(site: Site, input: ItemListInput): JsonLdNode {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Dataset (0.3)
+// ---------------------------------------------------------------------------
+
+/** A file a dataset can be downloaded as. */
+export interface DataDownloadInput {
+  /** The file: a path on this site ("/weather/nyc.csv") or an absolute URL. */
+  contentUrl: string;
+  /** Its MIME type: "text/csv", "application/json"… */
+  encodingFormat: string;
+  name?: string;
+}
+
+/** A measured variable: its name, or the name with a unit and a sentence. */
+export type VariableMeasuredInput = string | { name: string; unitText?: string; description?: string };
+
+export interface DatasetInput extends RichResultOption {
+  /** The page the dataset is on (its @id is `{canonical}#dataset`). */
+  path: string;
+  name: string;
+  /**
+   * What the data is, for a person who has never seen it. Google's Dataset
+   * result needs 50 to 5,000 characters (`richResult: false` lifts that).
+   */
+  description: string;
+  alternateName?: string | readonly string[];
+  keywords?: readonly string[];
+  /** What is measured: "Daily high temperature (°F)", or `{ name, unitText, description }`. */
+  variables?: readonly VariableMeasuredInput[];
+  /** ISO 8601: "2026-08-14/2026-10-20", or "2026-08-14/.." while it is still growing. */
+  temporalCoverage?: string;
+  /** Where it is about: a place name, or a place with coordinates. */
+  spatialCoverage?: string | { name: string; geo?: GeoInput };
+  /** The files it can be downloaded as. */
+  distribution?: readonly DataDownloadInput[];
+  /** Shorthand for one CSV download: the same as `distribution: [{ contentUrl, encodingFormat: "text/csv" }]`. */
+  csv?: string;
+  /** Who made it. Default: this site's organization, written inline (with its name) so the page alone says who. */
+  creator?: PartyInput;
+  /** Default: the same as `creator`. */
+  publisher?: PartyInput;
+  /** The terms it is offered under, as a URL (a page here or a licence's own page). */
+  license?: string;
+  /** Not defaulted: whether it costs nothing is a fact about the business. */
+  isAccessibleForFree?: boolean;
+  /** The sources it was built from, as URLs. */
+  isBasedOn?: readonly string[];
+  datePublished?: DateInput;
+  dateModified?: DateInput;
+  version?: string;
+  identifier?: string;
+  measurementTechnique?: string;
+  includedInDataCatalog?: { name: string; url?: string };
+  sameAs?: ReadonlyArray<string | null | undefined | false>;
+  id?: string;
+}
+
+/**
+ * A table of measurements a page publishes (Almanac's station highs, a day's
+ * results across 24 cities): a schema.org Dataset, with its files as
+ * DataDownloads. Use it where it is honest — the page IS the data, and a
+ * file of the same rows can be downloaded — never on a page that merely
+ * mentions numbers.
+ */
+export function dataset(site: Site, input: DatasetInput): JsonLdNode {
+  const issues = new Issues("dataset");
+  const canonical = safePageUrl(site, issues, input.path);
+  const description = text(issues, input.description, "description", true);
+  if (description !== undefined && input.richResult !== false) {
+    issues.check(
+      description.length >= 50 && description.length <= 5000,
+      `description must be 50 to 5,000 characters for Google's Dataset result (got ${description.length}); pass richResult: false to describe it anyway`,
+    );
+  }
+  const published = date(issues, input.datePublished, "datePublished");
+  const modified = date(issues, input.dateModified, "dateModified");
+  if (published && modified) issues.check(dateMillis(modified) >= dateMillis(published), "dateModified is before datePublished");
+  const files: DataDownloadInput[] = [...(input.distribution ?? []), ...(input.csv ? [{ contentUrl: input.csv, encodingFormat: "text/csv" }] : [])];
+  const distribution = files.map((file, i) => {
+    const encodingFormat = text(issues, file.encodingFormat, `distribution[${i}].encodingFormat`, true);
+    if (encodingFormat !== undefined) issues.check(/^[a-z]+\/[A-Za-z0-9.+-]+$/.test(encodingFormat), `distribution[${i}].encodingFormat must be a MIME type like "text/csv"`);
+    issues.check(typeof file.contentUrl === "string" && file.contentUrl !== "", `distribution[${i}].contentUrl is required`);
+    return {
+      "@type": "DataDownload",
+      encodingFormat,
+      contentUrl: url(site, issues, file.contentUrl, `distribution[${i}].contentUrl`),
+      name: text(issues, file.name, `distribution[${i}].name`, false),
+    };
+  });
+  const variables = (input.variables ?? []).map((variable, i) => {
+    if (typeof variable === "string") return text(issues, variable, `variables[${i}]`, true);
+    return {
+      "@type": "PropertyValue",
+      name: text(issues, variable.name, `variables[${i}].name`, true),
+      unitText: text(issues, variable.unitText, `variables[${i}].unitText`, false),
+      description: text(issues, variable.description, `variables[${i}].description`, false),
+    };
+  });
+  const place =
+    input.spatialCoverage === undefined
+      ? undefined
+      : typeof input.spatialCoverage === "string"
+        ? { "@type": "Place", name: text(issues, input.spatialCoverage, "spatialCoverage", true) }
+        : { "@type": "Place", name: text(issues, input.spatialCoverage.name, "spatialCoverage.name", true), geo: geo(issues, input.spatialCoverage.geo, "spatialCoverage.geo") };
+  // The site's organization INLINE by default — its name beside its @id —
+  // because the full node is usually only in the home page's graph, and a
+  // dataset read on its own page must still say who made it.
+  const siteOrg = { "@type": "Organization", "@id": organizationId(site), name: site.name, url: pageUrl(site, "/") };
+  const creator = input.creator === undefined ? siteOrg : party(site, issues, input.creator, "creator", "Organization");
+  const publisher = input.publisher === undefined ? creator : party(site, issues, input.publisher, "publisher", "Organization");
+  const alternateName =
+    input.alternateName === undefined
+      ? undefined
+      : (Array.isArray(input.alternateName) ? input.alternateName : [input.alternateName as string]).map((name, i) => text(issues, name, `alternateName[${i}]`, true));
+  const temporalCoverage = text(issues, input.temporalCoverage, "temporalCoverage", false);
+  if (temporalCoverage !== undefined) {
+    const [from, to, ...rest] = temporalCoverage.split("/");
+    const iso = (part: string | undefined) => part !== undefined && /^\d{4}(-\d{2}(-\d{2}(T\d{2}(:\d{2}(:\d{2}(\.\d+)?)?)?(Z|[+-]\d{2}:?\d{2})?)?)?)?$/.test(part);
+    issues.check(
+      rest.length === 0 && iso(from) && (to === undefined || to === ".." || iso(to)),
+      `temporalCoverage "${temporalCoverage}" must be ISO 8601: "2026-10-20", "2026-08-14/2026-10-20" or "2026-08-14/.."`,
+    );
+  }
+  return finish(issues, {
+    "@type": "Dataset",
+    "@id": nodeId(site, canonical, input.id, "dataset"),
+    name: text(issues, input.name, "name", true),
+    alternateName: alternateName && alternateName.length > 0 ? alternateName : undefined,
+    description,
+    url: canonical ?? undefined,
+    keywords: input.keywords && input.keywords.length > 0 ? input.keywords.join(", ") : undefined,
+    variableMeasured: variables.length > 0 ? variables : undefined,
+    temporalCoverage,
+    spatialCoverage: place,
+    distribution: distribution.length > 0 ? distribution : undefined,
+    creator,
+    publisher,
+    license: url(site, issues, input.license, "license"),
+    isAccessibleForFree: input.isAccessibleForFree,
+    isBasedOn: input.isBasedOn && input.isBasedOn.length > 0 ? input.isBasedOn.map((source, i) => url(site, issues, source, `isBasedOn[${i}]`)) : undefined,
+    datePublished: published,
+    dateModified: modified,
+    version: text(issues, input.version, "version", false),
+    identifier: text(issues, input.identifier, "identifier", false),
+    measurementTechnique: text(issues, input.measurementTechnique, "measurementTechnique", false),
+    includedInDataCatalog: input.includedInDataCatalog
+      ? {
+          "@type": "DataCatalog",
+          name: text(issues, input.includedInDataCatalog.name, "includedInDataCatalog.name", true),
+          url: url(site, issues, input.includedInDataCatalog.url, "includedInDataCatalog.url"),
+        }
+      : undefined,
+    sameAs: sameAs(site, issues, input.sameAs, "sameAs"),
+    inLanguage: site.language,
+  });
+}
+
 export interface PersonInput {
   name: string;
   /** What the @id is made from (default: the name). Use a stable key (a slug or user id) if names can change. */

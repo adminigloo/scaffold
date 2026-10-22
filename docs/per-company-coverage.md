@@ -62,6 +62,7 @@ project's isolation test.
 | `env` | Shared | reads the site's own settings when it starts; nothing in it belongs to a business |
 | `license` | Shared | checks the site's own licence key with the seller; one per site, not per business |
 | `observability` | Shared | the site owner's error log and health checks, across every business |
+| `digest` | Shared | each person's own email choices and digests, keyed by the person: they follow them, not any one business |
 | `create-app` | Shared | the generator itself; it writes the project and is never installed into it |
 
 ## When a company is deleted

@@ -8,6 +8,7 @@ import {
 import { DATA_CATEGORIES, SUBPROCESSORS } from "@/legal";
 import { PUBLISHER } from "@/legal-publisher";
 import { OperatorOnly } from "@/components/OperatorOnly";
+import { metadataFor } from "@/seo";
 
 /**
  * Its own canonical, and every page that has one sets it here rather than
@@ -16,12 +17,11 @@ import { OperatorOnly } from "@/components/OperatorOnly";
  * — a whole site declaring itself canonical to `/`, which asks Google to drop
  * all of it.
  */
-export const metadata: Metadata = {
+export const metadata: Metadata = metadataFor({
+  path: "/privacy",
   title: "Privacy",
-  description:
-    "What __DISPLAY_NAME__ holds about you, why, and everyone else who sees it.",
-  alternates: { canonical: "/privacy" },
-};
+  description: "What __DISPLAY_NAME__ holds about you, why, and everyone else who sees it.",
+});
 
 /**
  * The privacy policy.

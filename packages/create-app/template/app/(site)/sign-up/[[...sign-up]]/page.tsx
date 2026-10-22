@@ -6,6 +6,7 @@ import { safeReturnPath } from "@/redirect";
 import { AFTER_AUTH_PATH } from "@/tenancy";
 import { Card, CardBody, PageHeader } from "@/components/ui";
 import { OperatorOnly } from "@/components/OperatorOnly";
+import { SignUpEmailSlot } from "@/components/SignUpEmailSlot";
 
 /**
  * Clerk's hosted sign-up, mounted as a catch-all.
@@ -76,23 +77,30 @@ export default async function SignUpPage({
   // main pushes the footer off every screen and paints over the header's rule.
   return (
     <main className="grid min-h-[70vh] place-items-center px-6 py-12">
-      {/* WITH NO RETURN PATH, the person goes to AFTER_AUTH_PATH (the
-          company dashboard, which sends a new owner to onboarding). Without a
-          fallback Clerk uses its dashboard's "after sign-in" address — usually
-          "/" — and a new owner never meets "What's your company called?".
-          The other page's address is ALWAYS passed, so the link inside Clerk's
-          card stays on this site instead of Clerk's hosted page (TB-DEPLOY-11). */}
-      {/* THROUGH afterSignUpPath (create-app 0.39): with analytics, a new
-          sign-up passes through /welcome, which marks the visit "Signed up"
-          and sends them on — so the site's numbers show which pages bring
-          people who sign up. Without analytics it is the same path. */}
-      <SignUp
-        fallbackRedirectUrl={afterSignUpPath(AFTER_AUTH_PATH)}
-        forceRedirectUrl={back === null ? undefined : afterSignUpPath(back)}
-        signInUrl={
-          back === null ? "/sign-in" : `/sign-in?redirect_url=${encodeURIComponent(back)}`
-        }
-      />
+      <div className="flex flex-col items-center">
+        {/* WITH NO RETURN PATH, the person goes to AFTER_AUTH_PATH (the
+            company dashboard, which sends a new owner to onboarding). Without a
+            fallback Clerk uses its dashboard's "after sign-in" address — usually
+            "/" — and a new owner never meets "What's your company called?".
+            The other page's address is ALWAYS passed, so the link inside Clerk's
+            card stays on this site instead of Clerk's hosted page (TB-DEPLOY-11). */}
+        {/* THROUGH afterSignUpPath (create-app 0.39): with analytics, a new
+            sign-up passes through /welcome, which marks the visit "Signed up"
+            and sends them on — so the site's numbers show which pages bring
+            people who sign up. Without analytics it is the same path. */}
+        <SignUp
+          fallbackRedirectUrl={afterSignUpPath(AFTER_AUTH_PATH)}
+          forceRedirectUrl={back === null ? undefined : afterSignUpPath(back)}
+          signInUrl={
+            back === null ? "/sign-in" : `/sign-in?redirect_url=${encodeURIComponent(back)}`
+          }
+        />
+        {/* THE EMAIL OPT-IN (create-app 0.40): in a project whose customers
+            are people and that sends email, one UNTICKED box per digest
+            beside the form, and this browser's time zone (/welcome keeps
+            both). A slot generated in two variants: nothing anywhere else. */}
+        <SignUpEmailSlot />
+      </div>
     </main>
   );
 }

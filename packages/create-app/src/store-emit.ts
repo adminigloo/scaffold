@@ -609,12 +609,9 @@ export default async function StorePage() {
 function renderSingleStorefrontPage(answers: Answers): string {
   return `import type { Metadata } from "next";
 import { Storefront } from "${answers.scope}/commerce/widget";
+import { metadataFor } from "@/seo";
 
-export const metadata: Metadata = {
-  title: "Store",
-  description: "Buy from us online. You pay on Stripe's secure page.",
-  alternates: { canonical: "/store" },
-};
+export const metadata: Metadata = metadataFor({ path: "/store", title: "Store", description: "Buy from us online. You pay on Stripe's secure page." });
 
 export const dynamic = "force-dynamic";
 

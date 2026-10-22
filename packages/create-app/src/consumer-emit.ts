@@ -158,7 +158,7 @@ export const PERSONAL_ACCOUNT_RETIRED: readonly string[] = [
  */
 export function renderConsumerMail(answers: Answers): string {
   const scope = answers.scope;
-  return `import { createEmailSender, formatSenderAddress } from "${scope}/email";
+  return `import { createEmailSender, EmailTransportError, formatSenderAddress } from "${scope}/email";
 import { emailEvents } from "${scope}/email/schema";
 import { db } from "@/db";
 import { env } from "@/env";
@@ -204,14 +204,29 @@ export interface OutgoingEmail {
   readonly tenantId?: string | null;
   /** Ids only, never a token: this column outlives the token. */
   readonly metadata?: Record<string, string>;
+  /**
+   * Extra headers (create-app 0.40): the digests' RFC 8058 one-click
+   * unsubscribe pair (List-Unsubscribe, List-Unsubscribe-Post).
+   */
+  readonly headers?: Readonly<Record<string, string>>;
+  /**
+   * The same on every retry of one message: Resend drops the repeat, so a
+   * retry after a timeout never sends it twice (create-app 0.40).
+   */
+  readonly idempotencyKey?: string;
 }
+
+/** What happened to one email. \`retryable\` on a failure: the provider may take it later (a timeout, a 429, a 5xx). */
+export type SentEmail =
+  | { readonly status: "sent" | "skipped" }
+  | { readonly status: "failed"; readonly error: string; readonly retryable: boolean };
 
 /**
  * Send one email. Returns the provider's answer ("sent", "skipped" without a
  * key, "failed") and never throws: a message the provider refuses to build is
  * a "failed" with a log row, not an exception in the caller.
  */
-export async function sendEmail(email: OutgoingEmail): Promise<{ readonly status: "sent" | "skipped" | "failed" }> {
+export async function sendEmail(email: OutgoingEmail): Promise<SentEmail> {
   let outcome: Awaited<ReturnType<typeof sender.send>>;
   try {
     outcome = await sender.send({
@@ -222,6 +237,8 @@ export async function sendEmail(email: OutgoingEmail): Promise<{ readonly status
       template: email.template,
       ...(email.tenantId ? { tenantId: email.tenantId } : {}),
       metadata: email.metadata ?? {},
+      ...(email.headers ? { headers: email.headers } : {}),
+      ...(email.idempotencyKey ? { idempotencyKey: email.idempotencyKey } : {}),
     });
   } catch (cause) {
     const error = cause instanceof Error ? cause : new Error(String(cause));
@@ -236,11 +253,23 @@ export async function sendEmail(email: OutgoingEmail): Promise<{ readonly status
       error: error.message,
       metadata: email.metadata ?? {},
     });
-    return { status: "failed" };
+    // A message the package refused to build: sending it again won't help.
+    return { status: "failed", error: error.message, retryable: false };
   }
   // The provider's answer is the truth about the email; the log row is bookkeeping.
   await recordDelivery(outcome.log);
+  if (outcome.status === "failed") return { status: "failed", error: outcome.error.message, retryable: mayRetry(outcome.error) };
   return { status: outcome.status };
+}
+
+/**
+ * May the provider take this message later? Unreachable (no status), asked to
+ * slow down (429) or broken on its side (5xx): yes. Anything else — a bad
+ * address, an unverified domain — will fail the same way again.
+ */
+function mayRetry(error: Error): boolean {
+  if (!(error instanceof EmailTransportError)) return false;
+  return error.status === null || error.status === 429 || error.status >= 500;
 }
 
 /** Writes one delivery-log row and never throws. */

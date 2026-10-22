@@ -88,6 +88,7 @@ export const PER_COMPANY_COVERAGE: Readonly<Record<string, Status>> = {
   env: "shared:reads the site's own settings when it starts; nothing in it belongs to a business",
   license: "shared:checks the site's own licence key with the seller; one per site, not per business",
   observability: "shared:the site owner's error log and health checks, across every business",
+  digest: "shared:each person's own email choices and digests, keyed by the person: they follow them, not any one business",
   "create-app": "shared:the generator itself; it writes the project and is never installed into it",
 };
 

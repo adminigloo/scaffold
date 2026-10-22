@@ -50,6 +50,32 @@ export interface EmailMessage {
    * wrong person, and a refused send is one the caller logs and can see.
    */
   readonly replyTo?: string | null | undefined;
+  /**
+   * Extra message headers (0.5), e.g. RFC 8058's one-click unsubscribe pair:
+   *
+   *   headers: {
+   *     "List-Unsubscribe": "<https://yoursite.com/api/email/v1/unsubscribe?t=…>",
+   *     "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+   *   }
+   *
+   * Names are letters, digits and hyphens; values are one line (no CR, LF or
+   * other control character, at most 2,000 characters); at most 20 of them.
+   * The headers this package writes itself (From, To, Cc, Bcc, Subject,
+   * Reply-To, Sender, Date, Message-ID, the MIME headers) are refused: use
+   * the message's own fields. Anything else is `EmailMessageInvalidError`
+   * (`field: "headers"`), never silently dropped — a dropped unsubscribe
+   * header is a sender Gmail and Yahoo start filtering.
+   */
+  readonly headers?: Readonly<Record<string, string>> | undefined;
+  /**
+   * The same key on a repeat of this message makes the provider drop the
+   * repeat instead of sending it twice (0.5; Resend's `Idempotency-Key`,
+   * honoured for 24 hours). For a retry after a send that may have gone — a
+   * timeout, a crash between the send and the write that records it. 1 to
+   * 256 visible ASCII characters, no spaces (`field: "idempotencyKey"`
+   * otherwise). A custom transport receives it and decides for itself.
+   */
+  readonly idempotencyKey?: string | null | undefined;
 }
 
 /** A validated message, formatted, as the transport receives it. */
@@ -60,6 +86,10 @@ export interface OutboundEmail {
   readonly subject: string;
   readonly html: string | null;
   readonly text: string | null;
+  /** The message's extra headers, validated (0.5). Absent or null: none. */
+  readonly headers?: Readonly<Record<string, string>> | null;
+  /** The message's idempotency key, validated (0.5). Absent or null: none. */
+  readonly idempotencyKey?: string | null;
 }
 
 export interface TransportResult {
@@ -105,7 +135,7 @@ export type SkipReason = "no-transport";
 export class EmailMessageInvalidError extends Error {
   readonly name = "EmailMessageInvalidError";
   constructor(
-    readonly field: "to" | "subject" | "body" | "replyTo",
+    readonly field: "to" | "subject" | "body" | "replyTo" | "headers" | "idempotencyKey",
     reason: string,
   ) {
     super(`Refusing to send: ${field} ${reason}.`);
@@ -246,6 +276,11 @@ export function createEmailSender(options: CreateEmailSenderOptions): EmailSende
         messageReplyTo = formatSenderAddress(parsed, "replyTo");
       }
 
+      // Checked before the transport is consulted, so a message an
+      // unconfigured deployment would have sent wrong is refused there too.
+      const headers = validHeaders(message.headers);
+      const idempotencyKey = validIdempotencyKey(message.idempotencyKey);
+
       const base = {
         toAddress: formatSenderAddress(to, "to"),
         // The From actually used, so the log row says what the customer saw.
@@ -276,6 +311,10 @@ export function createEmailSender(options: CreateEmailSenderOptions): EmailSende
           subject,
           html,
           text,
+          // Only when the message has them, so a message without either reaches
+          // a transport exactly as it did before 0.5.
+          ...(headers !== null ? { headers } : {}),
+          ...(idempotencyKey !== null ? { idempotencyKey } : {}),
         });
       } catch (cause) {
         // Returned, not rethrown. A provider being down is not a defect in the
@@ -325,6 +364,8 @@ export function createResendTransport(apiKey: string): EmailTransport {
         headers: {
           authorization: `Bearer ${apiKey}`,
           "content-type": "application/json",
+          // Resend drops a repeat of the same key for 24 hours (0.5).
+          ...(message.idempotencyKey ? { "idempotency-key": message.idempotencyKey } : {}),
         },
         body: JSON.stringify({
           from: message.from,
@@ -333,6 +374,7 @@ export function createResendTransport(apiKey: string): EmailTransport {
           ...(message.html !== null ? { html: message.html } : {}),
           ...(message.text !== null ? { text: message.text } : {}),
           ...(message.replyTo !== null ? { reply_to: message.replyTo } : {}),
+          ...(message.headers && Object.keys(message.headers).length > 0 ? { headers: { ...message.headers } } : {}),
         }),
         // Without a deadline a hung provider holds the request open until the
         // platform kills the whole function, so the caller never reaches the
@@ -372,6 +414,87 @@ function readMessageId(body: unknown): string | null {
   if (typeof body !== "object" || body === null) return null;
   const id = (body as { readonly id?: unknown }).id;
   return typeof id === "string" && id.length > 0 ? id : null;
+}
+
+/**
+ * Headers the message's own fields write, refused as extras: a second
+ * `Subject` or `To` is either ignored or duplicated depending on the
+ * provider, and neither is what the caller meant.
+ */
+const RESERVED_HEADERS = new Set([
+  "from",
+  "to",
+  "cc",
+  "bcc",
+  "subject",
+  "reply-to",
+  "sender",
+  "date",
+  "message-id",
+  "mime-version",
+  "content-type",
+  "content-transfer-encoding",
+  "return-path",
+]);
+
+const MAX_HEADERS = 20;
+const MAX_HEADER_VALUE = 2_000;
+
+/** The extras, checked (0.5): null when there are none. */
+function validHeaders(input: Readonly<Record<string, string>> | undefined): Readonly<Record<string, string>> | null {
+  if (input === undefined || input === null) return null;
+  if (typeof input !== "object" || Array.isArray(input)) {
+    throw new EmailMessageInvalidError("headers", "must be an object of header names to values");
+  }
+  const entries = Object.entries(input);
+  if (entries.length === 0) return null;
+  if (entries.length > MAX_HEADERS) {
+    throw new EmailMessageInvalidError("headers", `has ${entries.length} entries; at most ${MAX_HEADERS} are sent`);
+  }
+  const out: Record<string, string> = {};
+  const seen = new Set<string>();
+  for (const [name, value] of entries) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9-]{0,75}$/.test(name)) {
+      throw new EmailMessageInvalidError("headers", `has a name that isn't a header name: ${JSON.stringify(name)}`);
+    }
+    const lower = name.toLowerCase();
+    if (RESERVED_HEADERS.has(lower)) {
+      throw new EmailMessageInvalidError("headers", `names ${name}, which the message's own fields write`);
+    }
+    if (seen.has(lower)) throw new EmailMessageInvalidError("headers", `names ${name} twice`);
+    seen.add(lower);
+    if (typeof value !== "string" || value.trim().length === 0) {
+      throw new EmailMessageInvalidError("headers", `gives ${name} no value`);
+    }
+    if (value.length > MAX_HEADER_VALUE || hasControl(value)) {
+      // A CR or LF here ends the header and starts one the caller never
+      // wrote: the header-injection rule `formatSenderAddress` holds for From.
+      throw new EmailMessageInvalidError(
+        "headers",
+        `gives ${name} a value that isn't one line of at most ${MAX_HEADER_VALUE} characters`,
+      );
+    }
+    out[name] = value;
+  }
+  return out;
+}
+
+/** The idempotency key, checked (0.5): null when there is none. */
+function validIdempotencyKey(input: string | null | undefined): string | null {
+  if (input === undefined || input === null) return null;
+  if (typeof input !== "string" || !/^[\x21-\x7e]{1,256}$/.test(input)) {
+    throw new EmailMessageInvalidError("idempotencyKey", "must be 1 to 256 visible ASCII characters with no spaces");
+  }
+  return input;
+}
+
+/** Any C0 control character or DEL. A scan, so this file holds none itself. */
+function hasControl(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
 }
 
 /** Whitespace is not a body, and `""` is not a template name. */

@@ -544,10 +544,26 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
       mentions(plan, ["src", "components", "PublicCompanyGate.tsx"], "<CompanyAnalytics"),
   },
   {
+    capability: "seo.defaults",
+    why:
+      "Every project has a tab icon, home-screen icons and an install manifest drawn from its name and brand colour, a share " +
+      "card at a fixed address, one public-page list with a hook for database-backed pages feeding the sitemap, llms.txt and " +
+      "llms-full.txt, and X-Robots-Tag on every private route from the proxy (create-app 0.40).",
+    provenBy: (plan) =>
+      mentions(plan, ["app", "manifest.ts"], "MetadataRoute.Manifest") &&
+      mentions(plan, ["app", "icon.tsx"], "brandIcon(") &&
+      mentions(plan, ["app", "og.png", "route.ts"], "shareCard()") &&
+      mentions(plan, ["src", "dynamic-pages.ts"], "export async function dynamicPages(") &&
+      mentions(plan, ["app", "llms-full.txt", "route.ts"], "export async function GET(") &&
+      mentions(plan, ["proxy.ts"], "X-Robots-Tag", "robotsHeaderFor("),
+  },
+  {
     capability: "seo.package",
     why: "The site's metadata, robots.txt and sitemap are built on @adminigloo/seo from one path list.",
     provenBy: (plan) =>
-      mentions(plan, ["src", "seo.ts"], "defineSite(", "definePaths(") &&
+      mentions(plan, ["src", "seo.ts"], "defineSite(") &&
+      // The path list moved beside it (create-app 0.40), where the proxy reads it.
+      mentions(plan, ["src", "seo-paths.ts"], "definePaths(") &&
       mentions(plan, ["app", "robots.ts"], "robotsPolicy(") &&
       mentions(plan, ["app", "sitemap.ts"], "sitemapEntries("),
   },

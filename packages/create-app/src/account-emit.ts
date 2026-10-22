@@ -12,7 +12,7 @@
  *                overlay); plans only (--model subscription): Overview and
  *                Billing, and the overview is what you're on
  */
-import { consumerProduct, tenantLabel, type Answers } from "./answers.js";
+import { consumerProduct, personEmails, tenantLabel, type Answers } from "./answers.js";
 import { sellsShop } from "./shop-emit.js";
 
 // ---------------------------------------------------------------------------
@@ -58,7 +58,7 @@ export function onlyTheOwner(_tenantName: string): string {
 /** The account area's heading. */
 export const ACCOUNT_HEADING = {
   title: "Your account",
-  description: ${JSON.stringify(sellsShop(answers) ? "Your plan, what you've bought, and your billing." : "Your plan, what it includes, and your billing.")},
+  description: ${JSON.stringify(personalHeading(answers))},
 } as const;
 `;
   }
@@ -101,6 +101,14 @@ export const ACCOUNT_HEADING = {
 `;
 }
 
+/** What a person's account area holds, in its heading (create-app 0.40: and their emails). */
+function personalHeading(answers: Answers): string {
+  const emails = personEmails(answers);
+  if (answers.businessModel === "none") return "Your emails: which ones come, and when.";
+  if (sellsShop(answers)) return emails ? "Your plan, what you've bought, your billing and your emails." : "Your plan, what you've bought, and your billing.";
+  return emails ? "Your plan, what it includes, your billing and your emails." : "Your plan, what it includes, and your billing.";
+}
+
 // ---------------------------------------------------------------------------
 // app/(site)/account/layout.tsx
 // ---------------------------------------------------------------------------
@@ -141,16 +149,15 @@ export default function AccountLayout({ children }: { readonly children: ReactNo
 // ---------------------------------------------------------------------------
 
 export function renderAccountTabs(answers: Answers): string {
-  const tabs = sellsShop(answers)
-    ? [
-        ["/account", "Overview"],
-        ["/account/orders", "Orders"],
-        ["/account/billing", "Billing"],
-      ]
-    : [
-        ["/account", "Overview"],
-        ["/account/billing", "Plan and billing"],
-      ];
+  // Each person's emails (create-app 0.40): a tab of their own — the only one
+  // in a project that sells nothing.
+  const emails: string[][] = personEmails(answers) ? [["/account/email", "Email"]] : [];
+  const tabs =
+    answers.businessModel === "none"
+      ? emails
+      : sellsShop(answers)
+        ? [["/account", "Overview"], ["/account/orders", "Orders"], ["/account/billing", "Billing"], ...emails]
+        : [["/account", "Overview"], ["/account/billing", "Plan and billing"], ...emails];
   return `"use client";
 
 import Link from "next/link";
@@ -158,7 +165,7 @@ import { usePathname } from "next/navigation";
 import { cx } from "@/components/ui";
 
 /**
- * The account area's tabs. GENERATED: ${sellsShop(answers) ? "this project has a shop, so its orders have a tab" : "this project sells plans and no products, so there are no orders to list"}.
+ * The account area's tabs. GENERATED: ${answers.businessModel === "none" ? "this project sells nothing, so the account area is each person's emails" : sellsShop(answers) ? "this project has a shop, so its orders have a tab" : "this project sells plans and no products, so there are no orders to list"}${personEmails(answers) ? "; each person's emails have their own tab" : ""}.
  *
  * Every href is written out literally, so the project's link checks can see
  * each route this strip points at.

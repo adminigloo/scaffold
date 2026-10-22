@@ -5,6 +5,7 @@ import {
   assertAnswersCompatible,
   consumerProduct,
   deferredUntilDeployedFor,
+  personEmails,
   isPersonalWorkspaceOnly,
   optionalEnvFor,
   overlayNamesFor,
@@ -99,6 +100,34 @@ import { renderDeploymentFeedback, renderFeedbackCron, renderFeedbackGlue } from
 import { assistantChats, renderAssistantGlue, renderAssistantLauncherSlot, renderAssistantTools } from "./assistant-emit.js";
 import { renderAnalyticsCron, renderSiteAnalyticsSlot, renderWebsiteGlue, websitesQuota } from "./website-emit.js";
 import { renderSeoPackageModule, renderSeoRobots, renderSeoSitemap } from "./seo-emit.js";
+import {
+  renderAppleIcon,
+  renderBrand,
+  renderBrandImages,
+  renderDynamicPages,
+  renderIcon,
+  renderIconRoute,
+  renderLlmsModule,
+  renderLlmsRoute,
+  renderProxy,
+  renderSeoDefaultsTest,
+  renderSeoPaths,
+  renderShareCardRoute,
+  renderSitePages,
+  renderWebManifest,
+} from "./seo-default-emit.js";
+import {
+  renderAccountEmailOnlyPage,
+  renderDeploymentDigest,
+  renderDigestApiRoute,
+  renderDigestCron,
+  renderDigestGlue,
+  renderDigestRegistry,
+  renderDigestTest,
+  renderEmailPreferencesPage,
+  renderSignUpEmailSlot,
+  renderUnsubscribePage,
+} from "./digest-emit.js";
 import { bookingFiles, bookingHostsQuota } from "./booking-emit.js";
 import { cardPaymentsOn, cardPaymentsSetup, paymentsFiles, renderNavBadges } from "./payments-emit.js";
 import { storeFiles, storeProductsQuota } from "./store-emit.js";
@@ -391,7 +420,7 @@ export async function planEmit(
       // Tenancy 2b-1: the alerts cron, the two Blob stores, the allowance,
       // the link key and what files cost — generated, empty without them.
       .split(ALERTS_FILES_MARKER)
-      .join(renderDeploymentAlertsFiles(answers) + renderDeploymentFeedback(answers) + cardPaymentsSetup(answers, "##"))
+      .join(renderDeploymentAlertsFiles(answers) + renderDeploymentFeedback(answers) + renderDeploymentDigest(answers) + cardPaymentsSetup(answers, "##"))
       // What a project made by an earlier create-app has to do by hand when
       // it runs `upgrade` (review BUY-01), for THIS project's features.
       .split(UPGRADE_NOTES_MARKER)
@@ -567,8 +596,13 @@ export async function planEmit(
   // /admin/analytics shows which pages bring them), no-ops without.
   files.set(join("src", "conversions.ts"), renderConversionPaths(answers));
   files.set(join("src", "server", "conversions.ts"), renderServerConversions(answers));
-  if (answers.includeAnalytics) {
+  // /welcome, where a new sign-up lands first: with --analytics it records the
+  // sign-up; with each person's emails (create-app 0.40) it keeps what they
+  // ticked beside the sign-up form.
+  if (answers.includeAnalytics || personEmails(answers)) {
     files.set(join("app", "welcome", "route.ts"), renderWelcomeRoute(answers));
+  }
+  if (answers.includeAnalytics) {
     // What counts as a sign-up and a first payment, held (review).
     files.set(join("src", "__tests__", "conversions.test.ts"), renderConversionsTest(answers));
   }
@@ -719,14 +753,35 @@ export async function planEmit(
   // heading and tabs, what the Stripe webhook hands the shop (or that there is
   // none) — and, with no shop, its overview page (what you're on). See
   // account-emit.ts and shop-emit.ts.
-  if (answers.businessModel !== "none") {
+  // create-app 0.40: and in a project whose customers are people and that
+  // sends email, each person's emails are a tab of it (/account/email) —
+  // the whole area, in a project that sells nothing.
+  if (answers.businessModel !== "none" || personEmails(answers)) {
     files.set(join("src", "account-copy.ts"), renderAccountCopy(answers));
     files.set(join("app", "(site)", "account", "layout.tsx"), renderAccountLayout(answers));
     files.set(join("src", "components", "account", "AccountTabs.tsx"), renderAccountTabs(answers));
+  }
+  if (answers.businessModel !== "none") {
     files.set(join("src", "server", "shop-hooks.ts"), renderShopHooks(answers));
     if (!sellsShop(answers)) {
       files.set(join("app", "(site)", "account", "page.tsx"), renderPlansAccountPage(answers));
     }
+  } else if (personEmails(answers)) {
+    files.set(join("app", "(site)", "account", "page.tsx"), renderAccountEmailOnlyPage());
+  }
+  // EACH PERSON'S OWN EMAILS (create-app 0.40, @adminigloo/digest): their
+  // preferences, the daily digest from src/digests.ts's sections, one-click
+  // unsubscribe, the staff preview and the proof. See digest-emit.ts. The
+  // sign-up page's slot is in EVERY project (nothing without these).
+  files.set(join("src", "components", "SignUpEmailSlot.tsx"), renderSignUpEmailSlot(answers));
+  if (personEmails(answers)) {
+    files.set(join("src", "digests.ts"), renderDigestRegistry(answers));
+    files.set(join("src", "server", "digest.ts"), renderDigestGlue(answers));
+    files.set(join("app", "api", "email", "[...path]", "route.ts"), renderDigestApiRoute());
+    files.set(join("app", "api", "cron", "digest", "route.ts"), renderDigestCron());
+    files.set(join("app", "(site)", "unsubscribe", "page.tsx"), renderUnsubscribePage());
+    files.set(join("app", "(site)", "account", "email", "page.tsx"), renderEmailPreferencesPage(answers));
+    files.set(join("src", "server", "__tests__", "digest.test.ts"), renderDigestTest(answers));
   }
   // EACH COMPANY RUNS THE FEATURES ITSELF (Tenancy 2a), companies only: whose
   // request a feature route is (the company id or web address in its path),
@@ -913,7 +968,28 @@ export async function planEmit(
   // site's own SEO kept, and each company's public pages in search (two
   // variants of each file, chosen here; see seo-emit.ts).
   files.set(join("src", "seo.ts"), answers.includeSeo ? renderSeoPackageModule(answers) : renderSeoModule(answers));
-  files.set(join("app", "llms.txt", "route.ts"), renderLlmsTxt(answers));
+  // SEO BY DEFAULT (create-app 0.40), in every project: the icons and the
+  // install manifest from the name and the brand colour, the site's share card
+  // at a fixed address, ONE public-page list with a hook for database-backed
+  // pages (the sitemap and both llms files read them), the path list the
+  // proxy sends X-Robots-Tag from (and, with --analytics, logs every AI
+  // crawler's read), and llms-full.txt beside llms.txt. See seo-default-emit.ts.
+  files.set(join("src", "brand.ts"), renderBrand(answers));
+  files.set(join("src", "brand-images.tsx"), renderBrandImages(answers));
+  files.set(join("app", "icon.tsx"), renderIcon());
+  files.set(join("app", "apple-icon.tsx"), renderAppleIcon());
+  files.set(join("app", "icon-192.png", "route.ts"), renderIconRoute(192));
+  files.set(join("app", "icon-512.png", "route.ts"), renderIconRoute(512));
+  files.set(join("app", "manifest.ts"), renderWebManifest());
+  files.set(join("app", "og.png", "route.ts"), renderShareCardRoute());
+  files.set(join("src", "site-pages.ts"), renderSitePages(answers));
+  files.set(join("src", "dynamic-pages.ts"), renderDynamicPages(answers));
+  files.set(join("src", "seo-paths.ts"), renderSeoPaths(answers));
+  files.set("proxy.ts", renderProxy(answers));
+  files.set(join("src", "llms.ts"), renderLlmsModule(answers));
+  files.set(join("app", "llms.txt", "route.ts"), renderLlmsRoute(answers, "index"));
+  files.set(join("app", "llms-full.txt", "route.ts"), renderLlmsRoute(answers, "full"));
+  files.set(join("src", "__tests__", "seo-defaults.test.ts"), renderSeoDefaultsTest(answers));
   files.set(join("app", "robots.ts"), answers.includeSeo ? renderSeoRobots(answers) : renderRobots(answers));
   // THE PUBLIC PAGES, AS A CRAWLER READS THEM (create-app 0.39): every page the
   // sitemap lists answers a real 200 with its <h1> in the first HTML, a missing
@@ -1357,6 +1433,11 @@ export function renderVercelJson(answers: Answers): string {
   if (answers.includeBooking) {
     crons.push({ path: "/api/cron/booking", schedule: "0 13 * * *" });
   }
+  // create-app 0.40: each person's digest, at or after their own hour. Daily
+  // at 15:00 UTC on Hobby (at or after 7 AM in every US zone); hourly on Pro.
+  if (personEmails(answers)) {
+    crons.push({ path: "/api/cron/digest", schedule: "0 15 * * *" });
+  }
   const config = {
     $schema: "https://openapi.vercel.sh/vercel.json",
     framework: "nextjs",
@@ -1662,6 +1743,16 @@ export function renderEnvLocal(answers: Answers): string {
       "# EMAIL_FROM=Your Name <hello@yourdomain.com>",
     );
   }
+  if (personEmails(answers)) {
+    lines.push(
+      "",
+      "# --- Each person's emails -------------------------------------------------",
+      "# What every unsubscribe link is signed with (32+ characters,",
+      "# `openssl rand -base64 48`). Without it one is made from CLERK_SECRET_KEY;",
+      "# changing either retires the links already sent.",
+      "# EMAIL_LINK_SECRET=",
+    );
+  }
   if (answers.includeAi) {
     lines.push(
       "",
@@ -1745,7 +1836,8 @@ export function renderEnvLocal(answers: Answers): string {
     answers.includeAnalytics ||
     answers.includeSeoReports ||
     answers.includeAeo ||
-    answers.includeBooking
+    answers.includeBooking ||
+    personEmails(answers)
   ) {
     lines.push(
       "",
@@ -1822,6 +1914,10 @@ const OPTIONAL_ENV_NOTES: Readonly<Record<string, readonly string[]>> = {
   AUDIENCE_SECRET: [
     "The key whose marks leave people out of the website numbers (32+",
     "characters). Unset: one is made from CLERK_SECRET_KEY.",
+  ],
+  EMAIL_LINK_SECRET: [
+    "What every email's unsubscribe link is signed with (32+ characters).",
+    "Unset: one is made from CLERK_SECRET_KEY. Changing it retires old links.",
   ],
   ASSISTANT_MODEL: [
     "The model the assistant answers with. Unset is Claude Haiku 4.5",
@@ -2182,6 +2278,16 @@ export function renderEnvModule(answers: Answers): string {
       `{ name: "Email", vars: ["RESEND_API_KEY", "EMAIL_FROM"], disables: "Sending mail. Sends are recorded as skipped instead." }`,
     );
   }
+  // create-app 0.40: each person's emails — the key their unsubscribe links
+  // are signed with (made from CLERK_SECRET_KEY without it) and the digests' cron.
+  if (personEmails(answers)) {
+    serverSpreads.push('EMAIL_LINK_SECRET: z.string().min(32, "at least 32 characters").optional()');
+    runtime.push("EMAIL_LINK_SECRET: process.env.EMAIL_LINK_SECRET");
+    features.push(
+      `{ name: "Unsubscribe links", vars: ["EMAIL_LINK_SECRET"], disables: "Nothing while CLERK_SECRET_KEY is set: the key is made from it. Rotating Clerk's key, or setting this later, retires the unsubscribe links in emails already sent (each person's preferences page still works)." }`,
+      `{ name: "Morning digests", vars: ["CRON_SECRET", "RESEND_API_KEY"], disables: "The daily digests: /api/cron/digest answers 401 until the secret is set, and without RESEND_API_KEY every digest is recorded as skipped and nothing goes out. People can still choose them at /account/email." }`,
+    );
+  }
 
   if (answers.includeFeedback) {
     // Declared here rather than in an env fragment of @__SCOPE_NAME__/feedback,
@@ -2278,7 +2384,8 @@ export function renderEnvModule(answers: Answers): string {
     answers.includeAnalytics ||
     answers.includeSeoReports ||
     answers.includeAeo ||
-    answers.includeBooking
+    answers.includeBooking ||
+    personEmails(answers)
   ) {
     // The shared secret the cron routes check. Declared here rather than in an
     // env fragment of @__SCOPE_NAME__/comms or /scheduling because it is not a
@@ -3167,6 +3274,17 @@ export function renderPermissionsCatalog(answers: Answers): string {
     defaultFor: ["admin"],
   },`
     : "";
+  // Each person's emails (create-app 0.40): seeing anybody's digest is
+  // seeing their account's news, so it is its own key, admin and cs_lead.
+  const digestStaffKeys = personEmails(answers)
+    ? `
+  "staff.digest.preview": {
+    label: "Preview people's emails",
+    description: "See anybody's digest for any day, exactly as it would go out, without sending it.",
+    category: "Emails",
+    defaultFor: ["admin", "cs_lead"],
+  },`
+    : "";
   const staffSpread = [...staffFragments, "appStaffPermissions"];
   // ONE PERSON PER ACCOUNT (create-app 0.39): in a consumers project the
   // tenancy fragment is spread with its team keys held by nobody.
@@ -3315,7 +3433,7 @@ const appStaffPermissions = {
     category: "${plural}",
     // Sealed: an override must not hand this to one person quietly.
     sealed: true,
-  },${schedulingStaffKeys}${estimatorStaffKeys}${invoicingStaffKeys}${commsStaffKeys}${alertsStaffKeys}${filesStaffKeys}${feedbackStaffKeys}${assistantStaffKeys}${analyticsStaffKeys}${searchCheckStaffKeys}${aiMentionsStaffKeys}
+  },${schedulingStaffKeys}${estimatorStaffKeys}${invoicingStaffKeys}${commsStaffKeys}${alertsStaffKeys}${filesStaffKeys}${feedbackStaffKeys}${assistantStaffKeys}${analyticsStaffKeys}${searchCheckStaffKeys}${aiMentionsStaffKeys}${digestStaffKeys}
 } as const;
 
 export const staffCatalog = definePermissions(
@@ -5475,6 +5593,8 @@ export function schemaOwners(answers: Answers): string[] {
   }
   if (answers.includeAi) owners.push("ai");
   if (answers.includeEmail) owners.push("email");
+  // create-app 0.40: each person's email choices, and the digests' ledger.
+  if (personEmails(answers)) owners.push("digest");
   // The widget package owns no tables; only the platform half does.
   if (answers.includeFeedback) owners.push("feedback");
   if (answers.includeSeoReports) owners.push("seo-reports");
@@ -5635,7 +5755,7 @@ interface GeneratedLink {
 }
 
 /** `// ...` lines, wrapped and indented one level into an array literal. */
-function indentedComment(text: string): string {
+export function indentedComment(text: string): string {
   const lines: string[] = [];
   let current = "";
   for (const word of text.split(/\s+/)) {
@@ -7660,10 +7780,13 @@ export function renderHomePage(answers: Answers): string {
 `
     : "";
 
-  return `import Link from "next/link";
+  // At `/` (no marketing site): its own canonical and the site's share card
+  // (create-app 0.40). At /setup/start it is private, so it says nothing.
+  const atRoot = !answers.includeMarketing;
+  return `${atRoot ? `import type { Metadata } from "next";\n` : ""}import Link from "next/link";
 import type { ReactNode } from "react";
 import { HealthCheck } from "@/components/HealthCheck";
-import { ${uiImports} } from "@/components/ui";
+import { ${uiImports} } from "@/components/ui";${atRoot ? `\nimport { metadataFor, SITE_NAME } from "@/seo";\n\n/** Its own canonical, and the site's share card (src/seo.ts). */\nexport const metadata: Metadata = metadataFor({ path: "/", title: SITE_NAME });` : ""}
 
 /**
  * Where the files are. Nothing more.
@@ -8124,6 +8247,14 @@ export const SITE_DESCRIPTION =
 export const INDEXABLE: boolean = resolveAppEnv() === "production";
 
 /**
+ * The share card every page without its own shows (create-app 0.40): the
+ * route at app/og.png (src/brand-images.tsx draws it), a FIXED address — Next
+ * 16 serves a root opengraph-image.tsx under a hashed name nothing here could
+ * name.
+ */
+export const SHARE_IMAGE = { url: "/og.png", width: 1200, height: 630, alt: SITE_NAME } as const;
+
+/**
  * Inherited by every page. A page overrides a field by exporting its own
  * \`metadata\`; anything it leaves out falls through to this.
  */
@@ -8149,6 +8280,7 @@ export const siteMetadata: Metadata = {
     // A copy decision rather than a technical one, and it is here so it is made
     // once: US English. Change it with the rest of the copy if the site isn't.
     locale: "en_US",
+    images: [SHARE_IMAGE],
   },
   twitter: {
     // The large card is the one that shows an image. \`summary\` shows a
@@ -8156,6 +8288,7 @@ export const siteMetadata: Metadata = {
     card: "summary_large_image",
     title: SITE_NAME,
     description: SITE_DESCRIPTION,
+    images: [SHARE_IMAGE.url],
   },
   robots: INDEXABLE
     ? { index: true, follow: true }
@@ -8170,6 +8303,40 @@ export const siteMetadata: Metadata = {
         googleBot: { index: false, follow: false },
       },
 };
+
+/** What a page says about itself (create-app 0.40): \`metadataFor\` below. */
+export interface PageInput {
+  /** The page's own path: it becomes its canonical address. */
+  readonly path: string;
+  /** Its title, without the site's name (the layout adds " · ${displayNameOf(answers.projectName)}" once). */
+  readonly title: string;
+  /** Falls back to SITE_DESCRIPTION. */
+  readonly description?: string;
+  /** Keep this page out of search. */
+  readonly noindex?: boolean;
+}
+
+/**
+ * A page's own metadata (create-app 0.40), what every generated public page
+ * exports: \`export const metadata = metadataFor({ path: "/pricing", title:
+ * "Pricing", description })\`. Its canonical is the page itself, the site's
+ * name is in the title once, and the share card and its words are complete —
+ * Next REPLACES a layout's openGraph when a page sets one, so a page that set
+ * only a title lost the site's card.
+ */
+export function metadataFor(page: PageInput): Metadata {
+  const named = page.title.trim() === SITE_NAME;
+  const fullTitle = named ? SITE_NAME : \`\${page.title} · \${SITE_NAME}\`;
+  const description = page.description ?? SITE_DESCRIPTION;
+  return {
+    title: named ? { absolute: SITE_NAME } : page.title,
+    description,
+    alternates: { canonical: page.path },
+    openGraph: { type: "website", siteName: SITE_NAME, locale: "en_US", url: page.path, title: fullTitle, description, images: [SHARE_IMAGE] },
+    twitter: { card: "summary_large_image", title: fullTitle, description, images: [SHARE_IMAGE.url] },
+    ...(page.noindex ? { robots: { index: false, follow: true } } : {}),
+  };
+}
 `;
 }
 
@@ -8289,10 +8456,12 @@ export function robotsDisallowed(answers: Answers): { readonly path: string; rea
       why: "A customer's own invoice, opened from the link in their email. The URL is the key to it; the page already says noindex and the API sends X-Robots-Tag, and this keeps a crawler that found a leaked link from fetching it at all.",
     });
   }
-  if (sells) {
+  if (sells || personEmails(answers)) {
     disallowed.push({
       path: "/account",
-      why: "A customer's own orders and billing. Signed-in only, and never a search result.",
+      why: sells
+        ? "A customer's own orders, billing and email choices. Signed-in only, and never a search result."
+        : "A person's own email choices. Signed-in only, and never a search result.",
     });
   }
   // The shop's checkout (create-app 0.39): only where there is a shop.
@@ -8302,16 +8471,24 @@ export function robotsDisallowed(answers: Answers): { readonly path: string; rea
       why: "Meaningless without a product in the query string, and a crawler following it would be indexing a payment form.",
     });
   }
+  // Where a new sign-up lands first (create-app 0.39/0.40): a 307, never a page.
+  if (answers.includeAnalytics || personEmails(answers)) {
+    disallowed.push({
+      path: "/welcome",
+      why: "Where a new sign-up lands first: it records the sign-up and sends them on with a redirect. Nothing to index.",
+    });
+  }
+  // A person's unsubscribe page (create-app 0.40): the link in each email.
+  if (personEmails(answers)) {
+    disallowed.push({
+      path: "/unsubscribe",
+      why: "The page an email's unsubscribe link opens. The URL carries that person's signed token: never a search result, and a crawler that found a link must not fetch it.",
+    });
+  }
   return disallowed;
 }
 
-export function renderRobots(answers: Answers): string {
-  const disallowed = robotsDisallowed(answers);
-
-  const entries = disallowed
-    .map((entry) => `${indentedComment(entry.why)}  "${entry.path}",\n`)
-    .join("\n");
-
+export function renderRobots(_answers: Answers): string {
   return `import type { MetadataRoute } from "next";
 import { env } from "@/env";
 // THE DECISION IS TAKEN ONCE, in src/seo.ts, and imported here. Reading the
@@ -8319,16 +8496,11 @@ import { env } from "@/env";
 // on the page disagree — and nothing in the product renders /robots.txt, so the
 // disagreement would only ever be found by a crawler.
 import { INDEXABLE } from "@/seo";
-
-/**
- * Routes that exist in this project and should not be indexed.
- *
- * A generated array, in the order it is written into the file. A project
- * generated without an admin panel contributes no /admin entry rather than
- * carrying a rule about a route it does not have.
- */
-const DISALLOWED: readonly string[] = [
-${entries}];
+// THE ROUTES, from src/seo-paths.ts (create-app 0.40): the same list the proxy
+// sends X-Robots-Tag from, so the file and the header can't disagree either. A
+// project generated without an admin panel has no /admin entry there rather
+// than a rule about a route it does not have.
+import { PRIVATE_PATHS } from "@/seo-paths";
 
 /**
  * /robots.txt.
@@ -8349,7 +8521,7 @@ export default function robots(): MetadataRoute.Robots {
   }
 
   return {
-    rules: [{ userAgent: "*", allow: "/", disallow: [...DISALLOWED] }],
+    rules: [{ userAgent: "*", allow: "/", disallow: [...PRIVATE_PATHS] }],
     // Absolute, because a sitemap reference in robots.txt must be. A relative
     // path here is ignored by every crawler that reads it, silently — so with
     // no base URL configured the line is omitted rather than emitted wrong.
@@ -8437,42 +8609,41 @@ export function sitemapPages(answers: Answers): { readonly path: string; readonl
   return pages;
 }
 
-export function renderSitemap(answers: Answers): string {
-  const pages = sitemapPages(answers);
-
-  const entries = pages
-    .map((page) => `${indentedComment(page.why)}  "${page.path}",\n`)
-    .join("\n");
-
+export function renderSitemap(_answers: Answers): string {
   return `import type { MetadataRoute } from "next";
+import { dynamicPages } from "@/dynamic-pages";
 import { env } from "@/env";
+import { robotsHeaderFor } from "@/seo-paths";
+import { SITE_PAGES } from "@/site-pages";
 
 /**
- * Every public page this project emitted, as a path.
- *
- * Generated from the answers, so a route that was never installed contributes
- * no entry. Sign-in, sign-up, /setup, /members, /account and /admin are absent
- * on purpose — they are either private or content-free, and /robots.txt already
- * asks crawlers not to follow them.
- */
-const PUBLIC_PAGES: readonly string[] = [
-${entries}];
-
-/**
- * /sitemap.xml.
+ * /sitemap.xml: every public page this project emitted (src/site-pages.ts,
+ * generated from the answers, so a route that was never installed contributes
+ * no entry) and the database-backed ones (src/dynamic-pages.ts). Sign-in,
+ * sign-up, /setup, /account and /admin are absent on purpose — they are
+ * private or content-free, and /robots.txt already asks crawlers not to follow
+ * them; a database-backed page under one of them is left out too.
  *
  * Absolute URLs, built from NEXT_PUBLIC_APP_URL. A sitemap containing relative
  * paths is rejected wholesale rather than partially, so getting this wrong
  * costs the whole file.
+ *
+ * CACHED FOR AN HOUR, then built again (create-app 0.40): without it Next
+ * builds this once, at \`next build\`, and the database-backed pages freeze.
  */
-export default function sitemap(): MetadataRoute.Sitemap {
+export const revalidate = 3600;
+
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   // No base URL, no sitemap: entries must be absolute, and a build without
   // NEXT_PUBLIC_APP_URL (CI, a fresh laptop) has nothing true to make them
   // absolute WITH. Empty is honest; localhost URLs in a sitemap are not.
   if (!env.NEXT_PUBLIC_APP_URL) return [];
   const base = env.NEXT_PUBLIC_APP_URL;
-  return PUBLIC_PAGES.map((path) => ({
-    url: new URL(path, base).toString(),
+  const more = (await dynamicPages().catch(() => [])).filter((page) => robotsHeaderFor(page.path) === null);
+  // No made-up "last changed" date: only one a page actually knows.
+  return [...SITE_PAGES, ...more].map((page) => ({
+    url: new URL(page.path, base).toString(),
+    ...(page.lastModified ? { lastModified: page.lastModified } : {}),
   }));
 }
 `;
@@ -8502,92 +8673,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
  * that ships.
  */
 export function renderLlmsTxt(answers: Answers): string {
-  const sells = answers.businessModel !== "none";
-
-  const pages: { readonly path: string; readonly line: string }[] = [
-    { path: "/", line: "The landing page." },
-  ];
-  if (answers.includeMarketing && sells) {
-    pages.push({ path: "/pricing", line: "Plans and pricing." });
-  }
-  // A single business's own pages only: a companies project's booking and
-  // estimate pages are each company's, under /t/, and out of search in this
-  // release (Tenancy 2a, D17).
-  const single = answers.tenantNoun === "none";
-  if (single && answers.includeScheduling) {
-    pages.push({ path: "/book-visit", line: "Book a visit: pick a service and a time; we come to you." });
-  }
-  if (single && answers.includeEstimator) {
-    pages.push({ path: "/estimate", line: "Instant estimate: a price from our own price book for what you can count or measure." });
-  }
-  if (sellsShop(answers)) {
-    pages.push({ path: "/products", line: "Published products available to buy." });
-  }
-  if (answers.includeMarketing || sells) {
-    pages.push(
-      { path: "/privacy", line: "Privacy policy; the subprocessor list is derived from the software actually installed." },
-      { path: "/terms", line: "Terms of service." },
-    );
-  }
-
-  const entries = pages
-    .map((page) => `- [${page.path === "/" ? "Home" : page.path.slice(1)}](\${base}${page.path === "/" ? "/" : page.path}): ${page.line}`)
-    .join("\n");
-
-  // Tenancy 2b-4a: with website visits, the AI crawlers that read this file
-  // (often their first and only fetch of a site) are logged for this site.
-  const counted = answers.includeAnalytics;
-  const crawlerImports = counted
-    ? `import { after } from "next/server";
-import { classifyCrawler } from "${answers.scope}/analytics/crawlers";
-`
-    : "";
-  const crawlerLog = counted
-    ? `
-  // A crawler reading this (runtime data: who is asking), logged after the
-  // answer is sent — AI assistants show up in this site's crawler numbers.
-  const userAgent = request.headers.get("user-agent");
-  if (classifyCrawler(userAgent)) {
-    const facts = {
-      userAgent,
-      path: "/llms.txt",
-      ip: request.headers.get("x-real-ip") ?? request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
-      country: request.headers.get("x-vercel-ip-country"),
-    };
-    after(() => recordSiteCrawlerHit(facts));
-  }`
-    : "";
-
-  return `/**
- * The routing table answer engines read first — sitemap.xml for the systems
- * that answer instead of listing. Generated from the answers, so a route that
- * was never installed contributes no line; the summary under the heading is
- * YOURS to write, because an answer engine will quote it verbatim and the
- * generator refuses to put words in your mouth.
- *
- * A route handler rather than a static file so the body can derive from the
- * environment. Content is deliberately terse — this is a map, not a pitch.
- */
-${crawlerImports}import { env } from "@/env";${counted ? `\nimport { recordSiteCrawlerHit } from "@/server/website";` : ""}
-
-export function GET(${counted ? "request: Request" : ""}): Response {${crawlerLog}
-  // Paths stay relative until the deployment knows its own address; engines
-  // only ever read this from a live site, where the variable is required.
-  const base = env.NEXT_PUBLIC_APP_URL ?? "";
-  const body = \`# ${answers.projectName}
-
-> ${answers.projectName}. Replace this line with the one sentence you would
-> say on the phone about what this product is — engines quote it verbatim.
-
-## Pages
-
-${entries}
-\`;
-  return new Response(body, {
-    headers: { "content-type": "text/plain; charset=utf-8" },
-  });
-}
-`;
+  return renderLlmsRoute(answers, "index");
 }
 
 /**

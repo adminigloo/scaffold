@@ -37,7 +37,7 @@ export function companyTokenPaths(answers: Answers): string[] {
 }
 
 /** robots.txt's private list for the seo package: today's, with a company's token pages in place of all of /t/. */
-function privatePaths(answers: Answers): string[] {
+export function privatePaths(answers: Answers): string[] {
   const companies = companiesMode(answers);
   const list = robotsDisallowed(answers)
     .map((entry) => entry.path)
@@ -52,12 +52,11 @@ export function renderSeoPackageModule(answers: Answers): string {
   const scope = answers.scope;
   const companies = companiesMode(answers);
   const noun = tenantLabel(answers).toLowerCase();
-  const publicPages = sitemapPages(answers).map((page) => page.path);
-  const quoted = (list: readonly string[]) => list.map((path) => `    ${JSON.stringify(path)},`).join("\n");
   return `import type { Metadata } from "next";
-import { definePaths, defineSite, siteMetadata as buildSiteMetadata } from "${scope}/seo";
+import { defineSite, pageMetadata, siteMetadata as buildSiteMetadata, type PageInput } from "${scope}/seo";
 import { resolveAppEnv } from "${scope}/env";
 import { env } from "@/env";
+import { paths } from "@/seo-paths";
 
 /**
  * What this site is called and what it says it is — and everything search
@@ -65,8 +64,8 @@ import { env } from "@/env";
  *
  * SITE_NAME starts as the project's name, title-cased: make it the name your
  * customers know. SITE_DESCRIPTION is placeholder copy and the one string here
- * you must replace — what a search result, a shared link and an AI answer
- * quote: one sentence for a person who has never heard of this product.
+ * you must replace — what a search result, a shared link, llms.txt and an AI
+ * answer quote: one sentence for a person who has never heard of this product.
  */
 export const SITE_NAME = ${JSON.stringify(displayNameOf(answers.projectName))};
 
@@ -77,37 +76,26 @@ export const SITE_DESCRIPTION =
 /**
  * May this deployment be indexed? PRODUCTION ONLY — \`resolveAppEnv()\`, which
  * calls an unlabelled production build "staging", never \`isDeployed()\`. ONE
- * value behind the robots meta tag, robots.txt and the sitemap, so the page
- * and the files can't disagree.
+ * value behind the robots meta tag, robots.txt, the sitemap and llms.txt, so
+ * the page and the files can't disagree.
  */
 export const INDEXABLE: boolean = resolveAppEnv() === "production";
 
 /**
- * THE ONE PATH LIST: robots.txt, the noindex tags and the sitemap all read
- * it, so a page added here lands in all three and a private area can't be
- * listed in one and forgotten in another.
- *
- *   public    this site's own pages worth finding (the sitemap lists them)
- *   private   no crawler should fetch them: signed-in areas, the API,${companies ? `
- *             and each ${noun}'s token pages (\`/t/{*}/quote\` written with the
- *             plain asterisk: one ${noun}'s web address, any one) — each is one
- *             customer's key` : ""}
- *   noindex   fetched, never listed: the sign-in pages
- *${companies ? `
- * Each ${noun}'s other public pages (its home, estimate, booking and feedback
- * pages) are in no list: indexable, and listed by app/sitemap.ts from the
- * database.
- *` : ""}
+ * THE ONE PATH LIST lives in src/seo-paths.ts (create-app 0.40), where the
+ * proxy can read it without loading the environment: its public pages are
+ * src/site-pages.ts's.${companies ? ` Each ${noun}'s other public pages (its home, estimate,
+ * booking and feedback pages) are in no list: indexable, and listed by
+ * app/sitemap.ts from the database.` : ""}
  */
-export const paths = definePaths({
-  public: [
-${quoted(publicPages)}
-  ],
-  private: [
-${quoted(privatePaths(answers))}
-  ],
-  noindex: ["/sign-in", "/sign-up"],
-});
+export { paths };
+
+/**
+ * The share card every page without its own shows (create-app 0.40): the
+ * route at app/og.png, a FIXED address — Next 16 serves a root
+ * opengraph-image.tsx under a hashed name this record couldn't name.
+ */
+export const SHARE_IMAGE = { url: "/og.png", width: 1200, height: 630, alt: SITE_NAME } as const;
 
 /**
  * The site, defined once. A build without NEXT_PUBLIC_APP_URL (CI) still
@@ -122,6 +110,7 @@ export const site = defineSite({
   titleSeparator: " · ",
   // A copy decision, made once (US English): change it with the rest of the copy.
   locale: "en_US",
+  image: SHARE_IMAGE,
   paths,
 });
 
@@ -129,9 +118,21 @@ export const site = defineSite({
  * Inherited by every page: the address relative share links resolve
  * against, the title, the description, the share card, and noindex off
  * production. NO canonical here, on purpose — a page sets its own, or every
- * page would point at the home page. (A page's own: \`pageMetadata(site, …)\`.)
+ * page would point at the home page.
  */
 export const siteMetadata: Metadata = buildSiteMetadata(site) as Metadata;
+
+/**
+ * A page's own metadata (create-app 0.40), what every generated public page
+ * exports: \`export const metadata = metadataFor({ path: "/pricing", title:
+ * "Pricing", description })\`. ${scope}/seo's \`pageMetadata\`: its canonical
+ * is the page itself, the brand is in the title once, the share card is the
+ * page's (\`image\`) or the site's, and noindex follows the path list and the
+ * deployment. A page with its own opengraph-image.tsx passes \`ownImage: true\`.
+ */
+export function metadataFor(page: PageInput): Metadata {
+  return pageMetadata(site, page) as Metadata;
+}
 `;
 }
 
@@ -143,21 +144,25 @@ import { robotsPolicy } from "${scope}/seo";
 ${crawlers ? `import { KNOWN_CRAWLERS, ROBOTS_CONTROL_TOKENS } from "${scope}/analytics/crawlers";\n` : ""}import { site } from "@/seo";
 
 /**
- * /robots.txt, from the one path list in src/seo.ts (Tenancy 2b-4a).
+ * /robots.txt, from the one path list in src/seo-paths.ts (Tenancy 2b-4a).
  *
  * Off production it refuses everything. On production: \`Allow: /\`, each
  * private path blocked by whole segments (\`/admin\` never blocks
- * \`/admin-guide\`), and one group per AI crawler — training, AI search and
- * the assistants that fetch a page because a person asked — every one
- * allowed, so AI answers can find and quote this site. To refuse training
- * but keep answers: \`robotsPolicy(site, { ai: { training: "deny" } })\`.
+ * \`/admin-guide\`), and every AI crawler — training, AI search and the
+ * assistants that fetch a page because a person asked — named and allowed,
+ * so AI answers can find and quote this site. ONE GROUP (create-app 0.40,
+ * \`combine\`): the bots are listed in the \`*\` group itself, its rules
+ * written once, where one group per bot repeated them all (a 900-line file).
+ * To refuse training but keep answers:
+ * \`robotsPolicy(site, { ai: { training: "deny" }, combine: true })\` (the
+ * refused bots get one \`Disallow: /\` group of their own).
  *${crawlers ? `
  * The bots are the installed analytics package's own list, so the crawlers
  * this site lets in and the crawlers its numbers count are one list.
  *` : ""}
  */
 export default function robots(): MetadataRoute.Robots {
-  return robotsPolicy(site${crawlers ? ", { crawlers: [...KNOWN_CRAWLERS, ...ROBOTS_CONTROL_TOKENS] }" : ""}) as MetadataRoute.Robots;
+  return robotsPolicy(site, { ${crawlers ? "crawlers: [...KNOWN_CRAWLERS, ...ROBOTS_CONTROL_TOKENS], " : ""}combine: true }) as MetadataRoute.Robots;
 }
 `;
 }
@@ -169,16 +174,26 @@ export function renderSeoSitemap(answers: Answers): string {
   if (!companies) {
     return `import type { MetadataRoute } from "next";
 import { pathEntries, sitemapEntries, toNextSitemap } from "${scope}/seo";
+import { dynamicPages } from "@/dynamic-pages";
 import { site } from "@/seo";
 
 /**
- * /sitemap.xml: this site's public pages, from the one path list in
- * src/seo.ts (Tenancy 2b-4a). Absolute addresses on this site's own origin;
- * empty off production. No "last changed" date is made up: a page whose date
- * isn't known is listed without one.
+ * /sitemap.xml: this site's public pages, from the one path list
+ * (src/seo-paths.ts, whose public pages are src/site-pages.ts's), and the
+ * database-backed ones (src/dynamic-pages.ts). Absolute addresses on this
+ * site's own origin; empty off production. No "last changed" date is made
+ * up: a page whose date isn't known is listed without one, and a private
+ * page is never listed.
+ *
+ * CACHED FOR AN HOUR, then built again (create-app 0.40): without it Next
+ * builds this once, at \`next build\`, and the database-backed pages freeze.
  */
-export default function sitemap(): MetadataRoute.Sitemap {
-  return toNextSitemap(sitemapEntries(site, pathEntries(site))) as MetadataRoute.Sitemap;
+export const revalidate = 3600;
+
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
+  const more = await dynamicPages().catch(() => []);
+  const pages = more.map((page) => ({ url: page.path, lastModified: page.lastModified ?? null }));
+  return toNextSitemap(sitemapEntries(site, [...pathEntries(site), ...pages], { onInvalid: () => {} })) as MetadataRoute.Sitemap;
 }
 `;
   }
@@ -193,6 +208,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     `import { pathEntries, sitemapEntries, toNextSitemap, type SitemapEntryInput } from "${scope}/seo";`,
     `import { tenants } from "${scope}/tenancy/schema";`,
     `import { db } from "@/db";`,
+    `import { dynamicPages } from "@/dynamic-pages";`,
     `import { site } from "@/seo";`,
     ...(plans ? [`import { planStandingOf } from "@/server/plan-gate";`] : []),
     `import { PUBLIC_COMPANY_PAGES } from "@/tenancy";`,
@@ -272,7 +288,9 @@ async function companyPages(): Promise<SitemapEntryInput[]> {
  * skipped, never a broken file.
  */
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const entries = sitemapEntries(site, [...pathEntries(site), ...(await companyPages())], { onInvalid: () => {} });
+  // And the database-backed pages of this site's own (src/dynamic-pages.ts, create-app 0.40).
+  const more = (await dynamicPages().catch(() => [])).map((page) => ({ url: page.path, lastModified: page.lastModified ?? null }));
+  const entries = sitemapEntries(site, [...pathEntries(site), ...more, ...(await companyPages())], { onInvalid: () => {} });
   return toNextSitemap(entries) as MetadataRoute.Sitemap;
 }
 `;

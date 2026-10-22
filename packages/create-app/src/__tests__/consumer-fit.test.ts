@@ -420,8 +420,16 @@ describe("conversions: which pages bring people who sign up and people who pay",
     expect(file(p, "app/(site)/sign-up/[[...sign-up]]/page.tsx")).toContain("fallbackRedirectUrl={afterSignUpPath(AFTER_AUTH_PATH)}");
   });
 
-  it("without analytics: no /welcome, and every hook is a no-op", async () => {
+  it("without analytics but with each person's emails (create-app 0.40): /welcome keeps what they ticked, and records no sign-up", async () => {
     const p = await plan({ ...CONSUMER_PLANS, includeAnalytics: false });
+    const welcome = file(p, "app/welcome/route.ts");
+    expect(welcome).toContain("applySignUpEmailChoice(principal.userId");
+    expect(welcome).not.toContain("recordSignUp");
+    expect(file(p, "src/conversions.ts")).toContain("/welcome?next=");
+  });
+
+  it("without analytics or email: no /welcome, and every hook is a no-op", async () => {
+    const p = await plan({ ...CONSUMER_PLANS, includeAnalytics: false, includeEmail: false });
     expect(p.files.has(sep("app/welcome/route.ts"))).toBe(false);
     expect(file(p, "src/conversions.ts")).toContain("return next;");
     expect(file(p, "src/server/conversions.ts")).toContain(

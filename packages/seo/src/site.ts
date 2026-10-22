@@ -21,7 +21,7 @@ export interface ShareImageMeta {
   readonly type?: string;
 }
 
-/** A path ("/opengraph-image") or URL, or the full descriptor. */
+/** A path ("/og.png") or URL, or the full descriptor. */
 export type ShareImageInput = string | { url: string; width?: number; height?: number; alt?: string; type?: string };
 
 export interface SiteInput {
@@ -45,10 +45,12 @@ export interface SiteInput {
   /** Between a page title and the brand. Default " | ". */
   titleSeparator?: string;
   /**
-   * The share image a page uses when it has none of its own: a static file
-   * ("/og.png") or the route a root `opengraph-image.tsx` is served at
-   * ("/opengraph-image"). Give width and height (1200×630) so previews draw
-   * before the image loads.
+   * The share image a page uses when it has none of its own, at an address
+   * that never changes: a static file in public/ or a route handler at a
+   * fixed path ("/og.png" — create-app writes app/og.png/route.tsx). NOT a
+   * root `opengraph-image.tsx`: Next 16 serves those under a hashed name
+   * ("/opengraph-image-2bab54?…"), so "/opengraph-image" is a 404 (0.3).
+   * Give width and height (1200×630) so previews draw before the image loads.
    */
   image?: ShareImageInput;
   /** Twitter/X handles, with or without the "@". */

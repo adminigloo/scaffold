@@ -64,6 +64,17 @@ generated app misbehaves.
      --model subscription --admin full --email --marketing --seo --analytics
    ```
 
+   **Each person's own emails** (create-app 0.40, `@adminigloo/digest`): with
+   `--email`, every person chooses their own emails at `/account/email` — each
+   digest and alert kind in `src/digests.ts`, every one OFF until they tick it
+   (at sign-up, unticked, or there) — and the hour their digests come in their
+   own zone. A digest is the SECTIONS you register (a server function of the
+   person and the day returning `{ title, text, html }`, or null);
+   `/api/cron/digest` sends one email per person per local day through a
+   ledger (a replay sends nobody anything), every email has RFC 8058 one-click
+   unsubscribe and a signed `/unsubscribe` link that needs no sign-in, and
+   staff preview anybody's digest for any day at `/api/email/v1/preview`.
+
    **Plans are not a shop** (create-app 0.39): `--model subscription` sells
    plans and nothing else — Stripe and billing, and no `/products`,
    `/checkout`, `/account/orders`, product builder, licence keys,
@@ -356,9 +367,17 @@ the optional table).
   two variants), signed-in screens not counted, its staff left out. A single
   business (`--tenant-noun none`) is one site, the way adminigloo.com counts
   its own.
-- **Search basics** (`--seo`): `src/seo.ts`, `app/robots.ts` and
-  `app/sitemap.ts` on `@adminigloo/seo` from one path list; robots.txt names
-  the AI crawlers. With companies, each company's public pages get their own
+- **SEO by default** (create-app 0.40, every project): a tab icon,
+  home-screen icons and `/manifest.webmanifest` from the name and
+  `src/brand.ts`, the site's share card at `/og.png`, ONE public-page list
+  (`src/site-pages.ts`) with `dynamicPages()` (`src/dynamic-pages.ts`) for
+  database-backed pages, feeding `/sitemap.xml`, `/llms.txt` and
+  `/llms-full.txt`; `X-Robots-Tag` on every private route from the generated
+  `proxy.ts` (with `--analytics`, every AI crawler's read of any page logged
+  after the answer); `metadataFor()` on every generated public page.
+- **Search basics** (`--seo`): `src/seo.ts`, `src/seo-paths.ts`,
+  `app/robots.ts` and `app/sitemap.ts` on `@adminigloo/seo` from one path
+  list; robots.txt names the AI crawlers, in one group. With companies, each company's public pages get their own
   title, canonical address and LocalBusiness details from its company
   settings, and the pages of every company taking requests are in the
   sitemap — the estimate page once its estimator is set up; token pages

@@ -37,8 +37,10 @@ import { asArray, isHttpUrl } from "./util.js";
  *     Claude-SearchBot, PerplexityBot…) or `userFetch` (ChatGPT-User,
  *     Claude-User, Perplexity-User: a person asked an assistant about you).
  *   - A bot named in its own group ignores the `*` group, so an allowed bot's
- *     group repeats every private rule; one group per token, so even a naive
- *     parser reads it right (seo-reports 0.1 mis-reads multi-agent groups).
+ *     group repeats every private rule; one group per token by default, so
+ *     even a naive parser reads it right (seo-reports 0.1 mis-read
+ *     multi-agent groups). `combine: true` lists the allowed bots in the `*`
+ *     group instead: one group, the same answers (0.3).
  */
 
 export type Access = "allow" | "deny";
@@ -67,7 +69,11 @@ export interface RobotsPolicyOptions {
   bots?: Readonly<Record<string, Access>>;
   /** Write an explicit group for each ALLOWED AI bot, so a reader sees them named. Default true. */
   nameAiBots?: boolean;
-  /** One group with several User-agent lines per distinct rule set, instead of one group per token. Default false. */
+  /**
+   * One group per distinct rule set instead of one group per token, the
+   * allowed bots listed in the `*` group itself (0.3): with every bot allowed,
+   * robots.txt is ONE group. Default false.
+   */
   combine?: boolean;
   /** Sitemap paths or URLs. Default ["/sitemap.xml"]; false for none. */
   sitemaps?: readonly string[] | false;
@@ -166,16 +172,33 @@ export function robotsPolicy(site: Site, options: RobotsPolicyOptions = {}): Rob
   return sitemaps.length > 0 ? { rules, sitemap: sitemaps } : { rules };
 }
 
+/**
+ * One group per distinct rule set (0.3: the `*` group's own set included).
+ * An allowed bot's rules ARE the `*` group's — that is why it repeats them —
+ * so it is listed in that group (`User-agent: *`, `User-agent: GPTBot`, …,
+ * then the rules once), and a site whose bots are all allowed writes ONE
+ * group. Under RFC 9309 a bot named in a group obeys that group, and every
+ * other bot obeys it as `*`: the same answer for every bot and path as the
+ * separate groups (a test holds them equal). Refused bots share one
+ * `Disallow: /` group.
+ */
 function combineGroups(groups: RobotsGroup[]): RobotsGroup[] {
   const [star, ...rest] = groups;
+  const rulesOf = (group: RobotsGroup) => JSON.stringify([group.allow ?? [], group.disallow ?? []]);
+  const everyone: RobotsGroup = { ...star!, userAgent: [...asArray(star!.userAgent)] };
+  const starRules = rulesOf(everyone);
   const byRules = new Map<string, RobotsGroup>();
   for (const group of rest) {
-    const key = JSON.stringify([group.allow ?? [], group.disallow ?? []]);
+    const key = rulesOf(group);
+    if (key === starRules) {
+      (everyone.userAgent as string[]).push(...asArray(group.userAgent));
+      continue;
+    }
     const existing = byRules.get(key);
     if (existing) (existing.userAgent as string[]).push(...asArray(group.userAgent));
     else byRules.set(key, { ...group, userAgent: [...asArray(group.userAgent)] });
   }
-  return [star!, ...byRules.values()];
+  return [everyone, ...byRules.values()];
 }
 
 /**

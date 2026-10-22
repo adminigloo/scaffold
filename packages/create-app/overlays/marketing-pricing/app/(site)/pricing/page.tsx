@@ -8,6 +8,7 @@ import { loadStaffPermissions } from "@/server/permissions";
 import { db } from "@/db";
 import { plans } from "@/plans";
 import { PRICING } from "@/marketing-copy";
+import { metadataFor } from "@/seo";
 // From the `marketing` overlay, which is selected whenever this one is — the
 // pricing page needs both a marketing site to belong to and plans to price. It
 // borrows the landing page's section shell on purpose: a pricing page set in the
@@ -23,11 +24,7 @@ import {
   toggleableIntervals,
 } from "@/components/marketing/pricing/planPresentation";
 
-export const metadata: Metadata = {
-  title: "Pricing",
-  description: PRICING.description,
-  alternates: { canonical: "/pricing" },
-};
+export const metadata: Metadata = metadataFor({ path: "/pricing", title: "Pricing", description: PRICING.description });
 
 /**
  * NOT STATIC, and the reason is not the prices.

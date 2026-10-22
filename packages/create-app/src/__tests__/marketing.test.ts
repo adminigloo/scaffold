@@ -363,7 +363,12 @@ describe("SEO, which is in every project on purpose", () => {
     // adopted by every page that does not override one — a whole site declaring
     // itself canonical to `/`, which asks Google to drop all of it.
     const plan = await planEmit(TEMPLATE_DIR, "/out", answers());
-    expect(withoutComments(plan.files.get(SEO) ?? "")).not.toContain("alternates");
+    // The root's own object: a page's canonical is metadataFor's (create-app 0.40), never the layout's.
+    const seo = withoutComments(plan.files.get(SEO) ?? "");
+    const root = seo.slice(seo.indexOf("export const siteMetadata"), seo.indexOf("export function metadataFor"));
+    expect(root).toContain("export const siteMetadata");
+    expect(root).not.toContain("alternates");
+    expect(seo).toContain("alternates: { canonical: page.path }");
   });
 
   it("indexes production and nothing else", async () => {
@@ -399,11 +404,14 @@ describe("SEO, which is in every project on purpose", () => {
       answers({ businessModel: "none", includeMarketing: false }),
     );
 
-    const withPages = marketing.files.get(SITEMAP) ?? "";
+    // The list the sitemap reads (create-app 0.40: src/site-pages.ts).
+    const PAGES = join("src", "site-pages.ts");
+    expect(marketing.files.get(SITEMAP) ?? "").toContain("SITE_PAGES");
+    const withPages = marketing.files.get(PAGES) ?? "";
     expect(withPages).toContain('"/pricing"');
     expect(withPages).toContain('"/privacy"');
 
-    const withoutPages = withoutComments(bare.files.get(SITEMAP) ?? "");
+    const withoutPages = withoutComments(bare.files.get(PAGES) ?? "");
     expect(withoutPages).not.toContain('"/pricing"');
     expect(withoutPages).not.toContain('"/privacy"');
     expect(withoutPages).toContain('"/"');

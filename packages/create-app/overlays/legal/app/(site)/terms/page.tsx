@@ -8,13 +8,14 @@ import {
 } from "@/components/legal/LegalDocument";
 import { EXTRA_TERMS } from "@/legal";
 import { PUBLISHER } from "@/legal-publisher";
+import { metadataFor } from "@/seo";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = metadataFor({
+  path: "/terms",
   title: "Terms",
   description:
     "The agreement between you and __DISPLAY_NAME__: your account, what you may do with the service, and what we owe each other.",
-  alternates: { canonical: "/terms" },
-};
+});
 
 /**
  * The terms of service.

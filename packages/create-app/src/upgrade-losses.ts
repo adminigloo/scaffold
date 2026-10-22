@@ -44,6 +44,8 @@ export const PACKAGE_TABLES: Readonly<Record<string, readonly string[]>> = {
   billing: ["entitlements", "plans", "subscriptions"],
   ai: ["ai_usage"],
   email: ["email_events"],
+  // create-app 0.40: each person's email choices and the digests' ledger.
+  digest: ["digest_preferences", "digest_subscriptions", "digest_sends"],
   feedback: [
     "feedback_boards",
     "feedback_categories",

@@ -6,6 +6,7 @@ import { HowItWorks } from "@/components/marketing/HowItWorks";
 import { Outcomes } from "@/components/marketing/Outcomes";
 import { PlansTeaser } from "@/components/marketing/PlansTeaser";
 import { isSignedIn } from "@/components/marketing/viewer";
+import { metadataFor, SITE_NAME } from "@/seo";
 
 /**
  * The landing page, for business owners (create-app 0.36): what it does for
@@ -26,12 +27,14 @@ import { isSignedIn } from "@/components/marketing/viewer";
  * Someone already signed in is offered "Go to your dashboard", not "Get
  * started" — the header's sign-in check, asked once more here.
  */
-export const metadata: Metadata = {
-  // Its own canonical, set here rather than inherited. Metadata merges field by
-  // field down the tree, so a canonical in the root layout would be adopted by
-  // every page that did not override it — a whole site claiming to be `/`.
-  alternates: { canonical: "/" },
-};
+/**
+ * Its own canonical, set here rather than inherited (metadata merges field by
+ * field down the tree, so a canonical in the root layout would be adopted by
+ * every page that did not override it — a whole site claiming to be `/`), and
+ * the site's share card and description (create-app 0.40: src/seo.ts's
+ * `metadataFor`).
+ */
+export const metadata: Metadata = metadataFor({ path: "/", title: SITE_NAME });
 
 export default async function Home() {
   const signedIn = await isSignedIn();

@@ -1,0 +1,65 @@
+{
+  "name": "@adminigloo/digest",
+  "version": "0.0.0",
+  "description": "Each person's own email choices and a daily digest in their own time zone: the digests and alert emails a project registers, one email per person per local day through a ledger, RFC 8058 one-click unsubscribe with signed links that work without signing in, a staff preview, and the preferences screen.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adminigloo/scaffold.git",
+    "directory": "packages/digest"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./schema": {
+      "types": "./dist/schema.d.ts",
+      "import": "./dist/schema.js",
+      "require": "./dist/schema.cjs"
+    },
+    "./ui": {
+      "types": "./dist/ui.d.ts",
+      "import": "./dist/ui.js",
+      "require": "./dist/ui.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "public"
+  },
+  "dependencies": {
+    "@adminigloo/db": "workspace:^"
+  },
+  "peerDependencies": {
+    "drizzle-orm": "catalog:peers",
+    "react": "^18.0.0 || ^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.4",
+    "drizzle-orm": "catalog:",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "scripts": {
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  }
+}

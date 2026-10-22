@@ -1,13 +1,13 @@
 import type { Metadata } from "next";
 import { EstimateTool } from "__SCOPE__/estimator-widget";
+import { metadataFor } from "@/seo";
 import { ESTIMATE_BOOK_VISIT_HREF } from "@/server/estimator-features";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = metadataFor({
+  path: "/estimate",
   title: "Instant estimate",
-  description:
-    "A real price in a minute, before anyone drives out — from our own price book, for what you can count or measure.",
-  alternates: { canonical: "/estimate" },
-};
+  description: "A real price in a minute, before anyone drives out — from our own price book, for what you can count or measure.",
+});
 
 /**
  * The instant estimate: a customer picks what they need, answers what they

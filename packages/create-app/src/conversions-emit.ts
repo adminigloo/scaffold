@@ -26,13 +26,26 @@
  * under a key analytics records at most once (`once`), so a refresh, a
  * back-button or a bookmarked return link never counts again.
  */
-import type { Answers } from "./answers.js";
+import { personEmails, type Answers } from "./answers.js";
 
 // ---------------------------------------------------------------------------
 // src/conversions.ts
 // ---------------------------------------------------------------------------
 
 export function renderConversionPaths(answers: Answers): string {
+  if (!answers.includeAnalytics && personEmails(answers)) {
+    return `/**
+ * Where a person lands straight after signing up (create-app 0.40): through
+ * /welcome (app/welcome/route.ts), which keeps the emails they ticked beside
+ * the sign-up form and their browser's time zone, then sends them on to
+ * where they were going. GENERATED in variants; with --analytics /welcome
+ * also marks their visit "Signed up".
+ */
+export function afterSignUpPath(next: string): string {
+  return \`/welcome?next=\${encodeURIComponent(next)}\`;
+}
+`;
+  }
   if (!answers.includeAnalytics) {
     return `/**
  * Where a person lands straight after signing up (create-app 0.39): where
@@ -246,28 +259,49 @@ ${firstPayment}`;
 // app/welcome/route.ts (with --analytics)
 // ---------------------------------------------------------------------------
 
-export function renderWelcomeRoute(_answers: Answers): string {
-  return `import { NextResponse, type NextRequest } from "next/server";
-import { safeReturnPath } from "@/redirect";
-import { currentPrincipal } from "@/server/auth";
-import { recordSignUp } from "@/server/conversions";
-import { AFTER_AUTH_PATH } from "@/tenancy";
+export function renderWelcomeRoute(answers: Answers): string {
+  const counted = answers.includeAnalytics;
+  const emails = personEmails(answers);
+  const imports = [
+    `import { NextResponse, type NextRequest } from "next/server";`,
+    `import { safeReturnPath } from "@/redirect";`,
+    `import { currentPrincipal } from "@/server/auth";`,
+    ...(counted ? [`import { recordSignUp } from "@/server/conversions";`] : []),
+    ...(emails ? [`import { applySignUpEmailChoice, SIGN_UP_EMAIL_COOKIE } from "@/server/digest";`] : []),
+    `import { AFTER_AUTH_PATH } from "@/tenancy";`,
+  ];
+  const what = [
+    ...(counted
+      ? [`their visit is marked
+ * "Signed up" (src/server/conversions.ts) — only when the account was made
+ * moments ago, and only once`]
+      : []),
+    ...(emails
+      ? [`the emails they ticked beside the sign-up form and
+ * their browser's time zone are kept (src/server/digest.ts; the cookie the
+ * form wrote is read once and deleted)`]
+      : []),
+  ].join(`, and
+ * `);
+  return `${imports.join("\n")}
 
 /**
- * WHERE A NEW SIGN-UP LANDS FIRST (create-app 0.39): their visit is marked
- * "Signed up" (src/server/conversions.ts) — only when the account was made
- * moments ago, and only once — then they go where they were going: a real
- * 307, so nothing renders here and nothing is indexed. The sign-up page sends
- * people here (src/conversions.ts); a returning sign-in never does, and
- * reaching it any other way counts nothing.
+ * WHERE A NEW SIGN-UP LANDS FIRST (create-app ${emails ? "0.40" : "0.39"}): ${what} — then they go where
+ * they were going: a real 307, so nothing renders here and nothing is
+ * indexed. The sign-up page sends people here (src/conversions.ts); a
+ * returning sign-in never does, and reaching it any other way counts nothing.
  */
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const next = safeReturnPath(req.nextUrl.searchParams.get("next") ?? undefined) ?? AFTER_AUTH_PATH;
-  const principal = await currentPrincipal().catch(() => null);
-  if (principal) await recordSignUp(principal.userId);
-  return NextResponse.redirect(new URL(next, req.url), 307);
+  const principal = await currentPrincipal().catch(() => null);${counted ? `
+  if (principal) await recordSignUp(principal.userId);` : ""}${emails ? `
+  if (principal) await applySignUpEmailChoice(principal.userId, req.cookies.get(SIGN_UP_EMAIL_COOKIE)?.value);` : ""}
+  const response = NextResponse.redirect(new URL(next, req.url), 307);${emails ? `
+  // Read once: the choice belongs to this sign-up, never the next one on this browser.
+  if (principal) response.cookies.delete(SIGN_UP_EMAIL_COOKIE);` : ""}
+  return response;
 }
 `;
 }

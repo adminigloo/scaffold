@@ -1011,9 +1011,10 @@ describe("the header and the company links (11.11)", () => {
       const siteLinks = site.slice(site.indexOf("export const SITE_LINKS"), site.indexOf("export const APP_LINKS"));
       expect(siteLinks.includes('"/book-visit"'), label).toBe(present);
       expect(siteLinks.includes('"/estimate"'), label).toBe(present);
-      expect(code(file(p, "app", "sitemap.ts")).includes('"/book-visit"'), label).toBe(present);
-      expect(code(file(p, "app", "llms.txt", "route.ts")).includes("/book-visit"), label).toBe(present);
-      const robots = code(file(p, "app", "robots.ts"));
+      // One list each (create-app 0.40): src/site-pages.ts for the sitemap and
+      // both llms files, src/seo-paths.ts for robots.txt and the proxy's header.
+      expect(code(file(p, "src", "site-pages.ts")).includes('"/book-visit"'), label).toBe(present);
+      const robots = code(file(p, "src", "seo-paths.ts"));
       expect(robots.includes('"/quote/"'), label).toBe(present);
       expect(robots.includes('"/visit/"'), label).toBe(present);
       expect(robots.includes('"/invoice/"'), label).toBe(present);
@@ -1173,7 +1174,7 @@ describe("what the project claims and documents (11.13)", () => {
       // Tenancy 2b-1 moved every line it changed (versions.ts says why); the showroom (0.36) moved the widgets again,
       // and its second round (0.36.1) the tenancy widget (the collapsible setup card); polish 3 (0.36.2) the widgets
       // that hand their buttons to the page header; 0.37 (deleting a company, past records' dates) every package
-      // that keeps company rows.
+      // that keeps company rows; 0.40 email (headers and an idempotency key, for the digests).
       ["tenancy", "^0.8.0"],
       ["tenancy-widget", "^0.5.0"],
       ["scheduling", "^0.7.0"],
@@ -1184,7 +1185,7 @@ describe("what the project claims and documents (11.13)", () => {
       ["invoicing-widget", "^0.4.0"],
       ["comms", "^0.6.0"],
       ["comms-widget", "^0.2.0"],
-      ["email", "^0.4.0"],
+      ["email", "^0.5.0"],
       ["storage", "^0.3.0"],
       ["storage-widget", "^0.1.0"],
     ] as const) {

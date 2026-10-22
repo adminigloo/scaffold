@@ -143,7 +143,8 @@ describe("the pages", () => {
     const page = file(p, "app", "(site)", "visit", "[token]", "page.tsx");
     expect(page).toContain("robots: { index: false, follow: false }");
     expect(page).toContain('referrer: "no-referrer"');
-    expect(file(p, "app", "robots.ts")).toContain('"/visit/"');
+    // The list robots.txt and the proxy's X-Robots-Tag read (create-app 0.40).
+    expect(file(p, "src", "seo-paths.ts")).toContain('"/visit/"');
   });
 
   it("put the booking page in the public nav and the sitemap, and the manage page in neither", async () => {
@@ -151,7 +152,8 @@ describe("the pages", () => {
     const nav = code(file(p, "src", "nav.ts"));
     expect(nav).toContain('href: "/book-visit"');
     expect(nav).not.toContain('"/visit');
-    const sitemap = code(file(p, "app", "sitemap.ts"));
+    // The list the sitemap reads (create-app 0.40: src/site-pages.ts).
+    const sitemap = code(file(p, "src", "site-pages.ts"));
     expect(sitemap).toContain('"/book-visit"');
     expect(sitemap).not.toContain('"/visit');
   });

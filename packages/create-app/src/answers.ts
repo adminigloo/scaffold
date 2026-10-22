@@ -451,6 +451,9 @@ export function packagesFor(answers: Answers): readonly string[] {
 
   if (answers.includeAi) optional.push("ai");
   if (answers.includeEmail) optional.push("email");
+  // Each person's email choices and the daily digest (create-app 0.40), in
+  // a project whose customers are people and that sends email.
+  if (personEmails(answers)) optional.push("digest");
 
   // Two packages for one answer, deliberately. `feedback` is the platform
   // half — schema, key issuance, the HTTP handlers — and `feedback-widget` is
@@ -680,7 +683,9 @@ export function optionalEnvFor(answers: Answers): readonly string[] {
     answers.includeSeoReports ||
     answers.includeAeo ||
     // Tenancy 2b-4c: and the calls' reminders and hold clean-up.
-    answers.includeBooking
+    answers.includeBooking ||
+    // create-app 0.40: and each person's digests.
+    personEmails(answers)
   ) {
     // What the /api/cron/* routes check. Optional because a laptop drains
     // nothing on a schedule; on a deployment, unset means every cron call is
@@ -713,6 +718,9 @@ export function optionalEnvFor(answers: Answers): readonly string[] {
   // marks are made with. Optional: without it one is made from
   // CLERK_SECRET_KEY, which a deployment already requires.
   if (answers.includeAnalytics) vars.push("AUDIENCE_SECRET");
+  // create-app 0.40: what every email's unsubscribe link is signed with.
+  // Optional: without it one is made from CLERK_SECRET_KEY.
+  if (personEmails(answers)) vars.push("EMAIL_LINK_SECRET");
   // Getting paid, part 1: "Pay now" on invoices. Optional — without them the
   // invoice page shows "How to pay" only. A companies project uses Connect
   // (each company's own Stripe account) and may take a fee; one business uses
@@ -747,6 +755,19 @@ export function optionalEnvFor(answers: Answers): readonly string[] {
  */
 export function consumerProduct(answers: Pick<Answers, "tenantNoun" | "audience">): boolean {
   return answers.tenantNoun === "none" && answers.audience === "consumers";
+}
+
+/**
+ * EACH PERSON'S OWN EMAILS (create-app 0.40, @adminigloo/digest): a project
+ * whose customers are people, and that sends email, gets each person's email
+ * preferences (/account/email: which digests and alert kinds, at what local
+ * hour, in what zone — every one OFF until they say yes), a daily digest built
+ * from the sections the project registers (src/digests.ts), one-click
+ * unsubscribe on every email, and the staff preview. A companies project's
+ * people get their alerts by email through Alert settings instead.
+ */
+export function personEmails(answers: Pick<Answers, "tenantNoun" | "audience" | "includeEmail">): boolean {
+  return consumerProduct(answers) && answers.includeEmail;
 }
 
 /**
@@ -1121,6 +1142,10 @@ export function capabilitiesFor(answers: Answers): readonly string[] {
     // that gets crawled outranks the client's real site for their own brand
     // terms, and undoing it is a Search Console removal plus weeks of waiting.
     "seo.metadata",
+    // SEO BY DEFAULT (create-app 0.40), in the base list for the same reason:
+    // icons and a share card, one page list with a hook for database-backed
+    // pages, llms-full.txt and X-Robots-Tag from the proxy.
+    "seo.defaults",
   ];
 
   // Both are tenanted. The difference is whether an organisation is a thing the
