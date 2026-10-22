@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/digest",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Each person's own email choices and a daily digest in their own time zone: the digests and alert emails a project registers, one email per person per local day through a ledger, RFC 8058 one-click unsubscribe with signed links that work without signing in, a staff preview, and the preferences screen.",
   "license": "UNLICENSED",
   "type": "module",

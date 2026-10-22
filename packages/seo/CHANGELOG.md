@@ -1,5 +1,11 @@
 # @adminigloo/seo
 
+## 0.3.0
+
+### Minor Changes
+
+- ad0405a: `dataset(site, input)`: a schema.org Dataset for a page that publishes a table of measurements — its files as DataDownloads (`distribution`, or `csv: "/path.csv"`, each with a MIME type), `variables` (text or `{ name, unitText, description }`), ISO 8601 `temporalCoverage` (`"2026-08-14/.."` while it grows), `spatialCoverage`, dates checked; a description of 50 to 5,000 characters for Google's Dataset result (`richResult: false` lifts it); `creator` and `publisher` default to the site's organization written inline with its name, so the page alone says who made it; `isAccessibleForFree` and `license` are never defaulted. `pageMetadata(site, { ownImage: true, … })` writes no image list, so a route's own `opengraph-image.tsx` is the one Next names (any explicit list hid it). `robotsPolicy(site, { combine: true })` now lists the allowed bots in the `*` group itself: with every bot allowed robots.txt is ONE group, its rules written once, with the same answer for every bot and path; refused bots share one `Disallow: /` group. The `image` doc no longer points at `/opengraph-image`, which Next 16 serves under a hashed name: use a fixed address such as `/og.png`.
+
 ## 0.2.0
 
 ### Minor Changes
