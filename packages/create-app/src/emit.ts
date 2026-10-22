@@ -110,6 +110,7 @@ import {
   renderLlmsModule,
   renderLlmsRoute,
   renderProxy,
+  renderProxyTest,
   renderSeoDefaultsTest,
   renderSeoPaths,
   renderShareCardRoute,
@@ -990,6 +991,10 @@ export async function planEmit(
   files.set(join("app", "llms.txt", "route.ts"), renderLlmsRoute(answers, "index"));
   files.set(join("app", "llms-full.txt", "route.ts"), renderLlmsRoute(answers, "full"));
   files.set(join("src", "__tests__", "seo-defaults.test.ts"), renderSeoDefaultsTest(answers));
+  // The proxy itself, run as Next runs it: the header, and (with --analytics)
+  // the crawler log, loaded only for a crawler, never for this project's own
+  // test traffic.
+  files.set(join("src", "__tests__", "proxy.test.ts"), renderProxyTest(answers));
   files.set(join("app", "robots.ts"), answers.includeSeo ? renderSeoRobots(answers) : renderRobots(answers));
   // THE PUBLIC PAGES, AS A CRAWLER READS THEM (create-app 0.39): every page the
   // sitemap lists answers a real 200 with its <h1> in the first HTML, a missing

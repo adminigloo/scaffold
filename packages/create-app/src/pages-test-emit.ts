@@ -144,9 +144,13 @@ afterAll(() => {
  * dev-browser cookie to its handshake (a 307 to *.clerk.accounts.dev), so
  * every page would answer 307 and nothing else be tested. Next serves the
  * same HTML without it.
+ *
+ * \`x-test-traffic\` says this is the project's own test, so the proxy never
+ * logs it as a crawler's read (proxy.ts): asked as GPTBot, every run would
+ * otherwise land in the site's crawler numbers.
  */
 async function get(path: string): Promise<Response> {
-  return fetch(\`\${base}\${path}\`, { redirect: "manual", headers: { "user-agent": CRAWLER } });
+  return fetch(\`\${base}\${path}\`, { redirect: "manual", headers: { "user-agent": CRAWLER, "x-test-traffic": "test:pages" } });
 }
 
 /**

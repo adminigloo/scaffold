@@ -462,16 +462,46 @@ function logCrawler(req: NextRequest): void {
   if (!classifyCrawler(userAgent)) return;
   const path = req.nextUrl.pathname;
   if (path.startsWith("/api/")${companies ? ` || path.startsWith("/t/")` : ""}) return;
-  const facts = {
-    userAgent,
-    path,
-    ip: req.headers.get("x-real-ip") ?? req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
-    country: req.headers.get("x-vercel-ip-country"),
-  };
+  const ip = req.headers.get("x-real-ip") ?? req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+  if (isOwnTraffic(req, ip)) return;
+  const facts = { userAgent, path, ip, country: req.headers.get("x-vercel-ip-country") };
   after(async () => {
     const { recordSiteCrawlerHit } = await import("@/server/website");
     await recordSiteCrawlerHit(facts);
   });
+}
+
+/** What \`pnpm test:pages\` sends on every request (tests/pages/public-pages.test.ts). */
+const TEST_TRAFFIC_HEADER = "x-test-traffic";
+
+/**
+ * THIS PROJECT'S OWN TRAFFIC, NEVER A CRAWLER'S READ: \`pnpm test:pages\`
+ * (which asks as GPTBot, and says so in TEST_TRAFFIC_HEADER), a curl from this
+ * machine, anything from a loopback or private-network address. A request
+ * that names no address at all (\`next start\` on a laptop passes none) is
+ * judged by the address it was sent to: localhost is this machine. A real
+ * crawler reads the site from a public address, by the site's own name.
+ * Without this every project's own tests filled its crawler log — one
+ * Almanac run wrote 286,123 rows.
+ */
+function isOwnTraffic(req: NextRequest, ip: string | null): boolean {
+  if (req.headers.has(TEST_TRAFFIC_HEADER)) return true;
+  if (ip) return isPrivateAddress(ip);
+  const host = (req.headers.get("host") ?? "").trim().toLowerCase();
+  const name = host.startsWith("[") ? host.slice(1, host.indexOf("]")) : host.replace(/:\\d+$/, "");
+  return name === "localhost" || name.endsWith(".localhost") || isPrivateAddress(name);
+}
+
+/** Loopback, private-network, link-local or unspecified: 127/8, 10/8, 172.16/12, 192.168/16, 169.254/16, 0/8, ::1, ::, fc00::/7, fe80::/10. */
+function isPrivateAddress(address: string): boolean {
+  const ip = address.trim().toLowerCase();
+  const v4 = /^(?:::ffff:)?(\\d{1,3})\\.(\\d{1,3})\\.\\d{1,3}\\.\\d{1,3}(?::\\d+)?$/.exec(ip);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    return a === 127 || a === 10 || a === 0 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254);
+  }
+  const v6 = ip.replace(/^\\[|\\](?::\\d+)?$/g, "");
+  return v6 === "::1" || v6 === "::" || /^f[cd][0-9a-f]{2}:/.test(v6) || /^fe[89ab][0-9a-f]:/.test(v6);
 }
 `
     : "";
@@ -586,6 +616,107 @@ export const config = {
   ],
 };
 `;
+}
+
+/** src/__tests__/proxy.test.ts: the proxy itself, as Next runs it on every request. */
+export function renderProxyTest(answers: Answers): string {
+  const counted = answers.includeAnalytics;
+  const crawlerMocks = counted
+    ? `
+/** What reached the crawler log, and whether its module was ever loaded. */
+const logged = vi.hoisted(() => ({ loaded: false, hits: [] as Array<{ path: string; ip: string | null }> }));
+vi.mock("@/server/website", () => {
+  logged.loaded = true;
+  return { recordSiteCrawlerHit: async (facts: { path: string; ip: string | null }) => void logged.hits.push({ path: facts.path, ip: facts.ip }) };
+});
+`
+    : "";
+  const crawlerTests = counted
+    ? `
+describe("the crawler log", () => {
+  it("a person's request is one user-agent test: nothing is logged, and the log's module is never loaded", async () => {
+    expect(await ask("/", { "user-agent": PERSON, "x-real-ip": "203.0.113.7" })).toBe(0);
+    expect(logged.loaded).toBe(false);
+  });
+
+  it("an AI crawler's read is logged after the answer, from a module loaded only then", async () => {
+    expect(await ask("/", { "user-agent": GPTBOT, "x-forwarded-for": "20.171.206.17, 10.0.0.1" })).toBe(1);
+    expect(logged.hits).toEqual([{ path: "/", ip: "20.171.206.17" }]);
+    expect(logged.loaded).toBe(true);
+  });
+
+  it("a crawler that reaches the server by the site's own name, naming no address, is still logged", async () => {
+    await ask("/", { "user-agent": GPTBOT });
+    expect(logged.hits).toEqual([{ path: "/", ip: null }]);
+  });
+
+  it.each([
+    ["test:pages, which says so", { "x-test-traffic": "test:pages", "x-real-ip": "20.171.206.17" }],
+    ["this machine", { "x-forwarded-for": "127.0.0.1" }],
+    ["this machine over IPv6", { "x-forwarded-for": "::1" }],
+    ["this machine, IPv4 in IPv6", { "x-real-ip": "::ffff:127.0.0.1" }],
+    ["the office network", { "x-real-ip": "192.168.1.20" }],
+    ["a container beside it", { "x-forwarded-for": "172.18.0.4" }],
+    ["a private IPv6 network", { "x-forwarded-for": "fd12:3456:789a::1" }],
+    ["a laptop's next start, which names no address", { host: "localhost:3000" }],
+    ["the same, asked at 127.0.0.1", { host: "127.0.0.1:3000" }],
+  ])("never logs this project's own traffic: %s", async (_label, headers) => {
+    expect(await ask("/", { "user-agent": GPTBOT, ...headers })).toBe(0);
+    expect(logged.hits).toEqual([]);
+  });
+});
+`
+    : "";
+  return `import { beforeEach, describe, expect, it, vi } from "vitest";
+import { NextRequest } from "next/server";
+import proxy from "../../proxy";
+
+/**
+ * THE PROXY, AS NEXT RUNS IT ON EVERY REQUEST (create-app 0.40): every answer
+ * under a private route says X-Robots-Tag, a public page's says nothing${counted ? `;
+ * an AI crawler's read is logged after the answer, from a module loaded only
+ * then, and this project's own traffic — test:pages, a curl from this
+ * machine, a private-network address — never is` : ""}.
+ */
+const tasks = vi.hoisted(() => [] as Array<() => unknown>);
+vi.mock("next/server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("next/server")>()),
+  // What runs after the answer has gone: kept here, and run by ask().
+  after: (task: () => unknown) => void tasks.push(task),
+}));
+// Clerk's wrapper as a pass-through: what is tested is the proxy's own work.
+vi.mock("@clerk/nextjs/server", () => ({
+  clerkMiddleware: (handler: (auth: unknown, req: NextRequest) => unknown) => (req: NextRequest) => handler({}, req),
+}));
+${crawlerMocks}
+${counted ? `const PERSON = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15";
+const GPTBOT = "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; GPTBot/1.2; +https://openai.com/gptbot)";
+
+` : ""}let response: Response | null = null;
+
+/** One request through the proxy, and what it left to run after the answer (run here). How many there were. */
+async function ask(path: string, headers: Record<string, string> = {}): Promise<number> {
+  const handle = proxy as unknown as (req: NextRequest) => Response | Promise<Response>;
+  response = await handle(new NextRequest(\`https://alma.example.com\${path}\`, { headers: { host: "alma.example.com", ...headers } }));
+  const after = tasks.splice(0);
+  for (const task of after) await task();
+  return after.length;
+}
+
+beforeEach(() => {
+  tasks.length = 0;${counted ? `
+  logged.hits.length = 0;` : ""}
+});
+
+describe("X-Robots-Tag", () => {
+  it("is on every answer under a private route, and on no public page", async () => {
+    await ask("/setup/start");
+    expect(response?.headers.get("x-robots-tag")).toMatch(/^noindex/);
+    await ask("/");
+    expect(response?.headers.get("x-robots-tag")).toBeNull();
+  });
+});
+${crawlerTests}`;
 }
 
 // ---------------------------------------------------------------------------

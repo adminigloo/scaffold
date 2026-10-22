@@ -282,6 +282,21 @@ describe("SEO by default, in every project", () => {
     }
   });
 
+  it("none of this project's own test traffic reaches the crawler log", async () => {
+    for (const answers of [ALMANAC, BARE]) {
+      const p = await plan(answers);
+      expect(code(file(p, "tests/pages/public-pages.test.ts"))).toContain('"x-test-traffic": "test:pages"');
+      expect(p.files.has(sep("src/__tests__/proxy.test.ts"))).toBe(true);
+    }
+    const proxy = code(file(await plan(ALMANAC), "proxy.ts"));
+    expect(proxy).toContain('const TEST_TRAFFIC_HEADER = "x-test-traffic";');
+    // Skipped before anything is left to run after the answer.
+    expect(proxy).toContain("if (isOwnTraffic(req, ip)) return;");
+    expect(proxy.indexOf("if (isOwnTraffic(req, ip)) return;")).toBeLessThan(proxy.indexOf("after(async () => {"));
+    expect(file(await plan(ALMANAC), "src/__tests__/proxy.test.ts")).toContain("never logs this project's own traffic: %s");
+    expect(file(await plan(BARE), "src/__tests__/proxy.test.ts")).not.toContain("the crawler log");
+  });
+
   it("names the routes the review asked for in the list the proxy sends X-Robots-Tag from", async () => {
     const paths = file(await plan(ALMANAC), "src/seo-paths.ts");
     for (const path of ['"/api/"', '"/setup"', '"/admin"', '"/account"', '"/welcome"', '"/unsubscribe"']) expect(paths, path).toContain(path);
