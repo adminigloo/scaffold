@@ -107,7 +107,10 @@ until their hour on D+1. The windows are back to back:
   hour;
 - run once a day (Vercel Hobby) and everyone still gets one a day, in
   whichever window that run falls (late for some zones, never twice);
-- after an outage only the window open now is sent, never a backlog.
+- after an outage only the window open now is sent, never a backlog;
+- a window for a day before the person said yes is never theirs: someone who
+  ticks the box at 5 AM gets that day's at 7, not the day before's at once and
+  another at 7 (after their hour, that day's goes at once).
 
 An hour the clocks jump over is the first moment after the jump; an hour
 that happens twice is the first.

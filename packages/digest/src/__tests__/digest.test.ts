@@ -138,12 +138,35 @@ describe("two people in different zones", () => {
   it("an hour later in the person's zone means an hour later: Ann at 9 AM is not due at 8", async () => {
     const digests = instance();
     await digests.savePreferences("user_ann", { timeZone: "America/Chicago", deliveryHour: 9, choices: { morning: true } });
-    // The window for Oct 20 is still open at 8 AM Oct 21 (it closes at 9): she gets Oct 20's once.
+    // The window open at 8 AM Oct 21 is Oct 20's (it closes at 9), a day
+    // before she said yes: nothing yet.
     now = new Date("2026-10-21T13:00:00Z");
     await digests.run();
-    expect(sent.map((message) => message.text.match(/it is (\S+)/)?.[1])).toEqual(["2026-10-20"]);
-    sent = [];
+    expect(sent).toEqual([]);
     now = new Date("2026-10-21T14:00:00Z"); // 9 AM CDT
+    await digests.run();
+    expect(sent.map((message) => message.text.match(/it is (\S+)/)?.[1])).toEqual(["2026-10-21"]);
+  });
+
+  it("someone who says yes before their hour gets that day's at their hour, not the day before's now and that day's within the hour", async () => {
+    const digests = instance();
+    // 5:30 AM in Chicago on Oct 21. The window open is still Oct 20's (it
+    // closes at 7), which would have gone now, and Oct 21's at 7: two
+    // emails in one morning for someone who just ticked the box.
+    now = new Date("2026-10-21T10:30:00Z");
+    await digests.savePreferences("user_ann", { timeZone: "America/Chicago", deliveryHour: 7, choices: { morning: true } });
+    expect((await digests.run()).digests[0]).toMatchObject({ subscribed: 1, due: 0, sent: 0 });
+    now = new Date("2026-10-21T12:05:00Z"); // 7:05 AM CDT
+    await digests.run();
+    now = new Date("2026-10-21T13:05:00Z");
+    await digests.run();
+    expect(sent.map((message) => message.text.match(/it is (\S+)/)?.[1])).toEqual(["2026-10-21"]);
+  });
+
+  it("someone who says yes after their hour still gets that day's at once", async () => {
+    const digests = instance();
+    now = new Date("2026-10-21T15:00:00Z"); // 10 AM CDT: Oct 21's window is open
+    await digests.savePreferences("user_ann", { timeZone: "America/Chicago", deliveryHour: 7, choices: { morning: true } });
     await digests.run();
     expect(sent.map((message) => message.text.match(/it is (\S+)/)?.[1])).toEqual(["2026-10-21"]);
   });

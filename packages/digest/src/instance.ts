@@ -5,7 +5,7 @@ import { isSafeHtml, type SafeHtml } from "./html.js";
 import { InvalidEmailKindError, type DigestPerson, type DigestRecipient, type DigestSectionContent, type DigestSpec, type EmailKind, type EmailKinds } from "./registry.js";
 import { renderAlertEmail, renderDigestEmail, type EmailTheme, type RenderedEmail } from "./render.js";
 import type { DigestTables } from "./schema.js";
-import { assertTimeZone, deliveryWindow, digestDay, isDay, isTimeZone, type DigestDay } from "./time.js";
+import { assertTimeZone, deliveryWindow, digestDay, isDay, isTimeZone, localDay, type DigestDay } from "./time.js";
 import { readUnsubscribe, signUnsubscribe } from "./tokens.js";
 
 /**
@@ -544,17 +544,29 @@ export function createDigests(options: CreateDigestsOptions): Digests {
       if (kind === null) continue; // no sections: offered nowhere, sent never
       const tally = { key: digest.key, subscribed: 0, due: 0, sent: 0, skipped: 0, empty: 0, failed: 0, waiting: 0 };
       const said = await db
-        .select({ userId: t.subscriptions.userId, timeZone: t.preferences.timeZone, deliveryHour: t.preferences.deliveryHour })
+        .select({
+          userId: t.subscriptions.userId,
+          chosenAt: t.subscriptions.changedAt,
+          timeZone: t.preferences.timeZone,
+          deliveryHour: t.preferences.deliveryHour,
+        })
         .from(t.subscriptions)
         .leftJoin(t.preferences, eq(t.preferences.userId, t.subscriptions.userId))
         .where(and(eq(t.subscriptions.kind, digest.key), eq(t.subscriptions.subscribed, true)));
       tally.subscribed = said.length;
       const now = clock();
-      const open = said.map((row) => {
-        const zone = isTimeZone(row.timeZone) ? row.timeZone : siteTimeZone;
-        const hour = validHour(row.deliveryHour) ? row.deliveryHour : defaultHour;
-        return { userId: row.userId, zone, hour, window: deliveryWindow(now, zone, hour) };
-      });
+      const open = said
+        .map((row) => {
+          const zone = isTimeZone(row.timeZone) ? row.timeZone : siteTimeZone;
+          const hour = validHour(row.deliveryHour) ? row.deliveryHour : defaultHour;
+          return { userId: row.userId, zone, hour, window: deliveryWindow(now, zone, hour), chosenOn: localDay(row.chosenAt, zone) };
+        })
+        // A window for a day before the person said yes isn't theirs. Before
+        // their hour the window still open is the day before's, so someone
+        // who ticks the box at 5 AM would get that one now and today's at 7:
+        // two in one morning. They get today's at 7; after their hour,
+        // today's at once.
+        .filter((entry) => entry.window.day >= entry.chosenOn);
       const days = [...new Set(open.map((entry) => entry.window.day))];
       const ledger =
         days.length === 0
