@@ -269,6 +269,19 @@ describe("SEO by default, in every project", () => {
     expect(silent).not.toContain("after(");
   });
 
+  it("test:pages starts the built site the way that works", async () => {
+    for (const answers of [ALMANAC, BARE]) {
+      const pages = code(file(await plan(answers), "tests/pages/public-pages.test.ts"));
+      // Vitest's NODE_ENV=test makes Next skip .env.local: no Clerk key, every page a 500.
+      expect(pages).toContain('env: { ...process.env, NODE_ENV: "production", PORT: String(port) }');
+      // Bound to 127.0.0.1 alone, Next 16.2 proxies each request back to itself at localhost, round and round.
+      expect(pages).toContain('[next, "start", "-p", String(port)]');
+      expect(pages).not.toContain('"-H"');
+      // On a Clerk development key a request for a document goes to Clerk's handshake: every page a 307.
+      expect(pages).not.toMatch(/accept: "text\/html"/i);
+    }
+  });
+
   it("names the routes the review asked for in the list the proxy sends X-Robots-Tag from", async () => {
     const paths = file(await plan(ALMANAC), "src/seo-paths.ts");
     for (const path of ['"/api/"', '"/setup"', '"/admin"', '"/account"', '"/welcome"', '"/unsubscribe"']) expect(paths, path).toContain(path);

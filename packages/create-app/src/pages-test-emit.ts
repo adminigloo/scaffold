@@ -117,8 +117,16 @@ beforeAll(async () => {
   base = \`http://127.0.0.1:\${port}\`;
   // Node runs Next's own bin directly: no shell, the same on every platform.
   const next = createRequire(import.meta.url).resolve("next/dist/bin/next");
-  server = spawn(process.execPath, [next, "start", "-p", String(port), "-H", "127.0.0.1"], {
-    env: { ...process.env, PORT: String(port) },
+  // NODE_ENV is "production", not the "test" Vitest runs under: under "test"
+  // Next doesn't read .env.local, so the site starts without its Clerk key and
+  // every page answers 500 ("Missing secretKey").
+  //
+  // No \`-H 127.0.0.1\`. Bound to that address alone, Next 16.2 hands each page
+  // request back to itself at http://localhost:<port> ("Failed to proxy"):
+  // ::1 refuses, 127.0.0.1 loops, and in seconds the machine has tens of
+  // thousands of sockets waiting and every page answers 500 after 25 s.
+  server = spawn(process.execPath, [next, "start", "-p", String(port)], {
+    env: { ...process.env, NODE_ENV: "production", PORT: String(port) },
     stdio: ["ignore", "pipe", "pipe"],
   });
   server.stdout?.on("data", (chunk: Buffer) => (serverLog += chunk.toString()));
@@ -130,8 +138,15 @@ afterAll(() => {
   server?.kill();
 });
 
+/**
+ * No \`Accept: text/html\`. On a Clerk DEVELOPMENT key (every machine but
+ * production) Clerk sends any request that asks for a document and has no
+ * dev-browser cookie to its handshake (a 307 to *.clerk.accounts.dev), so
+ * every page would answer 307 and nothing else be tested. Next serves the
+ * same HTML without it.
+ */
 async function get(path: string): Promise<Response> {
-  return fetch(\`\${base}\${path}\`, { redirect: "manual", headers: { "user-agent": CRAWLER, accept: "text/html" } });
+  return fetch(\`\${base}\${path}\`, { redirect: "manual", headers: { "user-agent": CRAWLER } });
 }
 
 /**
