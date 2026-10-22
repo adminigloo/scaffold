@@ -463,8 +463,17 @@ function oneInstancePerPeriod(rule: RecurrenceRule): boolean {
   );
 }
 
-/** A wall-clock backstop for one expansion (0.2), for a server under load: the step budget is what normally stops a walk. */
-export const MAX_EXPANSION_MS = 100;
+/**
+ * A wall-clock backstop for one expansion (0.2): the step budget is what
+ * normally stops a walk, and this only catches one that runs away anyway.
+ *
+ * One second, not 100 ms (0.3.1). At 100 ms the backstop fired on ordinary
+ * feeds whenever the server was busy: on Oct 21, 2026 GitHub's shared runner
+ * took longer than that over a 4,000-event calendar, and a feed refused here
+ * fails closed, so the host's booking page offers no times at all. A slow
+ * server must make the page slower, never empty.
+ */
+export const MAX_EXPANSION_MS = 1_000;
 
 /** The expansion work one busy() call may still do; a walk past it (or past its deadline) throws IcsBudgetError. */
 interface StepBudget {
