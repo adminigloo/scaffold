@@ -420,7 +420,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // handlers and their route tables, the open/closed gate, the company caps,
   // reminders and the pinned calendar reader. 0.1 had none of these.
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
-  booking: "0.3.0",
+  booking: "0.3.1",
   // 0.2.0: the fetch adapter over booking 0.2's admin routes, the honeypot and
   // the "closed" sentence; pinned in step with the workspace.
   // 0.3.0: title={false} on the calls screen (create-app 0.36).
