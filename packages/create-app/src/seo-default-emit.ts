@@ -477,12 +477,14 @@ const TEST_TRAFFIC_HEADER = "x-test-traffic";
 /**
  * THIS PROJECT'S OWN TRAFFIC, NEVER A CRAWLER'S READ: \`pnpm test:pages\`
  * (which asks as GPTBot, and says so in TEST_TRAFFIC_HEADER), a curl from this
- * machine, anything from a loopback or private-network address. A request
- * that names no address at all (\`next start\` on a laptop passes none) is
- * judged by the address it was sent to: localhost is this machine. A real
- * crawler reads the site from a public address, by the site's own name.
- * Without this every project's own tests filled its crawler log — one
- * Almanac run wrote 286,123 rows.
+ * machine, anything from a loopback or private-network address. With nothing
+ * in front of it, Next names the connection's own address in
+ * x-forwarded-for, so a request made on this machine says 127.0.0.1, ::1 or
+ * ::ffff:127.0.0.1; one that names no address at all is judged by the
+ * address it was sent to: localhost is this machine. A real crawler reads the
+ * site from a public address, by the site's own name. Without this every
+ * project's own tests filled its crawler log — one Almanac run wrote 286,123
+ * rows.
  */
 function isOwnTraffic(req: NextRequest, ip: string | null): boolean {
   if (req.headers.has(TEST_TRAFFIC_HEADER)) return true;
@@ -654,12 +656,12 @@ describe("the crawler log", () => {
     ["test:pages, which says so", { "x-test-traffic": "test:pages", "x-real-ip": "20.171.206.17" }],
     ["this machine", { "x-forwarded-for": "127.0.0.1" }],
     ["this machine over IPv6", { "x-forwarded-for": "::1" }],
-    ["this machine, IPv4 in IPv6", { "x-real-ip": "::ffff:127.0.0.1" }],
+    ["this machine, as Next names it on a dual-stack socket", { "x-forwarded-for": "::ffff:127.0.0.1" }],
     ["the office network", { "x-real-ip": "192.168.1.20" }],
     ["a container beside it", { "x-forwarded-for": "172.18.0.4" }],
     ["a private IPv6 network", { "x-forwarded-for": "fd12:3456:789a::1" }],
-    ["a laptop's next start, which names no address", { host: "localhost:3000" }],
-    ["the same, asked at 127.0.0.1", { host: "127.0.0.1:3000" }],
+    ["no address named, sent to localhost", { host: "localhost:3000" }],
+    ["no address named, sent to 127.0.0.1", { host: "127.0.0.1:3000" }],
   ])("never logs this project's own traffic: %s", async (_label, headers) => {
     expect(await ask("/", { "user-agent": GPTBOT, ...headers })).toBe(0);
     expect(logged.hits).toEqual([]);
