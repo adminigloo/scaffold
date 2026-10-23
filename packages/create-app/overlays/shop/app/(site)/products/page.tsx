@@ -12,6 +12,7 @@ import { type StorefrontProduct } from "@/server/routers/checkout";
 import { checkoutMode } from "@/server/checkout-mode";
 import { productHref } from "@/storefront";
 import { api } from "@/trpc/server";
+import { reportError } from "@/server/error-reporter";
 import { OperatorOnly } from "@/components/OperatorOnly";
 
 /**
@@ -36,9 +37,23 @@ export default async function ProductsPage() {
   // rethrow fired, and the page 500d on a project with no credentials at all.
   // Asking the handle needs no query, cannot be wrapped by anything, and is the
   // one pattern used everywhere else in this project.
-  const products: StorefrontProduct[] | null = isDbConfigured(db)
-    ? await (await api()).checkout.listProducts()
-    : null;
+  //
+  // A DATABASE THAT IS SET BUT DOESN'T ANSWER (an outage, a wrong password)
+  // is the one failure left after that guard. The page says so and the error
+  // is reported, instead of a 500 on the page every header links to. CI's
+  // route sweep met exactly this: its placeholder DATABASE_URL is configured
+  // and refused, and /products was the one public page that read the
+  // database.
+  let products: StorefrontProduct[] | null = null;
+  let unavailable = false;
+  if (isDbConfigured(db)) {
+    try {
+      products = await (await api()).checkout.listProducts();
+    } catch (error) {
+      unavailable = true;
+      void reportError({ error, source: "route", tenantId: null, context: { feature: "storefront" } });
+    }
+  }
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-10">
@@ -76,7 +91,11 @@ export default async function ProductsPage() {
         </OperatorOnly>
       )}
 
-      {products === null ? (
+      {unavailable ? (
+        <Notice tone="warn" title="The products can't be shown right now">
+          Something on our side didn&apos;t answer. Try again in a minute.
+        </Notice>
+      ) : products === null ? (
         <Notice tone="info" title="The shop isn't open yet">
           <OperatorOnly>
           This page lists rows from Postgres and <code>DATABASE_URL</code> is not
