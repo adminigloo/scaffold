@@ -1,5 +1,20 @@
 # create-adminigloo-app
 
+## 0.41.0
+
+### Minor Changes
+
+- 42e3996: Social posts (`--social`, `add social`), through `@adminigloo/social` 0.1: posts written by the app and posted by a person. With companies, each company's own at /app/posts over /api/app/{id}/posts (social.view, social.manage), its cards drawn in its own name and brand colour and pointing at its own page; this site's own (and one business's) at /admin/posts over /api/admin/posts on staff keys (staff.social.view, staff.social.manage). The page: today's drafts with Approve all, earlier drafts, what's ready to post with the posting session's list as JSON (GET …/posts/v1/admin/approved), a launch or announcement from the person's own facts, the history, and "See every card format". One draft per platform in its own format (X, LinkedIn, Instagram, Facebook, TikTok, Threads, Bluesky, Telegram, Discord, Reddit — `SOCIAL_PLATFORMS` in src/server/social.ts). Code writes every fact; with `--ai` Claude Haiku 4.5 writes only the line on the images and a short sign-off, checked against the generic honesty list and held against the month on the AI ledger (`SOCIAL_AI_POSTS_A_MONTH`, operation `social_post`). Every image comes from the public, signed /api/social/card (`SOCIAL_CARD_SECRET`, else a key made from `CLERK_SECRET_KEY`). The migration (`social_posts`), the nav entries, the permissions, the isolation proof over `SOCIAL_ADMIN_ROUTES`, and the company deletion's `forgetTenant`. Nothing posts by itself and no platform's API is called. A single business needs an admin panel for it.
+
+### Patch Changes
+
+- 0ba7e63: The storefront (`/products`) no longer answers 500 when the database is set
+  but doesn't answer (an outage, a wrong password). It says "The products can't
+  be shown right now" and reports the error; a project with no database still
+  gets "The shop isn't open yet". CI's route sweep found it: its placeholder
+  DATABASE_URL is configured and refused, and this was the one public page
+  that read the database.
+
 ## 0.40.0
 
 ### Minor Changes

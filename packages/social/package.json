@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/social",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Social posts for each company, written by the app and posted by a person: one draft per platform in that platform's own format (X's link in the first comment, LinkedIn's hook first with a 4:5 quote card, Instagram and Facebook 4:5 carousels, TikTok a 9:16 carousel under a short caption, Reddit text only), every fact and number written by code and checked, the AI (metered, the cheapest model) writing only the words around them, a queue to edit and approve, signed card images, and a posting-session list for whoever posts them by hand.",
   "license": "UNLICENSED",
   "type": "module",
