@@ -35,6 +35,7 @@ const EVERYTHING: Partial<Answers> = {
   includeBooking: true,
   includeStore: true,
   includeCustomers: true,
+  includeSocial: true,
   includeAeo: true,
   includeAnalytics: true,
   includeSeo: true,

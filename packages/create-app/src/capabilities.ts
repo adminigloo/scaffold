@@ -1020,6 +1020,35 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
       exists(plan, "app", "(site)", "store", "page.tsx") &&
       mentions(plan, ["app", "admin", "store", "page.tsx"], "<StoreAdmin"),
   },
+  {
+    capability: "social.posts",
+    why:
+      "This site's own social posts (create-app 0.41): /admin/posts over /api/admin/posts on staff keys " +
+      "(staff.social.view, staff.social.manage), every draft's images from the signed card route. Posted by hand.",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "server", "social.ts"], "buildSiteSocialHandlers", "authorizeStaffFor(", "SOCIAL_SITE") &&
+      exists(plan, "app", "api", "admin", "posts", "[...path]", "route.ts") &&
+      mentions(plan, ["app", "admin", "posts", "page.tsx"], "<PostsAdmin") &&
+      mentions(plan, ["app", "api", "social", "card", "route.tsx"], "createCardRoute("),
+  },
+  {
+    capability: "social.companies",
+    why:
+      "Each company's own social posts (create-app 0.41): /app/posts over /api/app/{id}/posts (the id in the path, " +
+      "asked every call), its cards in its own name and brand colour from the signed card route.",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "server", "social.ts"], "buildSocialAdminHandlers", "companyAuthorizer(", "cardBrand(") &&
+      exists(plan, "app", "api", "app", "[tenantId]", "posts", "[...path]", "route.ts") &&
+      mentions(plan, ["app", "(site)", "app", "posts", "page.tsx"], "<PostsAdmin") &&
+      mentions(plan, ["app", "api", "social", "card", "route.tsx"], "createCardRoute("),
+  },
+  {
+    capability: "social.ai-words",
+    why:
+      "The words around a post's facts from a model (create-app 0.41, --ai): Claude Haiku 4.5 writes only the line on " +
+      "the images and a short sign-off, every call held against the month on the AI ledger and settled at what the provider reported.",
+    provenBy: (plan) => mentions(plan, ["src", "server", "social.ts"], "createAnthropicComplete(", "reserveAiAllowance(", "settleAiReservation("),
+  },
 ];
 
 /**

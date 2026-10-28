@@ -434,6 +434,10 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.3.0 (polish 3): `<CustomersActions>` — Add customer, Import and Export in the page header.
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
   customers: "0.3.1",
+  // First release (create-app 0.41): social posts per company — the queue, the
+  // handler and its route table, the screens (./ui), the cards (./cards,
+  // ./fonts) and the metered Claude call (./anthropic).
+  social: "0.1.0",
 };
 
 export class UnknownPackageVersionError extends Error {

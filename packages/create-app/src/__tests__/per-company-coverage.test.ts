@@ -83,6 +83,9 @@ export const PER_COMPANY_COVERAGE: Readonly<Record<string, Status>> = {
   catalog: "per-company",
   // The customer list (create-app 0.35): each company's customers and their timelines.
   customers: "per-company",
+  // Social posts (create-app 0.41): each company's own posts for its own
+  // accounts, and its cards in its own name. The site's own posts stay the site's.
+  social: "per-company",
   // Not about any one business, by design.
   db: "shared:the database connection and migration tools every package uses; it keeps no business's records",
   env: "shared:reads the site's own settings when it starts; nothing in it belongs to a business",
@@ -153,6 +156,8 @@ const COMPANY_EVERYTHING: Answers = {
   includeStore: true,
   // The customer list (create-app 0.35), whose route table is per company.
   includeCustomers: true,
+  // Social posts (create-app 0.41), whose route table is per company.
+  includeSocial: true,
 };
 
 let planned: Promise<EmitPlan> | null = null;
@@ -265,6 +270,7 @@ export const FORGET_COVERAGE: Readonly<Record<string, string>> = {
   commerce: "forgetTenant",
   catalog: "forgetTenant",
   customers: "forgetTenant",
+  social: "forgetTenant",
 };
 
 let sellingPlan: Promise<EmitPlan> | null = null;

@@ -110,6 +110,9 @@ export const EVERY_CONFIGURATION: readonly Configuration[] = TENANT_NOUNS.flatMa
                     // The customer list (create-app 0.35), on the suite axis too, with
                     // the same single-business admin rule.
                     includeSuite && !(tenantNoun === "none" && adminShell === "none") ? "--customers" : "--no-customers",
+                    // Social posts (create-app 0.41), on the suite axis too, with the same
+                    // single-business admin rule (one business writes them at /admin/posts).
+                    includeSuite && !(tenantNoun === "none" && adminShell === "none") ? "--social" : "--no-social",
                     includeMarketing ? "--marketing" : "--no-marketing",
                   ];
                   return {
@@ -139,6 +142,7 @@ export const EVERY_CONFIGURATION: readonly Configuration[] = TENANT_NOUNS.flatMa
                       includeBooking: includeSuite && !(tenantNoun === "none" && adminShell === "none"),
                       includeStore: includeSuite && !(tenantNoun === "none" && adminShell === "none"),
                       includeCustomers: includeSuite && !(tenantNoun === "none" && adminShell === "none"),
+                      includeSocial: includeSuite && !(tenantNoun === "none" && adminShell === "none"),
                       includeMarketing,
                     },
                   };

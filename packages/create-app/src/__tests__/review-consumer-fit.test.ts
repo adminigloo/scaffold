@@ -146,6 +146,8 @@ describe("the tables each package owns — what an upgrade can DROP", () => {
       includeBooking: true,
       includeStore: true,
       includeCustomers: true,
+      // create-app 0.41: and social posts, whose queue is a table of its own.
+      includeSocial: true,
     };
     for (const answers of [everything, BASE, CONSUMERS, { ...BASE, businessModel: "none" as const }]) {
       const plan = await planEmit(TEMPLATE_DIR, "/out", answers);

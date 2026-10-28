@@ -298,6 +298,32 @@ export function bookingSection(answers: ProjectManifest["answers"]): string[] {
   ];
 }
 
+/** The "Social posts" section (create-app 0.41). Empty without the answer. */
+export function socialSection(answers: ProjectManifest["answers"]): string[] {
+  if (!answers.includeSocial) return [];
+  const companies = answers.tenantNoun !== "none";
+  const noun = companies ? tenantLabel(answers).toLowerCase() : "business";
+  const site = answers.adminShell !== "none";
+  return [
+    "### Social posts",
+    "",
+    ...(companies
+      ? [
+          `- **Each ${noun}'s own posts** at /app/posts (social.view to look, social.manage to write and approve): a post from its own facts becomes one draft per platform, its cards in the ${noun}'s own name and brand colour, pointing at its page here.`,
+        ]
+      : []),
+    ...(site ? ["- **This site's own posts** at /admin/posts (staff.social.view, staff.social.manage); \"today\" there is SITE_TIME_ZONE in src/server/social.ts."] : []),
+    "- **One draft per platform, in its own format**: X (the link in the first comment, a 1:1 card), LinkedIn (the hook first, a 4:5 card), Instagram and Facebook (4:5 carousels), TikTok (a 9:16 carousel under a short caption), Threads, Bluesky, Telegram and Discord (1:1 cards), Reddit (text only). Take a platform out of SOCIAL_PLATFORMS in src/server/social.ts.",
+    answers.includeAi
+      ? "- **Code writes every fact**: the person's own words go out on every platform. Claude Haiku 4.5 writes only the line on the images and a short sign-off, using only the facts' numbers, checked against the generic honesty list (guarantees, hype, pressure), and every call is held against the month (SOCIAL_AI_POSTS_A_MONTH) on the AI ledger. Where a check fails, the draft keeps the person's own words and says why."
+      : "- **Code writes every fact**: the person's own words go out on every platform, the first sentence on the images. This project has no AI (`create-app add ai` adds a metered line on the images and a short sign-off).",
+    "- **Posted by hand**: approve a draft, then Copy text or Open X, attach its images, post its first comment, and paste the post's link back (Mark posted). The approved list as JSON, for a posting session in the browser, is GET …/posts/v1/admin/approved.",
+    "- **The cards** are drawn by /api/social/card from words signed into each image's address (SOCIAL_CARD_SECRET, else a key made from CLERK_SECRET_KEY): a changed word is a 403. \"See every card format\" on the posts page shows them all.",
+    "- **Not included**: posting by itself, any platform's API, posting at a set time, or reading likes and views back.",
+    "",
+  ];
+}
+
 /**
  * The "Search check" and "AI mentions" sections (Tenancy 2b-4b): what each
  * reads, where it's seen, what it costs. Empty without either answer.
@@ -662,6 +688,7 @@ export function renderProjectReadme(manifest: ProjectManifest): string {
   lines.push(...websiteSection(answers));
   lines.push(...websiteReportsSection(answers));
   lines.push(...bookingSection(answers));
+  lines.push(...socialSection(answers));
   // Getting paid, part 1: what to turn on in Stripe for Pay now.
   if (answers.includeInvoicing) lines.push(...cardPaymentsSetup(answers as unknown as Answers, "###").split("\n"));
   lines.push("### Not included", "", ...notIncludedFor(companies, { seo: answers.includeSeo }).map((item) => `- ${item}`), "");

@@ -124,6 +124,8 @@ export const PACKAGE_TABLES: Readonly<Record<string, readonly string[]>> = {
     "booking_types",
   ],
   customers: ["customer_addresses", "customer_links", "customer_merges", "customer_notices", "customers"],
+  // create-app 0.41: the posts queue.
+  social: ["social_posts"],
 };
 
 /** Where every project's schema module lives, as a plan's file map keys it. */

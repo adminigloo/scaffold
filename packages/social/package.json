@@ -1,0 +1,104 @@
+{
+  "name": "@adminigloo/social",
+  "version": "0.0.0",
+  "description": "Social posts for each company, written by the app and posted by a person: one draft per platform in that platform's own format (X's link in the first comment, LinkedIn's hook first with a 4:5 quote card, Instagram and Facebook 4:5 carousels, TikTok a 9:16 carousel under a short caption, Reddit text only), every fact and number written by code and checked, the AI (metered, the cheapest model) writing only the words around them, a queue to edit and approve, signed card images, and a posting-session list for whoever posts them by hand.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adminigloo/scaffold.git",
+    "directory": "packages/social"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./schema": {
+      "types": "./dist/schema.d.ts",
+      "import": "./dist/schema.js",
+      "require": "./dist/schema.cjs"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "import": "./dist/server.js",
+      "require": "./dist/server.cjs"
+    },
+    "./cards": {
+      "types": "./dist/cards.d.ts",
+      "import": "./dist/cards.js",
+      "require": "./dist/cards.cjs"
+    },
+    "./fonts": {
+      "types": "./dist/fonts.d.ts",
+      "import": "./dist/fonts.js",
+      "require": "./dist/fonts.cjs"
+    },
+    "./anthropic": {
+      "types": "./dist/anthropic.d.ts",
+      "import": "./dist/anthropic.js",
+      "require": "./dist/anthropic.cjs"
+    },
+    "./ui": {
+      "types": "./dist/ui.d.ts",
+      "import": "./dist/ui.js",
+      "require": "./dist/ui.cjs"
+    },
+    "./sql/*": "./sql/*",
+    "./fonts/*": "./fonts/*",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "sql",
+    "fonts",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@anthropic-ai/sdk": ">=0.122.0",
+    "drizzle-orm": "catalog:peers",
+    "react": "^18.0.0 || ^19.0.0",
+    "zod": "catalog:peers"
+  },
+  "peerDependenciesMeta": {
+    "@anthropic-ai/sdk": {
+      "optional": true
+    },
+    "drizzle-orm": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "zod": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@anthropic-ai/sdk": "^0.122.0",
+    "@electric-sql/pglite": "^0.5.8",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.4",
+    "drizzle-orm": "catalog:",
+    "happy-dom": "^20.0.0",
+    "next": "16.2.12",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "zod": "catalog:"
+  },
+  "scripts": {
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "embed-fonts": "node scripts/embed-fonts.mjs"
+  }
+}

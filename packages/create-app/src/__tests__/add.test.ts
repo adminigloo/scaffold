@@ -94,6 +94,7 @@ describe("create-adminigloo-app add <feature>", () => {
         booking: "includeBooking",
         store: "includeStore",
         customers: "includeCustomers",
+        social: "includeSocial",
       } as const)[feature];
       const expected = await projectFiles({ ...BASE, [key]: true });
 

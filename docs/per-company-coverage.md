@@ -58,6 +58,7 @@ project's isolation test.
 | `commerce` | Per company | Each company's own store: its checkouts, orders and the store payments that need its owner, paid into its own Stripe account and recorded only for the company that owns it (getting paid, part 2). The site's own storefront orders stay the site's. |
 | `catalog` | Per company | Each company's own products (name, price, photo, stock) for its store; the site's own plans and products are kept apart under "*" and only the site sells them. |
 | `customers` | Per company | Each company's own customer list: its customers, their emails, phones, addresses and notes, and everything that is theirs — quotes, visits, invoices, calls, orders and messages — on one timeline. The same email in two companies is two customers, and a company's features only ever find or create customers inside it (create-app 0.35). |
+| `social` | Per company | Each company's own social posts: drafts for its own accounts, one per platform, its cards drawn in its own name and brand colour, approved and posted by hand at /app/posts; one company never sees, approves or forgets another's (create-app 0.41). The site's own posts stay the site's. |
 | `db` | Shared | the database connection and migration tools every package uses; it keeps no business's records |
 | `env` | Shared | reads the site's own settings when it starts; nothing in it belongs to a business |
 | `license` | Shared | checks the site's own licence key with the seller; one per site, not per business |
@@ -77,8 +78,8 @@ rows go — `FORGET_COVERAGE` in the same test file checks it:
   company column — `permissions`, `estimator`, `scheduling`, `invoicing`,
   `comms`, `email`, `notifications`, `storage` (and the files' bytes, after the
   transaction), `feedback`, `assistant`, `ai`, `billing`, `analytics`,
-  `audience`, `seo-reports`, `aeo`, `booking`, `stripe`, `commerce`, `catalog`
-  and `customers`. A generated project's `src/server/forget-company.ts` calls
+  `audience`, `seo-reports`, `aeo`, `booking`, `stripe`, `commerce`, `catalog`,
+  `customers` and `social`. A generated project's `src/server/forget-company.ts` calls
   each one it installed, and its `forget-company.test.ts` plants a row in every
   table with a company column (read from the database) and fails, naming the
   table, when one is missed — or when another company's rows go too.

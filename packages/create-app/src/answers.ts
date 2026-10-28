@@ -250,6 +250,20 @@ export interface Answers {
    * turns it off.
    */
   readonly includeCustomers: boolean;
+  /**
+   * SOCIAL POSTS (create-app 0.41, @adminigloo/social): the app writes each
+   * post — one draft per platform, in that platform's own format, with its
+   * card images — into a queue; a person edits and approves; a person posts
+   * them BY HAND and marks each posted with its link. Nothing posts by
+   * itself, and no platform's API is called. Code writes every fact (the
+   * person's own words); with --ai the model writes only the line on the
+   * images and a short sign-off, metered against the month.
+   *
+   * With companies, each company's own at /app/posts (and this site's own at
+   * /admin/posts, with an admin panel); one business at /admin/posts.
+   * DEFAULTS TO FALSE: it is a sellable feature.
+   */
+  readonly includeSocial: boolean;
   /** Scope the packages are published under. */
   readonly scope: string;
 }
@@ -278,6 +292,7 @@ export const DEFAULT_ANSWERS: Answers = {
   includeBooking: false,
   includeStore: false,
   includeCustomers: false,
+  includeSocial: false,
   scope: "@adminigloo",
 };
 
@@ -343,6 +358,14 @@ export function assertAnswersCompatible(answers: Answers): void {
     throw new IncompatibleAnswersError(
       "The customer list needs an admin panel in a single-business project: customers are looked up, edited, merged and imported at /admin/customers. " +
         "Use --admin minimal (or full) with --customers, or leave it off with --no-customers.",
+    );
+  }
+  // SOCIAL POSTS, ONE BUSINESS, NEED AN ADMIN PANEL: they are written and
+  // approved at /admin/posts. (A company's are at /app/posts, which needs none.)
+  if (answers.includeSocial && answers.tenantNoun === "none" && answers.adminShell === "none") {
+    throw new IncompatibleAnswersError(
+      "Social posts need an admin panel in a single-business project: posts are written, approved and marked posted at /admin/posts. " +
+        "With --admin none nobody could see a draft. Use --admin minimal (or full) with --social.",
     );
   }
   if (answers.includeScheduling && answers.adminShell === "none") {
@@ -533,6 +556,9 @@ export function packagesFor(answers: Answers): readonly string[] {
   // owner's own browsing in them.
   if (answers.includeAnalytics) optional.push("analytics", "audience");
   if (answers.includeSeo) optional.push("seo");
+  // Social posts (create-app 0.41): one package — the queue, the handler, the
+  // screens (./ui), the cards (./cards, ./fonts) and the metered call (./anthropic).
+  if (answers.includeSocial) optional.push("social");
 
   return [...base, ...optional].map((p) => `${answers.scope}/${p}`);
 }
@@ -721,6 +747,9 @@ export function optionalEnvFor(answers: Answers): readonly string[] {
   // create-app 0.40: what every email's unsubscribe link is signed with.
   // Optional: without it one is made from CLERK_SECRET_KEY.
   if (personEmails(answers)) vars.push("EMAIL_LINK_SECRET");
+  // create-app 0.41: what every social card's address is signed with.
+  // Optional: without it one is made from CLERK_SECRET_KEY.
+  if (answers.includeSocial) vars.push("SOCIAL_CARD_SECRET");
   // Getting paid, part 1: "Pay now" on invoices. Optional — without them the
   // invoice page shows "How to pay" only. A companies project uses Connect
   // (each company's own Stripe account) and may take a fee; one business uses
@@ -1349,6 +1378,12 @@ export function capabilitiesFor(answers: Answers): readonly string[] {
   // Search basics through @adminigloo/seo, and each company's public pages in search.
   if (answers.includeSeo) keys.push("seo.package");
   if (answers.includeSeo && companies) keys.push("seo.companies");
+  // Social posts (create-app 0.41): this site's own (with an admin panel to
+  // hold the page), each company's own, and the words around the facts from a
+  // metered model (with --ai) — three questions a consumer asks separately.
+  if (answers.includeSocial && answers.adminShell !== "none") keys.push("social.posts");
+  if (answers.includeSocial && companies) keys.push("social.companies");
+  if (answers.includeSocial && answers.includeAi) keys.push("social.ai-words");
 
   // The public face. Three keys rather than one, because a consumer asking
   // "does this project have a pricing page" is asking something a single

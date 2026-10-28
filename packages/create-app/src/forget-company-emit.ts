@@ -50,6 +50,7 @@ export const FORGET_ENTRIES: Readonly<Record<string, string>> = {
   invoicing: "invoicing",
   comms: "comms",
   booking: "booking",
+  social: "social/server",
   feedback: "feedback",
   assistant: "assistant",
   aeo: "aeo",

@@ -35,6 +35,7 @@ const EVERYTHING: Partial<Answers> = {
   includeAeo: true,
   includeAnalytics: true,
   includeSeo: true,
+  includeSocial: true,
 };
 const BARE: Partial<Answers> = { tenantNoun: "none", businessModel: "none" };
 

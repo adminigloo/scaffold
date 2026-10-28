@@ -54,6 +54,7 @@ export interface CliFlags {
   readonly booking?: boolean;
   readonly store?: boolean;
   readonly customers?: boolean;
+  readonly social?: boolean;
 }
 
 export class UnknownFlagValueError extends Error {
@@ -103,6 +104,7 @@ export function parseArgs(argv: readonly string[]): CliFlags {
   let booking: boolean | undefined;
   let store: boolean | undefined;
   let customers: boolean | undefined;
+  let social: boolean | undefined;
 
   /** Supports both `--flag value` and `--flag=value`. */
   const readValue = (arg: string, prefix: string, index: number): string | undefined =>
@@ -144,6 +146,8 @@ export function parseArgs(argv: readonly string[]): CliFlags {
     else if (arg === "--no-store") store = false;
     else if (arg === "--customers") customers = true;
     else if (arg === "--no-customers") customers = false;
+    else if (arg === "--social") social = true;
+    else if (arg === "--no-social") social = false;
     else if (arg === "--aeo") aeo = true;
     else if (arg === "--no-aeo") aeo = false;
     else if (arg === "--analytics") analytics = true;
@@ -204,6 +208,7 @@ export function parseArgs(argv: readonly string[]): CliFlags {
     booking,
     store,
     customers,
+    social,
   };
 }
 
@@ -298,6 +303,14 @@ export const HELP = `
                        timeline; search, merge, CSV import and export. On by
                        default with any field feature. With companies, each
                        company's at /app/customers; one business, /admin/customers.
+  --social             Social posts, posted by a person: one draft per platform
+    / --no-social      (X, LinkedIn, Instagram, Facebook, TikTok, Threads,
+                       Bluesky, Telegram, Discord, Reddit) in its own format with
+                       its card images, approved and then posted BY HAND — no
+                       auto-posting, no platform APIs. With --ai the model writes
+                       only the line on the images and a sign-off, metered. With
+                       companies, each company's at /app/posts; this site's own,
+                       and one business's, at /admin/posts.
   --aeo                AI mentions: do AI assistants name you when customers ask
     / --no-aeo         them questions — the quote, the sources, the competitors,
                        the trend. With companies, each company's own at
@@ -560,6 +573,19 @@ export async function collectAnswers(
     flags.customers ??
     customersByDefault({ tenantNoun, adminShell, includeEstimator, includeScheduling, includeInvoicing, includeBooking, includeStore, includeComms });
 
+  // Social posts (create-app 0.41). A single business works them under /admin,
+  // so with no admin panel there it isn't offered (the answer would be refused).
+  const includeSocial =
+    flags.social ??
+    (tenantNoun === "none" && adminShell === "none"
+      ? false
+      : await prompter.confirm(
+          tenantNoun !== "none"
+            ? "Social posts? Each company writes its posts for every platform, approves them and posts them by hand — no auto-posting."
+            : "Social posts? Write your posts for every platform, approve them and post them by hand — no auto-posting.",
+          DEFAULT_ANSWERS.includeSocial,
+        ));
+
   const answers: Answers = {
     projectName,
     tenantNoun,
@@ -584,6 +610,7 @@ export async function collectAnswers(
     includeBooking,
     includeStore,
     includeCustomers,
+    includeSocial,
     scope: DEFAULT_ANSWERS.scope,
   };
   // Refused here, before a directory is created, with the reason.

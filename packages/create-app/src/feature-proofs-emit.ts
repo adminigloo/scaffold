@@ -316,6 +316,25 @@ function suitesFor(answers: Answers): readonly FeatureSuite[] {
       ...(answers.includeAi ? { adminExpr: "(overrides) => buildAiMentionsHandlers({ ...overrides, engine: proofAnswerEngine })" } : {}),
     });
   }
+  // SOCIAL POSTS (create-app 0.41): a company's posts — the queue, compose,
+  // approve, edit, mark posted, skip, the posting session's list and the card
+  // formats. Built with no model, so compose writes the company's own words
+  // and the proof never asks one.
+  if (answers.includeSocial) {
+    suites.push({
+      feature: "social",
+      glue: "@/server/social",
+      adminBuilder: "buildSocialAdminHandlers",
+      adminRoutes: "SOCIAL_ADMIN_ROUTES",
+      adminSegment: "posts",
+      publicBuilder: null,
+      publicRoutes: null,
+      publicSegment: null,
+      pkg: "social",
+      permissions: "socialPermissions",
+      adminExpr: "(overrides) => buildSocialAdminHandlers({ ...overrides, complete: null })",
+    });
+  }
   return suites;
 }
 
@@ -357,6 +376,8 @@ export const FEATURE_ENTITIES: Readonly<Record<string, readonly string[]>> = {
   // create-app 0.35: a customer, one of their addresses, and a second
   // customer (the one a merge would fold in), and a notice on the first (new details from a form).
   customers: ["customer", "customer-address", "spare-customer", "customer-notice"],
+  // create-app 0.41: one of the company's drafts (on one platform).
+  social: ["post"],
 };
 
 // ---------------------------------------------------------------------------
@@ -425,6 +446,7 @@ export function renderCompanyRows(answers: Answers): string {
       : []),
     ...(comms ? [`import { enqueueMessage, sendNow, upsertTemplate } from "${scope}/comms";`] : []),
     ...(answers.includeCustomers ? [`import { findOrCreateCustomer, getCustomer, linkCustomer, mergeCustomers } from "${scope}/customers/server";`] : []),
+    ...(answers.includeSocial ? [`import { postStore } from "${scope}/social/server";`] : []),
     ...(estimator
       ? [
           `import {
@@ -1034,6 +1056,34 @@ export function renderCompanyRows(answers: Answers): string {
   if (!notice) throw new Error(\`no customer notice was planted for \${label}\`);
   rows["customer-notice"] = notice;
   strings.push(\`\${Label} Listed Customer\`, \`listed@\${label}.test\`, \`1 \${Label} Lane\`, \`\${Label} probe quote\`, \`\${Label} Spare Customer\`, \`spare@\${label}.test\`, \`\${Label} Duplicate\`, \`duplicate@\${label}.test\`, \`9 \${Label} Form Road\`, \`\${Label} probe form\`);
+`);
+  }
+  if (answers.includeSocial) {
+    blocks.push(`
+  // SOCIAL POSTS (create-app 0.41): a draft of the ${noun}'s own on X — its
+  // words, its hook, its first comment, its card — written the way the
+  // builder writes one.
+  const socialQueue = postStore(database, { tenantId });
+  await socialQueue.upsertDraft({
+    key: \`launch:\${label}-probe\`,
+    kind: "launch",
+    platform: "x",
+    author: \`\${Label} Posts Author\`,
+    day: "2031-03-04",
+    text: \`\${Label} probe post: open on Saturdays.\`,
+    hook: \`\${Label} probe hook\`,
+    images: [{ url: \`https://example.com/api/social/card?brand=\${label}-probe-card\`, alt: \`\${Label} probe card\`, width: 1080, height: 1080 }],
+    firstComment: \`https://example.com/t/\${label}-probe-link\`,
+    templateText: \`\${Label} probe post: open on Saturdays.\`,
+    writtenBy: "template",
+    note: null,
+    linkUrl: \`https://example.com/t/\${label}-probe-link\`,
+    facts: { title: \`\${Label} probe facts\`, lines: [\`\${Label} probe post: open on Saturdays.\`] },
+  });
+  const [socialDraft] = await socialQueue.list({ limit: 1 });
+  if (!socialDraft) throw new Error(\`no post was planted for \${label}\`);
+  rows.post = socialDraft.id;
+  strings.push(\`\${Label} Posts Author\`, \`\${Label} probe post\`, \`\${Label} probe hook\`, \`\${label}-probe-card\`, \`\${label}-probe-link\`, \`\${Label} probe facts\`);
 `);
   }
   if (answers.includeAeo) {
@@ -2095,6 +2145,10 @@ export function renderFeatureIsolationTest(answers: Answers): string {
         (table) => `    ${table}: await all(sql\`select * from ${table} where tenant_id = \${a} order by id\`),`,
       ),
     );
+  }
+  // create-app 0.41: A's posts.
+  if (answers.includeSocial) {
+    snapshot.push(`    social_posts: await all(sql\`select * from social_posts where tenant_id = \${a} order by id\`),`);
   }
   if (answers.includeAeo) {
     snapshot.push(

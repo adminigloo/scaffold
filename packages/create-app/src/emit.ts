@@ -130,6 +130,7 @@ import {
   renderUnsubscribePage,
 } from "./digest-emit.js";
 import { bookingFiles, bookingHostsQuota } from "./booking-emit.js";
+import { socialFiles, socialSiteScreens } from "./social-emit.js";
 import { cardPaymentsOn, cardPaymentsSetup, paymentsFiles, renderNavBadges } from "./payments-emit.js";
 import { storeFiles, storeProductsQuota } from "./store-emit.js";
 import { customersFiles, customersListener, customersListenerImport, hasCustomerLinkPages, renderCustomerLinkSlot } from "./customers-emit.js";
@@ -519,7 +520,9 @@ export async function planEmit(
     // Getting paid, part 2: a single business's store is worked on staff keys.
     (!isCompanies(answers) && answers.includeStore) ||
     // The customer list (create-app 0.35): a single business's is worked on staff keys.
-    (!isCompanies(answers) && answers.includeCustomers)
+    (!isCompanies(answers) && answers.includeCustomers) ||
+    // Social posts (create-app 0.41): this site's own (/admin/posts) are worked on staff keys, in both modes.
+    socialSiteScreens(answers)
   ) {
     files.set(join("src", "server", "staff-access.ts"), renderStaffAccess(answers));
   }
@@ -580,6 +583,11 @@ export async function planEmit(
   // business's), the hooks every installed feature tells, and the backfill.
   // See customers-emit.ts.
   for (const [path, body] of customersFiles(answers)) files.set(join(...path.split("/")), body);
+  // SOCIAL POSTS (create-app 0.41): this site's own posts (with an admin
+  // panel), each company's own, the signed card route, and the glue that says
+  // whose a route is, which brand a card is drawn in and whether a metered
+  // model writes the words around the facts. See social-emit.ts.
+  for (const [path, body] of socialFiles(answers)) files.set(join(...path.split("/")), body);
   // "Customer: Mrs Lee →" on an estimate's and an invoice's page: the link
   // with --customers, nothing without — the record pages carry no `if`.
   if (hasCustomerLinkPages(answers)) {
@@ -819,7 +827,9 @@ export async function planEmit(
       answers.includeSeoReports ||
       answers.includeAeo ||
       // Tenancy 2b-4c: and its calls and booking page.
-      answers.includeBooking)
+      answers.includeBooking ||
+      // create-app 0.41: and its posts.
+      answers.includeSocial)
   ) {
     files.set(join("src", "test", "company-rows.ts"), renderCompanyRows(answers));
     files.set(
@@ -1804,6 +1814,16 @@ export function renderEnvLocal(answers: Answers): string {
       "# AUDIENCE_SECRET=",
     );
   }
+  if (answers.includeSocial) {
+    lines.push(
+      "",
+      "# --- Social posts -------------------------------------------------------------",
+      "# The key every post's card images are signed with (32+ characters,",
+      "# `openssl rand -base64 48`). Without it one is made from CLERK_SECRET_KEY;",
+      "# changing either retires the images of drafts not yet posted.",
+      "# SOCIAL_CARD_SECRET=",
+    );
+  }
   if (assistantChats(answers)) {
     lines.push(
       "",
@@ -1920,6 +1940,10 @@ const OPTIONAL_ENV_NOTES: Readonly<Record<string, readonly string[]>> = {
     "The key whose marks leave people out of the website numbers (32+",
     "characters). Unset: one is made from CLERK_SECRET_KEY.",
   ],
+  SOCIAL_CARD_SECRET: [
+    "What every social post's card images are signed with (32+ characters).",
+    "Unset: one is made from CLERK_SECRET_KEY. Changing it retires unposted drafts' images.",
+  ],
   EMAIL_LINK_SECRET: [
     "What every email's unsubscribe link is signed with (32+ characters).",
     "Unset: one is made from CLERK_SECRET_KEY. Changing it retires old links.",
@@ -2011,6 +2035,7 @@ const ANSWER_LABELS: Partial<Record<keyof Answers, string>> = {
   includeBooking: "Book a call",
   includeStore: "Store",
   includeCustomers: "Customers",
+  includeSocial: "Social posts",
 };
 
 export function renderScaffoldRecord(manifest: ProjectManifest): string {
@@ -2498,6 +2523,21 @@ export function renderEnvModule(answers: Answers): string {
     );
   }
 
+  // create-app 0.41: the key every social card's address is signed with.
+  // Optional: without it one is made from CLERK_SECRET_KEY (src/server/social.ts).
+  if (answers.includeSocial) {
+    serverSpreads.push('SOCIAL_CARD_SECRET: z.string().min(32, "at least 32 characters").optional()');
+    runtime.push("SOCIAL_CARD_SECRET: process.env.SOCIAL_CARD_SECRET");
+    features.push(
+      `{ name: "Social card links", vars: ["SOCIAL_CARD_SECRET"], disables: "Nothing while CLERK_SECRET_KEY is set: the key every post's card images are signed with is made from it. Changing either retires the images of drafts not yet posted (write the post again)." }`,
+      ...(answers.includeAi
+        ? [
+            `{ name: "AI-written posts", vars: ["ANTHROPIC_API_KEY"], disables: "The line on a post's images and its short sign-off, which Claude Haiku 4.5 writes (metered). Without it every draft is the person's own words, the first sentence on the images." }`,
+          ]
+        : []),
+    );
+  }
+
   // Tenancy 2b-4b: the weekly checks ride on the cron secret too.
   if (answers.includeSeoReports) {
     features.push(
@@ -2945,6 +2985,20 @@ export const PACKAGE_PERMISSION_FRAGMENTS: readonly PackagePermissionFragment[] 
       "One business keeps its customers, worked by its staff at /admin/customers: " +
       "every staff role sees them, cs_lead and admin change, merge, import and export them.",
   },
+  // SOCIAL POSTS (create-app 0.41): a company's posts are its own, so company
+  // keys in a companies project (owner, admin and member see them; owner and
+  // admin write, approve and mark them posted). This site's OWN posts stay on
+  // the staff ladder in both modes (staff.social.*), mapped in src/server/social.ts.
+  {
+    package: "social",
+    binding: "socialPermissions",
+    scope: "tenant",
+    installedBy: (answers) => answers.tenantNoun !== "none" && answers.includeSocial,
+    why:
+      "Each company posts to its own social accounts, so these are company keys: " +
+      "owners, admins and members see the drafts, owners and admins write, approve, " +
+      "skip and mark them posted.",
+  },
 ];
 
 export class PermissionScopeMismatchError extends Error {
@@ -3290,6 +3344,25 @@ export function renderPermissionsCatalog(answers: Answers): string {
     defaultFor: ["admin", "cs_lead"],
   },`
     : "";
+  // THIS SITE'S OWN social posts' staff keys (create-app 0.41), in BOTH modes
+  // wherever there's an admin panel: /admin/posts is the site's, worked by its
+  // staff, whether or not companies post too. src/server/social.ts maps the
+  // package's two permissions onto these.
+  const socialStaffKeys = socialSiteScreens(answers)
+    ? `
+  "staff.social.view": {
+    label: "See this site's posts",
+    description: "The posts drafted for this site's own social accounts, the ones ready to post, and what was posted.",
+    category: "Posts",
+    defaultFor: ["admin", "cs_lead"],
+  },
+  "staff.social.manage": {
+    label: "Write and approve this site's posts",
+    description: "Write a post from this site's own facts, edit, approve and skip drafts, and mark them posted with their link. Writing a post may use part of the site's AI allowance.",
+    category: "Posts",
+    defaultFor: ["admin"],
+  },`
+    : "";
   const staffSpread = [...staffFragments, "appStaffPermissions"];
   // ONE PERSON PER ACCOUNT (create-app 0.39): in a consumers project the
   // tenancy fragment is spread with its team keys held by nobody.
@@ -3438,7 +3511,7 @@ const appStaffPermissions = {
     category: "${plural}",
     // Sealed: an override must not hand this to one person quietly.
     sealed: true,
-  },${schedulingStaffKeys}${estimatorStaffKeys}${invoicingStaffKeys}${commsStaffKeys}${alertsStaffKeys}${filesStaffKeys}${feedbackStaffKeys}${assistantStaffKeys}${analyticsStaffKeys}${searchCheckStaffKeys}${aiMentionsStaffKeys}${digestStaffKeys}
+  },${schedulingStaffKeys}${estimatorStaffKeys}${invoicingStaffKeys}${commsStaffKeys}${alertsStaffKeys}${filesStaffKeys}${feedbackStaffKeys}${assistantStaffKeys}${analyticsStaffKeys}${searchCheckStaffKeys}${aiMentionsStaffKeys}${digestStaffKeys}${socialStaffKeys}
 } as const;
 
 export const staffCatalog = definePermissions(
@@ -5629,6 +5702,8 @@ export function schemaOwners(answers: Answers): string[] {
   if (answers.includeBooking) owners.push("booking");
   // The customer list (create-app 0.35): customers, their addresses, links and merges.
   if (answers.includeCustomers) owners.push("customers");
+  // Social posts (create-app 0.41): the posts queue (social_posts).
+  if (answers.includeSocial) owners.push("social");
   return owners;
 }
 
@@ -6066,6 +6141,18 @@ export function renderSiteNav(answers: Answers): string {
         ...(answers.includeSeoReports ? ["How search engines and AI assistants read its website and pages, as a list of things to fix."] : []),
         ...(answers.includeAeo ? ["Whether AI assistants name it when customers ask them questions."] : []),
       ].join(" "),
+    });
+  }
+  // create-app 0.41: the company's social posts, how it's found beyond its website.
+  if (!single && answers.includeSocial) {
+    companyFeatureLinks.push({
+      href: "/app/posts",
+      label: "Posts",
+      permission: "social.view",
+      group: "Website",
+      why:
+        `Posts for the ${label}'s own social accounts, one draft per platform in its ` +
+        "own format and card images: approve them, post them by hand, mark them posted.",
     });
   }
   // Tenancy 2b-3: the company's assistant settings (its chat is the button on
@@ -6687,6 +6774,17 @@ export function renderAdminNav(answers: Answers): string {
       why:
         "The calls people booked at /book, the hours and time off of whoever " +
         "takes them, the holidays and the call types, from the booking package.",
+    });
+  }
+  // create-app 0.41: this site's own social posts (a company's are at /app/posts).
+  if (socialSiteScreens(answers)) {
+    operations.push({
+      href: "/admin/posts",
+      label: "Posts",
+      permission: "staff.social.view",
+      why:
+        "This site's own social posts, one draft per platform in its own format, " +
+        "from the social package: approve them, post them by hand, mark them posted.",
     });
   }
   if (answers.includeAssistant) {
