@@ -6,6 +6,7 @@ import { composeUrl, HOOK_MAX, measure, PLATFORMS } from "../platforms.js";
 import type { Platform, PostEdit, PostStatus } from "../types.js";
 import { dayText, postAnchor, type PostGroupView, type QueuePostView } from "../view.js";
 import { ShareImages } from "./share.js";
+import { MakeVideo } from "./video.js";
 
 /**
  * What an action answers: nothing when it worked, or a message for the
@@ -380,7 +381,9 @@ function PlatformPanel({
       {post.status === "expired" ? <p className="social-note">Expired{post.expiresLabel ? ` (it was ${post.expiresLabel.charAt(0).toLowerCase()}${post.expiresLabel.slice(1)})` : ""}: it&rsquo;s no longer offered for posting.</p> : null}
 
       {rule.captionOnly ? (
-        <p className="social-note">In {rule.name}: the pictures come in as a photo post. Pick a sound ({rule.name} asks for one), paste the caption, then post.</p>
+        <p className="social-note">
+          In {rule.name}: the pictures come in as a photo post, or make them a video. Either way, pick a sound in {rule.name} (its own sounds reach the most people), paste the caption, then post.
+        </p>
       ) : null}
       <div className="social-actions">
         {post.status === "draft" && actions ? (
@@ -405,6 +408,7 @@ function PlatformPanel({
         ) : null}
         <CopyButton text={typed.text} label="Copy text" />
         <ShareImages postKey={post.key} platform={post.platform} images={post.images} text={typed.text} />
+        {rule.captionOnly ? <MakeVideo postKey={post.key} platform={post.platform} images={post.images} text={typed.text} /> : null}
         {compose ? (
           <a className="social-button" href={compose} target="_blank" rel="noreferrer">
             Open {rule.name}

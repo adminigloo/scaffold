@@ -15,6 +15,7 @@ import { defineConfig } from "tsup";
  *           ./anthropic  the metered Claude call (type-only SDK import)
  *           ./openai     the metered OpenAI call, or any Chat Completions service (no SDK import)
  *           ./ai-sdk     the metered call through the Vercel AI SDK, any provider (no SDK import)
+ *           ./video      a draft's 9:16 slides as an MP4, made in the browser (Mediabunny, loaded on demand)
  *   client  ./ui         the queue screens (React), stamped "use client" —
  *                        tsup strips in-file directives while bundling, so the
  *                        banner puts it back at every bundle head
@@ -33,6 +34,7 @@ export default defineConfig([
       anthropic: "src/anthropic.ts",
       openai: "src/openai.ts",
       "ai-sdk": "src/ai-sdk.ts",
+      video: "src/video/index.ts",
     },
     format: ["esm", "cjs"],
     dts: true,

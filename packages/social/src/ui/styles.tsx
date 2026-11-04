@@ -510,6 +510,9 @@ export const socialCss = `
 /* The package page (PostsAdmin) and the card formats (CardFormats). */
 /* The whole page paints its own ground, so its titles never sit on a host's background of the other theme. */
 .social-admin { display: flex; flex-direction: column; gap: 32px; padding: 16px; border-radius: var(--_radius); background: var(--_canvas); color: var(--_ink); }
+/* A made video: its preview, then what to do with it. */
+.social-video-made { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+.social-video { display: block; width: 200px; max-width: 100%; aspect-ratio: 9 / 16; border-radius: var(--_radius); background: #000; }
 /* A plain link (the posting session's) in the theme's accent, not the browser's blue. */
 .social a { color: var(--_accent); }
 .social-section { display: flex; flex-direction: column; gap: 12px; }

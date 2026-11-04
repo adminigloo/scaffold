@@ -53,6 +53,11 @@
       "import": "./dist/ai-sdk.js",
       "require": "./dist/ai-sdk.cjs"
     },
+    "./video": {
+      "types": "./dist/video.d.ts",
+      "import": "./dist/video.js",
+      "require": "./dist/video.cjs"
+    },
     "./ui": {
       "types": "./dist/ui.d.ts",
       "import": "./dist/ui.js",
@@ -110,5 +115,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "embed-fonts": "node scripts/embed-fonts.mjs"
+  },
+  "dependencies": {
+    "mediabunny": "^1.65.1"
   }
 }

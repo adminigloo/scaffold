@@ -32,7 +32,8 @@ const FOLDERS: Readonly<Record<string, { readonly react: boolean }>> = {
 };
 
 /** What the package may import from outside itself (it declares each). */
-const ALLOWED = /^(react|react\/jsx-runtime|drizzle-orm|drizzle-orm\/pg-core|zod|node:crypto|node:fs\/promises|node:path)$/;
+// mediabunny: the MP4 container for ./video/render.ts only, loaded when a clip is made (social 0.3).
+const ALLOWED = /^(react|react\/jsx-runtime|drizzle-orm|drizzle-orm\/pg-core|zod|node:crypto|node:fs\/promises|node:path|mediabunny)$/;
 /** The core modules ui/ may reach for types only: they hold a database. */
 const SERVER_ONLY = /^\.\.\/(store|schema|handlers|forget|server|anthropic)\.js$/;
 

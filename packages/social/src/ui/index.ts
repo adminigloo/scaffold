@@ -13,6 +13,7 @@ export { PostsAdmin, type PostsAdminProps } from "./PostsAdmin.js";
 export { PostQueue, type PostQueueProps } from "./PostQueue.js";
 export { PostCard, attempt, messageOf, type ActionResult, type QueueActions } from "./PostCard.js";
 export { canShareFiles, imageFileName, imageFiles, ShareImages, shareLabel, type ShareImagesProps } from "./share.js";
+export { fullScreenSlides, MakeVideo, videoFileName, type MakeVideoProps } from "./video.js";
 export { ComposeForm, type ComposeInput } from "./ComposeForm.js";
 export { CardFormats } from "./CardFormats.js";
 export { createSocialClient, type SocialClient } from "./client.js";
