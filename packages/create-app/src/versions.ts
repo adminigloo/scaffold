@@ -437,7 +437,9 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // First release (create-app 0.41): social posts per company — the queue, the
   // handler and its route table, the screens (./ui), the cards (./cards,
   // ./fonts) and the metered Claude call (./anthropic).
-  social: "0.2.3",
+  // 0.2.x: what Almanac learned (hashtags, link cards, stale posts, smell); any AI (./openai).
+  // 0.3.0: TikTok share and video (./video), `npx adminigloo-social init`, the AI SDK (./ai-sdk).
+  social: "0.3.0",
 };
 
 export class UnknownPackageVersionError extends Error {
