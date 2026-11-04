@@ -1,5 +1,9 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import type { Complete, CompleteRequest } from "./writer.js";
+import { DEFAULT_SOCIAL_TIMEOUT_MS, worstCaseMicros, type PostSpend, type PostSpendUsage, type SocialModelRate } from "./meter.js";
+import type { Complete } from "./writer.js";
+
+// The meter is shared by every provider's call (./meter.ts); kept here too, where 0.1 code imports it.
+export { DEFAULT_SOCIAL_TIMEOUT_MS, SOCIAL_POST_OPERATION, worstCaseMicros, type PostSpend, type PostSpendUsage, type SocialModelRate } from "./meter.js";
 
 /**
  * @adminigloo/social/anthropic — ONE POST'S WORDS ON CLAUDE, METERED
@@ -30,32 +34,6 @@ import type { Complete, CompleteRequest } from "./writer.js";
 
 /** Claude Haiku 4.5: the founder's default for every AI feature — the cheapest model that does the job. */
 export const DEFAULT_SOCIAL_MODEL = "claude-haiku-4-5";
-/** What each call is counted as on the app's ledger. */
-export const SOCIAL_POST_OPERATION = "social_post";
-/** How long one call may take before it's given up (no retry): the writer then uses the app's own words. */
-export const DEFAULT_SOCIAL_TIMEOUT_MS = 20_000;
-
-/** A model's price, as @adminigloo/ai's rate table holds it: micros per million tokens. */
-export interface SocialModelRate {
-  readonly inputMicrosPerMTok: number;
-  readonly outputMicrosPerMTok: number;
-}
-
-/** What one call used, as the provider reported it. */
-export interface PostSpendUsage {
-  readonly model: string;
-  readonly inputTokens: number;
-  readonly outputTokens: number;
-  readonly cachedInputTokens: number;
-  readonly cachedWriteTokens: number;
-  readonly reported: boolean;
-}
-
-/** The app's meter: hold the worst case before the call, settle what it cost after. */
-export interface PostSpend {
-  reserve(input: { readonly tenantId: string; readonly userId: string | null; readonly model: string; readonly reserveMicros: bigint }): Promise<{ readonly ok: true; readonly reservationId: string } | { readonly ok: false; readonly message: string }>;
-  settle(reservationId: string, outcome: { readonly usage: PostSpendUsage | null; readonly status: "completed" | "errored"; readonly latencyMs: number; readonly error?: unknown }): Promise<void>;
-}
 
 export interface AnthropicCompleteOptions {
   /** The app's `new Anthropic()`. */
@@ -70,18 +48,6 @@ export interface AnthropicCompleteOptions {
   readonly tenantId: string;
   readonly userId?: string | null;
   readonly timeoutMs?: number;
-}
-
-/**
- * THE MOST ONE CALL CAN COST, in micros, before it's asked: every character
- * of the instructions and the facts counted as a token (English runs about
- * four characters a token, so this is a ceiling for any language), 64 more
- * for the message's framing, and the whole answer bound. Rounded up.
- */
-export function worstCaseMicros(request: Pick<CompleteRequest, "system" | "prompt" | "maxTokens">, rate: SocialModelRate): bigint {
-  const inputTokens = request.system.length + request.prompt.length + 64;
-  const perMillion = (tokens: number, micros: number) => (BigInt(Math.ceil(tokens)) * BigInt(Math.ceil(micros)) + 999_999n) / 1_000_000n;
-  return perMillion(inputTokens, rate.inputMicrosPerMTok) + perMillion(Math.max(0, request.maxTokens), rate.outputMicrosPerMTok);
 }
 
 function textOf(content: unknown): string {

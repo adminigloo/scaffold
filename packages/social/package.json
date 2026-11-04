@@ -43,6 +43,11 @@
       "import": "./dist/anthropic.js",
       "require": "./dist/anthropic.cjs"
     },
+    "./openai": {
+      "types": "./dist/openai.d.ts",
+      "import": "./dist/openai.js",
+      "require": "./dist/openai.cjs"
+    },
     "./ui": {
       "types": "./dist/ui.d.ts",
       "import": "./dist/ui.js",

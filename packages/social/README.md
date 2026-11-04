@@ -77,6 +77,28 @@ posting-session list) and marks each one posted with its link.
   `{ "hook", "asides": [{ "text", "probability" }] }`; `QueueWire.sections`
   gains `expired`. The table is unchanged: no migration.
 
+## Any AI provider
+
+The writer never calls a provider itself: it calls the `complete` function
+you hand it, `({ system, prompt, maxTokens, schema }) => Promise<string>`.
+Two come ready-made, each metered the same way (every call's worst case held
+on your ledger before it's asked, then settled at what the provider reported):
+
+```ts
+// Claude (Haiku 4.5 by default)
+import Anthropic from "@anthropic-ai/sdk";
+import { createAnthropicComplete } from "@adminigloo/social/anthropic";
+const complete = createAnthropicComplete({ client: new Anthropic(), rate, spend, tenantId, userId });
+
+// OpenAI, or any Chat Completions service: you name the model and its price
+import OpenAI from "openai";
+import { createOpenAIComplete } from "@adminigloo/social/openai";
+const complete = createOpenAIComplete({ client: new OpenAI(), model: "<your model>", rate, spend, tenantId, userId });
+```
+
+Anything else (the Vercel AI SDK, a gateway, your own model) is a function of
+that same shape. `null` means no AI: every post is your own words.
+
 ## What you install, and what you get
 
 | Install | You get |
@@ -89,6 +111,7 @@ posting-session list) and marks each one posted with its link.
 | … `@adminigloo/social/cards` | The card images: quote cards and carousels from plain specs, signed addresses, the layout that never lets words run off, and `createCardRoute` for the image route. |
 | … `@adminigloo/social/fonts` | The cards' fonts, embedded (DM Serif Display and Inter): no file to trace, for the card route alone. |
 | … `@adminigloo/social/anthropic` | The metered Claude call (`createAnthropicComplete`). Needs `pnpm add @anthropic-ai/sdk`. |
+| … `@adminigloo/social/openai` | The metered OpenAI call (`createOpenAIComplete`), or any service that speaks OpenAI's Chat Completions API (Azure OpenAI, OpenRouter, Groq, Together, a local server). No SDK import: hand it your `new OpenAI()` or any client with `chat.completions.create`. |
 | `sql/social-0.1.0.sql` | The table's DDL, for a host without drizzle-kit. |
 | `pnpm add next` (yours already) | `next/og`'s `ImageResponse` paints the cards. Any painter of the same shape works. |
 
