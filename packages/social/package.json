@@ -48,6 +48,11 @@
       "import": "./dist/openai.js",
       "require": "./dist/openai.cjs"
     },
+    "./ai-sdk": {
+      "types": "./dist/ai-sdk.d.ts",
+      "import": "./dist/ai-sdk.js",
+      "require": "./dist/ai-sdk.cjs"
+    },
     "./ui": {
       "types": "./dist/ui.d.ts",
       "import": "./dist/ui.js",

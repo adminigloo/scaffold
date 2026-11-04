@@ -14,6 +14,7 @@ import { defineConfig } from "tsup";
  *           ./fonts      the cards' fonts, embedded (no file to trace)
  *           ./anthropic  the metered Claude call (type-only SDK import)
  *           ./openai     the metered OpenAI call, or any Chat Completions service (no SDK import)
+ *           ./ai-sdk     the metered call through the Vercel AI SDK, any provider (no SDK import)
  *   client  ./ui         the queue screens (React), stamped "use client" —
  *                        tsup strips in-file directives while bundling, so the
  *                        banner puts it back at every bundle head
@@ -31,6 +32,7 @@ export default defineConfig([
       fonts: "src/cards/fonts.ts",
       anthropic: "src/anthropic.ts",
       openai: "src/openai.ts",
+      "ai-sdk": "src/ai-sdk.ts",
     },
     format: ["esm", "cjs"],
     dts: true,

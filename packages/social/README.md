@@ -90,11 +90,20 @@ import Anthropic from "@anthropic-ai/sdk";
 import { createAnthropicComplete } from "@adminigloo/social/anthropic";
 const complete = createAnthropicComplete({ client: new Anthropic(), rate, spend, tenantId, userId });
 
-// OpenAI, or any Chat Completions service: you name the model and its price
-import OpenAI from "openai";
-import { createOpenAIComplete } from "@adminigloo/social/openai";
-const complete = createOpenAIComplete({ client: new OpenAI(), model: "<your model>", rate, spend, tenantId, userId });
+// OpenAI, or any Chat Completions service: you name the model and its price.
+// No SDK needed: openAIFetchClient is plain fetch (or pass your own new OpenAI()).
+import { createOpenAIComplete, openAIFetchClient } from "@adminigloo/social/openai";
+const complete = createOpenAIComplete({ client: openAIFetchClient({ apiKey }), model: "<your model>", rate, spend, tenantId, userId });
+
+// The Vercel AI SDK: any provider it has a model for
+import { generateText } from "ai";
+import { createAiSdkComplete } from "@adminigloo/social/ai-sdk";
+const complete = createAiSdkComplete({ generateText, model: yourModel, rate, spend, tenantId, userId });
 ```
+
+A reasoning model (OpenAI's gpt-5 family) thinks out of the same small bound
+as its answer: pass `reasoningTokens` (room for its thinking, held too) and
+keep its effort low.
 
 Anything else (the Vercel AI SDK, a gateway, your own model) is a function of
 that same shape. `null` means no AI: every post is your own words.
@@ -111,7 +120,8 @@ that same shape. `null` means no AI: every post is your own words.
 | … `@adminigloo/social/cards` | The card images: quote cards and carousels from plain specs, signed addresses, the layout that never lets words run off, and `createCardRoute` for the image route. |
 | … `@adminigloo/social/fonts` | The cards' fonts, embedded (DM Serif Display and Inter): no file to trace, for the card route alone. |
 | … `@adminigloo/social/anthropic` | The metered Claude call (`createAnthropicComplete`). Needs `pnpm add @anthropic-ai/sdk`. |
-| … `@adminigloo/social/openai` | The metered OpenAI call (`createOpenAIComplete`), or any service that speaks OpenAI's Chat Completions API (Azure OpenAI, OpenRouter, Groq, Together, a local server). No SDK import: hand it your `new OpenAI()` or any client with `chat.completions.create`. |
+| … `@adminigloo/social/openai` | The metered OpenAI call (`createOpenAIComplete`), or any service that speaks OpenAI's Chat Completions API (Azure OpenAI, OpenRouter, Groq, Together, a local server). No SDK needed: your `new OpenAI()`, or `openAIFetchClient({ apiKey })` over plain fetch. |
+| … `@adminigloo/social/ai-sdk` | The metered call through the Vercel AI SDK (`createAiSdkComplete`): any provider it has a model for. Hand it your `generateText` and model. |
 | `sql/social-0.1.0.sql` | The table's DDL, for a host without drizzle-kit. |
 | `pnpm add next` (yours already) | `next/og`'s `ImageResponse` paints the cards. Any painter of the same shape works. |
 

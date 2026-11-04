@@ -31,8 +31,13 @@ export { DEFAULT_SOCIAL_TIMEOUT_MS, SOCIAL_POST_OPERATION, worstCaseMicros, type
  * sentence, so the writer puts the app's own words on every platform and the
  * card says why.
  *
- * NO SDK IMPORT: the client is any object of the shape below. This module
- * never reads a key.
+ * NO SDK NEEDED: the client is any object of the shape below, the `openai`
+ * package's or `openAIFetchClient`'s (plain fetch, an injected key: no
+ * package to install). This module never reads a key from the environment.
+ *
+ * A REASONING MODEL (the gpt-5 family) thinks out of the same bound as its
+ * answer: give it `reasoningTokens` of room and `extraBody: { reasoning_effort:
+ * "minimal" }`, and the hold covers both.
  */
 
 /** The one method this needs, as the `openai` package's client has it (and the services that copy it). */
@@ -77,6 +82,44 @@ export interface OpenAICompleteOptions {
    * the same small bound, so keep it low), a gateway's own fields.
    */
   readonly extraBody?: Readonly<Record<string, unknown>>;
+  /** Room for a reasoning model's thinking, on top of the writer's bound (default 0). Held too. */
+  readonly reasoningTokens?: number;
+}
+
+export interface OpenAIFetchClientOptions {
+  /** The app's key, from wherever it keeps keys. */
+  readonly apiKey: string;
+  /** Default https://api.openai.com/v1; any Chat Completions service's own. */
+  readonly baseURL?: string;
+  readonly fetchFn?: typeof fetch;
+  /** More headers a service wants (an organization, a project, a gateway's). */
+  readonly headers?: Readonly<Record<string, string>>;
+}
+
+/**
+ * A Chat Completions client over plain fetch: no SDK to install. Errors carry
+ * the service's status and message, never the key.
+ */
+export function openAIFetchClient(options: OpenAIFetchClientOptions): ChatCompletionsClient {
+  const base = (options.baseURL ?? "https://api.openai.com/v1").replace(/\/+$/, "");
+  const fetchFn = options.fetchFn ?? fetch;
+  return {
+    chat: {
+      completions: {
+        async create(body: unknown, requestOptions?: { readonly timeout?: number }) {
+          const res = await fetchFn(`${base}/chat/completions`, {
+            method: "POST",
+            headers: { "content-type": "application/json", authorization: `Bearer ${options.apiKey}`, ...options.headers },
+            body: JSON.stringify(body),
+            ...(requestOptions?.timeout ? { signal: AbortSignal.timeout(requestOptions.timeout) } : {}),
+          });
+          const json = (await res.json().catch(() => null)) as { readonly error?: { readonly message?: string } } | null;
+          if (!res.ok) throw new Error(`the AI service said ${res.status}: ${json?.error?.message ?? res.statusText}`.slice(0, 300));
+          return json;
+        },
+      },
+    },
+  };
 }
 
 interface ChatCompletionAnswer {
@@ -101,8 +144,10 @@ export function createOpenAIComplete(options: OpenAICompleteOptions): Complete {
   const userId = options.userId ?? null;
   const tokenLimit = options.tokenLimit ?? "max_completion_tokens";
   const format = options.format ?? "json_schema";
+  const extra = Math.max(0, Math.trunc(options.reasoningTokens ?? 0));
   return async (request) => {
-    const reservation = options.spend ? await options.spend.reserve({ tenantId: options.tenantId, userId, model, reserveMicros: worstCaseMicros(request, options.rate) }) : null;
+    const bound = request.maxTokens + extra;
+    const reservation = options.spend ? await options.spend.reserve({ tenantId: options.tenantId, userId, model, reserveMicros: worstCaseMicros({ ...request, maxTokens: bound }, options.rate) }) : null;
     if (reservation && !reservation.ok) throw new Error(reservation.message);
     const reservationId = reservation?.reservationId ?? null;
     const started = Date.now();
@@ -116,7 +161,7 @@ export function createOpenAIComplete(options: OpenAICompleteOptions): Complete {
             { role: "system", content: request.system },
             { role: "user", content: request.prompt },
           ],
-          [tokenLimit]: request.maxTokens,
+          [tokenLimit]: bound,
           response_format: format === "json_schema" ? { type: "json_schema", json_schema: { name: "social_post", schema: request.schema, strict: true } } : { type: "json_object" },
         },
         { timeout, maxRetries: 0 },
