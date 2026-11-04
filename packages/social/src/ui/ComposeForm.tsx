@@ -66,7 +66,7 @@ export function ComposeForm({
       </label>
       {hashtags ? (
         <label className="social-field">
-          <span>Hashtags for Instagram and TikTok (optional, up to five)</span>
+          <span>Hashtags (optional, up to five; X takes the first 2, Bluesky 3, LinkedIn all 5)</span>
           <input value={tags} placeholder="#yourtown #yourtrade" onChange={(e) => setTags(e.target.value)} />
         </label>
       ) : null}

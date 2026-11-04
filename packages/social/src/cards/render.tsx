@@ -42,6 +42,9 @@ export function brandedAssets(spec: CardSpec, assets: CardAssets): CardAssets {
     theme: { ...assets.theme, ...(words.accent ? { accent: words.accent } : {}), ...(words.onAccent ? { onAccent: words.onAccent } : {}) },
     brand: { name: words.name, site: words.site },
     author: { name: words.name, handle: words.handle ?? words.site },
+    // The app's own characters and their art belong to the app's own brand, never a company's card.
+    authors: undefined,
+    characters: undefined,
   };
 }
 

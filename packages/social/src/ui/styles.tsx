@@ -42,6 +42,8 @@ export const socialCss = `
   color: var(--_ink);
   font-size: 14px;
   line-height: 1.5;
+  /* A long link (a tagged first comment) breaks rather than pushing a phone's page sideways. */
+  overflow-wrap: anywhere;
 }
 @media (prefers-color-scheme: dark) {
   .social {

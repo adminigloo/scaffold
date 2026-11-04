@@ -367,6 +367,7 @@ function PlatformPanel({
                 : ""}
         </p>
       ) : null}
+      {post.linkUrl && rule.linkIn === "card" ? <CopyButton text={post.linkUrl} label="Copy link" /> : null}
       {post.postedUrl ? (
         <p className="social-posted">
           Posted:{" "}

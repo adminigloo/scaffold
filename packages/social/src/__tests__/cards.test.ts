@@ -5,6 +5,7 @@ import { genericHonesty } from "../honesty.js";
 import { PLATFORM_IDS } from "../types.js";
 import {
   brandedAssets,
+  cardAuthor,
   cardAlt,
   cardBrand,
   cardFormatSets,
@@ -321,6 +322,17 @@ describe("a company's card is drawn in its own name", () => {
     const layout = cardLayout(spec, ASSETS);
     expect(layout.kind === "quote" && [layout.name.text, layout.handle.text, layout.site.text]).toEqual(["Green Acres", "green.example", "green.example"]);
     expect(cardAlt(spec, { name: "Maple & Rye", handle: "@maplerye", site: "maplerye.example" })).toBe("Green Acres (green.example): Open on Saturdays.");
+  });
+
+  it("draws a company's card in the company's name, never the app's own characters (social 0.2.1)", () => {
+    const art = { src: "data:image/png;base64,AA==", width: 1, height: 1 };
+    const assets = { ...ASSETS, authors: { mercury: { name: "Mercury", handle: "@app", avatar: art } }, characters: { mercury: art } };
+    const spec = { kind: "quote", size: "square", text: "Open Saturdays.", author: "mercury", brand: { name: "Alpha Lawn Care", site: "alpha.example" } } as const;
+    const drawn = brandedAssets(spec, assets);
+    expect(cardAuthor(spec, drawn).name).toBe("Alpha Lawn Care");
+    expect(drawn.characters).toBeUndefined();
+    // The app's own card still names its character.
+    expect(cardAuthor({ ...spec, brand: undefined }, brandedAssets({ ...spec, brand: undefined }, assets)).name).toBe("Mercury");
   });
 });
 
