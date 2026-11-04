@@ -33,13 +33,20 @@ const FOLDERS: Readonly<Record<string, { readonly react: boolean }>> = {
 
 /** What the package may import from outside itself (it declares each). */
 // mediabunny: the MP4 container for ./video/render.ts only, loaded when a clip is made (social 0.3).
-const ALLOWED = /^(react|react\/jsx-runtime|drizzle-orm|drizzle-orm\/pg-core|zod|node:crypto|node:fs\/promises|node:path|mediabunny)$/;
+const ALLOWED = /^(react|react\/jsx-runtime|drizzle-orm|drizzle-orm\/pg-core|zod|node:crypto|node:fs\/promises|node:path|node:fs|mediabunny)$/;
 /** The core modules ui/ may reach for types only: they hold a database. */
 const SERVER_ONLY = /^\.\.\/(store|schema|handlers|forget|server|anthropic)\.js$/;
 
+/**
+ * The generator (cli/init.ts) holds the files it writes INTO an app as text:
+ * their imports are the app's, not the package's, so it isn't read here. Its
+ * own imports are node:fs, node:path and node:crypto (cli-init.test.ts runs it).
+ */
+const GENERATOR = /[\\/]cli[\\/]init\.ts$/;
+
 function filesIn(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
-    e.isDirectory() ? (e.name === "__tests__" ? [] : filesIn(join(dir, e.name))) : /\.(ts|tsx)$/.test(e.name) ? [join(dir, e.name)] : [],
+    e.isDirectory() ? (e.name === "__tests__" ? [] : filesIn(join(dir, e.name))) : /\.(ts|tsx)$/.test(e.name) && !GENERATOR.test(join(dir, e.name)) ? [join(dir, e.name)] : [],
   );
 }
 

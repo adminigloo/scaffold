@@ -42,6 +42,15 @@ export default defineConfig([
     external: ["@anthropic-ai/sdk", "react", "react-dom"],
   },
   {
+    // The command: `npx adminigloo-social init` (Node only, ESM, run as a bin).
+    entry: { cli: "src/cli/main.ts" },
+    format: ["esm"],
+    platform: "node",
+    dts: false,
+    clean: false,
+    banner: { js: "#!/usr/bin/env node" },
+  },
+  {
     entry: { ui: "src/ui/index.ts" },
     format: ["esm", "cjs"],
     dts: true,
