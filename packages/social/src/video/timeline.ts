@@ -18,7 +18,7 @@
 export interface SlideshowSpec {
   /** How many slides, in order. */
   readonly slides: number;
-  /** Frames a second. */
+  /** Frames a second: TikTok and Instagram refuse video under 23. */
   readonly fps: number;
   /** How long each slide holds, crossing included. */
   readonly secondsPerSlide: number;

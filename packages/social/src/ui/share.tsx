@@ -100,7 +100,12 @@ export function ShareImages({ postKey, platform, images, text }: ShareImagesProp
     let live = true;
     setFiles(null);
     imageFiles(images, postKey, platform)
-      .then((f) => live && setFiles(f))
+      .then((f) => {
+        if (!live) return;
+        // A phone takes so many files, so big (Android: 10, 50 MB each): where these can't go, only Download shows.
+        if (typeof navigator.canShare === "function" && !navigator.canShare({ files: f })) return setCanShare(false);
+        setFiles(f);
+      })
       .catch(() => live && setNote("The images didn't load here: use Download images, then add them in the app."));
     return () => {
       live = false;

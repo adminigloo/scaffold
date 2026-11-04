@@ -110,18 +110,27 @@ A TikTok draft comes with 9:16 slides inside TikTok's safe zone and a short
 caption with its hashtags. From the posts screen:
 
 - **Send to TikTok** (on a phone): the slides go to the share sheet in order
-  and the caption goes on the clipboard; TikTok opens with them as a photo
-  post. Pick a sound, paste the caption, post.
+  and the caption goes on the clipboard; TikTok opens them as a slideshow.
+  Where TikTok isn't in the list (some iPhones), save them to Photos and pick
+  them in TikTok. Pick a sound, paste the caption, post. A phone that can't
+  take the files (Android shares at most 10, 50 MB each) gets Download only.
 - **Make a video**: the slides become an MP4 made in the browser (H.264,
   1080 × 1920, 30 fps, about 2.5 seconds a slide with a slow push-in,
   crossfades, the last slide held longer and a seamless loop), with no
   sound track: pick a TikTok sound, which reaches further than any file's.
   **Send video to TikTok** on a phone, **Download video** anywhere. The same
-  clip works as an Instagram Reel or a YouTube Short.
+  clip works as an Instagram Reel or a YouTube Short, with no other app's
+  watermark on it. On TikTok, video posts get more engagement than photo posts
+  (3.39% against 1.92% median, Buffer's study of 45M posts, March 2026).
 - **Download images** on a computer, for any platform's own upload page.
 - `@adminigloo/social/video` (`makeSlideshowVideo`) makes the clip for your own
   screens. It needs a browser with WebCodecs (Chrome, Edge, Safari 16.4+,
-  Firefox 130+); where there's none, the button doesn't show.
+  Firefox 130+); where there's none, the button doesn't show. Keep `fps` at 23
+  or more: TikTok and Instagram refuse slower video.
+
+Not in 0.3: posting straight into a TikTok inbox. TikTok's Content Posting API
+takes a reviewed TikTok developer app, each owner's sign-in, and JPEG (not PNG)
+photos pulled from a verified domain.
 
 ## Any AI provider
 

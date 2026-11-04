@@ -78,11 +78,16 @@ export function drawFrame(ctx: Context2D, slides: readonly ImageBitmap[], layers
   ctx.globalAlpha = 1;
 }
 
+/** H.264 encodes in 2×2 blocks of colour: an odd side is refused (Safari) or padded. */
+function even(n: number): number {
+  return Math.max(2, Math.round(n / 2) * 2);
+}
+
 /** The slides (their image addresses, in order) as an MP4 clip. */
 export async function makeSlideshowVideo(imageUrls: readonly string[], options: MakeVideoOptions = {}): Promise<MadeVideo> {
   if (!imageUrls.length) throw new Error("A video needs at least one slide.");
-  const width = options.width ?? WIDTH;
-  const height = options.height ?? HEIGHT;
+  const width = even(options.width ?? WIDTH);
+  const height = even(options.height ?? HEIGHT);
   const spec: SlideshowSpec = {
     fps: options.fps ?? DEFAULT_SLIDESHOW.fps,
     secondsPerSlide: options.secondsPerSlide ?? DEFAULT_SLIDESHOW.secondsPerSlide,

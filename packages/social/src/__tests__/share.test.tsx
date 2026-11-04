@@ -104,6 +104,15 @@ describe("the share buttons", () => {
     expect(empty.innerHTML).toBe("");
   });
 
+  it("drops Send where the phone takes files but not these (Android: 10 at most, 50 MB each): Download stays", async () => {
+    stub(navigator, "share", vi.fn(async () => undefined));
+    // The one-file probe passes; the draft's two real files don't.
+    stub(navigator, "canShare", (data: { files: File[] }) => data.files.length <= 1);
+    vi.stubGlobal("fetch", async () => png());
+    const container = await mount(<ShareImages postKey="launch:1" platform="tiktok" images={IMAGES} text="t" />);
+    expect([...container.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Download 2 images"]);
+  });
+
   it("says what to do when the share sheet fails, and nothing when the person closes it", async () => {
     stub(navigator, "canShare", () => true);
     stub(navigator, "clipboard", { writeText: async () => undefined });

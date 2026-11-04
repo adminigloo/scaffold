@@ -382,7 +382,7 @@ function PlatformPanel({
 
       {rule.captionOnly ? (
         <p className="social-note">
-          In {rule.name}: the pictures come in as a photo post, or make them a video. Either way, pick a sound in {rule.name} (its own sounds reach the most people), paste the caption, then post.
+          In {rule.name}: the pictures open as a slideshow, or make them a video (videos get more engagement there). If {rule.name} isn&rsquo;t in the share list, save them to your photos and pick them in {rule.name}. Add a sound from {rule.name}&rsquo;s library, paste the caption, then post.
         </p>
       ) : null}
       <div className="social-actions">
