@@ -437,7 +437,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // First release (create-app 0.41): social posts per company — the queue, the
   // handler and its route table, the screens (./ui), the cards (./cards,
   // ./fonts) and the metered Claude call (./anthropic).
-  social: "0.2.2",
+  social: "0.2.3",
 };
 
 export class UnknownPackageVersionError extends Error {
