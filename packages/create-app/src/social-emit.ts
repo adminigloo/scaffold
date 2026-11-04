@@ -57,7 +57,7 @@ function renderSocialGlue(answers: Answers): string {
   const imports = [
     `import { createHmac, randomBytes } from "node:crypto";`,
     `import { isDeployed } from "${scope}/env";`,
-    `import { genericHonesty, launchSource, PLATFORM_IDS, type Complete, type DraftImage, type Platform, type PostSource, type WriterOptions } from "${scope}/social";`,
+    `import { combineHonesty, genericHonesty, launchSource, PLATFORM_IDS, smell, type Complete, type DraftImage, type Platform, type PostLife, type PostSource, type WriterOptions } from "${scope}/social";`,
     `import { createSocialAdminHandlers, dayIn, type ComposeRequest } from "${scope}/social/server";`,
     `import { ${companies ? "cardBrand, " : ""}cardFormatSets, cardImage, draftCards, launchCarousel, quoteCard, sampleCardSets, type CardBrandWords, type CardByline, type CardSigning, type CardSpec, type CardTheme } from "${scope}/social/cards";`,
     ...(ai
@@ -108,6 +108,17 @@ export const SOCIAL_SITE = "*";
  * each one left.
  */
 export const SOCIAL_PLATFORMS: readonly Platform[] = PLATFORM_IDS;
+
+/**
+ * How long a post is worth posting: about a week from its day. After that a
+ * draft, or an approved post nobody posted, reads expired, can't be approved
+ * and leaves the posting list. Change it per kind if a post of yours lasts
+ * longer or shorter.
+ */
+export const SOCIAL_LIFE: PostLife = ({ day }) => ({ until: new Date(Date.parse(\`\${day}T00:00:00Z\`) + 8 * 86_400_000), label: "about a week" });
+
+/** The words the AI writes, held to the generic honesty list and, for its sign-offs, the AI-smell check (dashes, "it's not X, it's Y", lists of three). */
+const SOCIAL_HONESTY = combineHonesty(genericHonesty, (text, part) => (part === "aside" ? smell(text, { names: false }) : null));
 
 /** This deployment's address, without a trailing slash (the cards' addresses, a post's default link). */
 function appUrl(): string {
@@ -315,8 +326,10 @@ export interface SocialOverrides {
 function writerFor(overrides: SocialOverrides) {
   return ({ tenantId, userId }: { readonly tenantId: string; readonly userId: string | null }): WriterOptions => ({
     complete: overrides.complete !== undefined ? overrides.complete : socialComplete(tenantId, userId),
-    honesty: genericHonesty,
+    honesty: SOCIAL_HONESTY,
     mode: "aside",
+    // Each draft's link says which platform and which post brought the visit (the site's analytics read it).
+    tagLinks: true,
   });
 }
 `;
@@ -360,6 +373,7 @@ export function buildSiteSocialHandlers(overrides: SocialOverrides = {}) {
     writer: writerFor(overrides),
     cardFormats: () => cardFormatSets(sampleCardSets(), socialCardImage),
     today: (_tenantId, now) => dayIn(SITE_TIME_ZONE, now),
+    life: SOCIAL_LIFE,
     onError: reportSocialError,
   });
 }
@@ -414,6 +428,7 @@ export function buildSocialAdminHandlers(overrides: FeatureHandlerOverrides & So
     writer: writerFor(overrides),
     cardFormats: async (tenantId) => cardFormatSets(sampleCardSets((await companyOf(tenantId)).brand), socialCardImage),
     today: async (tenantId, now) => dayIn((await tenancy.companyProfile(tenantId))?.timeZone ?? null, now),
+    life: SOCIAL_LIFE,
     onError: reportSocialError,
   });
 }

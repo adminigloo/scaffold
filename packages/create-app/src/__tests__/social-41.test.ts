@@ -54,7 +54,11 @@ describe("companies mode", () => {
     expect(glue).toContain("dayIn((await tenancy.companyProfile(tenantId))?.timeZone ?? null, now)");
     // Code writes every fact; the AI only the hook and the sign-off, every word checked.
     expect(glue).toContain('mode: "aside"');
-    expect(glue).toContain("honesty: genericHonesty");
+    expect(glue).toContain("honesty: SOCIAL_HONESTY");
+    // Almanac's lessons, on by default: tagged links, the AI-smell check on sign-offs, posts that go stale.
+    expect(glue).toContain("tagLinks: true");
+    expect(glue).toContain("smell(text, { names: false })");
+    expect(glue).toContain("life: SOCIAL_LIFE");
     expect(file(p, "app", "api", "app", "[tenantId]", "posts", "[...path]", "route.ts")).toContain("buildSocialAdminHandlers()");
     const page = file(p, "app", "(site)", "app", "posts", "page.tsx");
     expect(page).toContain('<CompanyGate path="/app/posts" permission="social.view">');
