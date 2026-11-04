@@ -134,6 +134,8 @@ export function linkLine(url: string, label: string | null): string {
 /** What code puts around a platform's words. */
 export interface Around {
   readonly hook: string;
+  /** What a hook-first platform opens with in place of the hook (PostSource.openingLine), or null for the hook. */
+  readonly openingLine?: string | null;
   readonly linkUrl: string | null;
   readonly linkLabel: string | null;
   readonly hashtags: readonly string[];
@@ -179,7 +181,7 @@ export function fixedAside(aside: FixedAside | null | undefined): FixedAside | n
  */
 export function composeText(platform: Platform, words: string, around: Around, aside: FixedAside | null = null, banter: string | null = null): string {
   const rule = PLATFORMS[platform];
-  const parts = [rule.hookFirst ? around.hook : "", words.trim(), scene(around, aside, banter)];
+  const parts = [rule.hookFirst ? (around.openingLine ?? around.hook) : "", words.trim(), scene(around, aside, banter)];
   if (around.linkUrl && rule.linkIn === "text") parts.push(linkLine(around.linkUrl, around.linkLabel));
   if (around.linkUrl && rule.linkIn === "bio") parts.push("Link in bio.");
   if (rule.hashtags > 0 && around.hashtags.length) parts.push(around.hashtags.slice(0, rule.hashtags).join(" "));
@@ -191,7 +193,7 @@ export function firstCommentFor(platform: Platform, linkUrl: string | null, link
   return linkUrl && PLATFORMS[platform].linkIn === "comment" ? linkLine(linkUrl, linkLabel) : null;
 }
 
-const aroundOf = (source: PostSource, hook: string, link: string | null): Around => ({ hook, linkUrl: link, linkLabel: source.linkLabel, hashtags: source.hashtags, speaker: source.speaker ?? null });
+const aroundOf = (source: PostSource, hook: string, link: string | null): Around => ({ hook, openingLine: source.openingLine?.trim() || null, linkUrl: link, linkLabel: source.linkLabel, hashtags: source.hashtags, speaker: source.speaker ?? null });
 
 /** Each platform's link: the source's, tagged with the platform and the post where the app asks (WriterOptions.tagLinks). */
 function linksFor(source: PostSource, tag: boolean): LinkOf {

@@ -44,9 +44,11 @@ export const socialCss = `
   line-height: 1.5;
   /* A long link (a tagged first comment) breaks rather than pushing a phone's page sideways. */
   overflow-wrap: anywhere;
+  color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   .social {
+    color-scheme: dark;
     --_ink: var(--social-ink, var(--color-ink, #e8edf1));
     --_muted: var(--social-muted, var(--color-ink-muted, #93a2ae));
     --_surface: var(--social-surface, var(--color-surface, #12181d));
@@ -506,7 +508,10 @@ export const socialCss = `
 
 
 /* The package page (PostsAdmin) and the card formats (CardFormats). */
-.social-admin { display: flex; flex-direction: column; gap: 32px; }
+/* The whole page paints its own ground, so its titles never sit on a host's background of the other theme. */
+.social-admin { display: flex; flex-direction: column; gap: 32px; padding: 16px; border-radius: var(--_radius); background: var(--_canvas); color: var(--_ink); }
+/* A plain link (the posting session's) in the theme's accent, not the browser's blue. */
+.social a { color: var(--_accent); }
 .social-section { display: flex; flex-direction: column; gap: 12px; }
 .social-section-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 12px; }
 .social-section-title { margin: 0; font-size: 16px; font-weight: 600; color: var(--_ink); }

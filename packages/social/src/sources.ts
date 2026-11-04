@@ -1,4 +1,4 @@
-import { cutToFit, HOOK_MAX } from "./platforms.js";
+import { cutToFit, HOOK_MAX, PLATFORMS } from "./platforms.js";
 import { PLATFORM_IDS, type DraftImage, type Platform, type PostSource } from "./types.js";
 
 /**
@@ -75,7 +75,11 @@ export const LAUNCH_FACTS_MAX = 1200;
 /** An announcement from a person's own words (key "launch:<id>"). */
 export function launchSource(input: SourceTarget & { readonly key: string; readonly facts: string; readonly kind?: string }): PostSource {
   const text = input.facts.replace(/\s+/g, " ").trim();
-  const hook = hookOf(firstSentence(text));
+  const first = firstSentence(text);
+  const hook = hookOf(first);
+  // Where a platform opens with the hook, it opens with the person's own first sentence and goes on
+  // with the rest, so the first fact isn't said twice (the AI's hook is on the images).
+  const rest = text.slice(first.length).trim();
   return {
     key: input.key,
     kind: input.kind ?? "launch",
@@ -85,11 +89,12 @@ export function launchSource(input: SourceTarget & { readonly key: string; reado
     facts: { title: hook, lines: [text], data: { text } },
     platforms: input.platforms ?? PLATFORM_IDS,
     hook,
+    openingLine: first,
     linkUrl: input.link,
     linkLabel: input.linkLabel ?? null,
     hashtags: input.hashtags ?? [],
-    // Reddit's first line is its title: the hook, then the whole announcement.
-    template: (platform) => (platform === "reddit" ? [`${hook}\n\n${text}`] : [text]),
+    // Reddit's first line is its title: the first sentence whole (its 300 take it), then the rest.
+    template: (platform) => (platform === "reddit" ? [rest ? `${first}\n\n${rest}` : first] : PLATFORMS[platform].hookFirst ? [rest] : [text]),
     images: input.images,
   };
 }

@@ -20,7 +20,7 @@ export const REJECT = {
   neg3: /\bno\s+\w+(?:\s\w+)?[.,]\s*no\s+\w+(?:\s\w+)?[.,]\s*just\b/i,
   // Run on the line with its vocatives taken out (VOCATIVES), so a chatty line's commas don't trip it.
   triad: /\b[\w']+(?:\s[\w']+){0,2},\s+[\w']+(?:\s[\w']+){0,2},?\s+(?:and|or)\s+[\w']+/i,
-  isAvoid: /\b(?:serves as|stands as|acts as|functions as|a testament to|a reminder (?:of|that))\b/i,
+  isAvoid: /\b(?:serves as|stands as|acts as|functions as|has a way of|a testament to|a reminder (?:of|that))\b/i,
   ingTail: /,\s+(?:highlighting|underscoring|showcasing|reflecting|emphasizing|ensuring|fostering|proving|reminding)\b/i,
   assistant:
     /\b(?:it'?s (?:important|worth) (?:to note|noting)|remember,? that|let'?s (?:dive|be honest|talk)|fun fact|pro tip|spoiler alert|plot twist|buckle up|here'?s the thing|the truth is|in a world where|at the end of the day|when it comes to|honestly|basically|needless to say|i must say|dare i say|just saying|i think not|we'?ve all been there)\b/i,

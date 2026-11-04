@@ -86,7 +86,8 @@ describe("composing a post", () => {
     expect(queue.today).toBe("2026-10-27");
     expect(queue.sections.today).toHaveLength(10);
     const instagram = queue.sections.today.find((p) => p.platform === "instagram")!;
-    expect(instagram.text).toBe("We now mow on Saturdays, 8 to noon.\n\nWe now mow on Saturdays, 8 to noon. Book online any time.\n\nLink in bio.\n\n#lawn #mowing");
+    // Opens with the first sentence and goes on with the rest: the first fact is never said twice (0.2.2).
+    expect(instagram.text).toBe("We now mow on Saturdays, 8 to noon.\n\nBook online any time.\n\nLink in bio.\n\n#lawn #mowing");
     expect(instagram.hook).toBe("We now mow on Saturdays, 8 to noon.");
     const x = queue.sections.today.find((p) => p.platform === "x")!;
     expect(x.firstComment).toBe("https://example.com/t/alpha");

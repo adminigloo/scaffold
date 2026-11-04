@@ -103,6 +103,13 @@ export interface PostSource {
   readonly platforms: readonly Platform[];
   /** The app's own hook: the short line on the image (./platforms.ts HOOK_MAX). The AI may write a better one. */
   readonly hook: string;
+  /**
+   * The line a platform that opens with the hook opens with instead (LinkedIn,
+   * Facebook, Instagram, TikTok), when the words would otherwise say it twice:
+   * a typed post opens with the person's own first sentence and its words are
+   * the rest. The images still carry the hook. None: the hook.
+   */
+  readonly openingLine?: string;
   /** The page it points to, absolute. Code places it (in the text, the first comment, or "link in bio"); the AI never writes a link. */
   readonly linkUrl: string | null;
   /** The words before the link where it's shown: "The new menu" makes "The new menu: https://…". */
