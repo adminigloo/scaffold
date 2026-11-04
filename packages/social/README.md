@@ -77,6 +77,52 @@ posting-session list) and marks each one posted with its link.
   `{ "hook", "asides": [{ "text", "probability" }] }`; `QueueWire.sections`
   gains `expired`. The table is unchanged: no migration.
 
+## Set it up in your app: one command
+
+In a Next.js app on Drizzle and Postgres (a project made with `create-app
+--social` has all of this already):
+
+```sh
+npm install @adminigloo/social
+npx adminigloo-social init          # --dry-run to see first; --ai to choose the AI
+```
+
+It finds your app directory, your Drizzle `db`, your schema and the AI library
+you already use (OpenAI, the Vercel AI SDK, Claude, or none), and writes:
+
+| File | What it is |
+| --- | --- |
+| `lib/social-posts.ts` | The glue: the handler, the cards, the AI, the rules. Three spots marked WIRE. |
+| `app/api/admin/posts/[...path]/route.ts` | The posts screen's server route |
+| `app/api/social/card/route.tsx` | The card images: public, so a platform can fetch them, and signed |
+| `app/admin/posts/page.tsx` | The posts screen |
+| one line in your Drizzle schema | The posts table, for `drizzle-kit generate` |
+| `SOCIAL_CARD_SECRET` in `.env.local` | The key the card addresses are signed with (never printed) |
+
+It never overwrites a file you have, and the screen stays **closed to everyone
+until you wire your staff check** into `authorize` (WIRE 1). Then generate and
+apply the migration your usual way, add `SOCIAL_CARD_SECRET` to your host,
+and link the screen from your admin menu.
+
+## TikTok, Reels and Shorts: pictures or a video
+
+A TikTok draft comes with 9:16 slides inside TikTok's safe zone and a short
+caption with its hashtags. From the posts screen:
+
+- **Send to TikTok** (on a phone): the slides go to the share sheet in order
+  and the caption goes on the clipboard; TikTok opens with them as a photo
+  post. Pick a sound, paste the caption, post.
+- **Make a video**: the slides become an MP4 made in the browser (H.264,
+  1080 × 1920, 30 fps, about 2.5 seconds a slide with a slow push-in,
+  crossfades, the last slide held longer and a seamless loop), with no
+  sound track: pick a TikTok sound, which reaches further than any file's.
+  **Send video to TikTok** on a phone, **Download video** anywhere. The same
+  clip works as an Instagram Reel or a YouTube Short.
+- **Download images** on a computer, for any platform's own upload page.
+- `@adminigloo/social/video` (`makeSlideshowVideo`) makes the clip for your own
+  screens. It needs a browser with WebCodecs (Chrome, Edge, Safari 16.4+,
+  Firefox 130+); where there's none, the button doesn't show.
+
 ## Any AI provider
 
 The writer never calls a provider itself: it calls the `complete` function
