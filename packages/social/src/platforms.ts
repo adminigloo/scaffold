@@ -44,19 +44,28 @@ export interface PlatformRule {
   readonly titleTarget?: number;
   /**
    * Where the link goes: in the text; in the first comment (X and LinkedIn
-   * show posts with a link to fewer people); or nowhere clickable, the
+   * show posts with a link to fewer people); as a link card under the text
+   * (Bluesky, social 0.2: its 300 count the whole address, so a link in the
+   * text crowded out the facts; whoever posts pastes the draft's link, waits
+   * for the card, then deletes the address); or nowhere clickable, the
    * caption saying "Link in bio." (Instagram, TikTok).
    */
-  readonly linkIn: "text" | "comment" | "bio";
+  readonly linkIn: "text" | "comment" | "card" | "bio";
   /**
    * A caption under images that carry the facts (TikTok's photo carousel):
-   * the hook, the aside and the hashtags, no fact lines, which the slides show.
+   * the hook, the facts in one line (the source's captionFacts), the aside
+   * and the hashtags; the slides show the rest.
    */
   readonly captionOnly?: boolean;
   /** Does the text open with the hook, on a line of its own? */
   readonly hookFirst: boolean;
-  /** Does the text end with the post's hashtags? */
-  readonly hashtags: boolean;
+  /**
+   * The most of the post's hashtags its text ends with, 0 for none (social
+   * 0.2: X 2, Bluesky 3, LinkedIn 5; hashtags are how a small account reaches
+   * the people who follow a topic). Where the text runs long they go one at
+   * a time, after the aside and the banter and before any fact.
+   */
+  readonly hashtags: number;
   /** The images it takes: one card, a carousel, or none. */
   readonly image: { readonly aspect: ImageAspect; readonly carousel: boolean } | null;
   /** How the AI is asked to write for it. */
@@ -66,15 +75,15 @@ export interface PlatformRule {
 }
 
 export const PLATFORMS: Readonly<Record<Platform, PlatformRule>> = {
-  x: { id: "x", name: "X", max: 280, target: 240, counting: "x", linkIn: "comment", hookFirst: false, hashtags: false, image: { aspect: "1:1", carousel: false }, style: "Punchy: one or two short sentences.", aside: "short" },
-  threads: { id: "threads", name: "Threads", max: 500, target: 400, counting: "chars", linkIn: "text", hookFirst: false, hashtags: false, image: { aspect: "1:1", carousel: false }, style: "Conversational: a few short sentences.", aside: "full" },
-  bluesky: { id: "bluesky", name: "Bluesky", max: 300, target: 240, counting: "graphemes", linkIn: "text", hookFirst: false, hashtags: false, image: { aspect: "1:1", carousel: false }, style: "A few short sentences.", aside: "short" },
-  telegram: { id: "telegram", name: "Telegram", max: 4096, target: 600, counting: "chars", linkIn: "text", hookFirst: false, hashtags: false, image: { aspect: "1:1", carousel: false }, style: "A short update, in a few short lines.", aside: "full" },
-  discord: { id: "discord", name: "Discord", max: 2000, target: 600, counting: "chars", linkIn: "text", hookFirst: false, hashtags: false, image: { aspect: "1:1", carousel: false }, style: "A short update, in a few short lines.", aside: "full" },
-  linkedin: { id: "linkedin", name: "LinkedIn", max: 3000, target: 900, counting: "chars", linkIn: "comment", hookFirst: true, hashtags: false, image: { aspect: "4:5", carousel: false }, style: "Short paragraphs of one or two sentences each.", aside: "full" },
-  facebook: { id: "facebook", name: "Facebook", max: 63_206, target: 500, counting: "chars", linkIn: "text", hookFirst: true, hashtags: false, image: { aspect: "4:5", carousel: true }, style: "A few short lines.", aside: "full" },
-  instagram: { id: "instagram", name: "Instagram", max: 2200, target: 400, counting: "chars", linkIn: "bio", hookFirst: true, hashtags: true, image: { aspect: "4:5", carousel: true }, style: "A few short lines: a caption under a carousel.", aside: "full" },
-  tiktok: { id: "tiktok", name: "TikTok", max: 2200, target: 150, counting: "chars", linkIn: "bio", hookFirst: true, captionOnly: true, hashtags: true, image: { aspect: "9:16", carousel: true }, style: "One short line: a caption under a photo carousel.", aside: "short" },
+  x: { id: "x", name: "X", max: 280, target: 240, counting: "x", linkIn: "comment", hookFirst: false, hashtags: 2, image: { aspect: "1:1", carousel: false }, style: "Punchy: one or two short sentences.", aside: "short" },
+  threads: { id: "threads", name: "Threads", max: 500, target: 400, counting: "chars", linkIn: "text", hookFirst: false, hashtags: 1, image: { aspect: "1:1", carousel: false }, style: "Conversational: a few short sentences.", aside: "full" },
+  bluesky: { id: "bluesky", name: "Bluesky", max: 300, target: 240, counting: "graphemes", linkIn: "card", hookFirst: false, hashtags: 3, image: { aspect: "1:1", carousel: false }, style: "A few short sentences.", aside: "short" },
+  telegram: { id: "telegram", name: "Telegram", max: 4096, target: 600, counting: "chars", linkIn: "text", hookFirst: false, hashtags: 0, image: { aspect: "1:1", carousel: false }, style: "A short update, in a few short lines.", aside: "full" },
+  discord: { id: "discord", name: "Discord", max: 2000, target: 600, counting: "chars", linkIn: "text", hookFirst: false, hashtags: 0, image: { aspect: "1:1", carousel: false }, style: "A short update, in a few short lines.", aside: "full" },
+  linkedin: { id: "linkedin", name: "LinkedIn", max: 3000, target: 900, counting: "chars", linkIn: "comment", hookFirst: true, hashtags: 5, image: { aspect: "4:5", carousel: false }, style: "Short paragraphs of one or two sentences each.", aside: "full" },
+  facebook: { id: "facebook", name: "Facebook", max: 63_206, target: 500, counting: "chars", linkIn: "text", hookFirst: true, hashtags: 2, image: { aspect: "4:5", carousel: true }, style: "A few short lines.", aside: "full" },
+  instagram: { id: "instagram", name: "Instagram", max: 2200, target: 400, counting: "chars", linkIn: "bio", hookFirst: true, hashtags: 5, image: { aspect: "4:5", carousel: true }, style: "A few short lines: a caption under a carousel.", aside: "full" },
+  tiktok: { id: "tiktok", name: "TikTok", max: 2200, target: 150, counting: "chars", linkIn: "bio", hookFirst: true, captionOnly: true, hashtags: 5, image: { aspect: "9:16", carousel: true }, style: "One short line: a caption under a photo carousel.", aside: "short" },
   reddit: {
     id: "reddit",
     name: "Reddit",
@@ -85,7 +94,7 @@ export const PLATFORMS: Readonly<Record<Platform, PlatformRule>> = {
     counting: "chars",
     linkIn: "text",
     hookFirst: false,
-    hashtags: false,
+    hashtags: 0,
     image: null,
     style: "A plain, factual title line, a blank line, then a plain body. No hype.",
     // A data post on Reddit reads as a joke's setup if it ends in one: none there.

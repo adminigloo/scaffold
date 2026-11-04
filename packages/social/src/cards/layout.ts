@@ -58,6 +58,14 @@ const HEADER_GAP = 56;
 const FOOTER_GAP = 40;
 /** Small capitals above a hook or a number. */
 export const EYEBROW = { size: 26, tracking: 0.16, gap: 26 } as const;
+/** Who's speaking, under a cover's hook. */
+export const BYLINE = { sizes: [32, 30, 28, 26, 24], gap: 22, lineHeight: 1.2 } as const;
+
+/** A picture's height, no more than `want`, and no wider than the content: a wide one (a cast of three) comes out shorter. */
+function artHeightFor(want: number, contentWidth: number, art: { readonly width: number; readonly height: number } | undefined): number {
+  if (!want || !art || art.width <= 0 || art.height <= 0) return want;
+  return Math.min(want, Math.floor((contentWidth * art.height) / art.width));
+}
 
 /** The body of a slide: below the header, above the footer. */
 export function slideBody(frame: Frame): { top: number; height: number } {
@@ -101,6 +109,7 @@ export interface CoverLayout extends SlideChrome {
   readonly frame: Frame;
   readonly eyebrow: LineBlock | null;
   readonly text: TextBlock;
+  readonly byline: LineBlock | null;
   readonly art: number;
 }
 
@@ -173,8 +182,17 @@ function chrome(m: CardMetrics, frame: Frame, name: string, foot: string, cue: b
   };
 }
 
-/** Lay out a card for its spec: every block of words sized to fit. */
-export function layoutCard(spec: CardSpec, m: CardMetrics, brand: { readonly name: string; readonly site: string; readonly handle: string; readonly author: string }): CardLayout {
+/**
+ * Lay out a card for its spec: every block of words sized to fit. `author`
+ * is the name its quote card shows; `art` the size of the picture it names,
+ * so a wide one fits the card's width.
+ */
+export function layoutCard(
+  spec: CardSpec,
+  m: CardMetrics,
+  brand: { readonly name: string; readonly site: string; readonly handle: string; readonly author: string },
+  art?: { readonly width: number; readonly height: number },
+): CardLayout {
   const frame = frameOf(spec.size);
   switch (spec.kind) {
     case "quote": {
@@ -194,15 +212,17 @@ export function layoutCard(spec: CardSpec, m: CardMetrics, brand: { readonly nam
     }
     case "cover": {
       const body = slideBody(frame);
-      const art = spec.character ? (spec.size === "story" ? 560 : spec.size === "portrait" ? 510 : 390) : 0;
+      const picture = artHeightFor(spec.character ? (spec.size === "story" ? 560 : spec.size === "portrait" ? 510 : 390) : 0, frame.contentWidth, art);
       const eyebrow = eyebrowOf(m, spec.eyebrow, frame.contentWidth);
-      const height = body.height - (eyebrow ? EYEBROW.size + EYEBROW.gap : 0) - (art ? art + 24 : 0);
+      const byline = spec.byline ? line(m.sans, spec.byline, frame.contentWidth, BYLINE.sizes) : null;
+      const height = body.height - (eyebrow ? EYEBROW.size + EYEBROW.gap : 0) - (byline ? BYLINE.gap + byline.size * BYLINE.lineHeight : 0) - (picture ? picture + 24 : 0);
       const sizes = spec.size === "square" ? [104, 92, 82, 72, 64, 56, 50] : [124, 110, 98, 88, 78, 70, 62, 56];
       return {
         kind: "cover",
         frame,
         eyebrow,
-        art,
+        art: picture,
+        byline,
         text: block(m.serif, spec.text, { width: frame.contentWidth, height, sizes, lineHeight: 1.06, maxLines: 8 }),
         ...chrome(m, frame, brand.name, brand.site, true),
       };
@@ -268,11 +288,11 @@ export function layoutCard(spec: CardSpec, m: CardMetrics, brand: { readonly nam
       if (note && fixed + note.height + 32 > body.height) note = null;
       // The character takes what's left, up to its size; too little room and it sits this one out.
       const room = body.height - fixed - (note ? note.height + 32 : 0) - 36;
-      const want = spec.character ? (spec.size === "story" ? 560 : spec.size === "portrait" ? 500 : 360) : 0;
-      const art = want && room >= 160 ? Math.min(want, Math.floor(room)) : 0;
+      const want = artHeightFor(spec.character ? (spec.size === "story" ? 560 : spec.size === "portrait" ? 500 : 360) : 0, frame.contentWidth, art);
+      const picture = want && room >= 160 ? Math.min(want, Math.floor(room)) : 0;
       // The footer is the handle; with none (it would only repeat the address above), the business's name.
       const foot = brand.handle && brand.handle !== brand.site ? brand.handle : brand.name;
-      return { kind: "cta", frame, eyebrow, art, site, button, note, ...chrome(m, frame, brand.name, foot, false) };
+      return { kind: "cta", frame, eyebrow, art: picture, site, button, note, ...chrome(m, frame, brand.name, foot, false) };
     }
   }
 }

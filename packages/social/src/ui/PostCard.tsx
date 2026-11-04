@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useRef, useState, type KeyboardEvent } from "react";
+import { isOpen } from "../expiry.js";
 import { composeUrl, HOOK_MAX, measure, PLATFORMS } from "../platforms.js";
-import type { PostEdit } from "../types.js";
-import type { QueuePostView } from "../view.js";
+import type { Platform, PostEdit, PostStatus } from "../types.js";
+import { dayText, postAnchor, type PostGroupView, type QueuePostView } from "../view.js";
 
 /**
  * What an action answers: nothing when it worked, or a message for the
@@ -15,8 +16,8 @@ export type ActionResult = void | { readonly error: string };
 
 /**
  * What a card can ask the app to do. Plain async functions, so a tRPC
- * mutation, a server action or a fetch (./client.ts) all fit. The app
- * refreshes the queue after each.
+ * mutation, a server action or a fetch all fit. The app refreshes the
+ * queue after each.
  */
 export interface QueueActions {
   readonly save: (id: string, edit: PostEdit) => Promise<ActionResult>;
@@ -39,8 +40,34 @@ export async function attempt(task: () => Promise<ActionResult>): Promise<string
   }
 }
 
-const STATUS_LABEL = { draft: "Draft", approved: "Approved", posted: "Posted", skipped: "Skipped" } as const;
+export const STATUS_LABEL: Readonly<Record<PostStatus, string>> = { draft: "Draft", approved: "Approved", posted: "Posted", skipped: "Skipped", expired: "Expired" };
 const WRITER_LABEL = { ai: "AI", "ai-aside": "AI hook & aside", template: "Template", person: "Edited" } as const;
+
+/** "3 approved", "1 draft", "5 drafts": a post's status summary, a chip each. */
+export function statusCount(status: PostStatus, count: number): string {
+  return status === "draft" ? `${count} ${count === 1 ? "draft" : "drafts"}` : `${count} ${STATUS_LABEL[status].toLowerCase()}`;
+}
+
+/** What a person has typed on one platform, over the version of the row it started from. */
+interface Typed {
+  readonly base: string;
+  readonly text: string;
+  readonly hook: string;
+  readonly comment: string;
+  readonly url: string;
+}
+
+const asStored = (p: QueuePostView): Typed => ({ base: p.updatedAt, text: p.text, hook: p.hook, comment: p.firstComment ?? "", url: p.postedUrl ?? "" });
+const edited = (t: Typed, p: QueuePostView) => t.text !== p.text || t.hook !== p.hook || t.comment !== (p.firstComment ?? "");
+const editOf = (t: Typed): PostEdit => ({ text: t.text, hook: t.hook, firstComment: t.comment || null });
+/**
+ * How many rows a text needs, wrapped at about a phone's width (36 characters of the monospace at
+ * 16 px): a text box sized by its line breaks alone hid most of a long line on a phone.
+ */
+const rowsFor = (text: string, most = 16) => Math.min(most, Math.max(4, text.split("\n").reduce((n, line) => n + Math.max(1, Math.ceil([...line].length / 36)), 0) + 1));
+
+/** Can it go out as typed: the text within the platform's limit, the hook short enough? */
+const fitsAsTyped = (p: QueuePostView, t: Typed) => measure(p.platform, t.text).fits && [...t.hook.trim()].length <= HOOK_MAX;
 
 /** Copy a text, saying so for two seconds. */
 function CopyButton({ text, label = "Copy" }: { readonly text: string; readonly label?: string }) {
@@ -64,74 +91,249 @@ function CopyButton({ text, label = "Copy" }: { readonly text: string; readonly 
   );
 }
 
-/**
- * One platform's draft: its images in posting order, the hook on them, the
- * text (editable until it's posted or skipped) with the live count, the
- * first comment, the link, and what to do next. `readOnly` (someone who may
- * look but not change) keeps Copy and Open, and nothing that writes.
- */
-export function PostCard({ post, actions, readOnly = false }: { readonly post: QueuePostView; readonly actions: QueueActions; readonly readOnly?: boolean }) {
-  const rule = PLATFORMS[post.platform];
-  const [text, setText] = useState(post.text);
-  const [hook, setHook] = useState(post.hook);
-  const [comment, setComment] = useState(post.firstComment ?? "");
-  const [url, setUrl] = useState(post.postedUrl ?? "");
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const open = post.status === "draft" || post.status === "approved";
-  const editable = open && !readOnly;
-  const dirty = text !== post.text || hook !== post.hook || comment !== (post.firstComment ?? "");
-  const m = measure(post.platform, text);
-  const hookLength = [...hook.trim()].length;
-  const compose = open ? composeUrl(post.platform, text) : null;
-  const edit: PostEdit = { text, hook, firstComment: comment || null };
+/** A platform's images in posting order, each opening full size: a strip that scrolls sideways for a carousel. */
+function Images({ images, label }: { readonly images: QueuePostView["images"]; readonly label: string }) {
+  return (
+    <ol className="social-images" aria-label={label}>
+      {images.map((image, i) => (
+        <li key={`${i}:${image.url}`} className="social-image">
+          {/* The thumbnail opens the full image, as stored: a signed address is used as it was built. */}
+          <a href={image.url} target="_blank" rel="noreferrer" title={`Open the full image${images.length > 1 ? ` (${i + 1} of ${images.length})` : ""}`}>
+            {/* A plain <img>: this card drops into any React app, so no framework image component. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={image.url} alt={image.alt} width={image.width} height={image.height} loading="lazy" />
+          </a>
+          {images.length > 1 ? <span>{`${i + 1} of ${images.length}`}</span> : null}
+        </li>
+      ))}
+    </ol>
+  );
+}
 
-  const run = async (what: string, task: () => Promise<ActionResult>) => {
-    setBusy(what);
+/**
+ * ONE POST, ONE CARD (the founder, Oct 28, 2026: a card per platform read
+ * as the same post over and over). What it's about, once: its kind, day and
+ * host, the hook, where each platform stands, and each different set of
+ * images. Then a tab per platform with that platform's text (editable), its
+ * images in posting order, its first comment and what to do next. "Approve
+ * all" approves every draft of the post, saving what's been typed first.
+ * What's typed stays while you move between tabs; a row the server changes
+ * comes back as the server has it.
+ *
+ * READ-ONLY WITHOUT ACTIONS: for someone who may see the posts but not
+ * change them, the card is the same post to read and copy, with no box to
+ * type in and none of the buttons that change it (each would only come back
+ * refused).
+ */
+export function PostCard({ post, actions, kindLabel }: { readonly post: PostGroupView; readonly actions?: QueueActions; readonly kindLabel: string }) {
+  const uid = useId();
+  const firstToDo = post.platforms.find((p) => p.status === "draft") ?? post.platforms.find((p) => p.status === "approved") ?? post.platforms[0]!;
+  const [chosen, setChosen] = useState<Platform>(firstToDo.platform);
+  const [typed, setTyped] = useState<Readonly<Record<string, Typed>>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<{ readonly where: string; readonly message: string } | null>(null);
+  const tabs = useRef(new Map<Platform, HTMLButtonElement>());
+
+  const selected = post.platforms.find((p) => p.platform === chosen) ?? post.platforms[0]!;
+  const typedOn = (p: QueuePostView): Typed => {
+    const t = typed[p.id];
+    return t && t.base === p.updatedAt ? t : asStored(p);
+  };
+  const type = (p: QueuePostView, change: Partial<Omit<Typed, "base">>) => setTyped((all) => ({ ...all, [p.id]: { ...typedOn(p), ...change } }));
+
+  const run = async (where: string, what: string, task: () => Promise<ActionResult>) => {
+    setBusy(`${where}:${what}`);
     setError(null);
-    setError(await attempt(task));
+    const message = await attempt(task);
+    if (message) setError({ where, message });
     setBusy(null);
   };
 
+  const waiting = post.platforms.filter((p) => p.status === "draft");
+  const over = waiting.filter((p) => !fitsAsTyped(p, typedOn(p)));
+  const approveAll = (can: QueueActions) =>
+    run("all", "approve", async () => {
+      // What's typed is saved first, so what's approved is what's on screen.
+      for (const p of waiting) {
+        const t = typedOn(p);
+        if (!edited(t, p)) continue;
+        const refused = messageOf(await can.save(p.id, editOf(t)));
+        if (refused) return { error: `${PLATFORMS[p.platform].name}: ${refused}` };
+      }
+      return can.approve(waiting.map((p) => p.id));
+    });
+
+  const choose = (platform: Platform, focus: boolean) => {
+    setChosen(platform);
+    if (!focus) return;
+    const tab = tabs.current.get(platform);
+    tab?.focus();
+    tab?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  };
+  const onTabKey = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {
+    const last = post.platforms.length - 1;
+    const to = e.key === "ArrowRight" ? (i === last ? 0 : i + 1) : e.key === "ArrowLeft" ? (i === 0 ? last : i - 1) : e.key === "Home" ? 0 : e.key === "End" ? last : null;
+    if (to === null) return;
+    e.preventDefault();
+    choose(post.platforms[to]!.platform, true);
+  };
+
+  const panel = `${uid}-panel`;
+  const tabId = (p: Platform) => `${uid}-tab-${p}`;
+
   return (
-    <article className="social-card" data-status={post.status} aria-label={`${rule.name} post`}>
-      <header className="social-card-head">
-        <span className="social-platform">{rule.name}</span>
+    <article className="social-post" id={postAnchor(post.key)} data-open={post.open || undefined} aria-label={`${kindLabel}, ${dayText(post.day)}`}>
+      <header className="social-post-head">
+        <p className="social-post-meta">
+          <span className="social-post-kind">{kindLabel}</span> · {dayText(post.day)} · {post.author}
+        </p>
+        <h3 className="social-post-hook">{post.hook}</h3>
+        {post.title !== post.hook ? <p className="social-post-title">{post.title}</p> : null}
+        <ul className="social-summary" aria-label="Where its platforms stand">
+          {post.summary.map((s) => (
+            <li key={s.status} className="social-chip" data-status={s.status}>
+              {statusCount(s.status, s.count)}
+            </li>
+          ))}
+        </ul>
+        {post.open && post.expiresLabel ? <p className="social-note">{post.expiresLabel}.</p> : null}
+      </header>
+
+      {post.imageSets.length ? (
+        <ul className="social-sets" aria-label="Its images, each set once">
+          {post.imageSets.map((set) => {
+            const lead = set.images[0]!;
+            return (
+              <li key={lead.url} className="social-set">
+                <a href={lead.url} target="_blank" rel="noreferrer" title="Open the full image">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={lead.url} alt={lead.alt} width={lead.width} height={lead.height} loading="lazy" />
+                </a>
+                <span>
+                  {set.platforms.map((p) => PLATFORMS[p].name).join(" · ")}
+                  {set.images.length > 1 ? ` · ${set.images.length} slides` : ""}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+
+      {waiting.length && actions ? (
+        <div className="social-post-actions">
+          <button type="button" className="social-button social-button-primary" disabled={busy !== null || over.length > 0} onClick={() => approveAll(actions)}>
+            {busy === "all:approve" ? "Approving…" : `Approve all (${waiting.length})`}
+          </button>
+          {over.length ? <p className="social-note">Shorten {over.map((p) => PLATFORMS[p.platform].name).join(" and ")} first: over the limit.</p> : null}
+        </div>
+      ) : null}
+      {error?.where === "all" ? (
+        <p className="social-error" role="alert">
+          {error.message}
+        </p>
+      ) : null}
+
+      <div className="social-tabs" role="tablist" aria-label="Platforms">
+        {post.platforms.map((p, i) => {
+          const on = p.platform === selected.platform;
+          return (
+            <button
+              key={p.id}
+              ref={(el) => {
+                if (el) tabs.current.set(p.platform, el);
+                else tabs.current.delete(p.platform);
+              }}
+              id={tabId(p.platform)}
+              type="button"
+              role="tab"
+              className="social-tab"
+              aria-selected={on}
+              aria-controls={panel}
+              tabIndex={on ? 0 : -1}
+              data-status={p.status}
+              onClick={() => choose(p.platform, false)}
+              onKeyDown={(e) => onTabKey(e, i)}
+            >
+              <span className="social-tab-mark" aria-hidden="true" />
+              {PLATFORMS[p.platform].name}
+              <span className="social-sr">{`, ${STATUS_LABEL[p.status].toLowerCase()}`}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="social-panel" role="tabpanel" id={panel} aria-labelledby={tabId(selected.platform)}>
+        <PlatformPanel
+          post={selected}
+          typed={typedOn(selected)}
+          onType={(change) => type(selected, change)}
+          busy={busy}
+          error={error?.where === selected.id ? error.message : null}
+          run={(what, task) => run(selected.id, what, task)}
+          actions={actions}
+        />
+      </div>
+    </article>
+  );
+}
+
+/** One platform of a post: what goes out there and what to do next. */
+function PlatformPanel({
+  post,
+  typed,
+  onType,
+  busy,
+  error,
+  run,
+  actions,
+}: {
+  readonly post: QueuePostView;
+  readonly typed: Typed;
+  readonly onType: (change: Partial<Omit<Typed, "base">>) => void;
+  readonly busy: string | null;
+  readonly error: string | null;
+  readonly run: (what: string, task: () => Promise<ActionResult>) => Promise<void>;
+  /** None for someone who may only read the posts: nothing to type in, no button that changes one. */
+  readonly actions?: QueueActions;
+}) {
+  const rule = PLATFORMS[post.platform];
+  const open = isOpen(post.status);
+  const editing = open && actions !== undefined;
+  const dirty = editing && edited(typed, post);
+  const m = measure(post.platform, typed.text);
+  const hookLength = [...typed.hook.trim()].length;
+  const compose = editing ? composeUrl(post.platform, typed.text) : null;
+  const working = (what: string) => busy === `${post.id}:${what}`;
+  const anyBusy = busy !== null;
+  const markLabel = post.status === "posted" ? "Correct the post's link" : post.status === "expired" ? "Posted after all? Paste the post's link" : "Posted? Paste the post's link";
+
+  return (
+    <>
+      <div className="social-panel-head">
         <span className="social-chip" data-status={post.status}>
           {STATUS_LABEL[post.status]}
         </span>
         <span className="social-chip" data-writer={post.writtenBy}>
           {WRITER_LABEL[post.writtenBy]}
         </span>
-      </header>
+      </div>
 
-      {post.images.length ? (
-        <ol className="social-images" aria-label={post.images.length > 1 ? `${post.images.length} images, in posting order` : "The image to attach"}>
-          {post.images.map((image, i) => (
-            <li key={`${i}:${image.url}`} className="social-image">
-              {/* The thumbnail opens the full image, as stored: a signed address is used as it was built. */}
-              <a href={image.url} target="_blank" rel="noopener noreferrer" title={`Open the full image${post.images.length > 1 ? ` (${i + 1} of ${post.images.length})` : ""}`}>
-                {/* A plain <img>: this card drops into any React app, so no framework image component. */}
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={image.url} alt={image.alt} width={image.width} height={image.height} loading="lazy" />
-              </a>
-              <span>{post.images.length > 1 ? `${i + 1} of ${post.images.length}` : `${image.width} × ${image.height}`}</span>
-            </li>
-          ))}
-        </ol>
-      ) : null}
+      {post.images.length ? <Images images={post.images} label={post.images.length > 1 ? `${rule.name}: ${post.images.length} images, in posting order` : `${rule.name}: the image to attach`} /> : null}
 
       <label className="social-field">
-        <span>
-          The hook, on the image ({hookLength} of {HOOK_MAX})
-        </span>
-        {editable ? <input value={hook} onChange={(e) => setHook(e.target.value)} aria-invalid={hookLength > HOOK_MAX || undefined} /> : <span className="social-hook">{post.hook}</span>}
+        <span>The hook, on the image ({hookLength} of {HOOK_MAX})</span>
+        {editing ? (
+          // Two rows, not one: a 90-character hook shows whole on a phone. One line all the same: a line break typed is a space.
+          <textarea className="social-hook-input" rows={2} value={typed.hook} onChange={(e) => onType({ hook: e.target.value.replace(/\s*\n\s*/g, " ") })} aria-invalid={hookLength > HOOK_MAX || undefined} />
+        ) : (
+          <span className="social-hook">{post.hook}</span>
+        )}
       </label>
 
-      {editable ? (
-        <textarea className="social-text" value={text} rows={Math.min(14, Math.max(4, text.split("\n").length + 1))} aria-label={`${rule.name} post text`} onChange={(e) => setText(e.target.value)} />
+      {editing ? (
+        <textarea className="social-text" value={typed.text} rows={rowsFor(typed.text)} aria-label={`${rule.name} post text`} onChange={(e) => onType({ text: e.target.value })} />
       ) : (
-        <pre className="social-text">{text}</pre>
+        <pre className="social-text social-text-done">{post.text}</pre>
       )}
       <p className="social-count" data-over={m.fits ? undefined : "true"}>
         {m.title ? `Title ${m.title.length} of ${m.title.max} · body ` : ""}
@@ -140,82 +342,89 @@ export function PostCard({ post, actions, readOnly = false }: { readonly post: Q
       </p>
       {post.note ? <p className="social-note">{post.note}.</p> : null}
 
-      {post.firstComment !== null || comment ? (
+      {post.firstComment !== null || typed.comment ? (
         <div className="social-comment">
           <label className="social-field">
             <span>First comment (post it as the first reply)</span>
-            {editable ? <input value={comment} onChange={(e) => setComment(e.target.value)} /> : <span>{post.firstComment}</span>}
+            {editing ? <input value={typed.comment} onChange={(e) => onType({ comment: e.target.value })} /> : <span>{post.firstComment}</span>}
           </label>
-          <CopyButton text={comment} label="Copy comment" />
+          <CopyButton text={typed.comment} label="Copy comment" />
         </div>
       ) : null}
 
       {post.linkUrl ? (
         <p className="social-link">
           Links to{" "}
-          <a href={post.linkUrl} target="_blank" rel="noopener noreferrer">
-            {post.linkUrl.replace(/^https?:\/\//, "")}
+          <a href={post.linkUrl} target="_blank" rel="noreferrer">
+            {post.linkUrl.replace(/^https?:\/\//, "").replace(/\?.*$/, "")}
           </a>
-          {rule.linkIn === "comment" ? ", in the first comment" : rule.linkIn === "bio" ? ", from the profile's bio" : ""}
+          {rule.linkIn === "comment"
+            ? ", in the first comment"
+            : rule.linkIn === "bio"
+              ? ", from the profile's bio"
+              : rule.linkIn === "card"
+                ? `, as a link card: paste the link in ${rule.name}'s composer, wait for the card, then delete the address`
+                : ""}
         </p>
       ) : null}
       {post.postedUrl ? (
         <p className="social-posted">
           Posted:{" "}
-          <a href={post.postedUrl} target="_blank" rel="noopener noreferrer">
+          <a href={post.postedUrl} target="_blank" rel="noreferrer">
             {post.postedUrl.replace(/^https?:\/\//, "")}
           </a>
         </p>
       ) : null}
+      {post.status === "expired" ? <p className="social-note">Expired{post.expiresLabel ? ` (it was ${post.expiresLabel.charAt(0).toLowerCase()}${post.expiresLabel.slice(1)})` : ""}: it&rsquo;s no longer offered for posting.</p> : null}
 
       <div className="social-actions">
-        {editable && dirty ? (
-          <button type="button" className="social-button" disabled={busy !== null} onClick={() => run("save", () => actions.save(post.id, edit))}>
-            {busy === "save" ? "Saving…" : "Save edits"}
-          </button>
-        ) : null}
-        {post.status === "draft" && !readOnly ? (
+        {post.status === "draft" && actions ? (
           <button
             type="button"
             className="social-button social-button-primary"
-            disabled={busy !== null || !m.fits || hookLength > HOOK_MAX}
+            disabled={anyBusy || !fitsAsTyped(post, typed)}
             onClick={() =>
               run("approve", async () => {
-                const refused = dirty ? messageOf(await actions.save(post.id, edit)) : null;
+                const refused = dirty ? messageOf(await actions.save(post.id, editOf(typed))) : null;
                 return refused ? { error: refused } : actions.approve([post.id]);
               })
             }
           >
-            {busy === "approve" ? "Approving…" : "Approve"}
+            {working("approve") ? "Approving…" : "Approve"}
           </button>
         ) : null}
-        <CopyButton text={text} label="Copy text" />
+        {dirty && actions ? (
+          <button type="button" className="social-button" disabled={anyBusy} onClick={() => run("save", () => actions.save(post.id, editOf(typed)))}>
+            {working("save") ? "Saving…" : "Save edits"}
+          </button>
+        ) : null}
+        <CopyButton text={typed.text} label="Copy text" />
         {compose ? (
-          <a className="social-button" href={compose} target="_blank" rel="noopener noreferrer">
+          <a className="social-button" href={compose} target="_blank" rel="noreferrer">
             Open {rule.name}
           </a>
         ) : null}
-        {editable ? (
-          <button type="button" className="social-button social-button-quiet" disabled={busy !== null} onClick={() => run("skip", () => actions.skip(post.id))}>
-            {busy === "skip" ? "Skipping…" : "Skip"}
+        {editing && actions ? (
+          <button type="button" className="social-button social-button-quiet" disabled={anyBusy} onClick={() => run("skip", () => actions.skip(post.id))}>
+            {working("skip") ? "Skipping…" : "Skip"}
           </button>
         ) : null}
       </div>
 
-      {!readOnly && (open || post.status === "posted") ? (
+      {actions && (open || post.status === "posted" || post.status === "expired") ? (
         <form
           className="social-posted-form"
           onSubmit={(e) => {
             e.preventDefault();
-            void run("posted", () => actions.markPosted(post.id, url));
+            void run("posted", () => actions.markPosted(post.id, typed.url));
           }}
         >
           <label className="social-field">
-            <span>{post.status === "posted" ? "Correct the post's link" : "Posted? Paste the post's link"}</span>
-            <input type="url" required value={url} placeholder={`https://… (the ${rule.name} post)`} onChange={(e) => setUrl(e.target.value)} />
+            <span>{markLabel}</span>
+            <input type="url" inputMode="url" required value={typed.url} placeholder={`https://… (the ${rule.name} post)`} onChange={(e) => onType({ url: e.target.value })} />
           </label>
-          <button type="submit" className="social-button" disabled={busy !== null || !url.trim()}>
-            {busy === "posted" ? "Saving…" : "Mark posted"}
+          <button type="submit" className="social-button" disabled={anyBusy || !typed.url.trim()}>
+            {working("posted") ? "Saving…" : "Mark posted"}
           </button>
         </form>
       ) : null}
@@ -224,6 +433,6 @@ export function PostCard({ post, actions, readOnly = false }: { readonly post: Q
           {error}
         </p>
       ) : null}
-    </article>
+    </>
   );
 }

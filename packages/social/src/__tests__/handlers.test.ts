@@ -115,7 +115,14 @@ describe("composing a post", () => {
       complete: ({ tenantId }) => {
         asked.push(tenantId);
         return {
-          complete: async () => JSON.stringify({ hook: "Saturday mowing is here.", aside: "The mowers have been polished, and so have we.", shortAside: "The mowers are ready." }),
+          complete: async () =>
+            JSON.stringify({
+              hook: "Saturday mowing is here.",
+              asides: [
+                { text: "The mowers have been polished, and so have we, and the shed is swept and smells of cut grass.", probability: 0.1 },
+                { text: "The mowers are ready.", probability: 0.2 },
+              ],
+            }),
           honesty: genericHonesty,
           mode: "aside",
         };
@@ -156,7 +163,14 @@ describe("the queue's routes", () => {
     expect(await store.get(x!.id)).toMatchObject({ approvedBy: "user-of-alpha", postedBy: "user-of-alpha" });
     const sections = (await queueOf(handle, "alpha")).sections;
     expect(sections.ready.map((p) => p.platform)).toEqual(["threads"]);
-    expect(sections.history.map((p) => p.platform).sort()).toEqual(["bluesky", "x"]);
+    // One post, one section (social 0.2): its platforms stay together under today while one is still to post.
+    expect(sections.history).toEqual([]);
+    expect(
+      sections.today
+        .filter((p) => p.status === "posted" || p.status === "skipped")
+        .map((p) => p.platform)
+        .sort(),
+    ).toEqual(["bluesky", "x"]);
   });
 
   it("answers the posting session with every approved post: what to paste, attach and comment, and where to mark it posted", async () => {

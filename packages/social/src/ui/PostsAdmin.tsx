@@ -115,8 +115,6 @@ export function PostsAdmin({ baseUrl, canManage, businessName, fetcher }: PostsA
             <PostQueue
               posts={queue.sections.today}
               actions={actions}
-              filter
-              approveAllLabel="Approve all for today"
               readOnly={readOnly}
               empty={canManage ? "Nothing for today yet. Write a post from your own facts below, and a draft for each platform lands here." : "Nothing for today yet."}
             />
@@ -137,14 +135,16 @@ export function PostsAdmin({ baseUrl, canManage, businessName, fetcher }: PostsA
                 Ready to post
               </h2>
               <p className="social-section-hint">
-                Approved, not posted yet. Post each by hand, then paste its link. For a posting session in the browser, the same list as JSON:{" "}
+                {queue.sections.ready.length
+                  ? `${queue.sections.ready.length} approved, not posted yet (marked Approved on their cards above). Post each by hand, then paste its link.`
+                  : "Nothing approved and waiting."}{" "}
+                For a posting session in the browser, the same list as JSON:{" "}
                 <a href={client.approvedUrl} target="_blank" rel="noopener noreferrer">
                   the approved posts
                 </a>
                 .
               </p>
             </div>
-            <PostQueue posts={queue.sections.ready} actions={actions} readOnly={readOnly} empty="Nothing approved and waiting." />
           </section>
 
           {canManage ? (
@@ -167,6 +167,16 @@ export function PostsAdmin({ baseUrl, canManage, businessName, fetcher }: PostsA
             </h2>
             <PostQueue posts={queue.sections.history} actions={actions} readOnly={readOnly} empty="Nothing posted yet." />
           </section>
+
+          {queue.sections.expired.length ? (
+            <section className="social-section" aria-labelledby="social-expired">
+              <h2 id="social-expired" className="social-section-title">
+                Expired
+              </h2>
+              <p className="social-section-hint">Too old to be worth posting, and nothing went out. One that did go out after all can still be marked posted.</p>
+              <PostQueue posts={queue.sections.expired} actions={actions} readOnly={readOnly} />
+            </section>
+          ) : null}
         </>
       ) : null}
 

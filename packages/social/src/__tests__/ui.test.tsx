@@ -6,13 +6,14 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createSocialAdminHandlers } from "../handlers.js";
 import { launchSource } from "../sources.js";
 import { createSocialClient } from "../ui/client.js";
-import { PostCard } from "../ui/PostCard.js";
+import { PostQueue } from "../ui/PostQueue.js";
 import { PostsAdmin } from "../ui/PostsAdmin.js";
 import type { QueuePostView } from "../view.js";
 import { createTestDb, type TestDb } from "./pglite.js";
 
 /**
- * THE SCREENS (../ui): a draft's card and what it lets a person do, and the
+ * THE SCREENS (../ui): a post's card (one card a post, a tab a platform,
+ * social 0.2) and what it lets a person do, and the
  * whole posts screen driven in a DOM against the REAL handler over a real
  * Postgres — compose, approve all, the posting session's link, the card
  * formats — with nothing between the two but the screen's own fetches.
@@ -47,15 +48,18 @@ const view = (over: Partial<QueuePostView> = {}): QueuePostView => ({
   status: "draft",
   postedUrl: null,
   postedAt: null,
+  expiresAt: null,
+  expiresLabel: null,
   updatedAt: "2026-10-27T15:00:00.000Z",
   ...over,
 });
 const noActions = { save: async () => undefined, approve: async () => undefined, markPosted: async () => undefined, skip: async () => undefined };
+const card = (post: QueuePostView, readOnly = false) => renderToStaticMarkup(<PostQueue posts={[post]} actions={noActions} readOnly={readOnly} />);
 
-describe("a draft's card", () => {
+describe("a post's card", () => {
   it("shows the images in order, the live count, the first comment, and Approve, Copy, Open X and Skip on a draft", () => {
-    const html = renderToStaticMarkup(<PostCard post={view()} actions={noActions} />);
-    expect(html).toContain('aria-label="X post"');
+    const html = card(view());
+    expect(html).toContain('aria-label="X post text"');
     expect(html).toContain('src="https://example.com/card.png?sig=x"');
     expect(html).toContain("<textarea");
     expect(html).toContain("36 of 280");
@@ -67,11 +71,11 @@ describe("a draft's card", () => {
   });
 
   it("is read-only once posted (with its link), and for someone who may only look", () => {
-    const posted = renderToStaticMarkup(<PostCard post={view({ status: "posted", postedUrl: "https://x.com/maplerye/status/1" })} actions={noActions} />);
+    const posted = card(view({ status: "posted", postedUrl: "https://x.com/maplerye/status/1" }));
     expect(posted).not.toContain("<textarea");
     expect(posted).toContain("Posted:");
     expect(posted).toContain("Correct the post&#x27;s link");
-    const looking = renderToStaticMarkup(<PostCard post={view()} actions={noActions} readOnly />);
+    const looking = card(view(), true);
     expect(looking).not.toContain("<textarea");
     for (const word of [">Approve<", ">Skip<", "Mark posted"]) expect(looking).not.toContain(word);
     expect(looking).toContain("Copy text");
@@ -105,7 +109,7 @@ function setValue(element: HTMLInputElement | HTMLTextAreaElement, value: string
 const buttonNamed = (container: HTMLElement, name: string) => [...container.querySelectorAll("button")].find((b) => b.textContent?.trim().startsWith(name)) as HTMLButtonElement | undefined;
 
 describe("the posts screen, over the real handler", () => {
-  it("writes a post from the person's facts, approves today's drafts, links the posting session, and shows the card formats", async () => {
+  it("writes a post from the person's facts, approves its drafts, links the posting session, and shows the card formats", async () => {
     const { handle } = createSocialAdminHandlers({
       db: test.db,
       tenantId: "alpha",
@@ -126,12 +130,13 @@ describe("the posts screen, over the real handler", () => {
     await act(async () => {
       form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     });
-    await settle(() => m.container.querySelectorAll("article.social-card").length === 2, "two drafts in today's queue");
+    // One post, one card: a tab for each of its two platforms.
+    await settle(() => m.container.querySelectorAll("article.social-post").length === 1 && m.container.querySelectorAll('article.social-post [role="tab"]').length === 2, "one post, two platforms, in today's queue");
     expect(m.container.textContent).toContain("Written. The drafts are in today's queue.");
 
-    // Approve all for today: both move to Ready to post.
-    await act(async () => buttonNamed(m.container, "Approve all for today")!.click());
-    await settle(() => (m.container.querySelector('[aria-labelledby="social-ready"]')?.querySelectorAll("article.social-card").length ?? 0) === 2, "both ready to post");
+    // The post's "Approve all": both platforms are ready to post, counted (not shown twice).
+    await act(async () => buttonNamed(m.container, "Approve all")!.click());
+    await settle(() => m.container.querySelector('[aria-labelledby="social-ready"]')?.textContent?.includes("2 approved, not posted yet") ?? false, "both ready to post");
     const session = [...m.container.querySelectorAll("a")].find((a) => a.textContent === "the approved posts")!;
     expect(session.getAttribute("href")).toBe("/api/admin/posts/v1/admin/approved");
 

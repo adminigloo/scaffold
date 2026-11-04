@@ -23,28 +23,66 @@ posting-session list) and marks each one posted with its link.
 - **Cheap and metered.** One call per post, Claude Haiku 4.5 by default, about
   a third of a cent at worst, held against the company's AI allowance before
   it's asked and settled at what the provider reported.
-- **Each platform's format** (the founder's list, Oct 2026):
+- **Each platform's format** (the founder's list, Oct 2026; hashtags and Bluesky's link card, Nov 2026):
 
-  | Platform | Text | Link | Image |
-  | --- | --- | --- | --- |
-  | X | punchy, 280 (links count 23) | in the first comment | 1:1 quote card |
-  | LinkedIn | the hook first, short paragraphs | in the first comment | 4:5 quote card |
-  | Instagram | the hook first, a caption, hashtags | "Link in bio." | 4:5 carousel |
-  | Facebook | the hook first, a few lines | in the text | 4:5 carousel |
-  | TikTok | a short caption (hook, sign-off, hashtags) | "Link in bio." | 9:16 carousel, inside TikTok's safe zone |
-  | Threads, Bluesky, Telegram, Discord | a few short lines | in the text | 1:1 quote card |
-  | Reddit | a plain title line, then the body | in the text | none |
+  | Platform | Text | Link | Hashtags | Image |
+  | --- | --- | --- | --- | --- |
+  | X | punchy, 280 (links count 23) | in the first comment | 2 | 1:1 quote card |
+  | LinkedIn | the hook first, short paragraphs | in the first comment | 5 | 4:5 quote card |
+  | Bluesky | a few short lines, 300 | a link card (not in the 300) | 3 | 1:1 quote card |
+  | Threads | a few short lines | in the text | 1 | 1:1 quote card |
+  | Facebook | the hook first, a few lines | in the text | 2 | 4:5 carousel |
+  | Instagram | the hook first, a caption | "Link in bio." | 5 | 4:5 carousel |
+  | TikTok | a short caption (hook, sign-off, hashtags) | "Link in bio." | 5 | 9:16 carousel, inside TikTok's safe zone |
+  | Telegram, Discord | a few short lines | in the text | none | 1:1 quote card |
+  | Reddit | a plain title line, then the body | in the text | none | none |
+
+  The hashtags are the post's own, the first few in order. Where a text runs
+  long they go one at a time, after the sign-off and before any fact.
 
 - **Per company.** Every draft belongs to one company (`tenant_id`), and every
   read and write is inside it: one company never sees, approves or forgets
   another's posts, even under the same key. `"*"` is the site's own posts.
+
+## New in 0.2 (from Almanac's month of posting by hand)
+
+- **One card per post**, a tab per platform, and "Approve all" on each post
+  (a card per platform read as the same post over and over). `<PostQueue>`
+  groups the rows itself (`groupPosts`).
+- **Posts go stale.** Give the handler a `life` (a `PostLife`: how long each
+  kind is worth posting) and a stale draft reads expired on the spot: it
+  can't be approved, it leaves the posting list, and the page shows it under
+  Expired. A rebuild keeps the day a draft was first built, so Build now on a
+  later day can't stretch its life.
+- **Hashtags on X, LinkedIn, Bluesky, Threads and Facebook** (the table above).
+- **Bluesky's link is a link card.** Its 300 counted the whole address, so a
+  tagged link crowded out the facts. The draft keeps its link (`linkUrl`):
+  paste it in Bluesky's composer, wait for the card, delete the address.
+- **Tagged links** (`tagLinks: true`): each draft's link carries the platform,
+  "social", the post's kind and its key, so the site's visit numbers say
+  which post brought each visit.
+- **The AI-smell check** (`smell`): the patterns that give a line away as a
+  model's (dashes, "it's not X, it's Y", lists of three, invented names).
+  Pass your own names (`{ names: [...APPROVED_NAMES, "Lou"] }`).
+- **Asides that sound like a person**: in "aside" mode the AI writes six
+  candidates and code keeps the least likely one that passes every check;
+  an author's fixed lines (`fallbackAsides`) go in wherever none does; a
+  post can carry banter between characters.
+- **Strict approval, if you want it** (`approval: "strict"` on the store or
+  the handler): only an approved post can be marked posted, and editing an
+  approved post sends it back to draft. The default stays open.
+- **Breaking, for code on 0.1:** `<PostQueue>` lost `filter` and
+  `approveAllLabel`; `<PostCard>` takes a post group and a `kindLabel`;
+  `PlatformRule.hashtags` is a number; the AI's answer in "aside" mode is
+  `{ "hook", "asides": [{ "text", "probability" }] }`; `QueueWire.sections`
+  gains `expired`. The table is unchanged: no migration.
 
 ## What you install, and what you get
 
 | Install | You get |
 | --- | --- |
 | `pnpm add @adminigloo/social` | Everything below, in one package. |
-| … `@adminigloo/social` (the root) | Each platform's format and limits, the number guard, the writer (`writePost`), the generic honesty list, the launch and release sources, the view, `SOCIAL_ADMIN_ROUTES` and the permission keys. Pure: safe anywhere, a browser included. |
+| … `@adminigloo/social` (the root) | Each platform's format and limits, the number guard, the writer (`writePost`), the AI-smell check (`smell`), tagged links (`taggedLink`), what goes stale (`effectiveStatus`, `asOf`), the queue in sections (`queueSectionsOf`), one view a post (`groupPosts`), the generic honesty list, the launch and release sources, the view, `SOCIAL_ADMIN_ROUTES` and the permission keys. Pure: safe anywhere, a browser included. |
 | … `@adminigloo/social/schema` | The table (`social_posts`, or your own prefix with `defineSocialTables({ prefix })`). |
 | … `@adminigloo/social/server` | The queue (`postStore(db, { tenantId })`), the HTTP handler the screens talk to (`createSocialAdminHandlers`), and `forgetTenant`. |
 | … `@adminigloo/social/ui` | The screens: `<PostsAdmin>` (the whole page), `<PostQueue>`, `<PostCard>`, `<ComposeForm>`, `<CardFormats>`. Their CSS comes with them. |

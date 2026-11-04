@@ -57,8 +57,8 @@ const size = z.enum(["square", "portrait", "story"]);
 
 /** What the query may say, per kind of card. Anything else is refused. */
 const query = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("quote"), size, text: line(400), date: line(24).optional(), ...base }),
-  z.strictObject({ kind: z.literal("cover"), size, text: line(200), eyebrow: line(60).optional(), character: z.string().regex(CHARACTER).optional(), cue: line(24).optional(), ...base }),
+  z.strictObject({ kind: z.literal("quote"), size, text: line(400), date: line(24).optional(), author: z.string().regex(CHARACTER).optional(), ...base }),
+  z.strictObject({ kind: z.literal("cover"), size, text: line(200), eyebrow: line(60).optional(), character: z.string().regex(CHARACTER).optional(), byline: line(40).optional(), cue: line(24).optional(), ...base }),
   z.strictObject({ kind: z.literal("stat"), size, value: line(24), text: line(200), eyebrow: line(60).optional(), note: line(200).optional(), ...base }),
   z.strictObject({ kind: z.literal("list"), size, text: line(120), rows, eyebrow: line(60).optional(), ranked: z.literal("1").optional(), note: line(200).optional(), ...base }),
   z.strictObject({ kind: z.literal("cta"), size, text: line(60), eyebrow: line(60).optional(), character: z.string().regex(CHARACTER).optional(), note: line(200).optional(), ...base }),
@@ -77,10 +77,12 @@ export function cardParams(spec: CardSpec): URLSearchParams {
   switch (spec.kind) {
     case "quote":
       put("date", spec.date);
+      put("author", spec.author);
       break;
     case "cover":
       put("eyebrow", spec.eyebrow);
       put("character", spec.character);
+      put("byline", spec.byline);
       put("cue", spec.cue);
       break;
     case "stat":

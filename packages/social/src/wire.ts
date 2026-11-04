@@ -16,6 +16,8 @@ export interface QueueWire {
     readonly earlier: readonly QueuePostView[];
     readonly ready: readonly QueuePostView[];
     readonly history: readonly QueuePostView[];
+    /** Earlier days' posts that went stale with nothing posted (social 0.2). */
+    readonly expired: readonly QueuePostView[];
   };
 }
 

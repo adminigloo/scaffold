@@ -1,5 +1,5 @@
 /**
- * THE QUEUE'S LOOK (social 0.1). Plain class names prefixed `social-`, every
+ * THE QUEUE'S LOOK (social 0.2). Plain class names prefixed `social-`, every
  * colour and radius from a `--social-*` variable: the app's Tailwind never
  * scans node_modules, so a package screen that leaned on utility classes
  * would arrive unstyled.
@@ -15,6 +15,11 @@
  *
  * Every screen renders <SocialStyles /> itself (once is enough; twice is
  * harmless), so an app imports nothing to get it.
+ *
+ * MOBILE FIRST (social 0.2, from Almanac: the founder works the queue on a
+ * phone): one column, every button and tab at least 44 px tall, inputs at
+ * 16 px so iOS doesn't zoom on focus, and only the tabs and the image strips
+ * scroll sideways, inside their card; the page itself never does.
  */
 export const socialCss = `
 .social {
@@ -32,6 +37,8 @@ export const socialCss = `
   --_danger: var(--social-danger, var(--color-danger, #a3302a));
   --_radius: var(--social-radius, var(--radius-card, 10px));
   --_mono: var(--social-mono, var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace));
+  --_pad: 14px;
+  min-width: 0;
   color: var(--_ink);
   font-size: 14px;
   line-height: 1.5;
@@ -52,51 +59,456 @@ export const socialCss = `
     --_danger: var(--social-danger, var(--color-danger, #e08272));
   }
 }
+
+.social-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 860px;
+}
+
+/* ---- One post ---------------------------------------------------------- */
+
+.social-post {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: var(--_pad);
+  border: 1px solid var(--_line);
+  border-radius: var(--_radius);
+  background: var(--_surface);
+}
+
+.social-post-head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.social-post-meta,
+.social-post-title {
+  margin: 0;
+  color: var(--_muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.social-post-kind {
+  color: var(--_ink);
+  font-weight: 600;
+}
+
+.social-post-hook {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.social-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.social-post-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Each different set of images once: the square card, the carousels. */
+.social-sets {
+  display: flex;
+  gap: 10px;
+  margin: 0 calc(var(--_pad) * -1);
+  padding: 0 var(--_pad) 4px;
+  overflow-x: auto;
+  list-style: none;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+}
+
+.social-set {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 4px;
+  width: 148px;
+  color: var(--_muted);
+  font-size: 12px;
+  line-height: 1.35;
+  scroll-snap-align: start;
+}
+
+.social-set img,
+.social-image img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--_line);
+  border-radius: calc(var(--_radius) - 2px);
+}
+
+/* ---- Platform tabs ----------------------------------------------------- */
+
+.social-tabs {
+  display: flex;
+  gap: 6px;
+  margin: 0 calc(var(--_pad) * -1);
+  padding: 2px var(--_pad) 4px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  scrollbar-width: thin;
+}
+
+.social-tab {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--_line);
+  border-radius: 999px;
+  background: var(--_surface);
+  color: var(--_ink);
+  font: inherit;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  scroll-snap-align: start;
+}
+
+.social-tab[aria-selected="true"] {
+  border-color: var(--_accent);
+  box-shadow: inset 0 0 0 1px var(--_accent);
+  font-weight: 600;
+}
+
+.social-tab-mark {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid var(--_muted);
+  border-radius: 50%;
+}
+
+.social-tab[data-status="approved"] .social-tab-mark {
+  border-color: var(--_ok);
+  background: var(--_ok);
+}
+
+.social-tab[data-status="posted"] .social-tab-mark {
+  border-color: var(--_accent);
+  background: var(--_accent);
+}
+
+.social-tab[data-status="skipped"] .social-tab-mark,
+.social-tab[data-status="expired"] .social-tab-mark {
+  border-style: dashed;
+}
+
+.social-tab[data-status="skipped"],
+.social-tab[data-status="expired"] {
+  color: var(--_muted);
+}
+
+.social-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--_line);
+}
+
+.social-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Read by a screen reader, not shown. */
+.social-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ---- Chips --------------------------------------------------------------- */
+
+.social-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 9px;
+  border: 1px solid var(--_line);
+  border-radius: 999px;
+  color: var(--_muted);
+  font-size: 12px;
+}
+
+.social-chip[data-status="approved"] {
+  border-color: transparent;
+  background: var(--_ok-soft);
+  color: var(--_ok);
+}
+
+.social-chip[data-status="posted"] {
+  border-color: transparent;
+  background: var(--_accent);
+  color: var(--_accent-ink);
+}
+
+.social-chip[data-status="expired"],
+.social-chip[data-writer="template"] {
+  border-color: transparent;
+  background: var(--_warn-soft);
+  color: var(--_warn);
+}
+
+.social-chip[data-status="skipped"] {
+  border-style: dashed;
+}
+
+/* ---- A platform's draft --------------------------------------------------- */
+
+.social-text {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--_line);
+  border-radius: calc(var(--_radius) - 2px);
+  background: var(--_canvas);
+  color: var(--_ink);
+  /* 16px: iOS zooms the page into any field set smaller. */
+  font: 16px/1.5 var(--_mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  resize: vertical;
+}
+
+.social-text-done {
+  font-size: 14px;
+}
+
+.social-count,
+.social-note,
+.social-link,
+.social-posted,
+.social-empty {
+  margin: 0;
+  color: var(--_muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.social-empty {
+  font-size: 14px;
+}
+
+.social-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.social-count[data-over] {
+  color: var(--_danger);
+  font-weight: 600;
+}
+
+.social-post a,
+.social-compose a {
+  color: var(--_accent);
+}
+
+/* A platform's images in posting order: small, a strip that scrolls sideways for a carousel. */
+.social-images {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  padding: 0 0 4px;
+  overflow-x: auto;
+  list-style: none;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+}
+
+.social-image {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 4px;
+  width: 96px;
+  color: var(--_muted);
+  font-size: 12px;
+  scroll-snap-align: start;
+}
+
+.social-hook {
+  color: var(--_ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.social-comment,
+.social-posted-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.social-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  color: var(--_muted);
+  font-size: 12px;
+}
+
+/* Beside a button (the first comment, the posted link) a field takes the row's room, and wraps under it on a phone. */
+.social-comment .social-field,
+.social-posted-form .social-field {
+  flex: 1 1 220px;
+}
+
+.social-field input,
+.social-hook-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--_line);
+  border-radius: calc(var(--_radius) - 2px);
+  background: var(--_surface);
+  color: var(--_ink);
+  font: inherit;
+  font-size: 16px;
+}
+
+.social-hook-input {
+  resize: none;
+  line-height: 1.35;
+}
+
+.social-field input[aria-invalid],
+.social-hook-input[aria-invalid] {
+  border-color: var(--_danger);
+}
+
+.social-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* ---- Buttons --------------------------------------------------------------- */
+
+.social-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--_line);
+  border-radius: calc(var(--_radius) - 2px);
+  background: var(--_surface);
+  color: var(--_ink);
+  font: inherit;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.social-button:hover {
+  border-color: var(--_muted);
+}
+
+.social-button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.social-button-primary {
+  border-color: var(--_accent);
+  background: var(--_accent);
+  color: var(--_accent-ink);
+}
+
+.social-button-primary:hover {
+  border-color: var(--_accent);
+  filter: brightness(1.1);
+}
+
+.social-button-quiet {
+  border-color: transparent;
+  background: transparent;
+  color: var(--_muted);
+}
+
+.social-tab:focus-visible,
+.social-button:focus-visible,
+.social-field input:focus-visible,
+.social-hook-input:focus-visible,
+.social-text:focus-visible {
+  outline: 2px solid var(--_accent);
+  outline-offset: 2px;
+}
+
+/* On a phone the post's main button takes the row. */
+@media (max-width: 479px) {
+  .social-post-actions .social-button-primary {
+    flex: 1 1 100%;
+  }
+}
+
+/* ---- Writing a post from your own facts -------------------------------------- */
+
+.social-group-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.social-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: var(--_pad);
+  border: 1px solid var(--_line);
+  border-radius: var(--_radius);
+  background: var(--_surface);
+}
+
+.social-error {
+  margin: 0;
+  color: var(--_danger);
+  font-size: 13px;
+}
+
+
+/* The package page (PostsAdmin) and the card formats (CardFormats). */
 .social-admin { display: flex; flex-direction: column; gap: 32px; }
 .social-section { display: flex; flex-direction: column; gap: 12px; }
 .social-section-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 12px; }
 .social-section-title { margin: 0; font-size: 16px; font-weight: 600; color: var(--_ink); }
 .social-section-hint { margin: 0; max-width: 72ch; color: var(--_muted); font-size: 13px; }
-.social-queue { display: flex; flex-direction: column; gap: 20px; }
-.social-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
-.social-filter { display: flex; flex-wrap: wrap; gap: 6px; }
-.social-group { display: flex; flex-direction: column; gap: 10px; }
-.social-group-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin: 0; font-size: 15px; font-weight: 600; color: var(--_ink); }
-.social-group-meta { color: var(--_muted); font-size: 12px; font-weight: 400; }
-.social-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 12px; }
-.social-card { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 12px; border: 1px solid var(--_line); border-radius: var(--_radius); background: var(--_surface); color: var(--_ink); }
-.social-card[data-status="skipped"] { opacity: 0.7; }
-.social-card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.social-platform { margin-right: auto; font-weight: 600; }
-.social-chip { padding: 1px 8px; border: 1px solid var(--_line); border-radius: 999px; color: var(--_muted); font-size: 12px; }
-.social-chip[data-status="approved"] { border-color: transparent; background: var(--_ok-soft); color: var(--_ok); }
-.social-chip[data-status="posted"] { border-color: transparent; background: var(--_accent); color: var(--_accent-ink); }
-.social-chip[data-writer="template"] { border-color: transparent; background: var(--_warn-soft); color: var(--_warn); }
-.social-text { box-sizing: border-box; width: 100%; margin: 0; padding: 8px 10px; border: 1px solid var(--_line); border-radius: calc(var(--_radius) - 2px); background: var(--_canvas); color: var(--_ink); font: 13px/1.5 var(--_mono); white-space: pre-wrap; overflow-wrap: anywhere; resize: vertical; }
-.social-count, .social-note, .social-link, .social-posted, .social-empty { margin: 0; color: var(--_muted); font-size: 12px; overflow-wrap: anywhere; }
-.social-count { font-variant-numeric: tabular-nums; }
-.social-count[data-over] { color: var(--_danger); font-weight: 600; }
-.social-card a, .social-compose a, .social-section a { color: var(--_accent); }
-.social-images { display: flex; gap: 8px; margin: 0; padding: 0 0 4px; overflow-x: auto; list-style: none; scroll-snap-type: x proximity; }
-.social-image { display: flex; flex: 0 0 auto; flex-direction: column; gap: 4px; width: min(100%, 220px); font-size: 12px; color: var(--_muted); scroll-snap-align: start; }
-.social-images .social-image:only-child { width: 100%; }
-.social-image img { display: block; width: 100%; height: auto; border: 1px solid var(--_line); border-radius: calc(var(--_radius) - 2px); }
-.social-hook { color: var(--_ink); font-size: 14px; font-weight: 600; }
-.social-comment { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px; }
-.social-field input[aria-invalid] { border-color: var(--_danger); }
-.social-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-.social-button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 6px 12px; border: 1px solid var(--_line); border-radius: calc(var(--_radius) - 2px); background: var(--_surface); color: var(--_ink); font: inherit; font-weight: 500; text-decoration: none; cursor: pointer; }
-.social-button:hover { border-color: var(--_muted); }
-.social-button:disabled { cursor: default; opacity: 0.55; }
-.social-button[aria-pressed="true"] { border-color: var(--_accent); color: var(--_accent); }
-.social-button-primary { border-color: var(--_accent); background: var(--_accent); color: var(--_accent-ink); }
-.social-button-primary:hover { border-color: var(--_accent); filter: brightness(1.1); }
-.social-button-quiet { border-color: transparent; background: transparent; color: var(--_muted); }
-.social-posted-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px; }
-.social-field { display: flex; flex: 1 1 220px; flex-direction: column; gap: 4px; color: var(--_muted); font-size: 12px; }
-.social-field input { box-sizing: border-box; width: 100%; min-height: 36px; padding: 6px 10px; border: 1px solid var(--_line); border-radius: calc(var(--_radius) - 2px); background: var(--_surface); color: var(--_ink); font: inherit; }
-.social-compose { display: flex; flex-direction: column; gap: 10px; max-width: 720px; padding: 14px; border: 1px solid var(--_line); border-radius: var(--_radius); background: var(--_surface); color: var(--_ink); }
-.social-error { margin: 0; color: var(--_danger); font-size: 13px; }
 .social-formats { display: flex; flex-direction: column; gap: 24px; }
 .social-formats > summary { cursor: pointer; font-weight: 600; color: var(--_accent); }
 .social-format-set { display: flex; flex-direction: column; gap: 6px; }

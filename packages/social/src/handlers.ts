@@ -4,7 +4,8 @@ import { SOCIAL_ADMIN_ROUTE_PERMISSIONS, type SocialAdminRouteKind } from "./rou
 import type { SocialPostTable } from "./schema.js";
 import { LAUNCH_FACTS_MAX, parseHashtags } from "./sources.js";
 import { isWebAddress, postStore, type QueuedPost, type SocialDb } from "./store.js";
-import type { PostSource } from "./types.js";
+import { asOf } from "./expiry.js";
+import type { PostLife, PostSource } from "./types.js";
 import { postView } from "./view.js";
 import type { CardFormatSet, ComposeWire, PostingSessionWire, QueueWire } from "./wire.js";
 import { writePost, type WriterOptions } from "./writer.js";
@@ -217,6 +218,14 @@ export interface CreateSocialAdminHandlersOptions {
   readonly cardFormats?: (tenantId: string) => readonly CardFormatSet[] | Promise<readonly CardFormatSet[]>;
   /** Today for the company (YYYY-MM-DD), in its own time zone. Default UTC. */
   readonly today?: (tenantId: string, now: Date) => string | Promise<string>;
+  /**
+   * How long each kind of post is worth posting (./expiry.ts). Past it, a
+   * draft or an approved post reads expired: it can't be approved and it
+   * leaves the posting list. None: posts never go stale.
+   */
+  readonly life?: PostLife;
+  /** What approving means: "open" (the default) or "strict" (only an approved post can be marked posted; ./store.ts). */
+  readonly approval?: "open" | "strict";
   readonly now?: () => Date;
   readonly onError?: (error: unknown, context: { tenantId: string | null; route: string }) => void;
 }
@@ -254,7 +263,7 @@ export function createSocialAdminHandlers(options: CreateSocialAdminHandlersOpti
       if (!verdict) return failure(new HttpRefusal("forbidden", 403, "You don't have permission to do that."));
       const userId = typeof verdict === "object" && verdict.userId !== undefined && verdict.userId !== null ? String(verdict.userId) : null;
       const scoped: string = tenantId;
-      const queue = postStore(options.db, { tenantId: scoped, ...(options.table ? { table: options.table } : {}) });
+      const queue = postStore(options.db, { tenantId: scoped, ...(options.table ? { table: options.table } : {}), ...(options.approval ? { approval: options.approval } : {}) });
       const now = clock();
       const today = async () => (options.today ? await options.today(scoped, now) : dayIn("UTC", now));
       /** One of this company's posts, or "not found". */
@@ -267,10 +276,11 @@ export function createSocialAdminHandlers(options: CreateSocialAdminHandlersOpti
       switch (matched.kind) {
         case "list": {
           const day = await today();
-          const sections = await queue.sections(day);
+          const sections = await queue.sections(day, { life: options.life, now });
+          const view = (rows: readonly QueuedPost[]) => rows.map((r) => postView(r, options.life, now));
           const wire: QueueWire = {
             today: day,
-            sections: { today: sections.today.map(postView), earlier: sections.earlier.map(postView), ready: sections.ready.map(postView), history: sections.history.map(postView) },
+            sections: { today: view(sections.today), earlier: view(sections.earlier), ready: view(sections.ready), history: view(sections.history), expired: view(sections.expired) },
           };
           return json(wire);
         }
@@ -288,7 +298,7 @@ export function createSocialAdminHandlers(options: CreateSocialAdminHandlersOpti
           let written = 0;
           let kept = 0;
           for (const draft of drafts) {
-            const outcome = await queue.upsertDraft({ ...draft, key: source.key, kind: source.kind, author: source.author, day: source.day, linkUrl: source.linkUrl, facts: source.facts, createdBy: userId });
+            const outcome = await queue.upsertDraft({ ...draft, key: source.key, kind: source.kind, author: source.author, day: source.day, linkUrl: draft.linkUrl ?? source.linkUrl, facts: source.facts, createdBy: userId });
             if (outcome === "written") written += 1;
             else kept += 1;
           }
@@ -299,7 +309,11 @@ export function createSocialAdminHandlers(options: CreateSocialAdminHandlersOpti
           const body = await readJson(req);
           const ids = Array.isArray(body.ids) ? body.ids.filter((id): id is string => typeof id === "string").slice(0, 200) : [];
           if (!ids.length) throw new HttpRefusal("invalid", 400, "Choose the posts to approve.");
-          return json({ approved: await queue.approve(ids, userId) });
+          // A draft gone stale (its PostLife ran out) isn't approved, even before anything marked it expired.
+          const fresh = asOf(await queue.list({ ids }), options.life, now)
+            .filter((r) => r.status === "draft")
+            .map((r) => r.id);
+          return json({ approved: await queue.approve(fresh, userId) });
         }
         case "edit": {
           const post = await own(matched.id ?? "");
@@ -310,7 +324,7 @@ export function createSocialAdminHandlers(options: CreateSocialAdminHandlersOpti
           if (!(await queue.edit(post.id, { text, hook, firstComment }))) {
             throw new HttpRefusal("conflict", 409, text.trim() ? "That post can't be edited now: it's been posted or skipped." : "A post needs its text.");
           }
-          return json({ post: postView(await own(post.id)) });
+          return json({ post: postView(await own(post.id), options.life, now) });
         }
         case "posted": {
           const post = await own(matched.id ?? "");
@@ -319,17 +333,20 @@ export function createSocialAdminHandlers(options: CreateSocialAdminHandlersOpti
           if (!(await queue.markPosted(post.id, url, userId))) {
             throw post.status === "skipped"
               ? new HttpRefusal("conflict", 409, "That post was skipped, so it can't be marked posted.")
+              : options.approval === "strict" && post.status !== "approved" && post.status !== "posted" && isWebAddress(String(url).trim())
+                ? new HttpRefusal("conflict", 409, "Approve it first: here, only an approved post can be marked posted.")
               : new HttpRefusal("invalid", 400, "Paste the post's own link (https://…).");
           }
-          return json({ post: postView(await own(post.id)) });
+          return json({ post: postView(await own(post.id), options.life, now) });
         }
         case "skip": {
           const post = await own(matched.id ?? "");
           if (!(await queue.skip(post.id))) throw new HttpRefusal("conflict", 409, "That post has already been posted or skipped.");
-          return json({ post: postView(await own(post.id)) });
+          return json({ post: postView(await own(post.id), options.life, now) });
         }
         case "approved": {
-          const rows = await queue.list({ statuses: ["approved"] });
+          // Never a post that's gone stale, whether or not anything has marked it expired yet.
+          const rows = asOf(await queue.list({ statuses: ["approved"] }), options.life, now).filter((r) => r.status === "approved");
           const wire: PostingSessionWire = {
             posts: rows.map((p) => ({
               id: p.id,

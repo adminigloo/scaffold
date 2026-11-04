@@ -3,7 +3,7 @@ import { cardElement } from "./elements.js";
 import { layoutCard, type CardLayout, type CardMetrics } from "./layout.js";
 import { parseFontMetrics, type FontMetrics } from "./metrics.js";
 import { parseCardParams, verifyCardParams } from "./params.js";
-import { CARD_SIZES, type CardAssets, type CardFont, type CardSpec } from "./types.js";
+import { CARD_SIZES, cardAuthor, cardCharacter, type CardAssets, type CardFont, type CardSpec } from "./types.js";
 
 const parsed = new WeakMap<ArrayBuffer, FontMetrics>();
 
@@ -48,7 +48,8 @@ export function brandedAssets(spec: CardSpec, assets: CardAssets): CardAssets {
 /** Where everything on this card goes (the words sized to fit), without drawing it. */
 export function cardLayout(spec: CardSpec, assets: CardAssets): CardLayout {
   const drawn = brandedAssets(spec, assets);
-  return layoutCard(spec, cardMetrics(drawn), { name: drawn.brand.name, site: drawn.brand.site, handle: drawn.author.handle, author: drawn.author.name });
+  const author = cardAuthor(spec, drawn);
+  return layoutCard(spec, cardMetrics(drawn), { name: drawn.brand.name, site: drawn.brand.site, handle: author.handle, author: author.name }, cardCharacter(spec, drawn));
 }
 
 /** The card's pixel size. */

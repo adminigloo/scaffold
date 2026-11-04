@@ -47,18 +47,18 @@ describe("each platform's format (the founder's list, Oct 27, 2026)", () => {
   };
 
   it("puts each link, hook, hashtag and image where that platform wants it", () => {
-    expect(shape("x")).toEqual({ link: "comment", hookFirst: false, hashtags: false, image: "one 1:1" });
-    expect(shape("linkedin")).toEqual({ link: "comment", hookFirst: true, hashtags: false, image: "one 4:5" });
-    expect(shape("instagram")).toEqual({ link: "bio", hookFirst: true, hashtags: true, image: "carousel 4:5" });
-    expect(shape("facebook")).toEqual({ link: "text", hookFirst: true, hashtags: false, image: "carousel 4:5" });
+    expect(shape("x")).toEqual({ link: "comment", hookFirst: false, hashtags: 2, image: "one 1:1" });
+    expect(shape("linkedin")).toEqual({ link: "comment", hookFirst: true, hashtags: 5, image: "one 4:5" });
+    expect(shape("instagram")).toEqual({ link: "bio", hookFirst: true, hashtags: 5, image: "carousel 4:5" });
+    expect(shape("facebook")).toEqual({ link: "text", hookFirst: true, hashtags: 2, image: "carousel 4:5" });
     // TikTok: a short caption (the hook, the aside, the hashtags) under slides that carry the facts.
-    expect(shape("tiktok")).toEqual({ link: "bio", hookFirst: true, hashtags: true, image: "carousel 9:16" });
+    expect(shape("tiktok")).toEqual({ link: "bio", hookFirst: true, hashtags: 5, image: "carousel 9:16" });
     expect(PLATFORMS.tiktok.captionOnly).toBe(true);
-    expect(shape("threads")).toEqual({ link: "text", hookFirst: false, hashtags: false, image: "one 1:1" });
-    expect(shape("bluesky")).toEqual({ link: "text", hookFirst: false, hashtags: false, image: "one 1:1" });
-    expect(shape("telegram")).toEqual({ link: "text", hookFirst: false, hashtags: false, image: "one 1:1" });
-    expect(shape("discord")).toEqual({ link: "text", hookFirst: false, hashtags: false, image: "one 1:1" });
-    expect(shape("reddit")).toEqual({ link: "text", hookFirst: false, hashtags: false, image: null });
+    expect(shape("threads")).toEqual({ link: "text", hookFirst: false, hashtags: 1, image: "one 1:1" });
+    expect(shape("bluesky")).toEqual({ link: "card", hookFirst: false, hashtags: 3, image: "one 1:1" });
+    expect(shape("telegram")).toEqual({ link: "text", hookFirst: false, hashtags: 0, image: "one 1:1" });
+    expect(shape("discord")).toEqual({ link: "text", hookFirst: false, hashtags: 0, image: "one 1:1" });
+    expect(shape("reddit")).toEqual({ link: "text", hookFirst: false, hashtags: 0, image: null });
   });
 });
 

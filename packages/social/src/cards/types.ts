@@ -94,7 +94,10 @@ export interface CardAssets {
   /** The family of the small words: names, labels, footers. */
   readonly sans: string;
   readonly theme: CardTheme;
+  /** Who "posted" a quote card that names nobody. */
   readonly author: CardAuthor;
+  /** The other authors a quote card may name, by key ("mercury"): an app with more than one character. */
+  readonly authors?: Readonly<Record<string, CardAuthor>>;
   readonly brand: CardBrand;
   /** The pictures a spec can name ("mascot"), if the app has any. */
   readonly characters?: Readonly<Record<string, CardArt>>;
@@ -137,6 +140,8 @@ export interface QuoteCardSpec extends CardBase {
   readonly text: string;
   /** A date after the handle ("Oct 27"), as a post shows when it was written. */
   readonly date?: string;
+  /** Who posted it: a key in the assets' authors. Left out, or unknown: the assets' own author. */
+  readonly author?: string;
 }
 
 /** A carousel's first slide (or a slide of words): the hook, a picture, "Swipe". */
@@ -146,6 +151,8 @@ export interface CoverCardSpec extends CardBase {
   /** The small capitals above the words ("NEW · OCT 26"). */
   readonly eyebrow?: string;
   readonly character?: string;
+  /** Who's speaking, in small words under the hook ("— Mercury"). */
+  readonly byline?: string;
   /** The swipe cue's word; "Swipe" when left out. */
   readonly cue?: string;
 }
@@ -192,3 +199,13 @@ export type CardKind = CardSpec["kind"];
 
 /** The most rows a list slide draws. */
 export const MAX_LIST_ROWS = 5;
+
+/** Who a card shows as its poster: the spec's author where the assets have one by that key, else their own. */
+export function cardAuthor(spec: CardSpec, assets: Pick<CardAssets, "author" | "authors">): CardAuthor {
+  return (spec.kind === "quote" && spec.author ? assets.authors?.[spec.author] : undefined) ?? assets.author;
+}
+
+/** The picture a cover or a call-to-action slide names, if the assets have it. */
+export function cardCharacter(spec: CardSpec, assets: Pick<CardAssets, "characters">): CardArt | undefined {
+  return (spec.kind === "cover" || spec.kind === "cta") && spec.character ? assets.characters?.[spec.character] : undefined;
+}

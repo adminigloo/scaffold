@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element, jsx-a11y/alt-text -- satori draws these; nobody browses them */
 import type { CSSProperties, ReactElement, ReactNode } from "react";
-import { EYEBROW, QUOTE, SLIDE_FOOTER, SLIDE_HEADER, slideBody, type CardLayout, type CoverLayout, type CtaLayout, type Frame, type LineBlock, type ListLayout, type QuoteLayout, type StatLayout, type TextBlock } from "./layout.js";
-import type { CardArt, CardAssets, CardPage, CardSpec, CoverCardSpec, CtaCardSpec, ListCardSpec, QuoteCardSpec, StatCardSpec } from "./types.js";
+import { BYLINE, EYEBROW, QUOTE, SLIDE_FOOTER, SLIDE_HEADER, slideBody, type CardLayout, type CoverLayout, type CtaLayout, type Frame, type LineBlock, type ListLayout, type QuoteLayout, type StatLayout, type TextBlock } from "./layout.js";
+import { cardAuthor, cardCharacter, type CardArt, type CardAssets, type CardPage, type CardSpec, type CoverCardSpec, type CtaCardSpec, type ListCardSpec, type QuoteCardSpec, type StatCardSpec } from "./types.js";
 
 /**
  * THE CARDS, AS SATORI DRAWS THEM: every box with more than one child is a
@@ -283,7 +283,7 @@ function QuoteCard({ spec, layout, ctx }: { spec: QuoteCardSpec; layout: QuoteLa
   const { frame } = layout;
   const width = frame.width - QUOTE.padX * 2;
   const footerTop = frame.height - QUOTE.bottom - QUOTE.footer;
-  void spec;
+  const author = cardAuthor(spec, assets);
   return (
     <Ground frame={frame} assets={assets}>
       {theme.flourish ? (
@@ -307,7 +307,7 @@ function QuoteCard({ spec, layout, ctx }: { spec: QuoteCardSpec; layout: QuoteLa
       >
         <div style={{ display: "flex", alignItems: "center" }}>
           <div style={{ display: "flex", padding: 5, borderRadius: QUOTE.avatar, border: `3px solid ${theme.accent}` }}>
-            <Mark art={assets.author.avatar} name={assets.author.name} size={QUOTE.avatar - 16} ctx={ctx} round />
+            <Mark art={author.avatar} name={author.name} size={QUOTE.avatar - 16} ctx={ctx} round />
           </div>
           <div style={{ display: "flex", flexDirection: "column", marginLeft: 28 }}>
             <div style={{ display: "flex", alignItems: "center" }}>
@@ -336,7 +336,7 @@ function CoverCard({ spec, layout, ctx }: { spec: CoverCardSpec; layout: CoverLa
   const { theme } = assets;
   const { frame } = layout;
   const body = slideBody(frame);
-  const art = spec.character && layout.art ? assets.characters?.[spec.character] : undefined;
+  const art = layout.art ? cardCharacter(spec, assets) : undefined;
   const artHeight = art ? layout.art : 0;
   const artWidth = art ? Math.round((artHeight * art.width) / art.height) : 0;
   const artTop = body.top + body.height - artHeight + 12;
@@ -354,6 +354,7 @@ function CoverCard({ spec, layout, ctx }: { spec: CoverCardSpec; layout: CoverLa
       <div style={{ position: "absolute", left: frame.left, top: body.top, width: frame.contentWidth, display: "flex", flexDirection: "column" }}>
         <Eyebrow block={layout.eyebrow} ctx={ctx} />
         <Words block={layout.text} family={assets.serif} color={theme.text} style={{ letterSpacing: "-0.01em" }} />
+        {layout.byline ? <Line block={layout.byline} family={assets.sans} weight={600} color={theme.accent} style={{ marginTop: BYLINE.gap, lineHeight: BYLINE.lineHeight, letterSpacing: "0.01em" }} /> : null}
       </div>
       {art ? <Picture art={art} height={artHeight} style={{ position: "absolute", left: artLeft, top: artTop }} /> : null}
       <Footer frame={frame} ctx={ctx} left={layout.footer} cue={spec.cue ?? "Swipe"} />
@@ -464,7 +465,7 @@ function CtaCard({ spec, layout, ctx }: { spec: CtaCardSpec; layout: CtaLayout; 
   const { theme } = assets;
   const { frame } = layout;
   const body = slideBody(frame);
-  const art = spec.character && layout.art ? assets.characters?.[spec.character] : undefined;
+  const art = layout.art ? cardCharacter(spec, assets) : undefined;
   const artHeight = art ? layout.art : 0;
   const artWidth = art ? Math.round((artHeight * art.width) / art.height) : 0;
   const block = (layout.eyebrow ? EYEBROW.size + EYEBROW.gap : 0) + (art ? artHeight + 36 : 0) + layout.site.size * 1.1 + 32 + layout.button.size * 1.2 + 56 + (layout.note ? layout.note.height + 32 : 0);

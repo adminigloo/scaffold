@@ -53,6 +53,12 @@ describe("the queue", () => {
     expect(await store.list()).toHaveLength(2);
   });
 
+  it("keeps a draft's day when a later Build now refreshes it, so its expiry doesn't move", async () => {
+    await store.upsertDraft(draft({ day: "2026-10-26" }));
+    expect(await store.upsertDraft(draft({ day: "2026-11-01", text: "Refreshed on a later day." }))).toBe("written");
+    expect(await only()).toMatchObject({ day: "2026-10-26", text: "Refreshed on a later day." });
+  });
+
   it("never writes over a draft a person edited", async () => {
     await store.upsertDraft(draft());
     const { id } = await only();
@@ -104,7 +110,7 @@ describe("the queue", () => {
     expect((await store.list({ day: "2026-10-26" })).map((r) => r.platform)).toEqual(["threads"]);
   });
 
-  it("splits the queue into today, earlier drafts, ready and history", async () => {
+  it("splits the queue into today, earlier, ready and history, each post in one section", async () => {
     await store.upsertDraft(draft({ key: "a", day: "2026-10-27" }));
     await store.upsertDraft(draft({ key: "b", day: "2026-10-25" }));
     await store.upsertDraft(draft({ key: "c", day: "2026-10-25", platform: "threads" }));
@@ -115,7 +121,8 @@ describe("the queue", () => {
     await store.markPosted(id("d"), "https://x.com/maplerye/status/4");
     const sections = await store.sections("2026-10-27");
     expect(sections.today.map((r) => r.key)).toEqual(["a"]);
-    expect(sections.earlier.map((r) => r.key)).toEqual(["b"]);
+    // Earlier: every earlier post with something still to do, an approved one too (social 0.2).
+    expect(sections.earlier.map((r) => r.key)).toEqual(["b", "c"]);
     expect(sections.ready.map((r) => r.key)).toEqual(["c"]);
     expect(sections.history.map((r) => r.key)).toEqual(["d"]);
   });
@@ -123,5 +130,80 @@ describe("the queue", () => {
   it("refuses a queue with no company", () => {
     expect(() => postStore(test.db, { tenantId: "" })).toThrow(/tenantId/);
     expect(() => postStore(test.db, { tenantId: "  " })).toThrow(/every queue is one company's/);
+  });
+});
+
+describe("a post going stale, in the table", () => {
+  it("marks drafts and approved rows expired, never a posted or skipped one, and lists the open ones lightly", async () => {
+    for (const platform of ["x", "threads", "bluesky", "telegram"] as const) await store.upsertDraft(draft({ platform }));
+    const rows = await store.list();
+    const by = (p: string) => rows.find((r) => r.platform === p)!;
+    await store.approve([by("threads").id]);
+    await store.markPosted(by("bluesky").id, "https://bsky.app/post/1");
+    await store.skip(by("telegram").id);
+    const open = await store.openPosts();
+    expect(open.map((r) => r.status).sort()).toEqual(["approved", "draft"]);
+    expect(Object.keys(open[0]!).sort()).toEqual(["day", "id", "key", "kind", "status"]);
+    expect(await store.expire(rows.map((r) => r.id))).toBe(2);
+    expect((await store.list()).map((r) => r.status).sort()).toEqual(["expired", "expired", "posted", "skipped"]);
+    expect(await store.openPosts()).toEqual([]);
+    expect(await store.expire([])).toBe(0);
+  });
+
+  it("never rebuilds an expired post, nor approves, edits or skips it; it can still be marked posted", async () => {
+    await store.upsertDraft(draft());
+    const { id } = await only();
+    await store.expire([id]);
+    expect(await store.upsertDraft(draft({ text: "Fresher words." }))).toBe("kept");
+    expect(await store.keysWithPosts([draft().key])).toEqual(new Set([draft().key]));
+    expect(await store.keysWithPosts([draft().key], "untouched")).toEqual(new Set());
+    expect(await store.approve([id])).toBe(0);
+    expect(await store.edit(id, { text: "Too late.", hook: "", firstComment: null })).toBe(false);
+    expect(await store.skip(id)).toBe(false);
+    // It went out after all (a posting session past midnight): the record says so.
+    expect(await store.markPosted(id, "https://x.com/almanac/status/7")).toBe(true);
+    expect(await store.get(id)).toMatchObject({ status: "posted", postedUrl: "https://x.com/almanac/status/7" });
+  });
+
+  it("lists by post and by row", async () => {
+    await store.upsertDraft(draft());
+    await store.upsertDraft(draft({ platform: "threads" }));
+    await store.upsertDraft(draft({ key: "board:2026-10-27", kind: "board" }));
+    expect((await store.list({ keys: [draft().key] })).map((r) => r.platform).sort()).toEqual(["threads", "x"]);
+    const [one] = await store.list({ keys: ["board:2026-10-27"] });
+    expect((await store.list({ ids: [one!.id] })).map((r) => r.key)).toEqual(["board:2026-10-27"]);
+    expect(await store.list({ keys: [] })).toEqual([]);
+    expect(await store.list({ ids: [] })).toEqual([]);
+  });
+});
+
+describe("strict approval (Ask Lou's rule, social 0.2)", () => {
+  it("marks posted only what a person approved, and an edit sends an approved post back to draft", async () => {
+    const strict = postStore(test.db, { tenantId: tenant(), approval: "strict" });
+    await strict.upsertDraft(draft());
+    const [row] = await strict.list();
+    const id = row!.id;
+    // A draft can't go straight to posted.
+    expect(await strict.markPosted(id, "https://x.com/maplerye/status/9")).toBe(false);
+    expect(await strict.approve([id])).toBe(1);
+    // New words after the approval: back to draft, the approval gone.
+    expect(await strict.edit(id, { text: "Open Saturdays, 9 to 1, from Nov 1.", hook: "Saturdays.", firstComment: null })).toBe(true);
+    expect(await strict.get(id)).toMatchObject({ status: "draft", approvedAt: null });
+    expect(await strict.markPosted(id, "https://x.com/maplerye/status/9")).toBe(false);
+    // Approved again, it can be marked posted.
+    expect(await strict.approve([id])).toBe(1);
+    expect(await strict.markPosted(id, "https://x.com/maplerye/status/9")).toBe(true);
+    expect(await strict.get(id)).toMatchObject({ status: "posted", postedUrl: "https://x.com/maplerye/status/9" });
+  });
+
+  it("leaves the open rule as it was: a draft can be marked posted, and an edit keeps the approval", async () => {
+    await store.upsertDraft(draft());
+    const [row] = await store.list();
+    expect(await store.approve([row!.id])).toBe(1);
+    expect(await store.edit(row!.id, { text: "Open Saturdays.", hook: "Saturdays.", firstComment: null })).toBe(true);
+    expect((await store.get(row!.id))!.status).toBe("approved");
+    await store.upsertDraft(draft({ key: "launch:sundays" }));
+    const sunday = (await store.list({ keys: ["launch:sundays"] }))[0]!;
+    expect(await store.markPosted(sunday.id, "https://x.com/maplerye/status/10")).toBe(true);
   });
 });
