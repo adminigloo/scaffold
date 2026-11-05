@@ -26,7 +26,11 @@ import type {
   AuditLineWire,
   DeleteCompanyBody,
   DeletedCompanyWire,
+  PersonNameBody,
   PersonRefWire,
+  StaffInvitationWire,
+  StaffInviteBody,
+  StaffInviteWire,
   StaffRoleBody,
   StaffRoleWire,
   SuspendBody,
@@ -58,6 +62,11 @@ export interface TenancyAdminTransport {
   people(q: { q?: string; staffOnly?: boolean; page?: number; pageSize?: number }): Promise<Result<AdminPeopleWire>>;
   staffRoles(): Promise<Result<{ roles: StaffRoleWire[] }>>;
   setStaffRole(userId: string, body: StaffRoleBody): Promise<Result<{ person: AdminPersonWire }>>;
+  /** Tenancy 0.9: the staff invitations nobody has taken up yet. */
+  staffInvitations(): Promise<Result<{ invitations: StaffInvitationWire[] }>>;
+  inviteStaff(body: StaffInviteBody): Promise<Result<StaffInviteWire>>;
+  revokeStaffInvitation(invitationId: string): Promise<Result<{ ok: true }>>;
+  setPersonName(userId: string, body: PersonNameBody): Promise<Result<{ person: AdminPersonWire }>>;
 }
 
 const KINDS = ["org", "personal"] as const;
@@ -189,7 +198,37 @@ export function parseAdminPerson(raw: unknown): AdminPersonWire | null {
     staffRole: role ? { key: role.key as string, name: str(role.name, role.key as string), rank: num(role.rank, 0) } : null,
     isYou: isTrue(raw.isYou),
     canChange: isTrue(raw.canChange),
+    canRename: isTrue(raw.canRename),
   };
+}
+
+export function parseStaffInvitation(raw: unknown): StaffInvitationWire | null {
+  if (!isObject(raw) || !isId(raw.id) || !isString(raw.email) || !isObject(raw.role) || !isString(raw.role.key)) return null;
+  return {
+    id: raw.id,
+    email: raw.email,
+    role: { key: raw.role.key, name: str(raw.role.name, raw.role.key) },
+    invitedBy: strOrNull(raw.invitedBy),
+    createdAt: str(raw.createdAt),
+    expiresAt: str(raw.expiresAt),
+    emailedAt: strOrNull(raw.emailedAt),
+    expired: isTrue(raw.expired),
+    canRevoke: isTrue(raw.canRevoke),
+  };
+}
+
+const INVITE_EMAIL = ["sent", "skipped", "cooldown", "failed"] as const;
+
+export function parseStaffInvite(raw: unknown): StaffInviteWire | null {
+  if (!isObject(raw)) return null;
+  if (raw.result === "granted") {
+    const person = parseAdminPerson(raw.person);
+    return person ? { result: "granted", person } : null;
+  }
+  if (raw.result !== "invited") return null;
+  const invitation = parseStaffInvitation(raw.invitation);
+  if (!invitation) return null;
+  return { result: "invited", invitation, email: oneOf(raw.email, INVITE_EMAIL) ?? "skipped", signUpUrl: strOrNull(raw.signUpUrl) };
 }
 
 export function parseAdminPeople(body: unknown): AdminPeopleWire | null {
@@ -233,6 +272,18 @@ export function createTenancyAdminClient(options: TransportOptions): TenancyAdmi
       ),
     setStaffRole: (userId, body) =>
       http.post(`/v1/admin/people/${seg(userId)}/staff-role`, body, (raw) => {
+        const person = isObject(raw) ? parseAdminPerson(raw.person) : null;
+        return person ? { person } : null;
+      }),
+    staffInvitations: () =>
+      http.get("/v1/admin/staff-invitations", (body) =>
+        isObject(body) && Array.isArray(body.invitations) ? { invitations: listOf(body.invitations, parseStaffInvitation) } : null,
+      ),
+    inviteStaff: (body) => http.post("/v1/admin/staff-invitations", body, parseStaffInvite),
+    revokeStaffInvitation: (invitationId) =>
+      http.post(`/v1/admin/staff-invitations/${seg(invitationId)}/revoke`, {}, (raw) => (isObject(raw) && isTrue(raw.ok) ? { ok: true as const } : null)),
+    setPersonName: (userId, body) =>
+      http.post(`/v1/admin/people/${seg(userId)}/name`, body, (raw) => {
         const person = isObject(raw) ? parseAdminPerson(raw.person) : null;
         return person ? { person } : null;
       }),

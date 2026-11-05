@@ -392,3 +392,101 @@ describe("<StaffPeople>", () => {
     await unmount();
   });
 });
+
+describe("<StaffPeople>: inviting and names (tenancy 0.9)", () => {
+  const waiting = {
+    id: "inv-1",
+    email: "new.hire@igloo.test",
+    role: { key: "cs_agent", name: "Customer service agent" },
+    invitedBy: "Ava",
+    createdAt: "2026-10-12T15:00:00.000Z",
+    expiresAt: "2026-10-26T15:00:00.000Z",
+    emailedAt: null,
+    expired: false,
+    canRevoke: true,
+  };
+
+  it("Invite sends the address with the lowest role by default; with no email it shows the sign-up link to copy; the waiting list reloads", async () => {
+    let asked = 0;
+    const f = fakeAdmin({
+      people: () => ok(people()),
+      staffInvitations: () => ok({ invitations: asked++ === 0 ? [] : [waiting] }),
+      inviteStaff: () => ok({ result: "invited", invitation: waiting, email: "skipped", signUpUrl: "https://app.test/sign-up?redirect_url=%2Fadmin" }),
+    });
+    const { container, unmount } = await mount(<StaffPeople transport={f.transport} />);
+    // An administrator can't give admin here (the fixture's roles), so the choices are the two below.
+    expect([...(labelled(container, "Role") as HTMLSelectElement).options].map((o) => o.value)).toEqual(["cs_lead", "cs_agent"]);
+    await type(labelled(container, "Email"), "new.hire@igloo.test");
+    await submit(container.querySelector("[data-aitw-invite] form"));
+    expect(f.of("inviteStaff").map((c) => c.args)).toEqual([[{ email: "new.hire@igloo.test", templateKey: "cs_agent" }]]);
+    expect(text(container.querySelector("[data-aitw-invite]"))).toContain(
+      "Invite saved, but the email isn't set up. Send new.hire@igloo.test this link; they become Customer service agent when they sign up with that address:",
+    );
+    expect(text(container.querySelector("[data-aitw-invite-link]"))).toContain("https://app.test/sign-up?redirect_url=%2Fadmin");
+    await wait(10);
+    expect(text(container.querySelector('[data-invitation="inv-1"]'))).toContain("Customer service agent");
+    await unmount();
+  });
+
+  it("an email that went says so, with no link; an address that had an account updates its row at once", async () => {
+    const f = fakeAdmin({
+      people: () => ok(people()),
+      staffInvitations: () => ok({ invitations: [] }),
+      inviteStaff: (body: { email: string }) =>
+        body.email === "olivia@summitwindows.test"
+          ? ok({ result: "granted", person: person({ staffRole: { key: "cs_lead", name: "Customer service lead", rank: 20 } }) })
+          : ok({ result: "invited", invitation: waiting, email: "sent", signUpUrl: "https://app.test/sign-up" }),
+    });
+    const { container, unmount } = await mount(<StaffPeople transport={f.transport} />);
+    await type(labelled(container, "Email"), "new.hire@igloo.test");
+    await submit(container.querySelector("[data-aitw-invite] form"));
+    expect(text(container.querySelector("[data-aitw-invite]"))).toContain("Invite sent to new.hire@igloo.test.");
+    expect(container.querySelector("[data-aitw-invite-link]")).toBeNull();
+    await choose(labelled(container, "Role"), "cs_lead");
+    await type(labelled(container, "Email"), "olivia@summitwindows.test");
+    await submit(container.querySelector("[data-aitw-invite] form"));
+    expect(text(container.querySelector("[data-aitw-invite]"))).toContain("olivia@summitwindows.test already had an account, so they're Customer service lead now.");
+    expect((container.querySelector('[data-person="u-olivia"] select') as HTMLSelectElement).value).toBe("cs_lead");
+    await unmount();
+  });
+
+  it("Withdraw takes an invitation off the list; someone who can't give any role sees no Invite form", async () => {
+    const f = fakeAdmin({
+      people: () => ok(people()),
+      staffInvitations: () => ok({ invitations: [waiting] }),
+      revokeStaffInvitation: () => ok({ ok: true }),
+    });
+    const { container, unmount } = await mount(<StaffPeople transport={f.transport} />);
+    await click(button(container.querySelector('[data-invitation="inv-1"]')!, "Withdraw"));
+    expect(f.of("revokeStaffInvitation").map((c) => c.args)).toEqual([["inv-1"]]);
+    expect(container.querySelector('[data-invitation="inv-1"]')).toBeNull();
+    await unmount();
+
+    const viewer = fakeAdmin({
+      people: () => ok(people({ roles: people().roles.map((r) => ({ ...r, assignable: false })) })),
+      staffInvitations: () => ok({ invitations: [{ ...waiting, canRevoke: false }] }),
+    });
+    const view = await mount(<StaffPeople transport={viewer.transport} />);
+    expect(view.container.querySelector("[data-aitw-invite]")).toBeNull();
+    expect(button(view.container.querySelector('[data-invitation="inv-1"]')!, "Withdraw")).toBeNull();
+    await view.unmount();
+  });
+
+  it("Edit name opens a first and last name on the row, saves through the server, and shows the answer; only where allowed", async () => {
+    const f = fakeAdmin({
+      people: () => ok(people({ people: [person({ name: null }), person({ userId: "u-sam", email: "sam@gig.test", name: "Sam", canRename: false })] })),
+      staffInvitations: () => ok({ invitations: [] }),
+      setPersonName: () => ok({ person: person({ name: "Olivia Stone" }) }),
+    });
+    const { container, unmount } = await mount(<StaffPeople transport={f.transport} />);
+    expect(container.querySelector('[data-person="u-sam"] [data-aitw-rename]')).toBeNull();
+    await click(container.querySelector('[data-person="u-olivia"] [data-aitw-rename]'));
+    await type(labelled(container.querySelector('[data-person="u-olivia"]')!, "First name"), "Olivia");
+    await type(labelled(container.querySelector('[data-person="u-olivia"]')!, "Last name"), "Stone");
+    await submit(container.querySelector('[data-person="u-olivia"] form'));
+    expect(f.of("setPersonName").map((c) => c.args)).toEqual([["u-olivia", { firstName: "Olivia", lastName: "Stone" }]]);
+    expect(text(container.querySelector('[data-person="u-olivia"]'))).toContain("Olivia Stone");
+    expect(container.querySelector('[data-person="u-olivia"] form')).toBeNull();
+    await unmount();
+  });
+});

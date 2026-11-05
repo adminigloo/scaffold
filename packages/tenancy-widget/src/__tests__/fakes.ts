@@ -265,6 +265,7 @@ export function person(extra: Partial<AdminPersonWire> = {}): AdminPersonWire {
     staffRole: null,
     isYou: false,
     canChange: true,
+    canRename: true,
     ...extra,
   };
 }

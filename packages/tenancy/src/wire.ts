@@ -233,16 +233,10 @@ export interface StaffInvitationWire {
   expired: boolean; canRevoke: boolean;
 }
 export interface StaffInviteBody { email: string; templateKey: string }
-/** What Invite did. `email`: sent now, skipped (no mailer, or inside the cooldown), or failed. */
+/** What Invite did: `email` is sent, skipped (no mailer), cooldown (emailed minutes ago) or failed; `signUpUrl` is for the screen to show when none went. */
 export type StaffInviteWire =
   | { result: "granted"; person: AdminPersonWire }
-  | {
-      result: "invited";
-      invitation: StaffInvitationWire;
-      email: "sent" | "skipped" | "cooldown" | "failed";
-      /** Where the invitee signs up, for the screen to show when no email went (the app's `staffSignUpUrl`). */
-      signUpUrl: string | null;
-    };
+  | { result: "invited"; invitation: StaffInvitationWire; email: "sent" | "skipped" | "cooldown" | "failed"; signUpUrl: string | null };
 export interface PersonNameBody { firstName: string; lastName: string }
 export interface AdminPeopleWire {
   people: AdminPersonWire[]; total: number; page: number; pageSize: number;

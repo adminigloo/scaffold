@@ -39,7 +39,7 @@ header switcher installs nothing but this.
 | You install | You get | You wire yourself |
 | --- | --- | --- |
 | `@adminigloo/tenancy-widget` | `<Onboarding>`, `<CompanySwitcher>`, `<SetupChecklist>`, `<TeamManager>`, `<CompanySettings>`, `<CompanySuspended>`, `<AcceptInvitation>`: a business owner signs up, names the company, invites the team and sets it up, with every rule (who may change whom, seats, the owner who can't leave) enforced by the server. | The pages that render them, and `@adminigloo/tenancy/server`'s `createTenancyHandlers` mounted at one route behind your sign-in. |
-| `@adminigloo/tenancy-widget/admin` | `<CompaniesConsole>`, `<CompanyDetail>`, `<StaffPeople>`: search and page through every company, see one company's people and recent activity, suspend or reactivate it, and give or take staff roles. | Three admin pages, and `createTenancyOperatorHandlers` mounted at one route. |
+| `@adminigloo/tenancy-widget/admin` | `<CompaniesConsole>`, `<CompanyDetail>`, `<StaffPeople>`: search and page through every company, see one company's people and recent activity, suspend or reactivate it, give or take staff roles, invite someone to a staff role by email (they take it up at their first sign-in), and edit a person's name. | Three admin pages, and `createTenancyOperatorHandlers` mounted at one route. |
 | `@adminigloo/tenancy` (the server, required) | The tables, the lifecycle (create, join, roles, removal, transfer, suspension), the settings registry, the checklist registry and both handler factories. | The service construction (database, mode, catalog, audit sink). See its README. |
 
 ## Install
@@ -136,6 +136,10 @@ import { CompaniesConsole, CompanyDetail, StaffPeople } from "@adminigloo/tenanc
 screen takes `tenantId`, and every request names that company in its path. A team
 page left open in one tab keeps acting on the company it shows, even after the
 owner switches company in another tab.
+
+## Staff invitations and names (with tenancy 0.9)
+
+`<StaffPeople>` now has an **Invite someone** form (an email and a role; the lowest role you can give is chosen by default), the **invitations waiting** with Withdraw, and **Edit name** on every row you may rename (your own, or anyone's if you can manage roles). When no email went, it shows the sign-up link with Copy link. It needs `@adminigloo/tenancy` 0.9 behind it, with `deliverStaffInvitation` and `staffSignUpUrl` passed to `createTenancyOperatorHandlers` (see that package's README).
 
 ## Upgrading from 0.3
 
