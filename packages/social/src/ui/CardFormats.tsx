@@ -1,13 +1,50 @@
 /* eslint-disable @next/next/no-img-element -- the cards are PNGs from the app's own card route, shown at their own size */
-import type { CardFormatSet } from "../wire.js";
+"use client";
+
+import type { CardFormatImage, CardFormatSet } from "../wire.js";
 import { SocialStyles } from "./styles.js";
+import { MakeVideo } from "./video.js";
+import { useImageViewer, viewOnPlainClick } from "./viewer.js";
 
 /**
  * EVERY CARD FORMAT AT ONCE: the quote card at 1:1 and 4:5, and each
  * carousel at 4:5 and 9:16, drawn by the same signed route the posts use.
- * Samples only: made-up words, nothing here is posted. Each opens full size.
+ * Samples only: made-up words, nothing here is posted. Each opens the viewer
+ * with its set (social 0.5), and a set in one of the app's looks can be made
+ * into a video at each of its sizes, to see how the look moves.
  */
+
+/** "9:16" for a 1080 × 1920 card. */
+function ratioOf(width: number, height: number): string {
+  const r = height / width;
+  if (Math.abs(r - 1) < 0.01) return "1:1";
+  if (Math.abs(r - 1.25) < 0.01) return "4:5";
+  if (Math.abs(r - 16 / 9) < 0.01) return "9:16";
+  return `${width}×${height}`;
+}
+
+/** A set's pictures by size, in the order the sizes first come. */
+function bySize(images: readonly CardFormatImage[]): { ratio: string; images: CardFormatImage[] }[] {
+  const groups = new Map<string, { ratio: string; images: CardFormatImage[] }>();
+  for (const image of images) {
+    const key = `${image.width}x${image.height}`;
+    const group = groups.get(key) ?? { ratio: ratioOf(image.width, image.height), images: [] };
+    group.images.push(image);
+    groups.set(key, group);
+  }
+  return [...groups.values()];
+}
+
+/** Does a card wear one of the app's looks? Its signed address names it. */
+function wearsLook(image: CardFormatImage): boolean {
+  try {
+    return new URL(image.url, "https://card.invalid").searchParams.has("look");
+  } catch {
+    return false;
+  }
+}
 export function CardFormats({ sets }: { readonly sets: readonly CardFormatSet[] }) {
+  const { open, viewer } = useImageViewer();
   return (
     <div className="social social-formats">
       <SocialStyles />
@@ -25,7 +62,7 @@ export function CardFormats({ sets }: { readonly sets: readonly CardFormatSet[] 
               const shown = image.height > image.width * 1.5 ? 180 : 220;
               return (
                 <li key={`${i}:${image.url}`}>
-                  <a href={image.url} target="_blank" rel="noopener noreferrer">
+                  <a href={image.url} target="_blank" rel="noopener noreferrer" title="View the images" onClick={viewOnPlainClick(() => open(set.images, i))}>
                     <img src={image.url} alt={image.alt} width={shown} height={Math.round((shown * image.height) / image.width)} loading="lazy" />
                   </a>
                   <span>{image.label}</span>
@@ -33,8 +70,16 @@ export function CardFormats({ sets }: { readonly sets: readonly CardFormatSet[] 
               );
             })}
           </ol>
+          {set.images.some(wearsLook) ? (
+            <div className="social-actions">
+              {bySize(set.images).map((group) => (
+                <MakeVideo key={group.ratio} postKey={`sample-${set.key}-${group.ratio.replace(":", "x")}`} images={group.images} label={`Make a ${group.ratio} video`} />
+              ))}
+            </div>
+          ) : null}
         </section>
       ))}
+      {viewer}
     </div>
   );
 }

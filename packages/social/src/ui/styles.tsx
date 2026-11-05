@@ -512,7 +512,8 @@ export const socialCss = `
 .social-admin { display: flex; flex-direction: column; gap: 32px; padding: 16px; border-radius: var(--_radius); background: var(--_canvas); color: var(--_ink); }
 /* A made video: its preview, then what to do with it. */
 .social-video-made { display: flex; flex-direction: column; gap: 10px; width: 100%; }
-.social-video { display: block; width: 200px; max-width: 100%; aspect-ratio: 9 / 16; border-radius: var(--_radius); background: #000; }
+/* The clip's own shape (social 0.5: 9:16, 4:5 or 1:1), from its width and height attributes. */
+.social-video { display: block; width: 220px; max-width: 100%; height: auto; border-radius: var(--_radius); background: #000; }
 /* A plain link (the posting session's) in the theme's accent, not the browser's blue. */
 .social a { color: var(--_accent); }
 .social-section { display: flex; flex-direction: column; gap: 12px; }
@@ -526,6 +527,164 @@ export const socialCss = `
 .social-format-images li { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--_muted); font-variant-numeric: tabular-nums; }
 .social-format-images img { display: block; height: auto; border: 1px solid var(--_line); border-radius: calc(var(--_radius) - 2px); }
 .social-sample-chip { margin-left: 6px; padding: 1px 8px; border: 1px solid var(--_line); border-radius: 999px; color: var(--_muted); font-size: 12px; font-weight: 500; }
+
+/* The image viewer (./viewer.tsx, social 0.5): a native modal dialog, the panel in it. */
+.social-viewer {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  height: 100%;
+  max-height: 100%;
+  margin: 0;
+  padding: 16px;
+  border: 0;
+  background: transparent;
+  color: var(--_ink);
+}
+
+.social-viewer[open] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.social-viewer::backdrop {
+  background: rgba(10, 12, 16, 0.72);
+}
+
+.social-viewer-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-sizing: border-box;
+  width: min(1200px, 100%);
+  max-height: 100%;
+  padding: 12px 14px 14px;
+  border-radius: var(--_radius);
+  background: var(--_surface);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.35);
+}
+
+.social-viewer-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.social-viewer-title {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.social-viewer-label {
+  color: var(--_muted);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.social-viewer-modes {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.social-viewer-modes .social-button[aria-pressed="true"] {
+  border-color: var(--_accent);
+  box-shadow: inset 0 0 0 1px var(--_accent);
+}
+
+.social-viewer-close,
+.social-viewer-step {
+  width: 44px;
+  padding: 0;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.social-viewer-stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  place-items: center;
+  gap: 10px;
+  min-height: 0;
+}
+
+.social-viewer-stage[data-steps] {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.social-viewer-stage img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: calc(100dvh - 160px);
+  border-radius: 8px;
+  background: var(--_canvas);
+}
+
+.social-viewer-strip {
+  display: flex;
+  gap: 12px;
+  margin: 0;
+  padding: 0 0 8px;
+  overflow-x: auto;
+  list-style: none;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+}
+
+.social-viewer-strip li {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--_muted);
+  font-size: 13px;
+  scroll-snap-align: start;
+}
+
+.social-viewer-pick {
+  display: block;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  cursor: zoom-in;
+}
+
+.social-viewer-pick:focus-visible {
+  outline: 2px solid var(--_accent);
+  outline-offset: 2px;
+}
+
+.social-viewer-strip img {
+  display: block;
+  width: auto;
+  height: min(calc(100dvh - 190px), 720px);
+  border-radius: 8px;
+  background: var(--_canvas);
+}
+
+@media (max-width: 640px) {
+  .social-viewer {
+    padding: 8px;
+  }
+
+  .social-viewer-stage img {
+    max-height: calc(100dvh - 200px);
+  }
+
+  .social-viewer-strip img {
+    height: min(52dvh, 420px);
+  }
+}
 `;
 
 /** The queue's styles, once per page (each screen renders it). */

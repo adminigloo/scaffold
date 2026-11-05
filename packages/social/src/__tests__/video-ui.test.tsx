@@ -5,17 +5,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DraftImage } from "../types.js";
 
 /**
- * "MAKE A VIDEO" (../ui/video.tsx): only for full-screen slides in a browser
- * that can make it; progress while it's made; then a preview, Send video to
- * TikTok (a phone) and Download video. The encoder is faked here (the real
- * one is checked in a real browser).
+ * "MAKE A VIDEO" (../ui/video.tsx): for any draft whose pictures are one size
+ * (social 0.5: every platform with pictures, at the pictures' own size), in
+ * a browser that can make it at that size; progress while it's made; then a
+ * preview, Send video to TikTok (a phone) and Download video. The encoder is
+ * faked here (the real one is checked in a real browser).
  */
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const make = vi.fn();
-const able = vi.fn(async () => true);
-vi.mock("../video/render.js", () => ({ canMakeVideo: () => able(), makeSlideshowVideo: (...args: unknown[]) => make(...args) }));
-const { MakeVideo, fullScreenSlides, videoFileName } = await import("../ui/video.js");
+const able = vi.fn(async (_width?: number, _height?: number) => true);
+vi.mock("../video/render.js", () => ({ canMakeVideo: (width: number, height: number) => able(width, height), makeCardVideo: (...args: unknown[]) => make(...args) }));
+const { MakeVideo, fullScreenSlides, videoFileName, videoSize } = await import("../ui/video.js");
 
 const TALL: DraftImage[] = [
   { url: "https://example.com/1.png", alt: "1", width: 1080, height: 1920 },
@@ -46,18 +47,30 @@ async function mount(element: React.ReactElement) {
 const buttons = (c: HTMLElement) => [...c.querySelectorAll("button, a")].map((b) => b.textContent?.trim());
 
 describe("make a video", () => {
-  it("names the clip and only takes full-screen slides", () => {
+  it("names the clip, knows a full-screen one, and takes pictures of one size only", () => {
     expect(videoFileName("launch:Saturdays", "tiktok")).toBe("launch-saturdays-tiktok.mp4");
+    expect(videoFileName("sample-look-spray-9x16")).toBe("sample-look-spray-9x16.mp4");
     expect(fullScreenSlides(TALL)).toBe(true);
     expect(fullScreenSlides([{ url: "x", alt: "", width: 1080, height: 1350 }])).toBe(false);
     expect(fullScreenSlides([])).toBe(false);
+    expect(videoSize(TALL)).toEqual({ width: 1080, height: 1920 });
+    expect(videoSize([...TALL, { url: "x", alt: "", width: 1080, height: 1350 }])).toBeNull();
+    expect(videoSize([])).toBeNull();
   });
 
-  it("shows nothing where the browser can't make it, or the slides aren't full screen", async () => {
+  it("shows nothing where the browser can't make it at the pictures' size, or they aren't one size", async () => {
     able.mockImplementation(async () => false);
     expect((await mount(<MakeVideo postKey="launch:1" platform="tiktok" images={TALL} text="t" />)).innerHTML).toBe("");
     able.mockImplementation(async () => true);
-    expect((await mount(<MakeVideo postKey="launch:1" platform="instagram" images={[{ url: "x", alt: "", width: 1080, height: 1350 }]} text="t" />)).innerHTML).toBe("");
+    expect((await mount(<MakeVideo postKey="launch:1" platform="tiktok" images={[...TALL, { url: "x", alt: "", width: 1080, height: 1350 }]} text="t" />)).innerHTML).toBe("");
+  });
+
+  it("offers a 4:5 video for Instagram and a 1:1 one for X (social 0.5), asking the browser about that size", async () => {
+    const portrait = await mount(<MakeVideo postKey="launch:1" platform="instagram" images={[{ url: "https://example.com/p.png", alt: "", width: 1080, height: 1350 }]} text="t" />);
+    expect(buttons(portrait)).toEqual(["Make a video"]);
+    expect(able).toHaveBeenCalledWith(1080, 1350);
+    const square = await mount(<MakeVideo postKey="launch:1" platform="x" images={[{ url: "https://example.com/s.png", alt: "", width: 1080, height: 1080 }]} text="t" label="Make a 1:1 video" />);
+    expect(buttons(square)).toEqual(["Make a 1:1 video"]);
   });
 
   it("makes the clip from the slides in order, then offers the preview, Send video to TikTok and Download video", async () => {
@@ -66,7 +79,7 @@ describe("make a video", () => {
     stub(navigator, "share", vi.fn(async () => undefined));
     stub(navigator, "canShare", () => true);
     stub(navigator, "clipboard", { writeText: vi.fn(async () => undefined) });
-    make.mockImplementation(async (_urls: string[], options: { onProgress?: (d: number) => void }) => {
+    make.mockImplementation(async (_cards: unknown[], options: { onProgress?: (d: number) => void }) => {
       options.onProgress?.(0.5);
       options.onProgress?.(1);
       return { blob: new Blob(["mp4"], { type: "video/mp4" }), seconds: 5.6, width: 1080, height: 1920 };
@@ -76,7 +89,10 @@ describe("make a video", () => {
     await act(async () => (c.querySelector("button") as HTMLButtonElement).click());
     for (let i = 0; i < 10; i++) await act(async () => new Promise((r) => setTimeout(r, 5)));
     expect(make).toHaveBeenCalledTimes(1);
-    expect(make.mock.calls[0]![0]).toEqual(["https://example.com/1.png", "https://example.com/2.png"]);
+    expect(make.mock.calls[0]![0]).toEqual([
+      { url: "https://example.com/1.png", width: 1080, height: 1920 },
+      { url: "https://example.com/2.png", width: 1080, height: 1920 },
+    ]);
     expect(c.querySelector("video")?.getAttribute("src")).toBe("blob:clip");
     expect(buttons(c)).toEqual(["Send video to TikTok", "Download video", "Make it again"]);
     expect(c.querySelector("a")?.getAttribute("download")).toBe("launch-1-tiktok.mp4");
@@ -85,6 +101,20 @@ describe("make a video", () => {
     const shared = (navigator.share as unknown as ReturnType<typeof vi.fn>).mock.calls[0]![0] as { files: File[]; text: string };
     expect(shared.files.map((f) => f.name)).toEqual(["launch-1-tiktok.mp4"]);
     expect(shared.text).toBe("Saturdays. #bakery");
+  });
+
+  it("makes a sample's video with no platform: downloaded, never sent", async () => {
+    stub(globalThis.URL, "createObjectURL", () => "blob:clip");
+    stub(globalThis.URL, "revokeObjectURL", () => undefined);
+    stub(navigator, "share", vi.fn(async () => undefined));
+    stub(navigator, "canShare", () => true);
+    make.mockImplementation(async () => ({ blob: new Blob(["mp4"], { type: "video/mp4" }), seconds: 4.2, width: 1080, height: 1080 }));
+    const c = await mount(<MakeVideo postKey="sample-look-confetti-1x1" images={[{ url: "https://example.com/s.png", alt: "", width: 1080, height: 1080 }]} />);
+    await act(async () => (c.querySelector("button") as HTMLButtonElement).click());
+    for (let i = 0; i < 10; i++) await act(async () => new Promise((r) => setTimeout(r, 5)));
+    expect(buttons(c)).toEqual(["Download video", "Make it again"]);
+    expect(c.querySelector("a")?.getAttribute("download")).toBe("sample-look-confetti-1x1.mp4");
+    expect(c.textContent).toContain("4 seconds at 1080×1080, with no sound.");
   });
 
   it("says plainly when the clip couldn't be made, and the photos still work", async () => {

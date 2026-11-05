@@ -8,12 +8,14 @@
  *   <PostQueue posts actions filter approveAllLabel />              the queue alone
  *   <ComposeForm onCompose />                                       a post from your own facts
  *   <CardFormats sets />                                            every card format
+ *   <ImageViewer images start onClose />                            the pictures in a pop-up (0.5)
  */
 export { PostsAdmin, type PostsAdminProps } from "./PostsAdmin.js";
 export { PostQueue, type PostQueueProps } from "./PostQueue.js";
 export { PostCard, attempt, messageOf, type ActionResult, type QueueActions } from "./PostCard.js";
 export { canShareFiles, imageFileName, imageFiles, ShareImages, shareLabel, type ShareImagesProps } from "./share.js";
-export { fullScreenSlides, MakeVideo, videoFileName, type MakeVideoProps } from "./video.js";
+export { fullScreenSlides, MakeVideo, videoFileName, videoSize, type MakeVideoProps } from "./video.js";
+export { ImageViewer, useImageViewer, viewOnPlainClick, type ViewerImage } from "./viewer.js";
 export { ComposeForm, type ComposeInput } from "./ComposeForm.js";
 export { CardFormats } from "./CardFormats.js";
 export { createSocialClient, type SocialClient } from "./client.js";

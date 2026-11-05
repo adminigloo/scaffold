@@ -7,6 +7,7 @@ import type { Platform, PostEdit, PostStatus } from "../types.js";
 import { dayText, postAnchor, type PostGroupView, type QueuePostView } from "../view.js";
 import { ShareImages } from "./share.js";
 import { MakeVideo } from "./video.js";
+import { useImageViewer, viewOnPlainClick, type ViewerImage } from "./viewer.js";
 
 /**
  * What an action answers: nothing when it worked, or a message for the
@@ -93,14 +94,19 @@ function CopyButton({ text, label = "Copy" }: { readonly text: string; readonly 
   );
 }
 
-/** A platform's images in posting order, each opening full size: a strip that scrolls sideways for a carousel. */
-function Images({ images, label }: { readonly images: QueuePostView["images"]; readonly label: string }) {
+/** A platform's images as the viewer shows them: the slide number on each of a carousel's. */
+function viewerImages(images: QueuePostView["images"], name: string): ViewerImage[] {
+  return images.map((image, i) => ({ ...image, label: images.length > 1 ? `${name}, ${i + 1} of ${images.length}` : name }));
+}
+
+/** A platform's images in posting order, each opening the viewer (social 0.5): a strip that scrolls sideways for a carousel. */
+function Images({ images, label, onView }: { readonly images: QueuePostView["images"]; readonly label: string; readonly onView: (start: number) => void }) {
   return (
     <ol className="social-images" aria-label={label}>
       {images.map((image, i) => (
         <li key={`${i}:${image.url}`} className="social-image">
-          {/* The thumbnail opens the full image, as stored: a signed address is used as it was built. */}
-          <a href={image.url} target="_blank" rel="noreferrer" title={`Open the full image${images.length > 1 ? ` (${i + 1} of ${images.length})` : ""}`}>
+          {/* The thumbnail opens the viewer; its address is the full image as stored, for a Ctrl/Cmd-click. */}
+          <a href={image.url} target="_blank" rel="noreferrer" title={`View the image${images.length > 1 ? ` (${i + 1} of ${images.length})` : ""}`} onClick={viewOnPlainClick(() => onView(i))}>
             {/* A plain <img>: this card drops into any React app, so no framework image component. */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={image.url} alt={image.alt} width={image.width} height={image.height} loading="lazy" />
@@ -135,6 +141,12 @@ export function PostCard({ post, actions, kindLabel }: { readonly post: PostGrou
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<{ readonly where: string; readonly message: string } | null>(null);
   const tabs = useRef(new Map<Platform, HTMLButtonElement>());
+  const { open: openViewer, viewer } = useImageViewer();
+  /* The overview opens every image the post has, each set once, so they can be stepped through or set side by side. */
+  const allImages: ViewerImage[] = post.imageSets.flatMap((set) => {
+    const name = set.platforms.map((p) => PLATFORMS[p].name).join(" · ");
+    return set.images.map((image, i) => ({ ...image, label: set.images.length > 1 ? `${name}, ${i + 1} of ${set.images.length}` : name }));
+  });
 
   const selected = post.platforms.find((p) => p.platform === chosen) ?? post.platforms[0]!;
   const typedOn = (p: QueuePostView): Typed => {
@@ -203,11 +215,12 @@ export function PostCard({ post, actions, kindLabel }: { readonly post: PostGrou
 
       {post.imageSets.length ? (
         <ul className="social-sets" aria-label="Its images, each set once">
-          {post.imageSets.map((set) => {
+          {post.imageSets.map((set, setIndex) => {
             const lead = set.images[0]!;
+            const start = post.imageSets.slice(0, setIndex).reduce((n, earlier) => n + earlier.images.length, 0);
             return (
               <li key={lead.url} className="social-set">
-                <a href={lead.url} target="_blank" rel="noreferrer" title="Open the full image">
+                <a href={lead.url} target="_blank" rel="noreferrer" title="View the images" onClick={viewOnPlainClick(() => openViewer(allImages, start))}>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={lead.url} alt={lead.alt} width={lead.width} height={lead.height} loading="lazy" />
                 </a>
@@ -273,8 +286,10 @@ export function PostCard({ post, actions, kindLabel }: { readonly post: PostGrou
           error={error?.where === selected.id ? error.message : null}
           run={(what, task) => run(selected.id, what, task)}
           actions={actions}
+          onViewImages={(start) => openViewer(viewerImages(selected.images, PLATFORMS[selected.platform].name), start)}
         />
       </div>
+      {viewer}
     </article>
   );
 }
@@ -288,6 +303,7 @@ function PlatformPanel({
   error,
   run,
   actions,
+  onViewImages,
 }: {
   readonly post: QueuePostView;
   readonly typed: Typed;
@@ -297,6 +313,8 @@ function PlatformPanel({
   readonly run: (what: string, task: () => Promise<ActionResult>) => Promise<void>;
   /** None for someone who may only read the posts: nothing to type in, no button that changes one. */
   readonly actions?: QueueActions;
+  /** Opens the viewer on this platform's images, at one of them. */
+  readonly onViewImages: (start: number) => void;
 }) {
   const rule = PLATFORMS[post.platform];
   const open = isOpen(post.status);
@@ -320,7 +338,13 @@ function PlatformPanel({
         </span>
       </div>
 
-      {post.images.length ? <Images images={post.images} label={post.images.length > 1 ? `${rule.name}: ${post.images.length} images, in posting order` : `${rule.name}: the image to attach`} /> : null}
+      {post.images.length ? (
+        <Images
+          images={post.images}
+          label={post.images.length > 1 ? `${rule.name}: ${post.images.length} images, in posting order` : `${rule.name}: the image to attach`}
+          onView={onViewImages}
+        />
+      ) : null}
 
       <label className="social-field">
         <span>The hook, on the image ({hookLength} of {HOOK_MAX})</span>
@@ -408,7 +432,7 @@ function PlatformPanel({
         ) : null}
         <CopyButton text={typed.text} label="Copy text" />
         <ShareImages postKey={post.key} platform={post.platform} images={post.images} text={typed.text} />
-        {rule.captionOnly ? <MakeVideo postKey={post.key} platform={post.platform} images={post.images} text={typed.text} /> : null}
+        {post.images.length ? <MakeVideo postKey={post.key} platform={post.platform} images={post.images} text={typed.text} /> : null}
         {compose ? (
           <a className="social-button" href={compose} target="_blank" rel="noreferrer">
             Open {rule.name}
