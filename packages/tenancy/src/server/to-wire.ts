@@ -4,6 +4,7 @@ import type {
   AdminCompanyRowWire,
   AdminPeopleWire,
   AdminPersonWire,
+  StaffInvitationWire,
   AuditLineWire,
   CompanyChoiceWire,
   CompanyWire,
@@ -24,6 +25,7 @@ import type {
   AdminCompanyRow,
   AdminPeople,
   AdminPerson,
+  StaffInvitationView,
   CompanyChoice,
   CompanyView,
   DeletedCompany,
@@ -262,6 +264,21 @@ export function adminPersonToWire(p: AdminPerson): AdminPersonWire {
     staffRole: p.staffRole ? { ...p.staffRole } : null,
     isYou: p.isYou,
     canChange: p.canChange,
+    canRename: p.canRename,
+  };
+}
+
+export function staffInvitationToWire(i: StaffInvitationView): StaffInvitationWire {
+  return {
+    id: i.id,
+    email: i.email,
+    role: { ...i.role },
+    invitedBy: i.invitedBy,
+    createdAt: iso(i.createdAt),
+    expiresAt: iso(i.expiresAt),
+    emailedAt: i.emailedAt ? iso(i.emailedAt) : null,
+    expired: i.expired,
+    canRevoke: i.canRevoke,
   };
 }
 

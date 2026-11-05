@@ -137,6 +137,11 @@ describe("every route answers its documented 200 shape (the table, read back)", 
       "admin-people": ["people", "total", "page", "pageSize", "roles", "you"],
       "admin-staff-roles": ["roles"],
       "admin-staff-role-set": ["person"],
+      // Tenancy 0.9: a name, and staff invitations.
+      "admin-person-name": ["person"],
+      "admin-staff-invitations": ["invitations"],
+      "admin-staff-invite": ["result", "invitation", "email", "signUpUrl"],
+      "admin-staff-invite-revoke": ["ok"],
     };
     const bodies: Record<string, unknown> = {
       "admin-suspend": { reason: "Unpaid since August" },
@@ -144,11 +149,14 @@ describe("every route answers its documented 200 shape (the table, read back)", 
       "admin-assign-owner": { toUserId: w.a2 },
       "admin-release-addresses": {},
       "admin-staff-role-set": { templateKey: "cs_agent" },
+      "admin-person-name": { firstName: "Bea", lastName: "Baker" },
+      "admin-staff-invite": { email: "new.hire@example.test", templateKey: "cs_agent" },
     };
     // The delete route is answered last among the company routes (it leaves nothing to suspend).
     bodies["admin-delete"] = { confirmSlug: (await h.tenancy.getCompanyDetail({ actorUserId: w.ava, tenantId: w.A })).company.slug };
+    let invitationId = "none";
     for (const route of TENANCY_OPERATOR_ROUTES) {
-      const path = route.path.replace(":tenantId", w.A).replace(":userId", w.b);
+      const path = route.path.replace(":tenantId", w.A).replace(":userId", w.b).replace(":invitationId", invitationId);
       const res = await operator.handle(
         new Request(`https://app.test/api/admin/tenancy/${path}`, {
           method: route.method,
@@ -157,7 +165,9 @@ describe("every route answers its documented 200 shape (the table, read back)", 
         }),
       );
       expect(res.status, `${route.kind}: ${await res.clone().text()}`).toBe(200);
-      expect(Object.keys(await jsonOf(res)).sort(), route.kind).toEqual([...shapes[route.kind]!].sort());
+      const answered = (await jsonOf(res)) as Record<string, unknown>;
+      expect(Object.keys(answered).sort(), route.kind).toEqual([...shapes[route.kind]!].sort());
+      if (route.kind === "admin-staff-invite") invitationId = String((answered["invitation"] as { id: string }).id);
     }
     // Someone signed in with no staff role.
     const res = await operator.handle(new Request("https://app.test/api/admin/tenancy/v1/admin/companies", { headers: { "x-test-user": w.a } }));

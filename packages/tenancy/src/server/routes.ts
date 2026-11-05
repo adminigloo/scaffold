@@ -81,7 +81,11 @@ export type TenancyOperatorRouteKind =
   | "admin-delete"
   | "admin-people"
   | "admin-staff-roles"
-  | "admin-staff-role-set";
+  | "admin-staff-role-set"
+  | "admin-person-name"
+  | "admin-staff-invitations"
+  | "admin-staff-invite"
+  | "admin-staff-invite-revoke";
 
 export interface TenancyRoute<K extends string = TenancyRouteKind | TenancyOperatorRouteKind> {
   readonly kind: K;
@@ -135,4 +139,9 @@ export const TENANCY_OPERATOR_ROUTES: readonly TenancyRoute<TenancyOperatorRoute
   { kind: "admin-people", method: "GET", path: "v1/admin/people", scope: "staff", permission: "staff.people.view", bucket: null },
   { kind: "admin-staff-roles", method: "GET", path: "v1/admin/staff-roles", scope: "staff", permission: "staff.roles.view", bucket: null },
   { kind: "admin-staff-role-set", method: "POST", path: "v1/admin/people/:userId/staff-role", scope: "staff", permission: "staff.roles.manage", bucket: "operator-write" },
+  // Tenancy 0.9: staff invitations, and a person's name (your own needs only staff.people.view; the operator checks anyone else's).
+  { kind: "admin-person-name", method: "POST", path: "v1/admin/people/:userId/name", scope: "staff", permission: "staff.people.view", bucket: "operator-write" },
+  { kind: "admin-staff-invitations", method: "GET", path: "v1/admin/staff-invitations", scope: "staff", permission: "staff.people.view", bucket: null },
+  { kind: "admin-staff-invite", method: "POST", path: "v1/admin/staff-invitations", scope: "staff", permission: "staff.roles.manage", bucket: "operator-write" },
+  { kind: "admin-staff-invite-revoke", method: "POST", path: "v1/admin/staff-invitations/:invitationId/revoke", scope: "staff", permission: "staff.roles.manage", bucket: "operator-write" },
 ];

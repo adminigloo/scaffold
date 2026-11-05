@@ -31,6 +31,10 @@ export const tenancyAuditedActions = {
   "staff.role.assigned": { label: "Gave someone a staff role", sensitive: true },
   "staff.role.removed": { label: "Took away someone's staff role" },
   "staff.bootstrap.granted": { label: "Made the first administrator", sensitive: true },
+  "staff.invitation.sent": { label: "Invited someone to a staff role" },
+  "staff.invitation.revoked": { label: "Withdrew a staff invitation before it was taken up" },
+  "staff.invitation.claimed": { label: "Took up a staff invitation at their first sign-in", sensitive: true },
+  "person.renamed": { label: "Changed a person's name" },
 } as const satisfies Readonly<Record<string, { readonly label: string; readonly sensitive?: boolean }>>;
 
 export type TenancyAuditAction = keyof typeof tenancyAuditedActions;
@@ -225,6 +229,19 @@ export function describeTenancyAuditEntry(action: string, metadata: unknown): st
       if (replaced !== null && replaced !== "") parts.push(`Their old ${role(replaced)} access was replaced by the invitation's role`);
       if (cleared > 0) parts.push("Extra access left over from before was cleared");
       return parts.length > 0 ? parts.join("; ") : null;
+    }
+    case "staff.invitation.sent":
+    case "staff.invitation.revoked": {
+      const email = text(m["email"]);
+      const to = text(m["to"]) ?? text(m["role"]);
+      if (email === null) return null;
+      return to === null ? email : `${email} as ${role(to)}`;
+    }
+    case "staff.invitation.claimed": {
+      const to = text(m["to"]);
+      const kept = text(m["kept"]);
+      if (kept !== null) return `Kept their ${role(kept)} role`;
+      return to === null ? null : `Now ${role(to)}`;
     }
     case "staff.role.assigned":
     case "staff.role.removed": {

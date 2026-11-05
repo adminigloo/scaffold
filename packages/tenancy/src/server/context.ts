@@ -25,6 +25,7 @@ import type {
   TenancyAuditSink,
   TenancyDb,
   TenancyEvent,
+  TenancyIdentity,
   TenancyMode,
   TenancyNoun,
 } from "./types.js";
@@ -50,6 +51,8 @@ export interface Ctx {
   readonly roles: TenantRoleSet;
   readonly seats: SeatLimitSource | undefined;
   readonly logos: LogoStore | undefined;
+  /** The identity provider, for People's name editing (tenancy 0.9). */
+  readonly identity: TenancyIdentity | undefined;
   /** Delete a company (0.8): the project's forget step; undefined → no deleting. */
   readonly deletion: CompanyDeletion | undefined;
   readonly reserved: ReadonlySet<string>;
@@ -94,6 +97,7 @@ export function createCtx(options: {
   roles?: TenantRoleSet;
   seats?: SeatLimitSource;
   logos?: LogoStore;
+  identity?: TenancyIdentity;
   deletion?: CompanyDeletion;
   reservedSlugs?: Iterable<string>;
   invitations?: { readonly expiresInHours?: number; readonly requireMatchingEmail?: boolean };
@@ -130,6 +134,7 @@ export function createCtx(options: {
     checklist: options.checklist,
     roles,
     seats: options.seats,
+    identity: options.identity,
     logos: options.logos,
     deletion: options.deletion,
     reserved,

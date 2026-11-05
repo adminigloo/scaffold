@@ -38,6 +38,7 @@ import {
   ensureBootstrapAdminForEmail,
   provisionUser,
 } from "./provisioning.js";
+import { claimStaffInvitation, ensureStaffAccess, inviteStaff, listStaffInvitations, revokeStaffInvitation, setPersonName } from "./staff-invitations.js";
 import { invitationsForMe, resolveSession, setActiveCompany } from "./session.js";
 import { getSettings, readSettings, updateSettings } from "./settings-service.js";
 import { changeMemberRole, getTeam, leaveCompany, removeMember, transferOwnership } from "./team.js";
@@ -85,6 +86,7 @@ export function createTenancyService(options: CreateTenancyServiceOptions): Tena
     ...(options.roles ? { roles: options.roles } : {}),
     ...(options.seats ? { seats: options.seats } : {}),
     ...(options.logos ? { logos: options.logos } : {}),
+    ...(options.identity ? { identity: options.identity } : {}),
     ...(options.deletion ? { deletion: options.deletion } : {}),
     ...(options.reservedSlugs ? { reservedSlugs: options.reservedSlugs } : {}),
     ...(options.invitations ? { invitations: options.invitations } : {}),
@@ -101,9 +103,16 @@ export function createTenancyService(options: CreateTenancyServiceOptions): Tena
     settings,
     roles: ctx.roles,
 
-    provisionUser: (input) => provisionUser(ctx, input),
+    // Provisioning also takes up a staff invitation waiting on the address
+    // (tenancy 0.9): the identity webhook is often the first to meet a person.
+    provisionUser: async (input) => {
+      const result = await provisionUser(ctx, input);
+      await claimStaffInvitation(ctx.db, { userId: input.userId, email: input.email, now: ctx.now(), audit: (tx, e) => ctx.audit(tx, e) });
+      return result;
+    },
     deprovisionUser: (input) => deprovisionUser(ctx, input),
     ensureBootstrapAdmin: (input) => ensureBootstrapAdmin(ctx, input),
+    ensureStaffAccess: (input) => ensureStaffAccess(ctx, input),
     ensureBootstrapAdminFor: (input) => ensureBootstrapAdminForEmail(ctx.db, { email: input.email, audit: (tx, e) => ctx.audit(tx, e) }),
 
     resolveSession: (input) => resolveSession(ctx, input),
@@ -160,6 +169,10 @@ export function createTenancyService(options: CreateTenancyServiceOptions): Tena
     listPeople: (input) => listPeople(ctx, input),
     listStaffRoles: (input) => listStaffRoles(ctx, input),
     setStaffRole: (input) => setStaffRole(ctx, input),
+    inviteStaff: (input) => inviteStaff(ctx, input),
+    listStaffInvitations: (input) => listStaffInvitations(ctx, input),
+    revokeStaffInvitation: (input) => revokeStaffInvitation(ctx, input),
+    setPersonName: (input) => setPersonName(ctx, input),
 
     resolveCompanyBySlug: (slug) => resolveCompanyBySlug(ctx, slug),
     async companyFor(tenantId) {

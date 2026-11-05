@@ -73,7 +73,7 @@ export interface TenancyAuditEvent {
   readonly actorUserId: string | null;
   readonly scope: "tenant" | "staff";
   readonly tenantId: string | null;
-  readonly resourceType: "tenant" | "tenant_member" | "tenant_invitation" | "staff_role";
+  readonly resourceType: "tenant" | "tenant_member" | "tenant_invitation" | "staff_role" | "staff_invitation" | "user";
   readonly resourceId: string;
   /** Never a token, never a URL carrying one. */
   readonly metadata: Readonly<Record<string, unknown>>;
@@ -112,6 +112,8 @@ export interface CreateTenancyServiceOptions {
   readonly seats?: SeatLimitSource;
   /** Absent → logo routes answer logo_storage_off. */
   readonly logos?: LogoStore;
+  /** The identity provider, for People's name editing (tenancy 0.9). */
+  readonly identity?: TenancyIdentity;
   /** Added to RESERVED_SLUGS (create-app passes the project's own name). */
   readonly reservedSlugs?: Iterable<string>;
   readonly invitations?: { readonly expiresInHours?: number; readonly requireMatchingEmail?: boolean };
@@ -434,6 +436,43 @@ export interface AdminPerson {
   readonly staffRole: { readonly key: string; readonly name: string; readonly rank: number } | null;
   readonly isYou: boolean;
   readonly canChange: boolean;
+  /** May the viewer change this person's name: their own, or anyone's with staff.roles.manage (tenancy 0.9). */
+  readonly canRename: boolean;
+}
+
+/** A staff role waiting for its owner's first sign-in (tenancy 0.9). */
+export interface StaffInvitationView {
+  readonly id: string;
+  readonly email: string;
+  readonly role: { readonly key: string; readonly name: string };
+  readonly invitedBy: string | null;
+  readonly createdAt: Date;
+  readonly expiresAt: Date;
+  readonly emailedAt: Date | null;
+  readonly expired: boolean;
+  readonly canRevoke: boolean;
+}
+
+/**
+ * What Invite did: an address with an account got the role now, or the
+ * invitation now waits. `sendEmail` is false inside the per-address cooldown.
+ */
+export type StaffInviteResult =
+  | { readonly kind: "granted"; readonly person: AdminPerson }
+  | { readonly kind: "invited"; readonly invitation: StaffInvitationView; readonly sendEmail: boolean };
+
+/** The /admin gate's self-heal: the first administrator, or an invitation's role. */
+export type StaffAccessOutcome =
+  | { readonly granted: true; readonly via: "bootstrap" | "invitation" }
+  | Extract<BootstrapOutcome, { readonly granted: false }>;
+
+/**
+ * Where a person's name really lives (tenancy 0.9): the app's identity
+ * provider. Without it a renamed person keeps the new name only until the
+ * provider's next user.updated webhook writes its own.
+ */
+export interface TenancyIdentity {
+  updateName(input: { readonly userId: string; readonly externalId: string; readonly firstName: string; readonly lastName: string }): Promise<void>;
 }
 
 export interface AdminPeople {
@@ -559,6 +598,8 @@ export interface TenancyService {
   provisionUser(input: { readonly userId: string; readonly email: string | null }): Promise<ProvisionResult>;
   deprovisionUser(input: { readonly userId: string }): Promise<DeprovisionResult>;
   ensureBootstrapAdmin(input: { readonly userId: string; readonly email: string | null }): Promise<BootstrapOutcome>;
+  /** The /admin gate's self-heal (tenancy 0.9): the first administrator, or the role a staff invitation holds for this address. */
+  ensureStaffAccess(input: { readonly userId: string; readonly email: string | null }): Promise<StaffAccessOutcome>;
   ensureBootstrapAdminFor(input: { readonly email: string }): Promise<BootstrapForEmailOutcome>;
 
   // 6.3 session
@@ -674,6 +715,12 @@ export interface TenancyService {
   }): Promise<AdminPeople>;
   listStaffRoles(input: { readonly actorUserId: string }): Promise<readonly StaffRoleView[]>;
   setStaffRole(input: { readonly actorUserId: string; readonly targetUserId: string; readonly templateKey: string | null } & Req): Promise<AdminPerson>;
+  /** Invite someone to a staff role by address (tenancy 0.9). */
+  inviteStaff(input: { readonly actorUserId: string; readonly email: string; readonly templateKey: string } & Req): Promise<StaffInviteResult>;
+  listStaffInvitations(input: { readonly actorUserId: string }): Promise<readonly StaffInvitationView[]>;
+  revokeStaffInvitation(input: { readonly actorUserId: string; readonly invitationId: string } & Req): Promise<void>;
+  /** A person's name: your own, or anyone's with staff.roles.manage (tenancy 0.9). */
+  setPersonName(input: { readonly actorUserId: string; readonly targetUserId: string; readonly firstName: string; readonly lastName: string } & Req): Promise<AdminPerson>;
 
   // 6.12 / 6.13
   /** An ACTIVE company by its web address (a suspended one is null): Tenancy 1's lookup, unchanged. */

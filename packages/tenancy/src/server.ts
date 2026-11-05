@@ -16,6 +16,7 @@ export { createTenancyService } from "./server/service.js";
 export { tenancyMembershipGate } from "./server/gate.js";
 export { tenancyChecklistItems } from "./server/checklist-service.js";
 export { ensureBootstrapAdminForEmail } from "./server/provisioning.js";
+export { STAFF_INVITATION_DAYS, STAFF_INVITATION_EMAIL_COOLDOWN_MINUTES } from "./server/staff-invitations.js";
 export { RETIRED_SLUGS_KEPT, SLUG_CHANGES_PER_DAY, LOGO_MAX_BYTES } from "./server/profile.js";
 export {
   INVITATION_EMAIL_COOLDOWN_MINUTES,
@@ -107,12 +108,16 @@ export type {
   SettingsSectionView,
   SettingsView,
   SlugCheck,
+  StaffAccessOutcome,
+  StaffInvitationView,
+  StaffInviteResult,
   StaffRoleView,
   TeamView,
   TenancyAuditEvent,
   TenancyAuditSink,
   TenancyDb,
   TenancyEvent,
+  TenancyIdentity,
   TenancyEventListener,
   TenancyEventPerson,
   TenancyMode,

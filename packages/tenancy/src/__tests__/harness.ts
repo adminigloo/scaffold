@@ -96,7 +96,7 @@ export async function harness(
   options: Partial<
     Pick<
       CreateTenancyServiceOptions,
-      "mode" | "seats" | "invitations" | "onEvent" | "onEventError" | "reservedSlugs" | "checklist" | "settings" | "companiesPerAccount" | "roles" | "deletion"
+      "mode" | "seats" | "invitations" | "onEvent" | "onEventError" | "reservedSlugs" | "checklist" | "settings" | "companiesPerAccount" | "roles" | "deletion" | "identity"
     >
   > & {
     readonly bootstrap?: BootstrapPolicy;
@@ -126,6 +126,7 @@ export async function harness(
     ...(options.companiesPerAccount !== undefined ? { companiesPerAccount: options.companiesPerAccount } : {}),
     ...(options.roles ? { roles: options.roles } : {}),
     ...(options.deletion ? { deletion: options.deletion } : {}),
+    ...(options.identity ? { identity: options.identity } : {}),
     ...(options.logos === false ? {} : { logos }),
     audit:
       options.audit ??

@@ -13,7 +13,7 @@ import {
   settleBeforeAnswering,
 } from "./http.js";
 import { TENANCY_OPERATOR_ROUTES, type TenancyOperatorRouteKind } from "./routes.js";
-import { adminCompanyDetailToWire, adminCompanyListToWire, adminPeopleToWire, adminPersonToWire, deletedCompanyToWire } from "./to-wire.js";
+import { adminCompanyDetailToWire, adminCompanyListToWire, adminPeopleToWire, adminPersonToWire, deletedCompanyToWire, staffInvitationToWire } from "./to-wire.js";
 import type { RequestFacts, TenancyService } from "./types.js";
 import type { AuditLineWire } from "../wire.js";
 
@@ -25,11 +25,28 @@ export interface CreateTenancyOperatorHandlersOptions {
   readonly limit?: RateLimiter;
   readonly requestFacts?: (req: Request) => RequestFacts;
   readonly onError?: (error: unknown, req: Request) => void | Promise<void>;
+  /**
+   * Tenancy 0.9: email a new staff invitation, after it's saved and never
+   * inside its address's cooldown. A failure is answered as `email: "failed"`
+   * and never un-saves it. Without one, Invite answers `email: "skipped"`
+   * and the screen shows `staffSignUpUrl` to pass on.
+   */
+  readonly deliverStaffInvitation?: (input: {
+    readonly email: string;
+    readonly roleName: string;
+    readonly invitedBy: string | null;
+    readonly expiresAt: Date;
+    readonly invitationId: string;
+  }) => Promise<"sent" | "skipped" | "failed">;
+  /** Tenancy 0.9: where an invitee signs up (absolute, back to /admin), shown when no email went. */
+  readonly staffSignUpUrl?: string;
 }
 
 const suspendBody = z.object({ reason: z.string().max(500) });
 const ownerBody = z.object({ toUserId: z.string().min(1).max(128) });
 const staffRoleBody = z.object({ templateKey: z.string().min(1).max(64).nullable() });
+const staffInviteBody = z.object({ email: z.string().trim().min(3).max(320), templateKey: z.string().min(1).max(64) });
+const personNameBody = z.object({ firstName: z.string().max(80), lastName: z.string().max(80) });
 const deleteBody = z.object({
   confirmSlug: z.string().max(100),
   force: z.object({ reason: z.string().max(500) }).optional(),
@@ -148,6 +165,45 @@ export function createTenancyOperatorHandlers(options: CreateTenancyOperatorHand
           person: adminPersonToWire(await tenancy.setStaffRole({ actorUserId: userId, targetUserId: p["userId"]!, templateKey: body.templateKey, request })),
         });
       }
+      case "admin-person-name": {
+        const body = parse(personNameBody, await readJson(req));
+        return jsonResponse(200, {
+          person: adminPersonToWire(
+            await tenancy.setPersonName({ actorUserId: userId, targetUserId: p["userId"]!, firstName: body.firstName, lastName: body.lastName, request }),
+          ),
+        });
+      }
+      case "admin-staff-invitations":
+        return jsonResponse(200, { invitations: (await tenancy.listStaffInvitations({ actorUserId: userId })).map(staffInvitationToWire) });
+      case "admin-staff-invite": {
+        const body = parse(staffInviteBody, await readJson(req));
+        const result = await tenancy.inviteStaff({ actorUserId: userId, email: body.email, templateKey: body.templateKey, request });
+        if (result.kind === "granted") return jsonResponse(200, { result: "granted", person: adminPersonToWire(result.person) });
+        let email: "sent" | "skipped" | "cooldown" | "failed" = result.sendEmail ? "skipped" : "cooldown";
+        if (result.sendEmail && options.deliverStaffInvitation) {
+          try {
+            email = await options.deliverStaffInvitation({
+              email: result.invitation.email,
+              roleName: result.invitation.role.name,
+              invitedBy: result.invitation.invitedBy,
+              expiresAt: result.invitation.expiresAt,
+              invitationId: result.invitation.id,
+            });
+          } catch (error) {
+            email = "failed";
+            await options.onError?.(error, req);
+          }
+        }
+        return jsonResponse(200, {
+          result: "invited",
+          invitation: staffInvitationToWire(result.invitation),
+          email,
+          signUpUrl: options.staffSignUpUrl ?? null,
+        });
+      }
+      case "admin-staff-invite-revoke":
+        await tenancy.revokeStaffInvitation({ actorUserId: userId, invitationId: p["invitationId"]!, request });
+        return jsonResponse(200, { ok: true });
     }
   }
 

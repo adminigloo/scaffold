@@ -523,7 +523,7 @@ export async function deleteCompany(
   return out.deleted;
 }
 
-async function staffRoleViews(db: TenancyDb, actorRank: number, topRank: number): Promise<StaffRoleView[]> {
+export async function staffRoleViews(db: TenancyDb, actorRank: number, topRank: number): Promise<StaffRoleView[]> {
   const templates = await listRoleTemplates(db, { scope: "staff" });
   return templates.map((t) => ({
     key: t.key,
@@ -535,7 +535,7 @@ async function staffRoleViews(db: TenancyDb, actorRank: number, topRank: number)
   }));
 }
 
-async function personFacts(
+export async function personFacts(
   ctx: Ctx,
   db: TenancyDb,
   actorUserId: string,
@@ -593,7 +593,7 @@ export async function listPeople(
   };
 }
 
-function personOf(r: Record<string, unknown>, actor: { userId: string; rank: number; topRank: number; can: ReadonlySet<string> }): AdminPerson {
+export function personOf(r: Record<string, unknown>, actor: { userId: string; rank: number; topRank: number; can: ReadonlySet<string> }): AdminPerson {
   const key = strOrNull(r["staff_key"]);
   const rank = key ? num(r["staff_rank"]) : 0;
   return {
@@ -605,7 +605,28 @@ function personOf(r: Record<string, unknown>, actor: { userId: string; rank: num
     staffRole: key ? { key, name: str(r["staff_name"]), rank } : null,
     isYou: r["id"] === actor.userId,
     canChange: canChange(actor, str(r["id"]), rank),
+    // Your own name, or anyone's with staff.roles.manage (tenancy 0.9).
+    canRename: r["id"] === actor.userId || actor.can.has("staff.roles.manage"),
   };
+}
+
+/** One person's People row, as this actor sees it (tenancy 0.9: shared by setStaffRole and setPersonName). */
+export async function readAdminPerson(
+  db: TenancyDb,
+  actor: { userId: string; rank: number; topRank: number; can: ReadonlySet<string> },
+  userId: string,
+): Promise<AdminPerson | null> {
+  const rows = await q(
+    db,
+    sql`/* adminigloo:tenancy/admin-person */
+      select u.id, u.email, u.display_name, u.created_at, st.key as staff_key, st.name as staff_name, st.rank as staff_rank,
+             (select count(*) from tenant_members m where m.user_id = u.id and m.status = 'active') as companies
+      from users u
+      left join principal_role sr on sr.principal_id = u.id and sr.scope = 'staff' and sr.tenant_id = '*'
+      left join role_template st on st.id = sr.template_id
+      where u.id = ${userId}`,
+  );
+  return rows[0] ? personOf(rows[0], actor) : null;
 }
 
 export async function listStaffRoles(ctx: Ctx, input: { readonly actorUserId: string }): Promise<StaffRoleView[]> {
@@ -669,17 +690,8 @@ export async function setStaffRole(
         request: input.request ?? null,
       });
     }
-    const rows = await q(
-      tx,
-      sql`/* adminigloo:tenancy/admin-person */
-        select u.id, u.email, u.display_name, u.created_at, st.key as staff_key, st.name as staff_name, st.rank as staff_rank,
-               (select count(*) from tenant_members m where m.user_id = u.id and m.status = 'active') as companies
-        from users u
-        left join principal_role sr on sr.principal_id = u.id and sr.scope = 'staff' and sr.tenant_id = '*'
-        left join role_template st on st.id = sr.template_id
-        where u.id = ${target.id}`,
-    );
-    return personOf(rows[0]!, { userId: input.actorUserId, rank: actor.rank, topRank: actor.topRank, can: actor.can });
+    const person = await readAdminPerson(tx, { userId: input.actorUserId, rank: actor.rank, topRank: actor.topRank, can: actor.can }, target.id);
+    return person!;
   });
 }
 

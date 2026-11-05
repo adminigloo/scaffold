@@ -421,6 +421,45 @@ const drafts = tenancyAlertsFor(
 );
 ```
 
+## Staff invitations and names (0.9)
+
+People can now bring in staff who haven't signed up yet, and fix a name.
+
+| Install | What it adds |
+| --- | --- |
+| `@adminigloo/tenancy` | **Invite to a staff role by address** (`inviteStaff`, staff.roles.manage, the same rank rule as the picker). An address with one account gets the role at once; two accounts on one address are refused; any other waits in `staff_invitations` for 14 days, and inviting it again replaces the role and restarts the clock. **Taken up on the verified address**, in both places a person is first met: `provisionUser` (the webhook, or the first request) and `ensureStaffAccess` (the /admin gate, for an account made before anything claimed it). The role is given with the inviter as the actor, so an inviter who has since lost their rank can't hand it out; a higher role someone already holds is kept. **Withdraw** (`revokeStaffInvitation`). **A person's name** (`setPersonName`): your own with any staff role, anyone's with staff.roles.manage, written to your identity provider first. Every act audited. |
+| `@adminigloo/tenancy-widget/admin` | `<StaffPeople>` gets the Invite form, the invitations waiting, and Edit name. |
+
+Wire it:
+
+```ts
+const tenancy = createTenancyService({
+  // …
+  identity: { updateName: async ({ externalId, firstName, lastName }) => { await (await clerkClient()).users.updateUser(externalId, { firstName, lastName }); } },
+});
+
+createTenancyOperatorHandlers({
+  // …
+  deliverStaffInvitation: async (invitation) => sendStaffInvitationEmail(invitation), // "sent" | "skipped" | "failed"
+  staffSignUpUrl: new URL("/sign-up?redirect_url=%2Fadmin", env.NEXT_PUBLIC_APP_URL).toString(),
+});
+```
+
+In the /admin layout, call `tenancy.ensureStaffAccess(...)` where you called
+`ensureBootstrapAdmin`: it does the bootstrap first, then the invitation.
+
+Without `deliverStaffInvitation`, Invite answers `email: "skipped"` and the
+screen shows `staffSignUpUrl` to pass on. An address is emailed at most once
+in 10 minutes however often Invite is pressed. Without `identity`, a name is
+written locally only, and the provider's next `user.updated` webhook writes
+its own back.
+
+## Upgrading to 0.9
+
+One new table, `staff_invitations`: generate and apply a migration. Nothing
+else changes for code that doesn't use the new functions; `AdminPerson` and
+`AdminPersonWire` gain `canRename`.
+
 ## Upgrading from 0.5
 
 Nothing to migrate. `TenancyService` gains `settleEvents` (a hand-written

@@ -221,7 +221,29 @@ export interface AdminPersonWire {
   companies: number;
   staffRole: { key: string; name: string; rank: number } | null;
   isYou: boolean; canChange: boolean;
+  /** Tenancy 0.9: may the viewer change this person's name. */
+  canRename: boolean;
 }
+/** Tenancy 0.9: a staff role waiting for its owner's first sign-in. */
+export interface StaffInvitationWire {
+  id: string; email: string;
+  role: { key: string; name: string };
+  invitedBy: string | null;
+  createdAt: Instant; expiresAt: Instant; emailedAt: Instant | null;
+  expired: boolean; canRevoke: boolean;
+}
+export interface StaffInviteBody { email: string; templateKey: string }
+/** What Invite did. `email`: sent now, skipped (no mailer, or inside the cooldown), or failed. */
+export type StaffInviteWire =
+  | { result: "granted"; person: AdminPersonWire }
+  | {
+      result: "invited";
+      invitation: StaffInvitationWire;
+      email: "sent" | "skipped" | "cooldown" | "failed";
+      /** Where the invitee signs up, for the screen to show when no email went (the app's `staffSignUpUrl`). */
+      signUpUrl: string | null;
+    };
+export interface PersonNameBody { firstName: string; lastName: string }
 export interface AdminPeopleWire {
   people: AdminPersonWire[]; total: number; page: number; pageSize: number;
   roles: StaffRoleWire[];

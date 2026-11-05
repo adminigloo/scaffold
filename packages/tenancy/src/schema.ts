@@ -362,4 +362,39 @@ export const tenantSlugChanges = pgTable(
   ],
 );
 
-export const tenancySchema = { tenants, tenantMembers, tenantInvitations, tenantRetiredSlugs, tenantSlugChanges };
+/**
+ * A staff role waiting for someone who hasn't signed up yet (tenancy 0.9,
+ * People's Invite). A staff role is a `principal_role` row and needs a user
+ * id, so the address and the role wait here until the first account whose
+ * VERIFIED address matches takes them up (src/server/staff-invitations.ts).
+ * No token: the identity provider proved the address. One open invitation
+ * per address, by the partial unique index.
+ */
+export const staffInvitations = pgTable(
+  "staff_invitations",
+  {
+    id: idColumn(),
+    /** Lowercased by `normaliseInviteEmail` at the boundary. */
+    email: text("email").notNull(),
+    /** A staff role template's key (`admin`, `cs_lead`, `cs_agent`). No foreign key, like tenant_invitations.template_id. */
+    templateKey: text("template_key").notNull(),
+    /** Whose authority it carries: the role is given as if they gave it, at claim time. */
+    invitedBy: text("invited_by"),
+    createdAt: createdAt(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    /** When it was last emailed: one address at most once per STAFF_INVITATION_EMAIL_COOLDOWN_MINUTES. */
+    emailedAt: timestamp("emailed_at", { withTimezone: true }),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    claimedBy: text("claimed_by"),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    revokedBy: text("revoked_by"),
+  },
+  (t) => [
+    uniqueIndex("staff_invitations_open_email_idx")
+      .on(t.email)
+      .where(sql`${t.claimedAt} is null and ${t.revokedAt} is null`),
+    index("staff_invitations_created_idx").on(t.createdAt),
+  ],
+);
+
+export const tenancySchema = { tenants, tenantMembers, tenantInvitations, tenantRetiredSlugs, tenantSlugChanges, staffInvitations };
