@@ -16,6 +16,7 @@ export { PostCard, attempt, lookOf, messageOf, type ActionResult, type QueueActi
 export { canShareFiles, imageFileName, imageFiles, ShareImages, shareLabel, type ShareImagesProps } from "./share.js";
 export { fullScreenSlides, MakeVideo, videoFileName, videoSize, type MakeVideoProps } from "./video.js";
 export { ImageViewer, useImageViewer, viewOnPlainClick, type ViewerImage } from "./viewer.js";
+export { LookControls } from "./LookControls.js";
 export { ComposeForm, type ComposeInput } from "./ComposeForm.js";
 export { CardFormats } from "./CardFormats.js";
 export { createSocialClient, type SocialClient } from "./client.js";

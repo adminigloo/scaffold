@@ -121,7 +121,8 @@ export const socialCss = `
   list-style: none;
 }
 
-/* The Look picker (social 0.6): a 44px select beside its label. */
+/* The Look picker (social 0.6): a 44px select beside its label, and (0.7) the switch's button after it. */
+.social-look-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 .social-look { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .social-look label { font-weight: 600; color: var(--_ink); }
 .social-select { min-height: 44px; min-width: 12rem; max-width: 100%; padding: 0 12px; border: 1px solid var(--_line); border-radius: var(--_radius); background: var(--_surface); color: var(--_ink); font: inherit; }

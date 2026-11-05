@@ -14,11 +14,25 @@ export interface LookOption {
   readonly name: string;
 }
 
+/**
+ * THE LOOKS A POST CAN WEAR, AS THE APP OFFERS THEM (social 0.7): a list to
+ * pick from (the backgrounds, say) and, if the app has one, a switch that
+ * adds something over any of them (confetti, say). A look's key is its
+ * option's, with the switch's suffix when it's on (../look-choices.ts).
+ */
+export interface LookChoices {
+  /** What the list is called: "Background". */
+  readonly label: string;
+  readonly options: readonly LookOption[];
+  /** The switch, if any: the suffix it adds to a look's key, and its button's words each way. */
+  readonly toggle?: { readonly suffix: string; readonly turnOn: string; readonly turnOff: string };
+}
+
 export interface QueueWire {
   /** Today in the business's own time zone (YYYY-MM-DD): what "Today" means on the page. */
   readonly today: string;
-  /** The looks a post can be switched to (social 0.6). None, or left out: no switching. */
-  readonly looks?: readonly LookOption[];
+  /** The looks a post can be switched to (social 0.6; as two choices since 0.7). Left out: no switching. */
+  readonly looks?: LookChoices;
   readonly sections: {
     readonly today: readonly QueuePostView[];
     readonly earlier: readonly QueuePostView[];

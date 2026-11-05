@@ -8,7 +8,8 @@ import { dayText, postAnchor, type PostGroupView, type QueuePostView } from "../
 import { ShareImages } from "./share.js";
 import { MakeVideo } from "./video.js";
 import { useImageViewer, viewOnPlainClick, type ViewerImage } from "./viewer.js";
-import type { LookOption } from "../wire.js";
+import type { LookChoices } from "../wire.js";
+import { LookControls } from "./LookControls.js";
 
 /**
  * What an action answers: nothing when it worked, or a message for the
@@ -147,7 +148,7 @@ function Images({ images, label, onView }: { readonly images: QueuePostView["ima
  * type in and none of the buttons that change it (each would only come back
  * refused).
  */
-export function PostCard({ post, actions, kindLabel, looks }: { readonly post: PostGroupView; readonly actions?: QueueActions; readonly kindLabel: string; readonly looks?: readonly LookOption[] }) {
+export function PostCard({ post, actions, kindLabel, looks }: { readonly post: PostGroupView; readonly actions?: QueueActions; readonly kindLabel: string; readonly looks?: LookChoices }) {
   const uid = useId();
   const firstToDo = post.platforms.find((p) => p.status === "draft") ?? post.platforms.find((p) => p.status === "approved") ?? post.platforms[0]!;
   const [chosen, setChosen] = useState<Platform>(firstToDo.platform);
@@ -212,7 +213,7 @@ export function PostCard({ post, actions, kindLabel, looks }: { readonly post: P
   /* The Look picker (social 0.6): the app's looks, for a post with pictures still to post; it redraws every platform's. */
   const currentLook = lookOf(post.imageSets[0]?.images ?? []);
   const changeable = post.platforms.find((p) => (p.status === "draft" || p.status === "approved") && p.images.length > 0);
-  const lookPicker = looks?.length && actions?.restyle && changeable ? { id: changeable.id, restyle: actions.restyle } : null;
+  const lookPicker = looks?.options.length && actions?.restyle && changeable ? { id: changeable.id, restyle: actions.restyle, choices: looks } : null;
 
   return (
     <article className="social-post" id={postAnchor(post.key)} data-open={post.open || undefined} aria-label={`${kindLabel}, ${dayText(post.day)}`}>
@@ -254,25 +255,16 @@ export function PostCard({ post, actions, kindLabel, looks }: { readonly post: P
       ) : null}
 
       {lookPicker ? (
-        <div className="social-look">
-          <label htmlFor={`${uid}-look`}>Look</label>
-          <select
+        <div className="social-look-row">
+          <LookControls
             id={`${uid}-look`}
-            className="social-select"
+            choices={lookPicker.choices}
             value={currentLook}
             disabled={busy !== null}
-            onChange={(e) => {
-              const next = e.target.value;
-              if (next && next !== currentLook) void run("look", "restyle", () => lookPicker.restyle(lookPicker.id, next));
+            onChange={(next) => {
+              if (next !== currentLook) void run("look", "restyle", () => lookPicker.restyle(lookPicker.id, next));
             }}
-          >
-            {currentLook && looks?.some((l) => l.key === currentLook) ? null : <option value={currentLook}>{currentLook ? "Its own" : "Plain"}</option>}
-            {(looks ?? []).map((l) => (
-              <option key={l.key} value={l.key}>
-                {l.name}
-              </option>
-            ))}
-          </select>
+          />
           {busy === "look:restyle" ? (
             <span className="social-note" role="status">
               Redrawing the pictures…

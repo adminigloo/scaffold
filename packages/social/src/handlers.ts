@@ -7,7 +7,8 @@ import { isWebAddress, postStore, type QueuedPost, type SocialDb } from "./store
 import { asOf } from "./expiry.js";
 import type { DraftImage, PostLife, PostSource } from "./types.js";
 import { postView } from "./view.js";
-import type { CardFormatSet, ComposeWire, LookOption, PostingSessionWire, QueueWire } from "./wire.js";
+import { lookKeys } from "./look-choices.js";
+import type { CardFormatSet, ComposeWire, LookChoices, PostingSessionWire, QueueWire } from "./wire.js";
 import { writePost, type WriterOptions } from "./writer.js";
 
 /**
@@ -216,19 +217,24 @@ export interface CreateSocialAdminHandlersOptions {
   /** How the AI writes for this company: its metered `complete` (or null for none), its honesty check, the mode. */
   readonly writer: (ctx: { readonly tenantId: string; readonly userId: string | null }) => WriterOptions | Promise<WriterOptions>;
   /**
-   * The looks a person can switch a post's pictures to (social 0.6), in the
-   * order to offer them: keys in the card assets' looks, and their names.
-   * Needs `restyle`. None: the pictures keep the look they were made in.
+   * The looks a person can switch a post's pictures to (social 0.6), as two
+   * choices since 0.7: a list (the backgrounds) and, if any, a switch over
+   * them (confetti), each look a key in the card assets' looks. Needs
+   * `restyle`. None: the pictures keep the look they were made in.
    */
-  readonly looks?: (tenantId: string) => readonly LookOption[] | Promise<readonly LookOption[]>;
+  readonly looks?: (tenantId: string) => LookChoices | Promise<LookChoices>;
   /**
    * A post's pictures in another look: the app re-signs each card with it
    * (the app holds the key, and knows its own cards). Null, or a picture that
    * isn't one of the app's cards: they stay as they are.
    */
   readonly restyle?: (images: readonly DraftImage[], look: string, ctx: { readonly tenantId: string }) => readonly DraftImage[] | null | Promise<readonly DraftImage[] | null>;
-  /** Every card format, as samples in the company's own brand, for "See every card format". None: an empty list. */
-  readonly cardFormats?: (tenantId: string) => readonly CardFormatSet[] | Promise<readonly CardFormatSet[]>;
+  /**
+   * Every card format, as samples in the company's own brand, for "See every
+   * card format". Since 0.7, in the look the screen asks for (one of `looks`'),
+   * or none. None: an empty list.
+   */
+  readonly cardFormats?: (tenantId: string, options: { readonly look: string | null }) => readonly CardFormatSet[] | Promise<readonly CardFormatSet[]>;
   /** Today for the company (YYYY-MM-DD), in its own time zone. Default UTC. */
   readonly today?: (tenantId: string, now: Date) => string | Promise<string>;
   /**
@@ -292,10 +298,10 @@ export function createSocialAdminHandlers(options: CreateSocialAdminHandlersOpti
           const day = await today();
           const sections = await queue.sections(day, { life: options.life, now });
           const view = (rows: readonly QueuedPost[]) => rows.map((r) => postView(r, options.life, now));
-          const looks = options.looks && options.restyle ? await options.looks(scoped) : [];
+          const looks = options.looks && options.restyle ? await options.looks(scoped) : null;
           const wire: QueueWire = {
             today: day,
-            ...(looks.length ? { looks } : {}),
+            ...(looks?.options.length ? { looks } : {}),
             sections: { today: view(sections.today), earlier: view(sections.earlier), ready: view(sections.ready), history: view(sections.history), expired: view(sections.expired) },
           };
           return json(wire);
@@ -362,11 +368,11 @@ export function createSocialAdminHandlers(options: CreateSocialAdminHandlersOpti
         }
         case "look": {
           const post = await own(matched.id ?? "");
-          const offered = options.looks && options.restyle ? await options.looks(scoped) : [];
+          const offered = options.looks && options.restyle ? lookKeys(await options.looks(scoped)) : [];
           if (!offered.length || !options.restyle) throw notFound();
           const body = await readJson(req);
           const look = typeof body.look === "string" ? body.look.trim() : "";
-          if (!offered.some((l) => l.key === look)) throw new HttpRefusal("invalid", 400, "Choose one of the looks.");
+          if (!offered.includes(look)) throw new HttpRefusal("invalid", 400, "Choose one of the looks.");
           // Every platform of the post, so all its cards wear the one look; what's been posted or skipped keeps its pictures.
           const rows = (await queue.list({ keys: [post.key] })).filter((r) => (r.status === "draft" || r.status === "approved") && r.images.length > 0);
           if (!rows.length) throw new HttpRefusal("conflict", 409, "That post's pictures can't change now: it's been posted or skipped.");
@@ -401,8 +407,14 @@ export function createSocialAdminHandlers(options: CreateSocialAdminHandlersOpti
           };
           return json(wire);
         }
-        case "card-formats":
-          return json({ sets: options.cardFormats ? await options.cardFormats(scoped) : [] });
+        case "card-formats": {
+          // The samples in one of the app's looks (social 0.7), or in none.
+          const asked = new URL(req.url).searchParams.get("look")?.trim() || null;
+          if (asked && !(options.looks && options.restyle ? lookKeys(await options.looks(scoped)) : []).includes(asked)) {
+            throw new HttpRefusal("invalid", 400, "Choose one of the looks.");
+          }
+          return json({ sets: options.cardFormats ? await options.cardFormats(scoped, { look: asked }) : [] });
+        }
       }
     } catch (error) {
       if (!(error instanceof HttpRefusal)) report(error, tenantId, matched.kind);

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { firstLook } from "../look-choices.js";
 import type { CardFormatSet, QueueWire } from "../wire.js";
 import { CardFormats } from "./CardFormats.js";
 import { createSocialClient } from "./client.js";
@@ -41,6 +42,9 @@ export function PostsAdmin({ baseUrl, canManage, businessName, fetcher }: PostsA
   const [error, setError] = useState<string | null>(null);
   const [formats, setFormats] = useState<readonly CardFormatSet[] | null>(null);
   const [formatsError, setFormatsError] = useState<string | null>(null);
+  /* The look the card formats show in (social 0.7), and whether another's are loading. */
+  const [formatsLook, setFormatsLook] = useState<string | null>(null);
+  const [formatsLoading, setFormatsLoading] = useState(false);
 
   const reload = useCallback(async () => {
     try {
@@ -86,13 +90,19 @@ export function PostsAdmin({ baseUrl, canManage, businessName, fetcher }: PostsA
     [client, reload],
   );
 
-  const loadFormats = async () => {
-    if (formats) return;
+  const loadFormats = async (look?: string | null) => {
+    if (formats && look === undefined) return;
+    // First open: the app's first look (its first background, its switch on), when it has looks.
+    const wanted = look === undefined ? (queue?.looks ? firstLook(queue.looks) : null) : look;
+    setFormatsLoading(true);
     try {
-      setFormats(await client.cardFormats());
+      setFormats(await client.cardFormats(wanted));
+      setFormatsLook(wanted);
       setFormatsError(null);
     } catch (e) {
       setFormatsError(e instanceof Error ? e.message : "The card formats couldn't be read.");
+    } finally {
+      setFormatsLoading(false);
     }
   };
 
@@ -198,7 +208,7 @@ export function PostsAdmin({ baseUrl, canManage, businessName, fetcher }: PostsA
             {formatsError}
           </p>
         ) : formats ? (
-          <CardFormats sets={formats} />
+          <CardFormats sets={formats} {...(queue?.looks ? { looks: queue.looks, look: formatsLook, onLook: (look: string) => void loadFormats(look), loading: formatsLoading } : {})} />
         ) : (
           <p className="social-empty">Loading the card formats…</p>
         )}

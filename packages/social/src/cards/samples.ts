@@ -28,11 +28,20 @@ const RATIO: Readonly<Record<CardSize, string>> = { square: "1:1", portrait: "4:
 
 /**
  * Every sample set, in the brand given (a company's own name and colour), or
- * the app's. With the app's looks (social 0.5), a set for each: its quote
- * card at 1:1, its announcement at 4:5, and the announcement at 9:16. A
- * company's card wears no look, so a brand gets none.
+ * the app's. With `look` (social 0.7), every card wears that one of the app's
+ * looks, for "See every card format" shown a look at a time. With `looks`
+ * (social 0.5), a set for each besides: its quote card at 1:1, its
+ * announcement at 4:5, and the announcement at 9:16. A company's card wears
+ * no look, so a brand gets neither.
  */
-export function sampleCardSets(brand?: CardBrandWords, options: { readonly looks?: readonly CardSampleLook[] } = {}): CardSampleSet[] {
+export function sampleCardSets(brand?: CardBrandWords, options: { readonly looks?: readonly CardSampleLook[]; readonly look?: string | null } = {}): CardSampleSet[] {
+  const look = brand ? null : (options.look ?? null);
+  const sets = baseSets(brand, look ? {} : options);
+  return look ? sets.map((set) => ({ ...set, specs: set.specs.map((spec) => ({ ...spec, look })) })) : sets;
+}
+
+/** The sample sets, and (social 0.5) one for each look given. */
+function baseSets(brand: CardBrandWords | undefined, options: { readonly looks?: readonly CardSampleLook[] }): CardSampleSet[] {
   const b = brand ? { brand } : {};
   const launch = {
     hook: "We're open on Saturdays now, 9 to 1.",

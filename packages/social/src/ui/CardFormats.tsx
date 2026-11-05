@@ -1,7 +1,8 @@
 /* eslint-disable @next/next/no-img-element -- the cards are PNGs from the app's own card route, shown at their own size */
 "use client";
 
-import type { CardFormatImage, CardFormatSet } from "../wire.js";
+import type { CardFormatImage, CardFormatSet, LookChoices } from "../wire.js";
+import { LookControls } from "./LookControls.js";
 import { SocialStyles } from "./styles.js";
 import { MakeVideo } from "./video.js";
 import { useImageViewer, viewOnPlainClick } from "./viewer.js";
@@ -12,6 +13,10 @@ import { useImageViewer, viewOnPlainClick } from "./viewer.js";
  * Samples only: made-up words, nothing here is posted. Each opens the viewer
  * with its set (social 0.5), and a set in one of the app's looks can be made
  * into a video at each of its sizes, to see how the look moves.
+ *
+ * With the app's looks (social 0.7) every format shows in one look at a time,
+ * chosen with the same two controls a post has (the background, and the
+ * switch over it), where a set per look was too much to read.
  */
 
 /** "9:16" for a 1080 × 1920 card. */
@@ -43,12 +48,36 @@ function wearsLook(image: CardFormatImage): boolean {
     return false;
   }
 }
-export function CardFormats({ sets }: { readonly sets: readonly CardFormatSet[] }) {
+export function CardFormats({
+  sets,
+  looks,
+  look,
+  onLook,
+  loading = false,
+}: {
+  readonly sets: readonly CardFormatSet[];
+  /** The app's looks (social 0.7): the formats show in `look`, and `onLook` asks for them in another. */
+  readonly looks?: LookChoices;
+  readonly look?: string | null;
+  readonly onLook?: (look: string) => void;
+  /** Another look's formats are on their way. */
+  readonly loading?: boolean;
+}) {
   const { open, viewer } = useImageViewer();
   return (
     <div className="social social-formats">
       <SocialStyles />
       <p className="social-section-hint">Every card on this page is a sample: the words and numbers are made up, to show the formats. A real post&rsquo;s cards are drawn from its own words.</p>
+      {looks?.options.length && onLook ? (
+        <div className="social-look-row">
+          <LookControls id="social-formats-look" choices={looks} value={look ?? ""} onChange={onLook} disabled={loading} />
+          {loading ? (
+            <span className="social-note" role="status">
+              Drawing the cards…
+            </span>
+          ) : null}
+        </div>
+      ) : null}
       {sets.length === 0 ? <p className="social-empty">No card formats to show.</p> : null}
       {sets.map((set) => (
         <section key={set.key} className="social-format-set" aria-labelledby={`social-formats-${set.key}`} data-sample-set={set.key}>

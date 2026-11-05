@@ -44,6 +44,20 @@ posting-session list) and marks each one posted with its link.
   read and write is inside it: one company never sees, approves or forgets
   another's posts, even under the same key. `"*"` is the site's own posts.
 
+## New in 0.7: a look is a background, and a switch over it
+
+The looks are offered as two choices instead of one long list: a dropdown
+(`label`, `options`: the backgrounds, say) and, if the app has one, a switch
+that adds something over any of them (`toggle`: its key `suffix` and its
+button's words, "Turn on confetti" / "Turn off confetti"). A look's key is the
+option's, with the suffix when the switch is on: `spray`, `spray-confetti`.
+The same two controls (`<LookControls>`) are on each post and at the top of
+**See every card format**, which now shows every format in the one look
+chosen (`cardFormats(tenantId, { look })`, `GET v1/admin/card-formats?look=`,
+`sampleCardSets(brand, { look })`) instead of a set per look. The handler's
+`looks()` returns `LookChoices`; 0.6's flat list is `{ label, options }`.
+`lookKeys`, `lookKey`, `lookParts` and `firstLook` read and build the keys.
+
 ## New in 0.6: switch a post's look, and rain
 
 - **The Look picker.** Give the handler your looks and a way to redraw a

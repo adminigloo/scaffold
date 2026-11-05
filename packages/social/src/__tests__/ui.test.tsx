@@ -8,6 +8,9 @@ import { launchSource } from "../sources.js";
 import { createSocialClient } from "../ui/client.js";
 import { PostQueue } from "../ui/PostQueue.js";
 import { PostsAdmin } from "../ui/PostsAdmin.js";
+import { CardFormats } from "../ui/CardFormats.js";
+import { lookKey, lookParts } from "../look-choices.js";
+import type { LookChoices } from "../wire.js";
 import type { QueuePostView } from "../view.js";
 import { createTestDb, type TestDb } from "./pglite.js";
 
@@ -160,34 +163,56 @@ describe("the posts screen, over the real handler", () => {
   });
 });
 
-describe("the Look picker (social 0.6)", () => {
-  it("shows the post's look among the app's, and switches every platform's pictures with one choice", async () => {
+/** The app's looks as two choices (social 0.7): the background, and confetti over it. */
+const LOOKS: LookChoices = {
+  label: "Background",
+  options: [
+    { key: "spray", name: "Spray paint" },
+    { key: "dark", name: "Dark" },
+  ],
+  toggle: { suffix: "-confetti", turnOn: "Turn on confetti", turnOff: "Turn off confetti" },
+};
+
+describe("the Look picker (social 0.6; a background and a switch since 0.7)", () => {
+  it("reads a look as its two choices, and puts them back together", () => {
+    expect(lookParts(LOOKS, "dark-confetti")).toEqual({ option: "dark", on: true });
+    expect(lookParts(LOOKS, "spray")).toEqual({ option: "spray", on: false });
+    expect(lookParts(LOOKS, "")).toBeNull();
+    expect(lookParts(LOOKS, "retired")).toBeNull();
+    expect(lookKey(LOOKS, "spray", true)).toBe("spray-confetti");
+    expect(lookKey({ ...LOOKS, toggle: undefined }, "spray", true)).toBe("spray");
+  });
+
+  it("shows the post's background and its confetti, and switches every platform's pictures with either", async () => {
     const asked: [string, string][] = [];
     const actions = { ...noActions, restyle: async (id: string, look: string) => void asked.push([id, look]) };
-    const looks = [
-      { key: "spray", name: "Spray paint" },
-      { key: "confetti", name: "Confetti" },
-    ];
-    const post = view({ images: [{ url: "https://example.com/api/social/card?kind=quote&look=confetti&sig=s", alt: "The card", width: 1080, height: 1080 }] });
-    const m = await mount(<PostQueue posts={[post, view({ id: "p2", platform: "linkedin" })]} actions={actions} looks={looks} />);
+    const post = view({ images: [{ url: "https://example.com/api/social/card?kind=quote&look=dark-confetti&sig=s", alt: "The card", width: 1080, height: 1080 }] });
+    const m = await mount(<PostQueue posts={[post, view({ id: "p2", platform: "linkedin" })]} actions={actions} looks={LOOKS} />);
     const select = m.container.querySelector(".social-look select") as HTMLSelectElement;
-    expect([...select.options].map((o) => o.textContent)).toEqual(["Spray paint", "Confetti"]);
-    expect(select.value).toBe("confetti");
-    expect(m.container.querySelector(".social-look label")?.textContent).toBe("Look");
+    expect([...select.options].map((o) => o.textContent)).toEqual(["Spray paint", "Dark"]);
+    expect(select.value).toBe("dark");
+    expect(m.container.querySelector(".social-look label")?.textContent).toBe("Background");
+    expect(buttonNamed(m.container, "Turn off confetti")).toBeTruthy();
     await act(async () => {
       select.value = "spray";
       select.dispatchEvent(new Event("change", { bubbles: true }));
     });
-    expect(asked).toEqual([["p1", "spray"]]);
+    await act(async () => buttonNamed(m.container, "Turn off confetti")!.click());
+    expect(asked).toEqual([
+      ["p1", "spray-confetti"],
+      ["p1", "dark"],
+    ]);
     await m.unmount();
   });
 
   it("offers Plain for a post made before the looks, and no picker once nothing can change or without the app's looks", async () => {
     const actions = { ...noActions, restyle: async () => undefined };
-    const looks = [{ key: "spray", name: "Spray paint" }];
+    const looks = LOOKS;
     const before = await mount(<PostQueue posts={[view()]} actions={actions} looks={looks} />);
     const select = before.container.querySelector(".social-look select") as HTMLSelectElement;
-    expect([...select.options].map((o) => o.textContent)).toEqual(["Plain", "Spray paint"]);
+    expect([...select.options].map((o) => o.textContent)).toEqual(["Plain", "Spray paint", "Dark"]);
+    // Confetti goes over a background: none chosen yet, nothing to turn on.
+    expect((buttonNamed(before.container, "Turn on confetti") as HTMLButtonElement).disabled).toBe(true);
     await before.unmount();
     // The element, not the stylesheet's rule for it (the styles render with every queue).
     const picker = 'class="social-look"';
@@ -195,6 +220,17 @@ describe("the Look picker (social 0.6)", () => {
     expect(renderToStaticMarkup(<PostQueue posts={[view()]} actions={actions} />)).not.toContain(picker);
     expect(renderToStaticMarkup(<PostQueue posts={[view()]} actions={actions} looks={looks} readOnly />)).not.toContain(picker);
     expect(renderToStaticMarkup(<PostQueue posts={[view()]} actions={actions} looks={looks} />)).toContain(picker);
+  });
+
+  it("shows every card format in one look at a time, with the same two controls", async () => {
+    const asked: string[] = [];
+    const sets = [{ key: "quote", title: "Quote card", about: "Samples", images: [{ url: "https://example.com/api/social/card?kind=quote&look=spray-confetti&sig=s", alt: "A sample", width: 1080, height: 1080, label: "quote · 1:1 · 1080×1080" }] }];
+    const m = await mount(<CardFormats sets={sets} looks={LOOKS} look="spray-confetti" onLook={(look) => void asked.push(look)} />);
+    expect((m.container.querySelector(".social-look select") as HTMLSelectElement).value).toBe("spray");
+    await act(async () => buttonNamed(m.container, "Turn off confetti")!.click());
+    expect(asked).toEqual(["spray"]);
+    expect(m.container.querySelectorAll("section.social-format-set")).toHaveLength(1);
+    await m.unmount();
   });
 
   it("tells each platform how to post something that moves: the video, in place of the picture", () => {

@@ -48,8 +48,8 @@ async function call<T>(fetcher: typeof fetch, url: string, init?: RequestInit): 
 export interface SocialClient {
   /** The queue as the page shows it. Throws with a sentence when it can't be read. */
   readonly queue: () => Promise<QueueWire>;
-  /** Every card format, as samples. */
-  readonly cardFormats: () => Promise<readonly CardFormatSet[]>;
+  /** Every card format, as samples: in one of the app's looks (social 0.7), or in none. */
+  readonly cardFormats: (look?: string | null) => Promise<readonly CardFormatSet[]>;
   /** What the cards' buttons do, the Look picker's included. */
   readonly actions: Required<QueueActions>;
   /** A post from a person's own facts. */
@@ -70,8 +70,8 @@ export function createSocialClient(baseUrl: string, fetcher: typeof fetch = (inp
       if (!answer.ok) throw new Error(answer.message);
       return answer.body;
     },
-    async cardFormats() {
-      const answer = await call<{ sets: readonly CardFormatSet[] }>(fetcher, `${base}/v1/admin/card-formats`);
+    async cardFormats(look) {
+      const answer = await call<{ sets: readonly CardFormatSet[] }>(fetcher, `${base}/v1/admin/card-formats${look ? `?look=${encodeURIComponent(look)}` : ""}`);
       if (!answer.ok) throw new Error(answer.message);
       return answer.body.sets ?? [];
     },
