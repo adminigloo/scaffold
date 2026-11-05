@@ -444,7 +444,8 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.4.0: the cards take the brand's whole logo (`brand.logo`) as their header.
   // 0.5.0: looks, cards that move in video (every platform with pictures), the picture viewer.
   // 0.6.0: the Look picker on each post, and confetti that rains.
-  social: "0.6.0",
+  // 0.7.0: a look is a background and a switch over it; the card formats a look at a time.
+  social: "0.7.0",
 };
 
 export class UnknownPackageVersionError extends Error {
