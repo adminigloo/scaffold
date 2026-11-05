@@ -259,7 +259,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // inline, which put a fourteenth version in a place no drift test looked at —
   // the exact arrangement the rest of this table exists to replace.
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company (./forget, the proof's planter).
-  testing: "0.3.2",
+  testing: "0.3.3",
   // Field service — first releases, pinned at the workspace versions the drift
   // test reads. The emitted routers/handlers import from each unconditionally
   // for the config that selects it, so a caret over anything older can resolve

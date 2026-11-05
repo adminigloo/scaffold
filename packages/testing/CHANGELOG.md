@@ -1,5 +1,12 @@
 # @adminigloo/testing
 
+## 0.3.3
+
+### Patch Changes
+
+- Updated dependencies [2e673ec]
+  - @adminigloo/tenancy@0.9.0
+
 ## 0.3.2
 
 ### Patch Changes
