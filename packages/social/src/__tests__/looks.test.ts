@@ -53,6 +53,7 @@ const ASSETS: CardAssets = {
         { kind: "ball", color: "#29baf8", size: 100, x: width - 60, y: 60, label: "GO", ink: "#ffffff", enter: "pop", delay: 0.1, bob: true },
         { kind: "bit", shape: "rect", color: "#fa5351", size: 40, x: 60, y: 60, rotate: 30, enter: "none" },
         { kind: "art", art: DOT, width: 517, x: 200, y: height - 160, rotate: 180, opacity: 0.5, enter: "spray", from: { x: 0, y: height }, stays: true, delay: 0.3 },
+        { kind: "bit", shape: "strip", color: "#a3e635", size: 36, x: 540, y: 300, rotate: 20, enter: "rain", fall: 4.5, sway: 20, spin: -180 },
       ],
       eyebrow: { art: { ...DOT, width: 334, height: 52 }, color: "#1a1a1a" },
       words: "slide",
@@ -143,8 +144,10 @@ describe("a card's parts, for a video", () => {
       look: "party",
       words: "slide",
       pieces: [
-        { index: 0, ...decorBox(decor[0]!), x: 1020, y: 60, from: { x: 1020, y: 60 }, enter: "pop", delay: 0.1, bob: true, stays: false },
-        { index: 2, ...decorBox(decor[2]!), x: 200, y: 920, from: { x: 0, y: 1080 }, enter: "spray", delay: 0.3, bob: false, stays: true },
+        { index: 0, ...decorBox(decor[0]!), x: 1020, y: 60, from: { x: 1020, y: 60 }, enter: "pop", delay: 0.1, bob: true, stays: false, fall: 0, sway: 0, spin: 0 },
+        { index: 2, ...decorBox(decor[2]!), x: 200, y: 920, from: { x: 0, y: 1080 }, enter: "spray", delay: 0.3, bob: false, stays: true, fall: 0, sway: 0, spin: 0 },
+        // Rain carries its fall, sway and spin (social 0.6).
+        { index: 3, ...decorBox(decor[3]!), x: 540, y: 300, from: { x: 540, y: 300 }, enter: "rain", delay: 0, bob: false, stays: false, fall: 4.5, sway: 20, spin: -180 },
       ],
     });
     expect(await (await get(cardLayerUrl(urlOf({ ...cover, look: undefined }), "motion"))).json()).toEqual({ width: 1080, height: 1080, look: null, words: "rise", pieces: [] });

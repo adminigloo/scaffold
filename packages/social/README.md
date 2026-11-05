@@ -44,6 +44,27 @@ posting-session list) and marks each one posted with its link.
   read and write is inside it: one company never sees, approves or forgets
   another's posts, even under the same key. `"*"` is the site's own posts.
 
+## New in 0.6: switch a post's look, and rain
+
+- **The Look picker.** Give the handler your looks and a way to redraw a
+  post's pictures in one (`looks: () => [{ key, name }]` and
+  `restyle(images, look)`, which re-signs each of your cards with the look),
+  and each post on the queue gets a **Look** select under its pictures. One
+  choice redraws every platform's pictures that hasn't been posted or skipped
+  (`POST v1/admin/posts/{post}/look`); what went out keeps its pictures, and
+  what a person has typed isn't touched. A post made before your looks shows
+  "Plain". `QueueWire.looks` carries the list; `lookOf(images)` reads a post's.
+- **Rain.** `enter: "rain"` falls a piece through the card the whole clip
+  long, behind the words, from where the card has it (the first frame is the
+  card as posted), wrapping back in at the top: `fall` (seconds to cross the
+  card), `sway` (px) and `spin` (degrees a second; none, and it wobbles, as a
+  ball with a word on it should). Each repeats a whole number of times in the
+  clip, so the loop has no seam, and every card of a video draws it on the
+  clip's own clock, so a cross never doubles it. `rainAt` in `./video`.
+- **A post that moves.** Each platform with pictures says so on its panel:
+  Make a video, then upload the video in place of the picture. A pasted or
+  uploaded picture stays still.
+
 ## New in 0.5: looks, cards that move, and a viewer
 
 - **Looks.** Give the card route your own looks (`assets.looks`, by key) and

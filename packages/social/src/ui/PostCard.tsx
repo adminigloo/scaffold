@@ -8,6 +8,7 @@ import { dayText, postAnchor, type PostGroupView, type QueuePostView } from "../
 import { ShareImages } from "./share.js";
 import { MakeVideo } from "./video.js";
 import { useImageViewer, viewOnPlainClick, type ViewerImage } from "./viewer.js";
+import type { LookOption } from "../wire.js";
 
 /**
  * What an action answers: nothing when it worked, or a message for the
@@ -27,6 +28,19 @@ export interface QueueActions {
   readonly approve: (ids: string[]) => Promise<ActionResult>;
   readonly markPosted: (id: string, url: string) => Promise<ActionResult>;
   readonly skip: (id: string) => Promise<ActionResult>;
+  /** A post's pictures in another look (social 0.6): `id` is any one of its platforms; all of them change. */
+  readonly restyle?: (id: string, look: string) => Promise<ActionResult>;
+}
+
+/** The look a post's cards wear: the `look` in its first card's signed address ("" for none). */
+export function lookOf(images: readonly { readonly url: string }[]): string {
+  const first = images[0];
+  if (!first) return "";
+  try {
+    return new URL(first.url, "https://card.invalid").searchParams.get("look") ?? "";
+  } catch {
+    return "";
+  }
 }
 
 /** An action's message for the person, or null when it worked. */
@@ -133,7 +147,7 @@ function Images({ images, label, onView }: { readonly images: QueuePostView["ima
  * type in and none of the buttons that change it (each would only come back
  * refused).
  */
-export function PostCard({ post, actions, kindLabel }: { readonly post: PostGroupView; readonly actions?: QueueActions; readonly kindLabel: string }) {
+export function PostCard({ post, actions, kindLabel, looks }: { readonly post: PostGroupView; readonly actions?: QueueActions; readonly kindLabel: string; readonly looks?: readonly LookOption[] }) {
   const uid = useId();
   const firstToDo = post.platforms.find((p) => p.status === "draft") ?? post.platforms.find((p) => p.status === "approved") ?? post.platforms[0]!;
   const [chosen, setChosen] = useState<Platform>(firstToDo.platform);
@@ -195,6 +209,11 @@ export function PostCard({ post, actions, kindLabel }: { readonly post: PostGrou
   const panel = `${uid}-panel`;
   const tabId = (p: Platform) => `${uid}-tab-${p}`;
 
+  /* The Look picker (social 0.6): the app's looks, for a post with pictures still to post; it redraws every platform's. */
+  const currentLook = lookOf(post.imageSets[0]?.images ?? []);
+  const changeable = post.platforms.find((p) => (p.status === "draft" || p.status === "approved") && p.images.length > 0);
+  const lookPicker = looks?.length && actions?.restyle && changeable ? { id: changeable.id, restyle: actions.restyle } : null;
+
   return (
     <article className="social-post" id={postAnchor(post.key)} data-open={post.open || undefined} aria-label={`${kindLabel}, ${dayText(post.day)}`}>
       <header className="social-post-head">
@@ -232,6 +251,39 @@ export function PostCard({ post, actions, kindLabel }: { readonly post: PostGrou
             );
           })}
         </ul>
+      ) : null}
+
+      {lookPicker ? (
+        <div className="social-look">
+          <label htmlFor={`${uid}-look`}>Look</label>
+          <select
+            id={`${uid}-look`}
+            className="social-select"
+            value={currentLook}
+            disabled={busy !== null}
+            onChange={(e) => {
+              const next = e.target.value;
+              if (next && next !== currentLook) void run("look", "restyle", () => lookPicker.restyle(lookPicker.id, next));
+            }}
+          >
+            {currentLook && looks?.some((l) => l.key === currentLook) ? null : <option value={currentLook}>{currentLook ? "Its own" : "Plain"}</option>}
+            {(looks ?? []).map((l) => (
+              <option key={l.key} value={l.key}>
+                {l.name}
+              </option>
+            ))}
+          </select>
+          {busy === "look:restyle" ? (
+            <span className="social-note" role="status">
+              Redrawing the pictures…
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+      {error?.where === "look" ? (
+        <p className="social-error" role="alert">
+          {error.message}
+        </p>
       ) : null}
 
       {waiting.length && actions ? (
@@ -407,6 +459,10 @@ function PlatformPanel({
       {rule.captionOnly ? (
         <p className="social-note">
           In {rule.name}: the pictures open as a slideshow, or make them a video (videos get more engagement there). If {rule.name} isn&rsquo;t in the share list, save them to your photos and pick them in {rule.name}. Add a sound from {rule.name}&rsquo;s library, paste the caption, then post.
+        </p>
+      ) : post.images.length ? (
+        <p className="social-note">
+          For a post that moves: Make a video, then upload the video in {rule.name} in place of the {post.images.length > 1 ? "pictures" : "picture"}. A pasted or uploaded picture stays still.
         </p>
       ) : null}
       <div className="social-actions">

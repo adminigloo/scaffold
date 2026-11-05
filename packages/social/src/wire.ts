@@ -8,9 +8,17 @@ import type { QueuePostView } from "./view.js";
  */
 
 /** GET v1/admin/posts: the queue as the page shows it. */
+/** One of the app's looks a post's pictures can wear (social 0.6): its key in the card assets, and what to call it. */
+export interface LookOption {
+  readonly key: string;
+  readonly name: string;
+}
+
 export interface QueueWire {
   /** Today in the business's own time zone (YYYY-MM-DD): what "Today" means on the page. */
   readonly today: string;
+  /** The looks a post can be switched to (social 0.6). None, or left out: no switching. */
+  readonly looks?: readonly LookOption[];
   readonly sections: {
     readonly today: readonly QueuePostView[];
     readonly earlier: readonly QueuePostView[];

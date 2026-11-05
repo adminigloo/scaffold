@@ -50,8 +50,8 @@ export interface SocialClient {
   readonly queue: () => Promise<QueueWire>;
   /** Every card format, as samples. */
   readonly cardFormats: () => Promise<readonly CardFormatSet[]>;
-  /** What the cards' buttons do. */
-  readonly actions: QueueActions;
+  /** What the cards' buttons do, the Look picker's included. */
+  readonly actions: Required<QueueActions>;
   /** A post from a person's own facts. */
   readonly compose: (input: { readonly facts: string; readonly link: string; readonly hashtags?: string }) => Promise<ActionResult | { readonly written: ComposeWire }>;
   /** The posting session's list (JSON), for a link. */
@@ -80,6 +80,7 @@ export function createSocialClient(baseUrl: string, fetcher: typeof fetch = (inp
       approve: async (ids: string[]) => done(await post("approve", { ids })),
       markPosted: async (postId: string, url: string) => done(await post(`posts/${id(postId)}/posted`, { url })),
       skip: async (postId: string) => done(await post(`posts/${id(postId)}/skip`, {})),
+      restyle: async (postId: string, look: string) => done(await post(`posts/${id(postId)}/look`, { look })),
     },
     async compose(input) {
       const answer = await call<ComposeWire>(fetcher, `${base}/v1/admin/compose`, { method: "POST", body: JSON.stringify({ facts: input.facts, link: input.link, hashtags: input.hashtags ?? "" }) });

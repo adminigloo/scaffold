@@ -54,6 +54,12 @@ function handlerFor(options: { readonly can?: readonly SocialPermission[]; reado
       }),
     writer: options.complete ?? (() => ({ complete: null, honesty: genericHonesty, mode: "aside" })),
     cardFormats: (tenantId) => [{ key: "quote", title: "Quote card", about: `Samples for ${tenantId}`, images: [] }],
+    // The Look picker (social 0.6): the probe's look is one of them, so the route table's every row can be driven.
+    looks: () => [
+      { key: "isolation-probe", name: "Probe" },
+      { key: "party", name: "Party" },
+    ],
+    restyle: (images, look) => (look === "party" || look === "isolation-probe" ? images.map((i) => ({ ...i, url: `${i.url.replace(/&look=[^&]*/, "")}&look=${look}` })) : null),
     today: () => "2026-10-27",
     now: () => NOW,
   });
@@ -185,6 +191,44 @@ describe("the queue's routes", () => {
     expect(session.posts[0]).toMatchObject({ id: x.id, platform: "x", platformName: "X", text: x.text, firstComment: x.firstComment, images: x.images });
     expect(session.posts[0]!.composeUrl).toBe(`https://x.com/intent/post?text=${encodeURIComponent(x.text)}`);
     expect(session.markPosted).toEqual({ method: "POST", url: "/api/app/alpha/posts/v1/admin/posts/{id}/posted", body: { url: "<the post's own link>" } });
+  });
+
+  it("switches a post's pictures to another look on every platform not posted or skipped, and lists the looks with the queue", async () => {
+    const { handle } = handlerFor();
+    await compose(handle, "alpha", "We now mow on Saturdays, 8 to noon.");
+    const queue = await queueOf(handle, "alpha");
+    expect(queue.looks).toEqual([
+      { key: "isolation-probe", name: "Probe" },
+      { key: "party", name: "Party" },
+    ]);
+    const rows = queue.sections.today;
+    const x = rows.find((p) => p.platform === "x")!;
+    const linkedin = rows.find((p) => p.platform === "linkedin")!;
+    const reddit = rows.find((p) => p.platform === "reddit")!;
+    // LinkedIn is posted first: what went out keeps its pictures.
+    expect((await handle(post("alpha", `v1/admin/posts/${linkedin.id}/posted`, { url: "https://linkedin.com/posts/1" }))).status).toBe(200);
+    const res = await handle(post("alpha", `v1/admin/posts/${x.id}/look`, { look: "party" }));
+    expect(res.status).toBe(200);
+    const after = (await queueOf(handle, "alpha")).sections;
+    const all = [...after.today, ...after.ready, ...after.history];
+    for (const row of all.filter((p) => p.platform !== "linkedin" && p.platform !== "reddit")) {
+      expect(row.images.every((i) => i.url.endsWith("&look=party")), row.platform).toBe(true);
+      // The words and their edit stamp stay as they were.
+      expect(row.updatedAt, row.platform).toBe(rows.find((p) => p.id === row.id)!.updatedAt);
+    }
+    expect(all.find((p) => p.id === linkedin.id)!.images).toEqual(linkedin.images);
+    expect(all.find((p) => p.id === reddit.id)!.images).toEqual([]);
+    expect(await res.json()).toEqual({ restyled: rows.filter((p) => p.platform !== "linkedin" && p.images.length).length });
+    // A look the app doesn't offer, and a picture the app can't redraw, are refused.
+    const refused = await handle(post("alpha", `v1/admin/posts/${x.id}/look`, { look: "nope" }));
+    expect([refused.status, ((await refused.json()) as { error: { message: string } }).error.message]).toEqual([400, "Choose one of the looks."]);
+  });
+
+  it("has no Look picker without the app's looks, and won't take looks without a way to redraw", async () => {
+    const plain = createSocialAdminHandlers({ db: test.db, tenantId: "alpha", authorize: () => ({ userId: "u1" }), compose: () => { throw new Error("never"); }, writer: () => ({ complete: null }) });
+    expect("looks" in ((await (await plain.handle(get("alpha", "v1/admin/posts"))).json()) as QueueWire)).toBe(false);
+    expect((await plain.handle(post("alpha", "v1/admin/posts/anything/look", { look: "party" }))).status).toBe(404);
+    expect(() => createSocialAdminHandlers({ db: test.db, tenantId: "alpha", authorize: () => true, compose: () => { throw new Error("never"); }, writer: () => ({ complete: null }), looks: () => [{ key: "party", name: "Party" }] })).toThrow(/looks needs restyle/);
   });
 
   it("shows the app's card formats for the company", async () => {

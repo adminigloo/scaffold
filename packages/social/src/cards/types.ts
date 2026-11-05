@@ -111,6 +111,16 @@ interface CardDecorBase {
    * that pops up on each).
    */
   readonly stays?: boolean;
+  /**
+   * "rain" (social 0.6): how many seconds it takes to fall the card's height
+   * (default 4), how far it sways side to side in pixels (default 0), and how
+   * fast it spins in degrees a second (default 0: it wobbles instead, the way
+   * a ball with a word on it should). The clip rounds each so it repeats a
+   * whole number of times, and the loop has no seam.
+   */
+  readonly fall?: number;
+  readonly sway?: number;
+  readonly spin?: number;
   /** "spray": where the paint comes from, in the card's pixels (a corner, say). Default: its centre. */
   readonly from?: { readonly x: number; readonly y: number };
 }

@@ -71,7 +71,23 @@ export function motionOf(spec: CardSpec, drawn: CardAssets): CardMotion {
   const pieces = cardDecor(spec, drawn).flatMap((piece, index): CardMotionPiece[] => {
     const enter = entranceOf(piece);
     if (enter === "none") return [];
-    return [{ index, ...decorBox(piece), x: piece.x, y: piece.y, from: piece.from ?? { x: piece.x, y: piece.y }, enter, delay: Math.max(0, piece.delay ?? 0), bob: piece.bob ?? false, stays: piece.stays ?? false }];
+    const rain = enter === "rain";
+    return [
+      {
+        index,
+        ...decorBox(piece),
+        x: piece.x,
+        y: piece.y,
+        from: piece.from ?? { x: piece.x, y: piece.y },
+        enter,
+        delay: Math.max(0, piece.delay ?? 0),
+        bob: piece.bob ?? false,
+        stays: piece.stays ?? false,
+        fall: rain ? Math.max(0.5, piece.fall ?? 4) : 0,
+        sway: rain ? Math.max(0, piece.sway ?? 0) : 0,
+        spin: rain ? (piece.spin ?? 0) : 0,
+      },
+    ];
   });
   return { width, height, look: look && spec.look ? spec.look : null, words: look?.words ?? "rise", pieces };
 }

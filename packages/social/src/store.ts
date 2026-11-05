@@ -239,6 +239,21 @@ export function postStore(db: SocialDb, options: PostStoreOptions) {
       return rows.length > 0;
     },
 
+    /**
+     * A draft's or an approved post's pictures, swapped for the same cards in
+     * another look (social 0.6): false once it's been posted or skipped (what
+     * went out stays as it went). Its words and their edit stamp are left as
+     * they are, so what a person has typed on the screen isn't lost.
+     */
+    async setImages(id: string, images: readonly DraftImage[]): Promise<boolean> {
+      const rows = await db
+        .update(t)
+        .set({ images: [...images] })
+        .where(and(mine, eq(t.id, id), inArray(t.status, ["draft", "approved"])))
+        .returning({ id: t.id });
+      return rows.length > 0;
+    },
+
     /** Drafts to approved: how many changed. `by` is who approved them. */
     async approve(ids: readonly string[], by: string | null = null): Promise<number> {
       const wanted = ids.filter((id) => typeof id === "string" && id !== "");

@@ -121,6 +121,12 @@ export const socialCss = `
   list-style: none;
 }
 
+/* The Look picker (social 0.6): a 44px select beside its label. */
+.social-look { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.social-look label { font-weight: 600; color: var(--_ink); }
+.social-select { min-height: 44px; min-width: 12rem; max-width: 100%; padding: 0 12px; border: 1px solid var(--_line); border-radius: var(--_radius); background: var(--_surface); color: var(--_ink); font: inherit; }
+.social-select:focus-visible { outline: 2px solid var(--_accent); outline-offset: 2px; }
+
 .social-post-actions {
   display: flex;
   flex-wrap: wrap;

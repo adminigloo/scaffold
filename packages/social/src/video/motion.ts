@@ -21,6 +21,10 @@ import type { CardMotionPiece, CardWordsEntrance } from "../card-parts.js";
  * - The last slide holds longer, then crosses into the first as it opens
  *   (its words whole, its pieces not yet on), so a replay has no seam. A
  *   single card loops into itself the same way.
+ * - Rain (social 0.6) falls the whole clip long, behind the words, on the
+ *   clip's own clock: every card draws it the same, a cross never doubles it,
+ *   and each piece's fall, sway and spin repeat a whole number of times in
+ *   the clip, so the replay picks it up where it left off.
  */
 
 export interface MotionSpec {
@@ -44,9 +48,10 @@ export const DEFAULT_MOTION: Omit<MotionSpec, "slides"> = { fps: 30, secondsPerS
 
 /**
  * One slide as one frame draws it: its opacity in a cross, its seconds on
- * screen, how far through its time it is (0 to 1), and the clip's seconds
- * (what a piece that stays goes by: the first slide coming back in as the
- * clip loops is at 0, as the clip opens).
+ * screen, how far through its time it is (0 to 1), the clip's seconds (what a
+ * piece that stays goes by: the first slide coming back in as the clip loops
+ * is at 0, as the clip opens), and the frame's own time in the clip (what
+ * rain goes by, so it never stops).
  */
 export interface MotionLayer {
   readonly slide: number;
@@ -54,6 +59,7 @@ export interface MotionLayer {
   readonly t: number;
   readonly progress: number;
   readonly clip: number;
+  readonly time: number;
 }
 
 /** Where each slide starts and how long it's on screen, in frames. */
@@ -106,7 +112,7 @@ export function motionLayers(frame: number, spec: MotionSpec): MotionLayer[] {
   const layerOf = (k: number, at: number, opacity: number): MotionLayer => {
     const from = shownFrom(k);
     const end = s[k]!.start + s[k]!.length;
-    return { slide: k, opacity, t: (at - from) / spec.fps, progress: clamp01((at - from) / Math.max(1, end - from)), clip: at / spec.fps };
+    return { slide: k, opacity, t: (at - from) / spec.fps, progress: clamp01((at - from) / Math.max(1, end - from)), clip: at / spec.fps, time: at / spec.fps };
   };
   const i = s.findIndex((span) => f >= span.start && f < span.start + span.length);
   const span = s[i]!;
@@ -116,7 +122,7 @@ export function motionLayers(frame: number, spec: MotionSpec): MotionLayer[] {
   if (next < 0 || intoNext > cross) return [base];
   const mix = smooth(clamp01(1 - (intoNext - 1) / cross));
   // Looping back, the first slide comes in exactly as the clip opens: still, its words whole, its pieces not yet on.
-  const incoming = next === 0 ? { slide: 0, opacity: mix, t: 0, progress: 0, clip: 0 } : layerOf(next, f, mix);
+  const incoming = next === 0 ? { slide: 0, opacity: mix, t: 0, progress: 0, clip: 0, time: f / spec.fps } : layerOf(next, f, mix);
   return [base, incoming];
 }
 
@@ -135,8 +141,40 @@ export interface PieceFrame {
   readonly reach: number | null;
 }
 
-/** How long each entrance takes, in seconds. */
-export const ENTRANCE_SECONDS: Readonly<Record<CardMotionPiece["enter"], number>> = { pop: 0.55, spray: 0.9, fall: 0.9, fade: 0.5 };
+/** How long each entrance takes, in seconds (rain has none: it's falling from the first frame). */
+export const ENTRANCE_SECONDS: Readonly<Record<CardMotionPiece["enter"], number>> = { pop: 0.55, spray: 0.9, fall: 0.9, fade: 0.5, rain: 0 };
+
+/** The clip a piece of rain falls through: its length in seconds and the card's height. */
+export interface RainClip {
+  readonly seconds: number;
+  readonly height: number;
+}
+
+/**
+ * A piece of rain at `time` seconds into the clip: from its place on the card
+ * at the first frame (so the first frame is the card as posted), falling and
+ * wrapping from just below the card to just above it, swaying, and spinning
+ * (or, with no spin, wobbling like a ball). Its fall, sway and spin are each
+ * rounded to a whole number of times in the clip, so the clip's last frame
+ * leads straight back into its first.
+ */
+export function rainAt(piece: CardMotionPiece, time: number, index: number, clip: RainClip): PieceFrame {
+  const T = clip.seconds;
+  if (!(T > 0) || !(clip.height > 0)) return { alpha: 1, scale: 1, dx: 0, dy: 0, rotate: 0, reach: null };
+  // From just above the card to just below it: a piece leaves the bottom whole before it comes back in at the top.
+  const span = clip.height + piece.height * 2;
+  const falls = Math.max(1, Math.round(T / Math.max(0.5, piece.fall || 4)));
+  const travel = ((time % T) / T) * falls * span;
+  const from = piece.top + piece.height;
+  const top = (((from + travel) % span) + span) % span - piece.height;
+  const swings = Math.max(1, Math.round(T / 2.4));
+  const phase = index * 1.7;
+  const dx = z((piece.sway || 0) * Math.sin((2 * Math.PI * swings * time) / T + phase) - (piece.sway || 0) * Math.sin(phase));
+  const turns = Math.round(((piece.spin || 0) * T) / 360);
+  // A ball wobbles from where the card has it (and back), never far enough to turn its word over.
+  const rotate = z(turns ? (360 * turns * (time % T)) / T : 10 * (Math.sin((2 * Math.PI * swings * time) / T + phase) - Math.sin(phase)));
+  return { alpha: 1, scale: 1, dx, dy: z(top - piece.top), rotate, reach: null };
+}
 
 /** The farthest corner of a piece's box from its nozzle: how far its paint has to reach. */
 function reachOf(piece: CardMotionPiece): number {
@@ -151,7 +189,8 @@ function reachOf(piece: CardMotionPiece): number {
  * A piece at `t` seconds into its slide. `index` is its place in the look,
  * which sets its bob's phase (so the balls don't bob in step).
  */
-export function pieceAt(piece: CardMotionPiece, t: number, index: number): PieceFrame {
+export function pieceAt(piece: CardMotionPiece, t: number, index: number, clip?: RainClip): PieceFrame {
+  if (piece.enter === "rain") return clip ? rainAt(piece, t, index, clip) : { alpha: 1, scale: 1, dx: 0, dy: 0, rotate: 0, reach: null };
   const seconds = ENTRANCE_SECONDS[piece.enter];
   const u = clamp01((t - piece.delay) / seconds);
   let frame: PieceFrame;

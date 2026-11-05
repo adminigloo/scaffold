@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CardMotionPiece } from "../card-parts.js";
-import { DEFAULT_MOTION, ENTRANCE_SECONDS, groundScale, motionFrames, motionLayers, motionSeconds, pieceAt, wordsAt, WORDS_AT, type MotionSpec } from "../video/motion.js";
+import { DEFAULT_MOTION, ENTRANCE_SECONDS, groundScale, motionFrames, motionLayers, motionSeconds, pieceAt, rainAt, wordsAt, WORDS_AT, type MotionSpec } from "../video/motion.js";
 
 /**
  * A CARD VIDEO'S MOTION (../video/motion.ts, social 0.5): the hook whole at
@@ -13,7 +13,7 @@ const PER = Math.round(DEFAULT_MOTION.secondsPerSlide * DEFAULT_MOTION.fps);
 const LAST = Math.round((DEFAULT_MOTION.secondsPerSlide + DEFAULT_MOTION.lastHoldSeconds) * DEFAULT_MOTION.fps);
 
 function piece(over: Partial<CardMotionPiece> = {}): CardMotionPiece {
-  return { index: 0, left: 966, top: 6, width: 108, height: 108, x: 1020, y: 60, from: { x: 1020, y: 60 }, enter: "pop", delay: 0.1, bob: false, stays: false, ...over };
+  return { index: 0, left: 966, top: 6, width: 108, height: 108, x: 1020, y: 60, from: { x: 1020, y: 60 }, enter: "pop", delay: 0.1, bob: false, stays: false, fall: 0, sway: 0, spin: 0, ...over };
 }
 /** The piece at many moments through its entrance. */
 const through = (p: CardMotionPiece, steps = 40) => Array.from({ length: steps + 1 }, (_, i) => pieceAt(p, p.delay + (ENTRANCE_SECONDS[p.enter] * i) / steps, 0));
@@ -27,7 +27,7 @@ describe("a card video's motion", () => {
   });
 
   it("opens on the hook, whole and still, with its pieces still to come", () => {
-    expect(motionLayers(0, three)).toEqual([{ slide: 0, opacity: 1, t: 0, progress: 0, clip: 0 }]);
+    expect(motionLayers(0, three)).toEqual([{ slide: 0, opacity: 1, t: 0, progress: 0, clip: 0, time: 0 }]);
     expect(wordsAt("rise", 0, true)).toEqual({ alpha: 1, dx: 0, dy: 0 });
     expect(groundScale(0, three.zoom)).toBe(1);
     expect(pieceAt(piece({ enter: "pop" }), 0, 0).alpha).toBe(0);
@@ -101,6 +101,33 @@ describe("a card video's motion", () => {
       [0, 0],
     ]);
     expect(motionLayers(total - 1, { ...three, loop: false }).map((l) => l.slide)).toEqual([2]);
+  });
+
+  it("rains a piece the whole clip long from where the card has it, behind the words, and picks the replay up where it left off", () => {
+    const clip = { seconds: motionSeconds(three), height: 1920 };
+    const drop = piece({ enter: "rain", left: 500, top: 700, width: 40, height: 40, x: 520, y: 720, fall: 4, sway: 24, spin: 200 });
+    // The first frame is the card as posted.
+    expect(rainAt(drop, 0, 3, clip)).toEqual({ alpha: 1, scale: 1, dx: 0, dy: 0, rotate: 0, reach: null });
+    // It falls, comes back in at the top, and spins.
+    const path = Array.from({ length: 60 }, (_, i) => rainAt(drop, (clip.seconds * i) / 60, 3, clip));
+    expect(path.some((f) => f.dy > 0)).toBe(true);
+    expect(path.some((f) => 700 + f.dy < 0)).toBe(true);
+    expect(new Set(path.map((f) => Math.round(f.rotate))).size).toBeGreaterThan(20);
+    // Its last moment leads straight back into its first: the clip loops with no seam.
+    const end = rainAt(drop, clip.seconds - 1e-6, 3, clip);
+    expect(end.dy).toBeCloseTo(0, 2);
+    expect(end.dx).toBeCloseTo(0, 2);
+    expect(((end.rotate % 360) + 360) % 360 > 359 || Math.abs(end.rotate % 360) < 1).toBe(true);
+    // A ball doesn't spin: it wobbles, never far enough to turn its word over.
+    const ball = piece({ enter: "rain", left: 300, top: 300, x: 354, y: 354, fall: 5, sway: 10, spin: 0 });
+    expect(Math.max(...Array.from({ length: 90 }, (_, i) => Math.abs(rainAt(ball, (clip.seconds * i) / 90, 1, clip).rotate)))).toBeLessThanOrEqual(20);
+    // Every card draws it on the clip's own clock: the loop's incoming first card included.
+    const [last, first] = motionLayers(motionFrames(three) - 2, three);
+    expect(first!.clip).toBe(0);
+    expect(first!.time).toBe(last!.time);
+    // Without the clip, rain stands still where the card has it.
+    expect(pieceAt(drop, 2, 0)).toEqual({ alpha: 1, scale: 1, dx: 0, dy: 0, rotate: 0, reach: null });
+    expect(pieceAt(drop, 2, 0, clip)).toEqual(rainAt(drop, 2, 0, clip));
   });
 
   it("pushes the ground in slowly over each card's time", () => {

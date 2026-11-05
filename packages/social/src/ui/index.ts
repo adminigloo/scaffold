@@ -12,7 +12,7 @@
  */
 export { PostsAdmin, type PostsAdminProps } from "./PostsAdmin.js";
 export { PostQueue, type PostQueueProps } from "./PostQueue.js";
-export { PostCard, attempt, messageOf, type ActionResult, type QueueActions } from "./PostCard.js";
+export { PostCard, attempt, lookOf, messageOf, type ActionResult, type QueueActions } from "./PostCard.js";
 export { canShareFiles, imageFileName, imageFiles, ShareImages, shareLabel, type ShareImagesProps } from "./share.js";
 export { fullScreenSlides, MakeVideo, videoFileName, videoSize, type MakeVideoProps } from "./video.js";
 export { ImageViewer, useImageViewer, viewOnPlainClick, type ViewerImage } from "./viewer.js";

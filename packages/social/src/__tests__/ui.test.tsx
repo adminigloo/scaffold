@@ -160,6 +160,48 @@ describe("the posts screen, over the real handler", () => {
   });
 });
 
+describe("the Look picker (social 0.6)", () => {
+  it("shows the post's look among the app's, and switches every platform's pictures with one choice", async () => {
+    const asked: [string, string][] = [];
+    const actions = { ...noActions, restyle: async (id: string, look: string) => void asked.push([id, look]) };
+    const looks = [
+      { key: "spray", name: "Spray paint" },
+      { key: "confetti", name: "Confetti" },
+    ];
+    const post = view({ images: [{ url: "https://example.com/api/social/card?kind=quote&look=confetti&sig=s", alt: "The card", width: 1080, height: 1080 }] });
+    const m = await mount(<PostQueue posts={[post, view({ id: "p2", platform: "linkedin" })]} actions={actions} looks={looks} />);
+    const select = m.container.querySelector(".social-look select") as HTMLSelectElement;
+    expect([...select.options].map((o) => o.textContent)).toEqual(["Spray paint", "Confetti"]);
+    expect(select.value).toBe("confetti");
+    expect(m.container.querySelector(".social-look label")?.textContent).toBe("Look");
+    await act(async () => {
+      select.value = "spray";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(asked).toEqual([["p1", "spray"]]);
+    await m.unmount();
+  });
+
+  it("offers Plain for a post made before the looks, and no picker once nothing can change or without the app's looks", async () => {
+    const actions = { ...noActions, restyle: async () => undefined };
+    const looks = [{ key: "spray", name: "Spray paint" }];
+    const before = await mount(<PostQueue posts={[view()]} actions={actions} looks={looks} />);
+    const select = before.container.querySelector(".social-look select") as HTMLSelectElement;
+    expect([...select.options].map((o) => o.textContent)).toEqual(["Plain", "Spray paint"]);
+    await before.unmount();
+    // The element, not the stylesheet's rule for it (the styles render with every queue).
+    const picker = 'class="social-look"';
+    expect(renderToStaticMarkup(<PostQueue posts={[view({ status: "posted", postedUrl: "https://x.com/a/1" })]} actions={actions} looks={looks} />)).not.toContain(picker);
+    expect(renderToStaticMarkup(<PostQueue posts={[view()]} actions={actions} />)).not.toContain(picker);
+    expect(renderToStaticMarkup(<PostQueue posts={[view()]} actions={actions} looks={looks} readOnly />)).not.toContain(picker);
+    expect(renderToStaticMarkup(<PostQueue posts={[view()]} actions={actions} looks={looks} />)).toContain(picker);
+  });
+
+  it("tells each platform how to post something that moves: the video, in place of the picture", () => {
+    expect(card(view())).toContain("Make a video, then upload the video in X in place of the picture.");
+  });
+});
+
 describe("the screens' client", () => {
   it("returns the handler's own sentence for a refusal, and plain words for what isn't the handler's", async () => {
     const answers: Response[] = [

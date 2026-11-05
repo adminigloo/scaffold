@@ -77,6 +77,11 @@ export function PostsAdmin({ baseUrl, canManage, businessName, fetcher }: PostsA
         await reload();
         return result;
       },
+      restyle: async (id: string, look: string) => {
+        const result = await client.actions.restyle(id, look);
+        await reload();
+        return result;
+      },
     }),
     [client, reload],
   );
@@ -113,6 +118,7 @@ export function PostsAdmin({ baseUrl, canManage, businessName, fetcher }: PostsA
               </h2>
             </div>
             <PostQueue
+              looks={queue.looks}
               posts={queue.sections.today}
               actions={actions}
               readOnly={readOnly}
@@ -125,7 +131,7 @@ export function PostsAdmin({ baseUrl, canManage, businessName, fetcher }: PostsA
               <h2 id="social-earlier" className="social-section-title">
                 Still waiting from earlier days
               </h2>
-              <PostQueue posts={queue.sections.earlier} actions={actions} readOnly={readOnly} />
+              <PostQueue looks={queue.looks} posts={queue.sections.earlier} actions={actions} readOnly={readOnly} />
             </section>
           ) : null}
 
@@ -165,7 +171,7 @@ export function PostsAdmin({ baseUrl, canManage, businessName, fetcher }: PostsA
             <h2 id="social-history" className="social-section-title">
               History
             </h2>
-            <PostQueue posts={queue.sections.history} actions={actions} readOnly={readOnly} empty="Nothing posted yet." />
+            <PostQueue looks={queue.looks} posts={queue.sections.history} actions={actions} readOnly={readOnly} empty="Nothing posted yet." />
           </section>
 
           {queue.sections.expired.length ? (
@@ -174,7 +180,7 @@ export function PostsAdmin({ baseUrl, canManage, businessName, fetcher }: PostsA
                 Expired
               </h2>
               <p className="social-section-hint">Too old to be worth posting, and nothing went out. One that did go out after all can still be marked posted.</p>
-              <PostQueue posts={queue.sections.expired} actions={actions} readOnly={readOnly} />
+              <PostQueue looks={queue.looks} posts={queue.sections.expired} actions={actions} readOnly={readOnly} />
             </section>
           ) : null}
         </>

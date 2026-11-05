@@ -1,5 +1,5 @@
 import { cardLayerUrl, type CardLayer, type CardMotion, type CardMotionPiece } from "../card-parts.js";
-import { DEFAULT_MOTION, groundScale, motionFrames, motionLayers, pieceAt, wordsAt, type MotionLayer, type MotionSpec } from "./motion.js";
+import { DEFAULT_MOTION, groundScale, motionFrames, motionLayers, motionSeconds, pieceAt, wordsAt, type MotionLayer, type MotionSpec } from "./motion.js";
 import { DEFAULT_SLIDESHOW, frameLayers, slideshowFrames, type FrameLayer, type SlideshowSpec } from "./timeline.js";
 
 /**
@@ -214,7 +214,21 @@ function drawSprayed(ctx: Context2D, picture: ImageBitmap, piece: CardMotionPiec
   ctx.drawImage(scratch, piece.left, piece.top, piece.width, piece.height);
 }
 
-/** One slide at one moment: the ground and its pieces pushing in, then the words. */
+/** One piece at one moment, where its frame puts it. */
+function drawPiece(ctx: Context2D, picture: ImageBitmap, piece: CardMotionPiece, at: ReturnType<typeof pieceAt>, scratch: OffscreenCanvas | HTMLCanvasElement): void {
+  if (at.alpha <= 0 || at.scale <= 0) return;
+  ctx.save();
+  ctx.globalAlpha = at.alpha;
+  ctx.translate(piece.x + at.dx, piece.y + at.dy);
+  if (at.rotate) ctx.rotate((at.rotate * Math.PI) / 180);
+  if (at.scale !== 1) ctx.scale(at.scale, at.scale);
+  ctx.translate(-piece.x, -piece.y);
+  if (at.reach === null) ctx.drawImage(picture, piece.left, piece.top, piece.width, piece.height);
+  else drawSprayed(ctx, picture, piece, at.reach, scratch);
+  ctx.restore();
+}
+
+/** One slide at one moment: the ground and its pieces pushing in, the rain over them, then the words. */
 function drawSlide(ctx: Context2D, slide: LoadedSlide, layer: MotionLayer, spec: MotionSpec, width: number, height: number, scratch: OffscreenCanvas | HTMLCanvasElement): void {
   const { sheet } = slide;
   ctx.save();
@@ -225,21 +239,18 @@ function drawSlide(ctx: Context2D, slide: LoadedSlide, layer: MotionLayer, spec:
   ctx.drawImage(slide.ground, 0, 0, width, height);
   sheet.pieces.forEach((piece, i) => {
     const picture = slide.pieces.get(piece.index);
-    if (!picture) return;
+    if (!picture || piece.enter === "rain") return;
     // Paint that stays goes by the clip's time, so every slide draws it the same; a ball pops up again on each.
-    const at = pieceAt(piece, piece.stays ? layer.clip : layer.t, i);
-    if (at.alpha <= 0 || at.scale <= 0) return;
-    ctx.save();
-    ctx.globalAlpha = at.alpha;
-    ctx.translate(piece.x + at.dx, piece.y + at.dy);
-    if (at.rotate) ctx.rotate((at.rotate * Math.PI) / 180);
-    if (at.scale !== 1) ctx.scale(at.scale, at.scale);
-    ctx.translate(-piece.x, -piece.y);
-    if (at.reach === null) ctx.drawImage(picture, piece.left, piece.top, piece.width, piece.height);
-    else drawSprayed(ctx, picture, piece, at.reach, scratch);
-    ctx.restore();
+    drawPiece(ctx, picture, piece, pieceAt(piece, piece.stays ? layer.clip : layer.t, i), scratch);
   });
   ctx.restore();
+  // Rain falls on the clip's own clock and outside the push-in, so a cross between two cards draws it once.
+  const clip = { seconds: motionSeconds(spec), height };
+  sheet.pieces.forEach((piece, i) => {
+    const picture = slide.pieces.get(piece.index);
+    if (!picture || piece.enter !== "rain") return;
+    drawPiece(ctx, picture, piece, pieceAt(piece, layer.time, i, clip), scratch);
+  });
   const words = wordsAt(sheet.words, layer.t, layer.slide === 0);
   if (words.alpha <= 0) return;
   ctx.globalAlpha = words.alpha;

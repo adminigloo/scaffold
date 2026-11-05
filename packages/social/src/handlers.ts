@@ -5,9 +5,9 @@ import type { SocialPostTable } from "./schema.js";
 import { LAUNCH_FACTS_MAX, parseHashtags } from "./sources.js";
 import { isWebAddress, postStore, type QueuedPost, type SocialDb } from "./store.js";
 import { asOf } from "./expiry.js";
-import type { PostLife, PostSource } from "./types.js";
+import type { DraftImage, PostLife, PostSource } from "./types.js";
 import { postView } from "./view.js";
-import type { CardFormatSet, ComposeWire, PostingSessionWire, QueueWire } from "./wire.js";
+import type { CardFormatSet, ComposeWire, LookOption, PostingSessionWire, QueueWire } from "./wire.js";
 import { writePost, type WriterOptions } from "./writer.js";
 
 /**
@@ -162,6 +162,7 @@ function adminRoute(method: string, pathname: string): { kind: SocialAdminRouteK
   if (n === 2 && a === "posts") return { kind: "edit", id: b! };
   if (n === 3 && a === "posts" && c === "posted") return { kind: "posted", id: b! };
   if (n === 3 && a === "posts" && c === "skip") return { kind: "skip", id: b! };
+  if (n === 3 && a === "posts" && c === "look") return { kind: "look", id: b! };
   return null;
 }
 
@@ -214,6 +215,18 @@ export interface CreateSocialAdminHandlersOptions {
   readonly compose: (input: ComposeRequest) => PostSource | Promise<PostSource>;
   /** How the AI writes for this company: its metered `complete` (or null for none), its honesty check, the mode. */
   readonly writer: (ctx: { readonly tenantId: string; readonly userId: string | null }) => WriterOptions | Promise<WriterOptions>;
+  /**
+   * The looks a person can switch a post's pictures to (social 0.6), in the
+   * order to offer them: keys in the card assets' looks, and their names.
+   * Needs `restyle`. None: the pictures keep the look they were made in.
+   */
+  readonly looks?: (tenantId: string) => readonly LookOption[] | Promise<readonly LookOption[]>;
+  /**
+   * A post's pictures in another look: the app re-signs each card with it
+   * (the app holds the key, and knows its own cards). Null, or a picture that
+   * isn't one of the app's cards: they stay as they are.
+   */
+  readonly restyle?: (images: readonly DraftImage[], look: string, ctx: { readonly tenantId: string }) => readonly DraftImage[] | null | Promise<readonly DraftImage[] | null>;
   /** Every card format, as samples in the company's own brand, for "See every card format". None: an empty list. */
   readonly cardFormats?: (tenantId: string) => readonly CardFormatSet[] | Promise<readonly CardFormatSet[]>;
   /** Today for the company (YYYY-MM-DD), in its own time zone. Default UTC. */
@@ -240,6 +253,7 @@ export function createSocialAdminHandlers(options: CreateSocialAdminHandlersOpti
   if (!options.tenantId && !options.resolveTenant) throw new Error("createSocialAdminHandlers: pass tenantId or resolveTenant");
   if (typeof options.authorize !== "function") throw new Error("createSocialAdminHandlers: pass authorize (your permission check)");
   if (typeof options.compose !== "function" || typeof options.writer !== "function") throw new Error("createSocialAdminHandlers: pass compose and writer");
+  if (options.looks && typeof options.restyle !== "function") throw new Error("createSocialAdminHandlers: looks needs restyle (how a post's pictures change look)");
   const report = (error: unknown, tenantId: string | null, route: string) => {
     try {
       options.onError?.(error, { tenantId, route });
@@ -278,8 +292,10 @@ export function createSocialAdminHandlers(options: CreateSocialAdminHandlersOpti
           const day = await today();
           const sections = await queue.sections(day, { life: options.life, now });
           const view = (rows: readonly QueuedPost[]) => rows.map((r) => postView(r, options.life, now));
+          const looks = options.looks && options.restyle ? await options.looks(scoped) : [];
           const wire: QueueWire = {
             today: day,
+            ...(looks.length ? { looks } : {}),
             sections: { today: view(sections.today), earlier: view(sections.earlier), ready: view(sections.ready), history: view(sections.history), expired: view(sections.expired) },
           };
           return json(wire);
@@ -343,6 +359,24 @@ export function createSocialAdminHandlers(options: CreateSocialAdminHandlersOpti
           const post = await own(matched.id ?? "");
           if (!(await queue.skip(post.id))) throw new HttpRefusal("conflict", 409, "That post has already been posted or skipped.");
           return json({ post: postView(await own(post.id), options.life, now) });
+        }
+        case "look": {
+          const post = await own(matched.id ?? "");
+          const offered = options.looks && options.restyle ? await options.looks(scoped) : [];
+          if (!offered.length || !options.restyle) throw notFound();
+          const body = await readJson(req);
+          const look = typeof body.look === "string" ? body.look.trim() : "";
+          if (!offered.some((l) => l.key === look)) throw new HttpRefusal("invalid", 400, "Choose one of the looks.");
+          // Every platform of the post, so all its cards wear the one look; what's been posted or skipped keeps its pictures.
+          const rows = (await queue.list({ keys: [post.key] })).filter((r) => (r.status === "draft" || r.status === "approved") && r.images.length > 0);
+          if (!rows.length) throw new HttpRefusal("conflict", 409, "That post's pictures can't change now: it's been posted or skipped.");
+          let restyled = 0;
+          for (const row of rows) {
+            const images = await options.restyle(row.images, look, { tenantId: scoped });
+            if (images?.length && (await queue.setImages(row.id, images))) restyled += 1;
+          }
+          if (!restyled) throw new HttpRefusal("invalid", 400, "These pictures can't take another look.");
+          return json({ restyled });
         }
         case "approved": {
           // Never a post that's gone stale, whether or not anything has marked it expired yet.

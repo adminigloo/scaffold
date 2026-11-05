@@ -13,9 +13,10 @@
 /**
  * How a piece of a look comes on in a video: it pops up from nothing and
  * settles, the paint sprays out from its corner, it falls in from above, it
- * fades in, or it's simply there.
+ * fades in, or it's simply there. Or (social 0.6) it rains: it falls through
+ * the card the whole clip long, behind the words, and comes back in at the top.
  */
-export type CardEntrance = "pop" | "spray" | "fall" | "fade" | "none";
+export type CardEntrance = "pop" | "spray" | "fall" | "fade" | "rain" | "none";
 
 /** How a slide's words come on in a video: up from a little below, in from the left, or a fade. */
 export type CardWordsEntrance = "rise" | "slide" | "fade";
@@ -78,6 +79,10 @@ export interface CardMotionPiece {
   readonly bob: boolean;
   /** Comes on with the first slide and stays (paint), or again with every slide. */
   readonly stays: boolean;
+  /** Rain (social 0.6): seconds to fall the card's height, how far it sways (px), and how fast it spins (degrees a second; 0: it wobbles, as a ball does). 0 for any other piece. */
+  readonly fall: number;
+  readonly sway: number;
+  readonly spin: number;
 }
 
 /**
