@@ -1174,9 +1174,9 @@ describe("what the project claims and documents (11.13)", () => {
       // Tenancy 2b-1 moved every line it changed (versions.ts says why); the showroom (0.36) moved the widgets again,
       // and its second round (0.36.1) the tenancy widget (the collapsible setup card); polish 3 (0.36.2) the widgets
       // that hand their buttons to the page header; 0.37 (deleting a company, past records' dates) every package
-      // that keeps company rows; 0.40 email (headers and an idempotency key, for the digests).
-      ["tenancy", "^0.8.0"],
-      ["tenancy-widget", "^0.5.0"],
+      // that keeps company rows; 0.40 email (headers and an idempotency key, for the digests); tenancy 0.9 People (staff invitations, names).
+      ["tenancy", "^0.9.0"],
+      ["tenancy-widget", "^0.6.0"],
       ["scheduling", "^0.7.0"],
       ["scheduling-widget", "^0.5.0"],
       ["estimator", "^0.7.0"],
