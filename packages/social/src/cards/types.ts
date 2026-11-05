@@ -76,6 +76,14 @@ export interface CardBrand {
   readonly site: string;
   /** The logo tile. None: the name's first letter on the accent. */
   readonly mark?: CardArt;
+  /**
+   * The brand's whole logo, as its site and emails show it (a wordmark or a
+   * lockup, any width). When given, it is the header: a slide shows it top
+   * left in place of the mark and the name, and the brand's own quote card
+   * shows it in place of the avatar and the name, the handle under it. The
+   * mark stays in the footers. A company's card (`brand` words) never shows it.
+   */
+  readonly logo?: CardArt;
 }
 
 /** A font file the card is drawn with (TTF, OTF or WOFF; satori can't read WOFF2). */
@@ -203,6 +211,17 @@ export const MAX_LIST_ROWS = 5;
 /** Who a card shows as its poster: the spec's author where the assets have one by that key, else their own. */
 export function cardAuthor(spec: CardSpec, assets: Pick<CardAssets, "author" | "authors">): CardAuthor {
   return (spec.kind === "quote" && spec.author ? assets.authors?.[spec.author] : undefined) ?? assets.author;
+}
+
+/**
+ * The brand's whole logo, when this card shows it: any slide of a brand that
+ * has one, and a quote card the brand itself posted (one a named author
+ * posted keeps that author's avatar and name).
+ */
+export function cardLogo(spec: CardSpec, assets: Pick<CardAssets, "author" | "authors" | "brand">): CardArt | undefined {
+  const logo = assets.brand.logo;
+  if (!logo) return undefined;
+  return spec.kind === "quote" && cardAuthor(spec, assets) !== assets.author ? undefined : logo;
 }
 
 /** The picture a cover or a call-to-action slide names, if the assets have it. */

@@ -170,6 +170,20 @@ function eyebrowOf(m: CardMetrics, text: string | undefined, width: number): Lin
 /** The mark's tile at the top left, and the room kept at the top right for "5 / 5". */
 export const MARK = 56;
 export const PAGE_ROOM = 120;
+/**
+ * A brand's whole logo (`CardBrand.logo`): its height in a slide's header,
+ * centred on the header's line and reaching into the gap under it, and on a
+ * quote card, where it and the handle under it fill the avatar's 132px.
+ */
+export const LOGO = { header: 88, quote: 88 } as const;
+
+/** A logo's size at `height`, its shape kept, narrowed (still in shape) to `maxWidth`. */
+export function logoSize(art: { readonly width: number; readonly height: number }, height: number, maxWidth: number): { width: number; height: number } {
+  if (!(art.width > 0 && art.height > 0)) return { width: Math.min(height, maxWidth), height: Math.min(height, maxWidth) };
+  const width = Math.round((height * art.width) / art.height);
+  if (width <= maxWidth) return { width, height };
+  return { width: Math.floor(maxWidth), height: Math.round((maxWidth * art.height) / art.width) };
+}
 /** At the foot: the accent rule before the words, and the "Swipe" pill on a cover. */
 export const FOOT_RULE = 30 + 14;
 export const CUE_ROOM = 250;

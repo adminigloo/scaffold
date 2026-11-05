@@ -266,6 +266,12 @@ routes, the card route, the metering, the migration and the nav entry.
    name, address and colour in its signed address (`cardBrand({ name, site, accent })`),
    so it's drawn in that company's name, never the site's.
 
+   `brand.mark` is a square tile (the first letter on the accent when left out). Give
+   `brand.logo` your whole logo, as your site and emails show it (`{ src, width, height }`,
+   any width), and it becomes the header: top left of every slide in place of the mark and
+   the name, and on your own quote card in place of the avatar and the name, the handle under
+   it. The mark stays in the footers; a company's card never shows your logo.
+
 ## Your own posts
 
 A `PostSource` is one thing worth saying: a `key` (unique per company:

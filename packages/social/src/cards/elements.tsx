@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element, jsx-a11y/alt-text -- satori draws these; nobody browses them */
 import type { CSSProperties, ReactElement, ReactNode } from "react";
-import { BYLINE, EYEBROW, QUOTE, SLIDE_FOOTER, SLIDE_HEADER, slideBody, type CardLayout, type CoverLayout, type CtaLayout, type Frame, type LineBlock, type ListLayout, type QuoteLayout, type StatLayout, type TextBlock } from "./layout.js";
-import { cardAuthor, cardCharacter, type CardArt, type CardAssets, type CardPage, type CardSpec, type CoverCardSpec, type CtaCardSpec, type ListCardSpec, type QuoteCardSpec, type StatCardSpec } from "./types.js";
+import { BYLINE, EYEBROW, LOGO, logoSize, PAGE_ROOM, QUOTE, SLIDE_FOOTER, SLIDE_HEADER, slideBody, type CardLayout, type CoverLayout, type CtaLayout, type Frame, type LineBlock, type ListLayout, type QuoteLayout, type StatLayout, type TextBlock } from "./layout.js";
+import { cardAuthor, cardCharacter, cardLogo, type CardArt, type CardAssets, type CardPage, type CardSpec, type CoverCardSpec, type CtaCardSpec, type ListCardSpec, type QuoteCardSpec, type StatCardSpec } from "./types.js";
 
 /**
  * THE CARDS, AS SATORI DRAWS THEM: every box with more than one child is a
@@ -12,7 +12,8 @@ import { cardAuthor, cardCharacter, type CardArt, type CardAssets, type CardPage
  * `theme.flourish` adds the night-sky look (a faint star field, sparkles, a
  * star badge by the name); `theme.glow` a soft light behind a big number or
  * a picture. With no art the mark and the avatar are the brand's first
- * letter on its accent.
+ * letter on its accent. A brand's whole logo (`brand.logo`), when it has one,
+ * is the header instead of the mark and the name.
  */
 
 /** The four-point sparkle. */
@@ -218,14 +219,26 @@ function Eyebrow({ block, ctx, style }: { block: LineBlock | null; ctx: Ctx; sty
   );
 }
 
+function Logo({ art, size }: { art: CardArt; size: { width: number; height: number } }) {
+  return <img src={art.src} width={size.width} height={size.height} style={{ width: size.width, height: size.height }} />;
+}
+
 function Header({ frame, ctx, page, wordmark }: { frame: Frame; ctx: Ctx; page?: CardPage; wordmark: LineBlock }) {
   const { assets } = ctx;
+  // The whole logo stands on the header's centre line, so a taller one reaches into the gap under it, never the words.
+  const logo = assets.brand.logo;
+  const size = logo ? logoSize(logo, LOGO.header, frame.contentWidth - PAGE_ROOM) : null;
+  const height = size ? Math.max(SLIDE_HEADER, size.height) : SLIDE_HEADER;
   return (
-    <div style={{ position: "absolute", left: frame.left, top: frame.top, width: frame.contentWidth, height: SLIDE_HEADER, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-      <div style={{ display: "flex", alignItems: "center" }}>
-        <Mark art={assets.brand.mark} name={assets.brand.name} size={56} ctx={ctx} />
-        <Line block={wordmark} family={assets.serif} color={assets.theme.text} style={{ marginLeft: 16, lineHeight: 1 }} />
-      </div>
+    <div style={{ position: "absolute", left: frame.left, top: frame.top - (height - SLIDE_HEADER) / 2, width: frame.contentWidth, height, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      {logo && size ? (
+        <Logo art={logo} size={size} />
+      ) : (
+        <div style={{ display: "flex", alignItems: "center" }}>
+          <Mark art={assets.brand.mark} name={assets.brand.name} size={56} ctx={ctx} />
+          <Line block={wordmark} family={assets.serif} color={assets.theme.text} style={{ marginLeft: 16, lineHeight: 1 }} />
+        </div>
+      )}
       {page && page.count > 1 ? (
         <div style={{ display: "flex", alignItems: "center", fontWeight: 600, fontSize: 24, letterSpacing: "0.1em", color: assets.theme.muted }}>
           {`${page.index} / ${page.count}`}
@@ -284,6 +297,7 @@ function QuoteCard({ spec, layout, ctx }: { spec: QuoteCardSpec; layout: QuoteLa
   const width = frame.width - QUOTE.padX * 2;
   const footerTop = frame.height - QUOTE.bottom - QUOTE.footer;
   const author = cardAuthor(spec, assets);
+  const logo = cardLogo(spec, assets);
   return (
     <Ground frame={frame} assets={assets}>
       {theme.flourish ? (
@@ -305,22 +319,29 @@ function QuoteCard({ spec, layout, ctx }: { spec: QuoteCardSpec; layout: QuoteLa
           justifyContent: "center",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center" }}>
-          <div style={{ display: "flex", padding: 5, borderRadius: QUOTE.avatar, border: `3px solid ${theme.accent}` }}>
-            <Mark art={author.avatar} name={author.name} size={QUOTE.avatar - 16} ctx={ctx} round />
+        {logo ? (
+          <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", height: QUOTE.avatar }}>
+            <Logo art={logo} size={logoSize(logo, LOGO.quote, width)} />
+            <Line block={layout.handle} family={assets.sans} weight={500} color={theme.muted} style={{ marginTop: 6 }} />
           </div>
-          <div style={{ display: "flex", flexDirection: "column", marginLeft: 28 }}>
-            <div style={{ display: "flex", alignItems: "center" }}>
-              <Line block={layout.name} family={assets.serif} color={theme.text} style={{ lineHeight: 1.1 }} />
-              {theme.flourish ? (
-                <div style={{ display: "flex", marginLeft: 12 }}>
-                  <StarBadge size={Math.round(layout.name.size * 0.8)} color={theme.accent} ink={theme.onAccent} />
-                </div>
-              ) : null}
+        ) : (
+          <div style={{ display: "flex", alignItems: "center" }}>
+            <div style={{ display: "flex", padding: 5, borderRadius: QUOTE.avatar, border: `3px solid ${theme.accent}` }}>
+              <Mark art={author.avatar} name={author.name} size={QUOTE.avatar - 16} ctx={ctx} round />
             </div>
-            <Line block={layout.handle} family={assets.sans} weight={500} color={theme.muted} style={{ marginTop: 4 }} />
+            <div style={{ display: "flex", flexDirection: "column", marginLeft: 28 }}>
+              <div style={{ display: "flex", alignItems: "center" }}>
+                <Line block={layout.name} family={assets.serif} color={theme.text} style={{ lineHeight: 1.1 }} />
+                {theme.flourish ? (
+                  <div style={{ display: "flex", marginLeft: 12 }}>
+                    <StarBadge size={Math.round(layout.name.size * 0.8)} color={theme.accent} ink={theme.onAccent} />
+                  </div>
+                ) : null}
+              </div>
+              <Line block={layout.handle} family={assets.sans} weight={500} color={theme.muted} style={{ marginTop: 4 }} />
+            </div>
           </div>
-        </div>
+        )}
         <Words block={layout.text} family={assets.serif} color={theme.text} style={{ marginTop: QUOTE.gap, letterSpacing: "-0.005em" }} />
       </div>
       <div style={{ position: "absolute", left: QUOTE.padX, top: footerTop, width, height: QUOTE.footer, display: "flex", alignItems: "center" }}>

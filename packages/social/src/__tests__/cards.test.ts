@@ -11,6 +11,7 @@ import {
   cardFormatSets,
   cardImage,
   cardLayout,
+  cardLogo,
   cardParams,
   CARD_FONT_FILES,
   CARD_SANS,
@@ -21,6 +22,8 @@ import {
   FIT_SLACK,
   launchCarousel,
   layoutCard,
+  LOGO,
+  logoSize,
   MAX_LIST_ROWS,
   parseCardParams,
   parseFontMetrics,
@@ -334,6 +337,46 @@ describe("a company's card is drawn in its own name", () => {
     // The app's own card still names its character.
     expect(cardAuthor({ ...spec, brand: undefined }, brandedAssets({ ...spec, brand: undefined }, assets)).name).toBe("Mercury");
   });
+});
+
+describe("a brand's whole logo (brand.logo) is its cards' header", () => {
+  // A real 1x1 PNG, declared at a lockup's shape (1531 x 566): satori draws it into that box.
+  const art = { src: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", width: 1531, height: 566 };
+  const withLogo: CardAssets = { ...ASSETS, brand: { ...ASSETS.brand, logo: art }, authors: { mercury: { name: "Mercury", handle: "@app" } } };
+
+  it("keeps its shape at its height, and narrows (still in shape) to the room it has", () => {
+    expect(logoSize(art, LOGO.header, 600)).toEqual({ width: 238, height: 88 });
+    expect(logoSize(art, LOGO.header, 120)).toEqual({ width: 120, height: 44 });
+    expect(logoSize({ width: 0, height: 0 }, LOGO.header, 600)).toEqual({ width: 88, height: 88 });
+  });
+
+  it("heads every slide and the brand's own quote card, never a named author's or a company's", () => {
+    expect(cardLogo(quoteCard("Open Saturdays.", "square"), withLogo)).toBe(art);
+    for (const slide of launchCarousel({ hook: "Open Saturdays.", text: "From 9 to 1.", call: "See our hours" }, "portrait")) {
+      expect(cardLogo(slide, withLogo), slide.kind).toBe(art);
+    }
+    expect(cardLogo({ ...quoteCard("Open Saturdays.", "square"), author: "mercury" }, withLogo)).toBeUndefined();
+    // An author the assets don't know is the brand's own, as cardAuthor reads it.
+    expect(cardLogo({ ...quoteCard("Open Saturdays.", "square"), author: "nobody" }, withLogo)).toBe(art);
+    const company = quoteCard("Open Saturdays.", "square", { brand: cardBrand({ name: "Green Acres", site: "green.example" }) });
+    expect(cardLogo(company, brandedAssets(company, withLogo))).toBeUndefined();
+    expect(cardLogo(quoteCard("Open Saturdays.", "square"), ASSETS)).toBeUndefined();
+  });
+
+  const route = createCardRoute({ secret: () => SECRET, assets: () => withLogo, paint: ImageResponse });
+  const cases: [string, CardSpec][] = [
+    ["quote 1:1", quoteCard("We're open on Saturdays now, 9 to 1.", "square", { date: "Oct 27" })],
+    ["quote 4:5", quoteCard("We're open on Saturdays now, 9 to 1.", "portrait")],
+    ...launchCarousel({ hook: "We're open on Saturdays now, 9 to 1.", text: "Starting Nov 1 we're open on Saturdays from 9 to 1.", eyebrow: "New hours", call: "See our hours" }, "story").map((spec): [string, CardSpec] => [`9:16 ${spec.kind}`, spec]),
+  ];
+  for (const [label, spec] of cases) {
+    it(`draws with the logo, ${label}: ${CARD_SIZES[spec.size].width}x${CARD_SIZES[spec.size].height} PNG`, async () => {
+      const url = new URL(cardImage(spec, { base: "https://example.com/api/social/card", secret: SECRET, byline: { name: "Maple & Rye", handle: "@maplerye", site: "maplerye.example" } }).url);
+      const response = await route(new Request(url));
+      expect(response.status).toBe(200);
+      expect(pngSize(new Uint8Array(await response.arrayBuffer()))).toEqual(CARD_SIZES[spec.size]);
+    }, 30_000);
+  }
 });
 
 describe("a draft's cards, per platform", () => {
