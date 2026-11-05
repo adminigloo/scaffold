@@ -35,7 +35,7 @@ import { companiesMode } from "./tenancy-emit.js";
  */
 export const PACKAGE_TABLES: Readonly<Record<string, readonly string[]>> = {
   auth: ["identity_webhook_events", "users"],
-  tenancy: ["tenant_invitations", "tenant_members", "tenant_retired_slugs", "tenant_slug_changes", "tenants"],
+  tenancy: ["staff_invitations", "tenant_invitations", "tenant_members", "tenant_retired_slugs", "tenant_slug_changes", "tenants"],
   permissions: ["principal_override", "principal_role", "role_template", "role_template_grant"],
   observability: ["audit_log", "error_log"],
   stripe: ["stripe_connected_accounts", "stripe_events"],

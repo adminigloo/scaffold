@@ -474,7 +474,8 @@ export function renderTenancyServer(answers: Answers): string {
 import { auditEntry } from "${scope}/observability";
 import { auditLog } from "${scope}/observability/schema";
 import type { BootstrapPolicy } from "${scope}/permissions";
-import { createTenancyService, type TenancyAuditSink } from "${scope}/tenancy/server";
+import { clerkClient } from "@clerk/nextjs/server";
+import { createTenancyService, type TenancyAuditSink, type TenancyIdentity } from "${scope}/tenancy/server";
 import { db } from "@/db";
 import { env } from "@/env";
 import { tenantCatalog } from "@/permissions/catalog";${companies ? `\nimport { TENANT_ROLES } from "@/permissions/roles";` : ""}
@@ -546,6 +547,19 @@ export const auditSink: TenancyAuditSink = async (tx, event) => {
   );
 };
 
+/**
+ * Where a person's name really lives: Clerk (People's Edit name, tenancy 0.9).
+ * Written there first, so its user.updated webhook carries the new name back
+ * rather than the old one over it. Without Clerk keys (a laptop not signed up
+ * yet) the name is kept in this database only.
+ */
+const identity: TenancyIdentity = {
+  async updateName({ externalId, firstName, lastName }) {
+    if (!env.CLERK_SECRET_KEY) return;
+    await (await clerkClient()).users.updateUser(externalId, { firstName, lastName });
+  },
+};
+
 export const tenancy = createTenancyService({
   db,
   mode: "${mode}",
@@ -560,6 +574,7 @@ export const tenancy = createTenancyService({
   // The platform's own name is not a customer's web address (review T1-07).
   reservedSlugs: ${JSON.stringify(reserved)},
   invitations: { expiresInHours: INVITATION_EXPIRY_HOURS },
+  identity,
   audit: auditSink,${companyOptions}${consumerOptions}${tenancyDeletionOption(answers)}
   onEventError: (error, event) => {
     log.error({ err: error, event: event.type }, "a tenancy event listener failed");
@@ -638,6 +653,7 @@ const deliverInvitation: NonNullable<CreateTenancyHandlersOptions["deliverInvita
     : "";
   return `import { desc, eq } from "drizzle-orm";
 import { users } from "${scope}/auth/schema";
+import { sendStaffInvitationEmail, staffInvitationEmailsConfigured, staffSignUpUrl } from "./staff-invitation-mail";
 import { auditLog } from "${scope}/observability/schema";
 import { clientIpFromHeaders, resolveRequestId } from "${scope}/observability/request";
 import { describeTenancyAuditEntry } from "${scope}/tenancy";
@@ -763,6 +779,10 @@ export function buildTenancyOperatorHandlers(
     limit,
     requestFacts,
     onError,
+    // People's Invite (tenancy 0.9): the email goes only when this project can
+    // send mail; otherwise People shows the sign-up link to pass on.
+    ...(staffInvitationEmailsConfigured ? { deliverStaffInvitation: sendStaffInvitationEmail } : {}),
+    staffSignUpUrl: staffSignUpUrl(),
   });
 }
 `;
@@ -970,6 +990,105 @@ export async function CompanyGate(props: {
   }
 
   return props.children({ principal, company, can, isStaff, locale });
+}
+`;
+}
+
+// ---------------------------------------------------------------------------
+// src/server/staff-invitation-mail.ts — People's Invite, by email (tenancy 0.9)
+// ---------------------------------------------------------------------------
+
+export function renderStaffInvitationMail(answers: Answers): string {
+  const scope = answers.scope;
+  const shared = `/** Where an invitee goes: sign-up (it offers sign-in too), then on to /admin. */
+export function staffSignUpUrl(): string {
+  return new URL("/sign-up?redirect_url=%2Fadmin", env.NEXT_PUBLIC_APP_URL).toString();
+}
+
+/** One staff invitation on its way out. No token: the role waits on the address, taken up at its first sign-in. */
+export interface StaffInvitationMail {
+  readonly email: string;
+  readonly roleName: string;
+  readonly invitedBy: string | null;
+  readonly expiresAt: Date;
+  readonly invitationId: string;
+}
+`;
+  if (!answers.includeEmail) {
+    return `import { env } from "@/env";
+
+${shared}
+/**
+ * ${answers.projectName} was generated without @${scope.replace(/^@/, "")}/email, so nothing is
+ * sent: People shows the sign-up link to pass on instead. Re-generate with
+ * \`--email\` to post them.
+ */
+export const staffInvitationEmailsConfigured: boolean = false;
+
+export function sendStaffInvitationEmail(_mail: StaffInvitationMail): Promise<"sent" | "skipped" | "failed"> {
+  return Promise.resolve("skipped");
+}
+`;
+  }
+  return `import { createEmailSender, formatSenderAddress } from "${scope}/email";
+import { emailEvents } from "${scope}/email/schema";
+import { db } from "@/db";
+import { env } from "@/env";
+import { SITE_NAME } from "@/seo";
+import { log } from "@/server/logger";
+
+${shared}
+/** Recorded in \`email_events.template\`. */
+export const STAFF_INVITATION_TEMPLATE = "staff-invitation";
+
+const sender = createEmailSender({
+  apiKey: env.RESEND_API_KEY,
+  from: env.EMAIL_FROM ?? "invitations@example.invalid",
+  replyTo: env.EMAIL_REPLY_TO,
+});
+
+/** Only with RESEND_API_KEY: without it People is told no email went, and shows the link. */
+export const staffInvitationEmailsConfigured: boolean = sender.configured;
+
+const escape = (text: string) => text.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
+
+/** Never throws: the invitation is saved before this runs, and a failed email must not lose it. */
+export async function sendStaffInvitationEmail(mail: StaffInvitationMail): Promise<"sent" | "skipped" | "failed"> {
+  const url = staffSignUpUrl();
+  const until = mail.expiresAt.toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
+  const who = mail.invitedBy ? \`\${mail.invitedBy} has invited you\` : "You've been invited";
+  const subject = \`You're invited to \${SITE_NAME}'s admin as \${mail.roleName}\`;
+  const lead = \`\${who} to \${SITE_NAME}'s admin as \${mail.roleName}.\`;
+  const text = [lead, "", \`Create your account with this email address (\${mail.email}) to take it up:\`, url, "", \`The invitation waits until \${until}.\`].join("\\n");
+  const html = \`<p>\${escape(lead)}</p><p>Create your account with this email address (\${escape(mail.email)}) to take it up:</p><p><a href="\${url}">Join \${escape(SITE_NAME)}</a></p><p>The invitation waits until \${escape(until)}.</p>\`;
+  try {
+    const outcome = await sender.send({
+      to: mail.email,
+      subject,
+      html,
+      text,
+      template: STAFF_INVITATION_TEMPLATE,
+      metadata: { staffInvitationId: mail.invitationId },
+    });
+    await db.insert(emailEvents).values(outcome.log).catch((err: unknown) => log.error({ err }, "staff invitation: the delivery log write failed"));
+    return outcome.status;
+  } catch (cause) {
+    const error = cause instanceof Error ? cause : new Error(String(cause));
+    await db
+      .insert(emailEvents)
+      .values({
+        messageId: null,
+        toAddress: mail.email,
+        fromAddress: formatSenderAddress(sender.from),
+        subject,
+        template: STAFF_INVITATION_TEMPLATE,
+        status: "failed",
+        error: error.message,
+        metadata: { staffInvitationId: mail.invitationId },
+      })
+      .catch((err: unknown) => log.error({ err }, "staff invitation: the delivery log write failed"));
+    return "failed";
+  }
 }
 `;
 }

@@ -30,6 +30,7 @@ import {
   renderTenancyConstants,
   renderTenancyHandlers,
   renderTenancyLogo,
+  renderStaffInvitationMail,
   renderTenancyServer,
   renderTenantSettings,
 } from "./tenancy-emit.js";
@@ -700,6 +701,9 @@ export async function planEmit(
   files.set(join("src", "server", "forget-company.ts"), renderForgetCompany(answers));
   files.set(join("src", "server", "__tests__", "forget-company.test.ts"), renderForgetCompanyTest(answers));
   files.set(join("src", "server", "tenancy-handlers.ts"), renderTenancyHandlers(answers));
+  // People's Invite by email (tenancy 0.9), in every project: staff invitations
+  // aren't a team's, so a consumers project has them too.
+  files.set(join("src", "server", "staff-invitation-mail.ts"), renderStaffInvitationMail(answers));
   files.set(join("src", "server", "tenancy-logo.ts"), renderTenancyLogo(answers));
   files.set(join("src", "components", "CompanySwitcherSlot.tsx"), renderCompanySwitcherSlot(answers));
   files.set(join("src", "components", "CompanyGate.tsx"), renderCompanyGate(answers));

@@ -45,7 +45,9 @@ export default async function AdminLayout({ children }: { children: ReactNode })
       // their very first sign-in. Signing in before the roles were installed
       // used to lock /admin for good; now the next visit after the seed lets
       // them in. Once an administrator exists this changes nothing.
-      const healed = await tenancy.ensureBootstrapAdmin({
+      // TENANCY 0.9: or the role a staff invitation holds for their address,
+      // for an account the identity webhook made before anything claimed it.
+      const healed = await tenancy.ensureStaffAccess({
         userId: principal.userId,
         email: principal.email,
       });

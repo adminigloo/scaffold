@@ -162,7 +162,7 @@ describe("the generated project's wiring", () => {
   it("self-heals the first administrator in /admin, with the recovery that works where it runs (TB-DEPLOY-08)", async () => {
     const plan = await planEmit(TEMPLATE_DIR, "/out", answers());
     const layout = get(plan, "app", "admin", "layout.tsx");
-    expect(layout).toContain("tenancy.ensureBootstrapAdmin(");
+    expect(layout).toContain("tenancy.ensureStaffAccess(");
     expect(layout).toContain('"templates-missing" ? "not-seeded"');
     const unavailable = get(plan, "src", "components", "admin", "AdminUnavailable.tsx");
     // The signed-in person's own email in the command (create-app 0.39); the

@@ -71,7 +71,8 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // `tenancyAlertsFor` are the team alerts. The emitted alerts glue calls
   // all of them; none exist in 0.5.x.
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company (deleteCompany, staff.tenants.delete).
-  tenancy: "0.8.1",
+  // 0.9.0: People invites someone to a staff role by email, and edits a name (staff_invitations).
+  tenancy: "0.9.0",
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
   // 0.4.0 (create-app 0.39): the seed applies a seal over an allow row a
   // shipped role already held (`sealsApplied`, `withdrawn`) — what takes a
@@ -348,7 +349,8 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.4.0: <SetupChecklist collapsible>, the dashboard's one-line card above
   // its numbers (create-app 0.36.1); a 0.3.x project's dashboard won't compile.
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company (the console's Delete).
-  "tenancy-widget": "0.5.0",
+  // 0.6.0: <StaffPeople> gets Invite, the invitations waiting, and Edit name.
+  "tenancy-widget": "0.6.0",
   // 0.2.0 (sweep): line items after creation, atomic idempotent payments,
   // reversals, a status transition table and tenant-scoped reads — the emitted
   // admin page and router call addInvoiceItem/reversePayment/markInvoiceViewed
