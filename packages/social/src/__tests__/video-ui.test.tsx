@@ -117,6 +117,30 @@ describe("make a video", () => {
     expect(c.textContent).toContain("4 seconds at 1080×1080, with no sound.");
   });
 
+  it("starts each platform's video afresh: one platform's clip never shows as another's (social 0.7.4)", async () => {
+    stub(globalThis.URL, "createObjectURL", () => "blob:clip");
+    stub(globalThis.URL, "revokeObjectURL", () => undefined);
+    make.mockImplementation(async () => ({ blob: new Blob(["mp4"], { type: "video/mp4" }), seconds: 10.6, width: 1080, height: 1920 }));
+    const { PostQueue } = await import("../ui/PostQueue.js");
+    const draft = (id: string, platform: "tiktok" | "instagram", height: number) => ({
+      id, key: "launch:1", kind: "launch", platform, author: "Maple & Rye", day: "2026-10-27", title: "Open on Saturdays", text: "Saturdays.", hook: "Saturdays.",
+      images: [{ url: `https://example.com/${id}.png`, alt: "", width: 1080, height }], firstComment: null, templateText: "Saturdays.", writtenBy: "template" as const,
+      note: null, linkUrl: null, status: "draft" as const, postedUrl: null, postedAt: null, expiresAt: null, expiresLabel: null, updatedAt: "2026-10-27T15:00:00.000Z",
+    });
+    const noop = async () => undefined;
+    const c = await mount(<PostQueue posts={[draft("t1", "tiktok", 1920), draft("i1", "instagram", 1350)]} actions={{ save: noop, approve: noop, markPosted: noop, skip: noop }} />);
+    const tab = (name: string) => [...c.querySelectorAll('[role="tab"]')].find((t) => t.textContent?.includes(name)) as HTMLButtonElement;
+    await act(async () => tab("TikTok").click());
+    for (let i = 0; i < 10; i++) await act(async () => new Promise((r) => setTimeout(r, 5)));
+    await act(async () => ([...c.querySelectorAll(".social-panel button")].find((b) => b.textContent === "Make a video") as HTMLButtonElement).click());
+    for (let i = 0; i < 10; i++) await act(async () => new Promise((r) => setTimeout(r, 5)));
+    expect(c.querySelector(".social-panel video")).not.toBeNull();
+    await act(async () => tab("Instagram").click());
+    for (let i = 0; i < 10; i++) await act(async () => new Promise((r) => setTimeout(r, 5)));
+    expect(c.querySelector(".social-panel video")).toBeNull();
+    expect([...c.querySelectorAll(".social-panel button")].map((b) => b.textContent)).toContain("Make a video");
+  });
+
   it("says plainly when the clip couldn't be made, and the photos still work", async () => {
     make.mockImplementation(async () => {
       throw new Error("slide 2 didn't load (404)");

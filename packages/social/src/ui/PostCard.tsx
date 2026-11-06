@@ -341,7 +341,9 @@ export function PostCard({ post, actions, kindLabel, looks }: { readonly post: P
       </div>
 
       <div className="social-panel" role="tabpanel" id={panel} aria-labelledby={tabId(selected.platform)}>
+        {/* Keyed by the draft: a tab switch starts its panel afresh, so one platform's video or shared files never show as another's. */}
         <PlatformPanel
+          key={selected.id}
           post={selected}
           typed={typedOn(selected)}
           onType={(change) => type(selected, change)}
