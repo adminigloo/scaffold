@@ -187,10 +187,10 @@ describe("the migration, the packages and the flags", () => {
     expect(PACKAGE_TABLES["social"]).toEqual(["social_posts"]);
   });
 
-  it("installs @adminigloo/social at 0.7.1, parses --social / --no-social, and can be added later", () => {
+  it("installs @adminigloo/social at 0.7.2, parses --social / --no-social, and can be added later", () => {
     expect(packagesFor(answers())).toContain("@adminigloo/social");
     expect(packagesFor(answers({ includeSocial: false }))).not.toContain("@adminigloo/social");
-    expect(packageVersions()["social"]).toBe("0.7.1");
+    expect(packageVersions()["social"]).toBe("0.7.2");
     expect(parseArgs(["acme", "--social"]).social).toBe(true);
     expect(parseArgs(["acme", "--no-social"]).social).toBe(false);
     expect(ADDABLE_FEATURES).toContain("social");
