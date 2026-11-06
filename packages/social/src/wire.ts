@@ -24,8 +24,13 @@ export interface LookChoices {
   /** What the list is called: "Background". */
   readonly label: string;
   readonly options: readonly LookOption[];
-  /** The switch, if any: the suffix it adds to a look's key, and its button's words each way. */
-  readonly toggle?: { readonly suffix: string; readonly turnOn: string; readonly turnOff: string };
+  /**
+   * The switch, if any: the suffix it adds to a look's key, its entry's words
+   * each way (the last entry of the dropdown since 0.7.2), and (0.7.2) what it
+   * adds in a word or two ("confetti"): the chosen option then reads "Blue +
+   * confetti", and the entry sits under that name.
+   */
+  readonly toggle?: { readonly suffix: string; readonly turnOn: string; readonly turnOff: string; readonly label?: string };
 }
 
 export interface QueueWire {
