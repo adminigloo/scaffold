@@ -1,5 +1,13 @@
 # create-adminigloo-app
 
+## 0.42.6
+
+### Patch Changes
+
+- 1186637: The look's switch is back as its own button beside the dropdown, as in 0.7 (0.7.2's single dropdown undone; its `toggle.label` is gone).
+  
+  - create-app pins social 0.7.3.
+
 ## 0.42.5
 
 ### Patch Changes
