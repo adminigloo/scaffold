@@ -449,7 +449,8 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.7.2: the look in one dropdown, the switch its last entry.
   // 0.7.3: the switch back beside the dropdown, as its own button.
   // 0.7.4: each platform's panel starts afresh, its own video and pictures.
-  social: "0.7.4",
+  // 0.7.5: the card formats' videos start afresh in another look.
+  social: "0.7.5",
 };
 
 export class UnknownPackageVersionError extends Error {
