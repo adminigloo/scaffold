@@ -230,6 +230,14 @@ export interface CreateSocialAdminHandlersOptions {
    */
   readonly restyle?: (images: readonly DraftImage[], look: string, ctx: { readonly tenantId: string }) => readonly DraftImage[] | null | Promise<readonly DraftImage[] | null>;
   /**
+   * Whether `restyle` can redraw these pictures here (social 0.7.1): false for
+   * pictures this server didn't make (another server's cards, which it can't
+   * sign again). The queue marks each such row, and the screen switches its
+   * Look controls off with a note saying where its look can be changed. None:
+   * every row can.
+   */
+  readonly canRestyle?: (images: readonly DraftImage[], ctx: { readonly tenantId: string }) => boolean;
+  /**
    * Every card format, as samples in the company's own brand, for "See every
    * card format". Since 0.7, in the look the screen asks for (one of `looks`'),
    * or none. None: an empty list.
@@ -297,7 +305,12 @@ export function createSocialAdminHandlers(options: CreateSocialAdminHandlersOpti
         case "list": {
           const day = await today();
           const sections = await queue.sections(day, { life: options.life, now });
-          const view = (rows: readonly QueuedPost[]) => rows.map((r) => postView(r, options.life, now));
+          const lookable = options.looks && options.restyle ? options.canRestyle : undefined;
+          const view = (rows: readonly QueuedPost[]) =>
+            rows.map((r) => {
+              const v = postView(r, options.life, now);
+              return lookable && r.images.length ? { ...v, canRestyle: lookable(r.images, { tenantId: scoped }) } : v;
+            });
           const looks = options.looks && options.restyle ? await options.looks(scoped) : null;
           const wire: QueueWire = {
             today: day,
@@ -381,7 +394,7 @@ export function createSocialAdminHandlers(options: CreateSocialAdminHandlersOpti
             const images = await options.restyle(row.images, look, { tenantId: scoped });
             if (images?.length && (await queue.setImages(row.id, images))) restyled += 1;
           }
-          if (!restyled) throw new HttpRefusal("invalid", 400, "These pictures can't take another look.");
+          if (!restyled) throw new HttpRefusal("invalid", 400, "These pictures can't be redrawn here: they were made somewhere else. Change the look where the post was written.");
           return json({ restyled });
         }
         case "approved": {

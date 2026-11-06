@@ -231,6 +231,30 @@ describe("the queue's routes", () => {
     expect([refused.status, ((await refused.json()) as { error: { message: string } }).error.message]).toEqual([400, "Choose one of the looks."]);
   });
 
+  it("marks a post whose pictures this server can't redraw (social 0.7.1), and leaves the mark off without the app's check", async () => {
+    const { handle } = handlerFor();
+    await compose(handle, "alpha", "We now mow on Saturdays, 8 to noon.");
+    expect((await queueOf(handle, "alpha")).sections.today.some((p) => "canRestyle" in p)).toBe(false);
+    const elsewhere = createSocialAdminHandlers({
+      db: test.db,
+      tenantId: "alpha",
+      authorize: () => ({ userId: "u1" }),
+      compose: () => {
+        throw new Error("never");
+      },
+      writer: () => ({ complete: null }),
+      looks: () => LOOKS,
+      restyle: () => null,
+      canRestyle: (images) => !images.some((i) => i.url.includes("p=x&")),
+      today: () => "2026-10-27",
+    });
+    const rows = (await queueOf(elsewhere.handle, "alpha")).sections.today;
+    expect(rows.find((p) => p.platform === "x")!.canRestyle).toBe(false);
+    expect(rows.find((p) => p.platform === "linkedin")!.canRestyle).toBe(true);
+    // A row with no pictures has nothing to redraw, and no mark.
+    expect("canRestyle" in rows.find((p) => p.platform === "reddit")!).toBe(false);
+  });
+
   it("has no Look picker without the app's looks, and won't take looks without a way to redraw", async () => {
     const plain = createSocialAdminHandlers({ db: test.db, tenantId: "alpha", authorize: () => ({ userId: "u1" }), compose: () => { throw new Error("never"); }, writer: () => ({ complete: null }) });
     expect("looks" in ((await (await plain.handle(get("alpha", "v1/admin/posts"))).json()) as QueueWire)).toBe(false);

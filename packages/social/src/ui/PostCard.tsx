@@ -33,6 +33,15 @@ export interface QueueActions {
   readonly restyle?: (id: string, look: string) => Promise<ActionResult>;
 }
 
+/** The site a picture comes from ("staging.example.com"), or "" when it has none. */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "";
+  }
+}
+
 /** The look a post's cards wear: the `look` in its first card's signed address ("" for none). */
 export function lookOf(images: readonly { readonly url: string }[]): string {
   const first = images[0];
@@ -213,7 +222,10 @@ export function PostCard({ post, actions, kindLabel, looks }: { readonly post: P
   /* The Look picker (social 0.6): the app's looks, for a post with pictures still to post; it redraws every platform's. */
   const currentLook = lookOf(post.imageSets[0]?.images ?? []);
   const changeable = post.platforms.find((p) => (p.status === "draft" || p.status === "approved") && p.images.length > 0);
-  const lookPicker = looks?.options.length && actions?.restyle && changeable ? { id: changeable.id, restyle: actions.restyle, choices: looks } : null;
+  // Pictures another server made can't be redrawn here (social 0.7.1): the controls stay, switched off, saying where.
+  const redrawable = post.platforms.filter((p) => (p.status === "draft" || p.status === "approved") && p.images.length > 0);
+  const elsewhere = redrawable.length > 0 && redrawable.every((p) => p.canRestyle === false) ? hostOf(redrawable[0]!.images[0]!.url) : null;
+  const lookPicker = looks?.options.length && actions?.restyle && changeable ? { id: changeable.id, restyle: actions.restyle, choices: looks, elsewhere } : null;
 
   return (
     <article className="social-post" id={postAnchor(post.key)} data-open={post.open || undefined} aria-label={`${kindLabel}, ${dayText(post.day)}`}>
@@ -260,7 +272,7 @@ export function PostCard({ post, actions, kindLabel, looks }: { readonly post: P
             id={`${uid}-look`}
             choices={lookPicker.choices}
             value={currentLook}
-            disabled={busy !== null}
+            disabled={busy !== null || lookPicker.elsewhere !== null}
             onChange={(next) => {
               if (next !== currentLook) void run("look", "restyle", () => lookPicker.restyle(lookPicker.id, next));
             }}
@@ -269,6 +281,13 @@ export function PostCard({ post, actions, kindLabel, looks }: { readonly post: P
             <span className="social-note" role="status">
               Redrawing the pictures…
             </span>
+          ) : null}
+          {lookPicker.elsewhere !== null ? (
+            <p className="social-note">
+              {lookPicker.elsewhere
+                ? `Its pictures were drawn by ${lookPicker.elsewhere}, so its look can be changed there, not here.`
+                : "Its pictures were drawn somewhere else, so its look can be changed there, not here."}
+            </p>
           ) : null}
         </div>
       ) : null}

@@ -222,6 +222,20 @@ describe("the Look picker (social 0.6; a background and a switch since 0.7)", ()
     expect(renderToStaticMarkup(<PostQueue posts={[view()]} actions={actions} looks={looks} />)).toContain(picker);
   });
 
+  it("switches the controls off, saying where, for pictures another server drew (social 0.7.1)", async () => {
+    const actions = { ...noActions, restyle: async () => undefined };
+    const made = (over: Partial<QueuePostView>) => view({ canRestyle: false, images: [{ url: "https://staging.example.com/api/social/card?kind=quote&sig=s", alt: "The card", width: 1080, height: 1080 }], ...over });
+    const m = await mount(<PostQueue posts={[made({}), made({ id: "p2", platform: "linkedin" })]} actions={actions} looks={LOOKS} />);
+    expect((m.container.querySelector(".social-look select") as HTMLSelectElement).disabled).toBe(true);
+    expect(m.container.textContent).toContain("Its pictures were drawn by staging.example.com, so its look can be changed there, not here.");
+    await m.unmount();
+    // One platform this server can redraw is enough to offer it.
+    const mixed = await mount(<PostQueue posts={[made({}), made({ id: "p2", platform: "linkedin", canRestyle: true })]} actions={actions} looks={LOOKS} />);
+    expect((mixed.container.querySelector(".social-look select") as HTMLSelectElement).disabled).toBe(false);
+    expect(mixed.container.textContent).not.toContain("not here.");
+    await mixed.unmount();
+  });
+
   it("shows every card format in one look at a time, with the same two controls", async () => {
     const asked: string[] = [];
     const sets = [{ key: "quote", title: "Quote card", about: "Samples", images: [{ url: "https://example.com/api/social/card?kind=quote&look=spray-confetti&sig=s", alt: "A sample", width: 1080, height: 1080, label: "quote · 1:1 · 1080×1080" }] }];
