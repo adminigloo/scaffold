@@ -1,5 +1,13 @@
 # create-adminigloo-app
 
+## 0.42.8
+
+### Patch Changes
+
+- 80298be: See every card format's videos start afresh in another look: a video made in one look no longer stays under another look's cards.
+  
+  - create-app pins social 0.7.5.
+
 ## 0.42.7
 
 ### Patch Changes
