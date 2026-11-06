@@ -102,7 +102,8 @@ export function CardFormats({
           {set.images.some(wearsLook) ? (
             <div className="social-actions">
               {bySize(set.images).map((group) => (
-                <MakeVideo key={group.ratio} postKey={`sample-${set.key}-${group.ratio.replace(":", "x")}`} images={group.images} label={`Make a ${group.ratio} video`} />
+                // Keyed by its cards too: another look's cards start afresh, never under the last look's video.
+                <MakeVideo key={`${group.ratio}:${group.images[0]?.url ?? ""}`} postKey={`sample-${set.key}-${group.ratio.replace(":", "x")}`} images={group.images} label={`Make a ${group.ratio} video`} />
               ))}
             </div>
           ) : null}

@@ -141,6 +141,27 @@ describe("make a video", () => {
     expect([...c.querySelectorAll(".social-panel button")].map((b) => b.textContent)).toContain("Make a video");
   });
 
+  it("starts the card formats' video afresh in another look: never a look's clip under another's cards (social 0.7.5)", async () => {
+    stub(globalThis.URL, "createObjectURL", () => "blob:clip");
+    stub(globalThis.URL, "revokeObjectURL", () => undefined);
+    make.mockImplementation(async () => ({ blob: new Blob(["mp4"], { type: "video/mp4" }), seconds: 4.2, width: 1080, height: 1080 }));
+    const { CardFormats } = await import("../ui/CardFormats.js");
+    const setIn = (look: string) => [{ key: "quote", title: "Quote card", about: "Samples", images: [{ url: `https://example.com/api/social/card?kind=quote&look=${look}&sig=s`, alt: "A sample", width: 1080, height: 1080, label: "quote · 1:1 · 1080×1080" }] }];
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => root.render(<CardFormats sets={setIn("spray")} />));
+    for (let i = 0; i < 10; i++) await act(async () => new Promise((r) => setTimeout(r, 5)));
+    await act(async () => ([...container.querySelectorAll("button")].find((b) => b.textContent === "Make a 1:1 video") as HTMLButtonElement).click());
+    for (let i = 0; i < 10; i++) await act(async () => new Promise((r) => setTimeout(r, 5)));
+    expect(container.querySelector("video")).not.toBeNull();
+    await act(async () => root.render(<CardFormats sets={setIn("dark")} />));
+    for (let i = 0; i < 10; i++) await act(async () => new Promise((r) => setTimeout(r, 5)));
+    expect(container.querySelector("video")).toBeNull();
+    expect([...container.querySelectorAll("button")].map((b) => b.textContent)).toContain("Make a 1:1 video");
+    await act(async () => root.unmount());
+  });
+
   it("says plainly when the clip couldn't be made, and the photos still work", async () => {
     make.mockImplementation(async () => {
       throw new Error("slide 2 didn't load (404)");
