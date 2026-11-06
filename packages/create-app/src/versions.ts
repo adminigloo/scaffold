@@ -445,7 +445,8 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.5.0: looks, cards that move in video (every platform with pictures), the picture viewer.
   // 0.6.0: the Look picker on each post, and confetti that rains.
   // 0.7.0: a look is a background and a switch over it; the card formats a look at a time.
-  social: "0.7.0",
+  // 0.7.1: the Look controls switched off, saying where, on pictures another server made.
+  social: "0.7.1",
 };
 
 export class UnknownPackageVersionError extends Error {
