@@ -44,11 +44,11 @@ posting-session list) and marks each one posted with its link.
   read and write is inside it: one company never sees, approves or forgets
   another's posts, even under the same key. `"*"` is the site's own posts.
 
-## New in 0.7.2: the look in one dropdown
+## 0.7.3: the switch is back beside the dropdown
 
-`<LookControls>` is one dropdown: the options, then the entry that turns the
-switch on or off ("Turn on confetti" / "Turn off confetti", under the switch's
-`label`). The chosen option says when it's on ("Blue + confetti").
+0.7.2 put the switch in the dropdown as its last entry; 0.7.3 puts it back as
+its own button beside it ("Turn on confetti" / "Turn off confetti"), as 0.7
+had it, and drops 0.7.2's `toggle.label`.
 
 ## New in 0.7: a look is a background, and a switch over it
 
