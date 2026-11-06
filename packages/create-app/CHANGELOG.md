@@ -1,5 +1,13 @@
 # create-adminigloo-app
 
+## 0.42.7
+
+### Patch Changes
+
+- 2b3df86: Each platform's panel starts afresh when its tab is chosen: a video made on one platform (TikTok's 9:16) no longer shows on the next (Instagram) as "Send video to Instagram", and neither do its shared pictures.
+  
+  - create-app pins social 0.7.4.
+
 ## 0.42.6
 
 ### Patch Changes
