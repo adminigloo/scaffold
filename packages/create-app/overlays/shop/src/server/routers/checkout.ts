@@ -25,6 +25,7 @@ import {
   MAX_QUANTITY,
   PurchaseRefusedError,
   STRIPE_MAX_AMOUNT_MINOR,
+  variantGrantsCredits,
   type PurchasableVariant,
 } from "@/server/fulfilment";
 // Imported for its SIDE EFFECT as much as its value. `createStripeClient`
@@ -466,8 +467,10 @@ async function purchasableOrThrow(
 
 function refusalCode(
   error: PurchaseRefusedError,
-): "NOT_FOUND" | "CONFLICT" | "BAD_REQUEST" {
+): "NOT_FOUND" | "CONFLICT" | "BAD_REQUEST" | "UNAUTHORIZED" {
   switch (error.code) {
+    case "account_required":
+      return "UNAUTHORIZED";
     case "not_for_sale":
       return "NOT_FOUND";
     case "sold_out":
@@ -815,6 +818,17 @@ export const checkoutRouter = createTRPCRouter({
 
       // Property 4. The same call `createIntent` makes, three procedures up.
       const variant = await purchasableOrThrow(input.variantId, input.quantity);
+
+      // Credits go into the buyer's account, so a guest can't buy them even
+      // where sign-in isn't configured. Asked before booking, so the answer is
+      // "sign in" rather than a refusal from inside fulfilment's transaction.
+      // (`createIntent` needs a signed-in buyer already.)
+      if (buyerId === null && (await variantGrantsCredits(variant.variantId))) {
+        throw new TRPCError({
+          code: "UNAUTHORIZED",
+          message: "Sign in to buy this: the credits go into your account.",
+        });
+      }
 
       const reference = simulatedReference();
 

@@ -1,0 +1,5 @@
+---
+"@adminigloo/create-app": minor
+---
+
+Credits (create-app 0.43): every shop (`--model one-time` or `both`) can sell spendable balances. A variant's Credits grant (`{ unit, amount }`, catalog 0.5) credits the BUYER's wallet (@adminigloo/wallet 0.1) inside the booking transaction, scaled by quantity, once per order however often the payment arrives; the order line carries `credits:<unit>`. A guest can't buy credits: `checkout.simulate` asks them to sign in first and fulfilment refuses a buyer-less booking (`account_required`), rolling the order back. The product builder edits the grant (unit and amount), the catalog router accepts every kind from `GRANT_KINDS`, `/account` shows "Your credits", and `/admin/credits` (Catalog → Credits, `credits.balances.view`) lists balances and the ledger with an audited, sensitive adjustment (`credits.balances.adjust`, a note required). New: `src/server/routers/credits.ts`, `src/credits.ts` (unit labels), the wallet's tables in the schema module, its permission fragment, and the `wallet.credits` capability.

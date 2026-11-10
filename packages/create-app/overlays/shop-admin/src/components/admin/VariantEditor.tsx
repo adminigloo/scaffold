@@ -48,6 +48,7 @@ const GRANT_LABELS: Record<GrantKind, string> = {
   ship: "Ship something physical",
   license_key: "Issue a licence key",
   entitlement: "Unlock a feature (entitlement)",
+  credits: "Add credits to their balance",
 };
 
 export interface VariantEditorProps {
@@ -511,9 +512,52 @@ function GrantFields({
             </div>
           </>
         ) : null}
+
+        {row.grantKind === "credits" ? (
+          <>
+            <div>
+              <label className={LABEL} htmlFor={id("credits-unit")}>
+                Unit
+              </label>
+              <input
+                id={id("credits-unit")}
+                className={FIELD}
+                value={row.grantCreditsUnit}
+                disabled={disabled}
+                placeholder="crowns"
+                autoComplete="off"
+                onChange={(event) =>
+                  onChange(row.key, { grantCreditsUnit: event.target.value })
+                }
+              />
+              <FieldNote>
+                Which balance it fills. Spell it exactly as the code that
+                spends it does: a different spelling is a different balance.
+              </FieldNote>
+            </div>
+            <div>
+              <label className={LABEL} htmlFor={id("credits-amount")}>
+                Credits per unit bought
+              </label>
+              <input
+                id={id("credits-amount")}
+                className={FIELD}
+                value={row.grantCreditsAmount}
+                disabled={disabled}
+                inputMode="numeric"
+                placeholder="25"
+                onChange={(event) =>
+                  onChange(row.key, { grantCreditsAmount: event.target.value })
+                }
+              />
+            </div>
+          </>
+        ) : null}
       </div>
       <Problems messages={problemsByPath.get(`grants[${index}].config`)} />
       <Problems messages={problemsByPath.get(`grants[${index}].config.feature`)} />
+      <Problems messages={problemsByPath.get(`grants[${index}].config.unit`)} />
+      <Problems messages={problemsByPath.get(`grants[${index}].config.amount`)} />
     </fieldset>
   );
 }

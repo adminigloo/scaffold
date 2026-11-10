@@ -33,6 +33,17 @@ export function upgradeNotesFor(answers: Answers, fromVersion: string): string[]
   const companies = answers.tenantNoun !== "none";
   const noun = tenantLabel(answers).toLowerCase();
   const crossed = (version: string) => (compareVersions(fromVersion, version) ?? -1) < 0;
+  // 0.43.0 — credits: a shop's products can put a spendable balance in the
+  // buyer's account. The tables are new, so a migration is all there is to do.
+  const shop = answers.businessModel === "one-time" || answers.businessModel === "both";
+  if (crossed("0.43.0") && shop) {
+    notes.push(
+      "Credits: products can now grant credits (a Credits grant in the product builder: a unit such as crowns and an amount), " +
+        "held in @adminigloo/wallet's wallet_balances and wallet_ledger. Run pnpm db:generate && pnpm db:migrate for the two tables, " +
+        "pnpm db:seed for the credits.balances.view and credits.balances.adjust staff keys, and name your units in src/credits.ts. " +
+        "Spend them in your own code with spendWallet from @adminigloo/wallet/server; staff see and adjust balances at /admin/credits.",
+    );
+  }
   // 0.40.0 — SEO by default (every project), and each person's own emails
   // (a consumers project with --email).
   if (crossed("0.40.0")) {

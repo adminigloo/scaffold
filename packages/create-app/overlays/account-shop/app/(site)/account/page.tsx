@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Principal } from "__SCOPE__/auth";
 import { formatMinor } from "__SCOPE__/catalog";
 import { isDbConfigured } from "__SCOPE__/db";
+import { balancesOf } from "__SCOPE__/wallet/server";
 import {
   Badge,
   Card,
@@ -19,6 +20,7 @@ import {
 } from "@/account";
 import { accountOrderHref, type Delivery } from "@/account-orders";
 import { LicenceKey } from "@/components/account/LicenceKey";
+import { creditsLabel } from "@/credits";
 import {
   featureLabel,
   limitLabel,
@@ -80,9 +82,12 @@ export default async function AccountPage() {
     order.reference === null ? [] : [order.reference],
   );
 
-  const [grantsByReference, deliveriesByOrder] = await Promise.all([
+  const [grantsByReference, deliveriesByOrder, credits] = await Promise.all([
     readGrantsForReferences({ tenantId: STOREFRONT_TENANT_ID, references }),
     readDeliveriesForOrders(orders.map((order) => order.id)),
+    // What a `credits` grant put in this person's account (wallet 0.1). Keyed
+    // on the PERSON, as fulfilment credits it, not on any tenant.
+    balancesOf(db, principal.userId),
   ]);
 
   const grants: GrantedEntitlement[] = [...grantsByReference.values()].flat();
@@ -106,13 +111,29 @@ export default async function AccountPage() {
   const billing = await billingBanner(principal);
 
   const hasSomething =
-    orders.length > 0 || meters.length > 0 || keys.length > 0 || billing !== null;
+    orders.length > 0 || meters.length > 0 || keys.length > 0 || credits.length > 0 || billing !== null;
 
   if (!hasSomething) return <NothingYet />;
 
   return (
     <div className="flex flex-col gap-6">
       {billing}
+
+      {credits.length > 0 && (
+        <Card>
+          <CardHeader
+            title="Your credits"
+            hint="What your purchases put in your account, less what you've spent."
+          />
+          <CardBody className="flex flex-col gap-2">
+            {credits.map((entry) => (
+              <p key={entry.unit} className="text-sm tabular-nums">
+                {creditsLabel(entry.balance, entry.unit)}
+              </p>
+            ))}
+          </CardBody>
+        </Card>
+      )}
 
       {keys.length > 0 && (
         <Card>

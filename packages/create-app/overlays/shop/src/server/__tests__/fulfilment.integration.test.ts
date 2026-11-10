@@ -6,7 +6,9 @@ import { productGrants, products, productVariants } from "__SCOPE__/catalog/sche
 import { entitlements } from "__SCOPE__/billing/schema";
 import { orderItems, orderShipments, orders } from "__SCOPE__/commerce/schema";
 import { auditLog } from "__SCOPE__/observability/schema";
-import { fulfilPurchase, readOrderByReference } from "@/server/fulfilment";
+import { walletBalances, walletLedger } from "__SCOPE__/wallet/schema";
+import { walletBalance } from "__SCOPE__/wallet/server";
+import { fulfilPurchase, PurchaseRefusedError, readOrderByReference } from "@/server/fulfilment";
 import { db, describeIntegration } from "@/test/db";
 
 /**
@@ -35,6 +37,8 @@ interface Seeded {
   readonly licenseVariantId: string;
   readonly shipVariantId: string;
   readonly noneVariantId: string;
+  /** Grants 25 `test-crowns` per unit bought. */
+  readonly creditsVariantId: string;
 }
 
 describeIntegration("fulfilPurchase", () => {
@@ -50,7 +54,7 @@ describeIntegration("fulfilPurchase", () => {
   async function seedVariant(
     productId: string,
     name: string,
-    grant: { kind: "entitlement" | "license_key" | "ship" | "none"; config: Record<string, unknown> },
+    grant: { kind: "entitlement" | "license_key" | "ship" | "credits" | "none"; config: Record<string, unknown> },
   ): Promise<string> {
     const [variant] = await db
       .insert(productVariants)
@@ -115,6 +119,10 @@ describeIntegration("fulfilPurchase", () => {
         kind: "none",
         config: {},
       }),
+      creditsVariantId: await seedVariant(product.id, "Pouch", {
+        kind: "credits",
+        config: { unit: "test-crowns", amount: 25 },
+      }),
     };
   });
 
@@ -134,6 +142,10 @@ describeIntegration("fulfilPurchase", () => {
       );
     }
     await db.delete(entitlements).where(eq(entitlements.tenantId, TENANT_ID));
+    if (seeded) {
+      await db.delete(walletLedger).where(eq(walletLedger.holderId, seeded.userId));
+      await db.delete(walletBalances).where(eq(walletBalances.holderId, seeded.userId));
+    }
     await db.delete(auditLog).where(eq(auditLog.tenantId, TENANT_ID));
     await db.delete(products).where(eq(products.tenantId, TENANT_ID));
     if (seeded) await db.delete(users).where(eq(users.id, seeded.userId));
@@ -242,6 +254,52 @@ describeIntegration("fulfilPurchase", () => {
       trackingNumber: null,
       shippedAt: null,
     });
+  });
+
+  it("credits the buyer's wallet once, scaled by quantity, however often the payment arrives", async () => {
+    const reference = `pi_${randomUUID().replace(/-/g, "")}`;
+    const before = await walletBalance(db, seeded.userId, "test-crowns");
+    const input = {
+      variantId: seeded.creditsVariantId,
+      quantity: 2,
+      userId: seeded.userId,
+      tenantId: TENANT_ID,
+      reference,
+      source: "stripe" as const,
+    };
+
+    const first = await fulfilPurchase(input);
+    const again = await fulfilPurchase(input);
+
+    expect(first.grants).toEqual([
+      { kind: "credits", unit: "test-crowns", amount: 50, balance: before + 50 },
+    ]);
+    expect(again.created).toBe(false);
+    // The order books once, so the wallet credits once: 25 per pack × 2.
+    expect(await walletBalance(db, seeded.userId, "test-crowns")).toBe(before + 50);
+
+    const [line] = await db
+      .select({ metadata: orderItems.metadata })
+      .from(orderItems)
+      .where(eq(orderItems.orderId, first.orderId));
+    expect(line?.metadata?.["credits:test-crowns"]).toBe("50");
+  });
+
+  it("refuses credits with no buyer, and books nothing", async () => {
+    const reference = `sim_${randomUUID()}`;
+    await expect(
+      fulfilPurchase({
+        variantId: seeded.creditsVariantId,
+        quantity: 1,
+        userId: null,
+        tenantId: TENANT_ID,
+        reference,
+        source: "simulated",
+      }),
+    ).rejects.toBeInstanceOf(PurchaseRefusedError);
+    // The refusal was inside the booking transaction: no order survives it.
+    const booked = await readOrderByReference({ tenantId: TENANT_ID, reference });
+    expect(booked).toBeNull();
   });
 
   it("grants nothing for a `none` product, and still records the order", async () => {
