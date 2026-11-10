@@ -8502,6 +8502,10 @@ export function robotsDisallowed(answers: Answers): { readonly path: string; rea
       why: "An auth screen indexes as a page with no content, and it competes with the real landing page for the brand term.",
     },
     { path: "/sign-up", why: "The same, for the other half of the pair." },
+    {
+      path: "/sign-out",
+      why: "Signing out. Every project has the page, and it is a button with nothing to read: an indexed one is a search result that signs whoever clicks it out.",
+    },
   ];
 
   if (answers.adminShell !== "none") {

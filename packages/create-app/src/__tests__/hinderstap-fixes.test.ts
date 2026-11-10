@@ -77,3 +77,16 @@ describe("the generated permissions integration test, in every audience", () => 
   });
 });
 
+describe("/sign-out stays out of every index", () => {
+  it("is private in the path list a --seo project reads", async () => {
+    const paths = file(await plan(HINDERSTAP), "src/seo-paths.ts");
+    expect(paths).toContain('"/sign-out",');
+    // Still fetched-but-unlisted, unchanged: the sign-in pair.
+    expect(paths).toContain('noindex: ["/sign-in", "/sign-up"]');
+  });
+
+  it("is disallowed in a project without --seo too", async () => {
+    expect(file(await plan(BARE), "src/seo-paths.ts")).toContain('"/sign-out"');
+  });
+});
+
