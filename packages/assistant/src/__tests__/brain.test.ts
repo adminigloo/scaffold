@@ -95,49 +95,64 @@ describe("sections: publish, rollback, deactivate — inside one company", () =>
     expect(log[0]).toMatchObject({ entityType: "section", entityKey: "greeting", action: "created", performedBy: "dallin" });
   });
 
-  it("publishes as the next version, refuses a stale base, a lost phrase and an overlong edit", async () => {
+  it("publishes as the next version, refuses a stale base, a base past the head, a lost phrase and an overlong edit", async () => {
     const a = await seeded();
     const core = (await listSectionsForEditor(db, a)).find((s) => s.key === "core_personality");
     if (!core) throw new Error("no core section");
-    expect(core.headVersion).toBe(0);
-    expect(await publishSection(db, a, { sectionId: core.id, baseVersion: 0, content: "No identity here." })).toEqual({
+    // The seed is v1, written by the code (0.11.0).
+    expect(core.headVersion).toBe(1);
+    expect(core.headKind).toBe("code");
+    expect(await publishSection(db, a, { sectionId: core.id, baseVersion: 1, content: "No identity here." })).toEqual({
       published: false,
       reason: "missing_phrase",
       phrase: "assistant",
     });
     expect(
-      await publishSection(db, a, { sectionId: core.id, baseVersion: 0, content: `You are the assistant. ${"x".repeat(5000)}` }),
+      await publishSection(db, a, { sectionId: core.id, baseVersion: 1, content: `You are the assistant. ${"x".repeat(5000)}` }),
     ).toEqual({ published: false, reason: "budget", maxTokens: 500 });
-    expect(await publishSection(db, a, { sectionId: core.id, baseVersion: 0, content: "You are the assistant, v1." }, "dallin")).toEqual({
+    expect(await publishSection(db, a, { sectionId: core.id, baseVersion: 1, content: "You are the assistant, v2." }, "dallin")).toEqual({
       published: true,
-      versionNumber: 1,
+      versionNumber: 2,
     });
-    expect(await publishSection(db, a, { sectionId: core.id, baseVersion: 0, content: "You are the assistant, stale." })).toEqual({
+    expect(await publishSection(db, a, { sectionId: core.id, baseVersion: 1, content: "You are the assistant, stale." })).toEqual({
       published: false,
       reason: "conflict",
-      headVersion: 1,
+      headVersion: 2,
     });
-    expect((await listSections(db, a)).find((s) => s.id === core.id)?.content).toBe("You are the assistant, v1.");
+    // A base the head never reached is not "someone published since": it's its own refusal.
+    expect(await publishSection(db, a, { sectionId: core.id, baseVersion: 7, content: "You are the assistant, from elsewhere." })).toEqual({
+      published: false,
+      reason: "base_ahead",
+      headVersion: 2,
+    });
+    expect((await listSections(db, a)).find((s) => s.id === core.id)?.content).toBe("You are the assistant, v2.");
+    expect((await listSectionVersions(db, a, core.id)).map((v) => [v.versionNumber, v.createdByKind, v.createdBy])).toEqual([
+      [2, "person", "dallin"],
+      [1, "code", "seed"],
+    ]);
   });
 
   it("two publishes at the same base: one wins, the other is a conflict — never a 500", async () => {
     const a = await seeded();
     const core = (await listSections(db, a)).find((s) => s.key === "core_personality")!;
     const results = await Promise.all([
-      publishSection(db, a, { sectionId: core.id, baseVersion: 0, content: "You are the assistant, first." }),
-      publishSection(db, a, { sectionId: core.id, baseVersion: 0, content: "You are the assistant, second." }),
+      publishSection(db, a, { sectionId: core.id, baseVersion: 1, content: "You are the assistant, first." }),
+      publishSection(db, a, { sectionId: core.id, baseVersion: 1, content: "You are the assistant, second." }),
     ]);
     expect(results.filter((r) => r.published)).toHaveLength(1);
     expect(results.filter((r) => !r.published && r.reason === "conflict")).toHaveLength(1);
   });
 
-  it("rolls back as a checked publish at the head", async () => {
+  it("rolls back as a checked publish at the head, as far back as the seed", async () => {
     const a = await seeded();
     const core = (await listSections(db, a)).find((s) => s.key === "core_personality")!;
-    await publishSection(db, a, { sectionId: core.id, baseVersion: 0, content: "You are the assistant, one." });
-    await publishSection(db, a, { sectionId: core.id, baseVersion: 1, content: "You are the assistant, two." });
-    expect(await rollbackSection(db, a, { sectionId: core.id, toVersion: 1 }, "dallin")).toEqual({ published: true, versionNumber: 3 });
-    expect((await listSectionVersions(db, a, core.id)).map((v) => v.versionNumber)).toEqual([3, 2, 1]);
+    await publishSection(db, a, { sectionId: core.id, baseVersion: 1, content: "You are the assistant, one." });
+    await publishSection(db, a, { sectionId: core.id, baseVersion: 2, content: "You are the assistant, two." });
+    expect(await rollbackSection(db, a, { sectionId: core.id, toVersion: 1 }, "dallin")).toEqual({ published: true, versionNumber: 4 });
+    expect((await listSectionVersions(db, a, core.id)).map((v) => v.versionNumber)).toEqual([4, 3, 2, 1]);
+    expect((await listSections(db, a)).find((s) => s.id === core.id)?.content).toBe(
+      DEFAULT_SECTIONS.find((s) => s.key === "core_personality")?.content,
+    );
     expect(await rollbackSection(db, a, { sectionId: core.id, toVersion: 99 })).toEqual({ published: false, reason: "unknown" });
   });
 
@@ -161,7 +176,7 @@ describe("sections: publish, rollback, deactivate — inside one company", () =>
     });
     expect(await rollbackSection(db, b, { sectionId: aCore.id, toVersion: 1 })).toEqual({ published: false, reason: "unknown" });
     expect(await deactivateSection(db, b, aCore.id)).toEqual({ deactivated: false, reason: "unknown" });
-    await publishSection(db, a, { sectionId: aCore.id, baseVersion: 0, content: "You are the assistant, A's own." });
+    await publishSection(db, a, { sectionId: aCore.id, baseVersion: 1, content: "You are the assistant, A's own." });
     expect(await listSectionVersions(db, b, aCore.id)).toEqual([]);
     expect(JSON.stringify(await listSections(db, a))).not.toBe(before); // A's own publish landed…
     expect((await listSections(db, b)).every((s) => !s.content.includes("A's own"))).toBe(true); // …and B never sees it.

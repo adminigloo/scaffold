@@ -9,7 +9,7 @@ Your own site gets one too, for your staff (`ASSISTANT_PLATFORM`, `"*"`).
 | You install | You get |
 | --- | --- |
 | `@adminigloo/assistant` | **The company handler** (`createAssistantHandlers`): the chat (streamed), each person's own conversations, "Yes, do it" / "No" on a change it offers, and the settings (profile, answers, house rules, words, the month's AI use, the change log) — one company per request, every route in `ASSISTANT_ADMIN_ROUTES` (alias `ASSISTANT_ROUTES`). **The brain and the engine**, every function of which takes the company: sections with versions, publish and rollback; house rules and glossary; conversations and messages; knowledge pages and FAQs, found by keyword; proposed changes, answered once. **The tool loop** (`runAssistantLoop`) and **the registry** (`createToolRegistry`) you fill with your own tools. **The contract**: `assistantPermissions` (the keys and their default roles), the route table, the wire types. Evals (`scoreAnswer`, goldens, runs). |
-| `@adminigloo/assistant/schema` | The Drizzle tables to add to your schema and migrate. **No database extension needed.** Shipped SQL for a host without drizzle-kit: `@adminigloo/assistant/sql/assistant-0.9.0.sql` (a fresh install) and `…/sql/upgrade-0.8-to-0.9.sql` (from 0.8). |
+| `@adminigloo/assistant/schema` | The Drizzle tables to add to your schema and migrate. **No database extension needed.** Shipped SQL for a host without drizzle-kit: `@adminigloo/assistant/sql/assistant-0.11.0.sql` (a fresh install), `…/sql/upgrade-0.8-to-0.9.sql` (from 0.8) and `…/sql/upgrade-0.10-to-0.11.sql` (from 0.9 or 0.10). |
 | `@adminigloo/assistant/anthropic` | `createAnthropicProvider({ client })` — the assistant on Claude: **Claude Haiku 4.5 by default** (`DEFAULT_ASSISTANT_MODEL`, $1 in / $5 out per million tokens), any model you name, with two prompt-cache breakpoints (`withPromptCache`), a stop that's a stop, and failures as plain classes. Needs `@anthropic-ai/sdk` (an optional peer); you make the client and own the key. |
 | `@adminigloo/assistant/vector` | OPTIONAL vector search: the `assistant_page_doc_vectors` table (pgvector), `reindexPageDoc`, `removePageDocVector`, and `…/sql/assistant-vector-0.9.0.sql`. Without it, knowledge is found by keyword (Postgres full-text) — a working mode, not a broken one. |
 | `@adminigloo/assistant-widget` | The screens: the launcher (a floating button and a slide-over chat), history, Stop, starter questions, the "ask before acting" card, and the owner's settings under `./admin`. See [its README](../assistant-widget). |
@@ -103,6 +103,37 @@ Every system prompt ends with `NO_MATH_FLOOR` — a line no editor can remove: q
 ## The wire
 
 `ASSISTANT_ADMIN_ROUTES`, relative to where you mount the handler (`{mount}/v1/…`): `GET status`, `POST chat`, `GET conversations`, `GET conversations/{conversation}`, `POST conversations/{conversation}/messages`, `POST actions/{action}/confirm`, `POST actions/{action}/decline`, `GET settings`, `POST settings/profile`, `POST settings/rules`, `POST settings/rules/{house-rule}/remove`, `POST settings/glossary`, `POST settings/glossary/{glossary-term}/remove`, `POST settings/faqs`, `POST settings/faqs/{faq}`, `POST settings/faqs/{faq}/remove`, `GET settings/changes`. Refusals are `{ error: { code, message } }` with a plain sentence; the chat streams the events in `AssistantStreamEvent` (`start`, `text`, `step`, `action`, `error`, `done`).
+
+## Sections whose default lives in code
+
+A section your app ships the text for (a persona, a guardrail, a house voice) shouldn't be seeded once and then frozen. Read it with `ensureSection` instead of `createSection`:
+
+```ts
+import { ensureSection } from "@adminigloo/assistant";
+
+const { content, outcome, differsFromCode } = await ensureSection(db, tenantId, {
+  key: "keeper_persona",
+  label: "The keeper",
+  content: KEEPER_PERSONA, // the text in your code, today
+  requiredPhrases: ["Hessa"],
+  maxTokens: 2000,
+}, { signer: "seed" });
+```
+
+- **Missing**: created from the seed, the seed recorded as v1, signed as the code's (`outcome: "created"`).
+- **Already the code's text**: nothing happens (`"current"`).
+- **Text the code wrote** (an older default, or a pre-0.11 seed with no versions): the seed is published as the next version, signed as the code's (`"adopted"`). Change the default in code, deploy, and every database follows on its next read.
+- **Text a person published**: theirs stands (`"edited"`, `differsFromCode: true`). The editor can offer `resetSectionToCode`, which puts the code's text back signed as the code's, so the section follows the code again.
+
+The seed's budget, required phrases and description are the code's settings, so they follow it too. Two servers adopting at once make one publish; both serve the code's text. Serve `content`: it's the code's text unless a person's edit stands (and on `"refused"`, when the section's own checks refused the seed, it's still the code's, with `refusal` saying why).
+
+**Who wrote a version** is `created_by_kind`, `"person"` or `"code"`. A bare-string actor (`publishSection(db, tenantId, input, userId)`) is a person, as before 0.11; code says `fromCode("seed")`. `listSectionsForEditor(db, tenantId, { seeds })` adds `headKind`, `codeDefault` and `differsFromCode` per row.
+
+## Upgrading from 0.10
+
+The database: one column, `assistant_section_versions.created_by_kind` (`pnpm db:generate` writes it; or run `sql/upgrade-0.10-to-0.11.sql`, safe twice). Every existing version becomes a person's, so nothing is overwritten on a guess. If your own code published versions under ids of its own, mark them as the code's first, in the same session: `select set_config('assistant.code_actors', 'seed,my-seed-script', false);`.
+
+The code: a section's first text is now its v1, so a freshly created or seeded section's head is 1, not 0 (an editor that reads the head is unaffected; code that hard-coded `baseVersion: 0` after creating gets a `conflict`). `publishSection` refuses a `baseVersion` past the head as `base_ahead` rather than `conflict`: handle it where you switch on `reason`.
 
 ## Upgrading from 0.8
 

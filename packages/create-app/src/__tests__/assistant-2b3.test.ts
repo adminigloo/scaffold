@@ -67,8 +67,9 @@ describe("packages, overlays and versions", () => {
     expect(overlayNamesFor(answers({ ...COMPANIES, includeAi: false }))).not.toContain("assistant-chat-admin");
     expect(overlayNamesFor(answers({ includeAssistant: true, tenantNoun: "none", adminShell: "full" }))).not.toContain("assistant-companies");
     const versions = packageVersions();
-    // The release line, not the patch (0.9.1 took ai 0.3's "feature" limit; 0.10 adds forgetTenant).
-    expect(versions.assistant).toMatch(/^0\.10\.\d+$/);
+    // The release line, not the patch (0.9.1 took ai 0.3's "feature" limit; 0.10 adds forgetTenant;
+    // 0.11 records who wrote each version, for ensureSection and the editor's "Use the default text").
+    expect(versions.assistant).toMatch(/^0\.11\.\d+$/);
     expect(versions["assistant-widget"]).toMatch(/^0\.3\.\d+$/); // the 0.3 line (a patch may move it)
     expect(versions.ai).toMatch(/^0\.4\.\d+$/); // 0.3 (Tenancy 2b-4b) brought fees beyond tokens; 0.4 adds forgetTenant.
   });

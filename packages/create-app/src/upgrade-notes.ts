@@ -33,6 +33,19 @@ export function upgradeNotesFor(answers: Answers, fromVersion: string): string[]
   const companies = answers.tenantNoun !== "none";
   const noun = tenantLabel(answers).toLowerCase();
   const crossed = (version: string) => (compareVersions(fromVersion, version) ?? -1) < 0;
+  // 0.43.0 — assistant 0.11: who wrote each version of a section, a person or
+  // the code, so a code default can follow the code without overwriting edits.
+  if (crossed("0.43.0") && answers.includeAssistant) {
+    notes.push(
+      "The assistant now records who wrote each version of a section, a person or the code (assistant 0.11): run " +
+        "`pnpm db:generate` and migrate (one new column, assistant_section_versions.created_by_kind, defaulting to 'person', so " +
+        "every existing edit stays yours). A guardrail you edited at /admin/assistant now says so, with \"Use the default text\" " +
+        "to go back to the package's. If your own code seeds sections, use `ensureSection` instead of `createSection` on first " +
+        "read: it keeps the section in step with your code and never writes over an edit. If that code already published " +
+        "versions under ids of its own, mark them as the code's once: node_modules/@adminigloo/assistant/sql/upgrade-0.10-to-0.11.sql, " +
+        "after `select set_config('assistant.code_actors', '<id>,<id>', false);` in the same session.",
+    );
+  }
   // 0.40.0 — SEO by default (every project), and each person's own emails
   // (a consumers project with --email).
   if (crossed("0.40.0")) {

@@ -209,7 +209,12 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // createAnthropicProvider (./anthropic), and the tools import saveFaq — none
   // of which exist in 0.8.x.
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
-  assistant: "0.10.0",
+  // 0.11.0: each version records who wrote it (a person or the code), a
+  // section's first text is its v1, `ensureSection` keeps a code default in
+  // step, and the emitted editor offers "Use the default text" through
+  // `resetSectionToCode` and `listSectionsForEditor({ seeds })`, none of which
+  // exist in 0.10.x.
+  assistant: "0.11.0",
   // 0.3.0: the launcher, history, Stop, starters and the "ask before acting"
   // card, and the settings screen (./admin) the company pages mount.
   "assistant-widget": "0.3.2",

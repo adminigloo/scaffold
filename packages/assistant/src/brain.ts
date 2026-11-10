@@ -8,6 +8,7 @@ import {
   assistantSectionVersions,
   assistantSections,
   assistantTenantRules,
+  type SignerKind,
 } from "./schema.js";
 import { withinBudget } from "./tokens.js";
 
@@ -51,6 +52,26 @@ export function isUniqueViolation(error: unknown): boolean {
     at = (at as { cause?: unknown }).cause;
   }
   return false;
+}
+
+/**
+ * WHO IS WRITING (0.11.0). A bare string is a person's id, which is what every
+ * caller before 0.11 passed and what it still means. Code that writes its own
+ * text (a seed, a default it ships) says so, `{ id: "seed", kind: "code" }` or
+ * `fromCode("seed")`: what a person wrote stands, and what code wrote is
+ * replaced when the code's default changes (`ensureSection`).
+ */
+export type Signer = string | { readonly id: string | null; readonly kind: SignerKind };
+
+/** The signer for text the app's own code writes: a seed, a shipped default. */
+export function fromCode(id = "code"): Signer {
+  return { id, kind: "code" };
+}
+
+function signerOf(actor: Signer | undefined): { readonly id: string | null; readonly kind: SignerKind } {
+  if (actor === undefined) return { id: null, kind: "person" };
+  if (typeof actor === "string") return { id: actor, kind: "person" };
+  return { id: actor.id, kind: actor.kind };
 }
 
 export interface SectionRow {
@@ -105,23 +126,60 @@ async function logChange(
 export interface EditorSectionRow extends SectionRow {
   /** The current head version, so the editor knows the publish base without a per-card query. */
   headVersion: number;
+  /** Who wrote the head version (0.11.0); null for a section with no versions yet. */
+  headKind: SignerKind | null;
+  /** The code's text for this section, when the caller passed its seeds; null otherwise. */
+  codeDefault: string | null;
+  /** The live text isn't the code's (0.11.0): the editor offers "go back to the code's text". */
+  differsFromCode: boolean;
+}
+
+/** A section's key and the text the app's code ships for it: a seed, a default. */
+export interface SectionSeedText {
+  readonly key: string;
+  readonly content: string;
+}
+
+export interface EditorListOptions {
+  /** The code's text per key (e.g. DEFAULT_SECTIONS), so each row can say whether it differs. */
+  readonly seeds?: readonly SectionSeedText[];
 }
 
 /**
  * A company's active sections plus each one's head version, for the editor —
- * one query with a correlated subquery instead of one per card.
+ * one query with a correlated subquery instead of one per card. Given the
+ * code's seeds, each row also says whether its live text is still the code's.
  */
-export async function listSectionsForEditor(db: AssistantDb, tenantId: string): Promise<EditorSectionRow[]> {
+export async function listSectionsForEditor(
+  db: AssistantDb,
+  tenantId: string,
+  options: EditorListOptions = {},
+): Promise<EditorSectionRow[]> {
   const t = company(tenantId);
   const headSub = db
     .select({ v: sql<number>`max(${assistantSectionVersions.versionNumber})` })
     .from(assistantSectionVersions)
     .where(eq(assistantSectionVersions.sectionId, assistantSections.id));
-  return db
-    .select({ ...SECTION_COLUMNS, headVersion: sql<number>`coalesce((${headSub}), 0)` })
+  const headKindSub = db
+    .select({ k: assistantSectionVersions.createdByKind })
+    .from(assistantSectionVersions)
+    .where(eq(assistantSectionVersions.sectionId, assistantSections.id))
+    .orderBy(desc(assistantSectionVersions.versionNumber))
+    .limit(1);
+  const rows: Array<SectionRow & { headVersion: number; headKind: SignerKind | null }> = await db
+    .select({
+      ...SECTION_COLUMNS,
+      headVersion: sql<number>`coalesce((${headSub}), 0)`,
+      headKind: sql<SignerKind | null>`(${headKindSub})`,
+    })
     .from(assistantSections)
     .where(and(eq(assistantSections.tenantId, t), eq(assistantSections.isActive, true)))
     .orderBy(asc(assistantSections.sortOrder), asc(assistantSections.key));
+  const seeds = new Map((options.seeds ?? []).map((seed) => [seed.key, seed.content]));
+  return rows.map((row) => {
+    const codeDefault = seeds.get(row.key) ?? null;
+    return { ...row, codeDefault, differsFromCode: codeDefault !== null && row.content !== codeDefault };
+  });
 }
 
 /** A company's active sections, in assembly order. */
@@ -165,14 +223,21 @@ export class SectionBudgetError extends Error {
   }
 }
 
+/**
+ * Create a section, its first text recorded as version 1 (0.11.0), so the
+ * history starts where the text did and "roll back" can always reach it. Before
+ * 0.11 the first text had no version: the first publish became v1 and the
+ * original was gone. `actor` is a person's id, or `fromCode(...)` for a seed.
+ */
 export async function createSection(
   db: AssistantDb,
   tenantId: string,
   input: CreateSectionInput,
-  actor?: string,
+  actor?: Signer,
 ): Promise<SectionRow> {
   const t = company(tenantId);
   const parsed = createSectionSchema.parse(input);
+  const signer = signerOf(actor);
   const maxTokens = parsed.maxTokens ?? 600;
   // Enforced here, not merely metered in the UI — Ask Lou's maxTokens lied.
   if (!withinBudget(parsed.content, maxTokens)) throw new SectionBudgetError(maxTokens);
@@ -187,32 +252,45 @@ export async function createSection(
       .limit(1)
       .then((rows: Array<{ sortOrder: number }>) => (rows[0]?.sortOrder ?? 0) + 10));
 
-  const rows = await db
-    .insert(assistantSections)
-    .values({
-      tenantId: t,
-      key: parsed.key,
-      label: parsed.label,
-      description: parsed.description ?? null,
-      content: parsed.content,
-      sortOrder,
-      isCore: parsed.isCore ?? false,
-      requiredPhrases: parsed.requiredPhrases ?? [],
-      maxTokens,
-    })
-    .returning(SECTION_COLUMNS);
-  const row = rows[0];
-  if (!row) throw new Error("section insert returned no row");
+  // One transaction: a section never exists without its first version.
+  return db.transaction(async (tx: AssistantDb) => {
+    const rows = await tx
+      .insert(assistantSections)
+      .values({
+        tenantId: t,
+        key: parsed.key,
+        label: parsed.label,
+        description: parsed.description ?? null,
+        content: parsed.content,
+        sortOrder,
+        isCore: parsed.isCore ?? false,
+        requiredPhrases: parsed.requiredPhrases ?? [],
+        maxTokens,
+      })
+      .returning(SECTION_COLUMNS);
+    const row = rows[0] as SectionRow | undefined;
+    if (!row) throw new Error("section insert returned no row");
 
-  await logChange(db, t, {
-    entityType: "section",
-    entityId: row.id,
-    entityKey: row.key,
-    action: "created",
-    performedBy: actor ?? null,
+    await tx.insert(assistantSectionVersions).values({
+      sectionId: row.id,
+      versionNumber: 1,
+      content: parsed.content,
+      changeSummary: "created",
+      createdBy: signer.id,
+      createdByKind: signer.kind,
+    });
+    await logChange(tx, t, {
+      entityType: "section",
+      entityId: row.id,
+      entityKey: row.key,
+      action: "created",
+      sectionId: row.id,
+      versionNumber: 1,
+      performedBy: signer.id,
+    });
+    await bumpConfigVersion(tx, t);
+    return row;
   });
-  await bumpConfigVersion(db, t);
-  return row;
 }
 
 /**
@@ -229,21 +307,37 @@ export const publishSectionSchema = z.object({
   changeSummary: z.string().max(500).optional(),
 });
 
+/**
+ * `conflict`: someone published since `baseVersion` (the head is past it).
+ * `base_ahead` (0.11.0): `baseVersion` is PAST the head, so the editor's copy
+ * came from somewhere else (another section, a restored database) and nothing
+ * newer was published; before 0.11 it read as `conflict`, "someone published a
+ * newer version", which was never true. Either way, reload before saving.
+ */
 export type PublishResult =
   | { published: true; versionNumber: number }
   | { published: false; reason: "conflict"; headVersion: number }
+  | { published: false; reason: "base_ahead"; headVersion: number }
   | { published: false; reason: "unknown" }
   | { published: false; reason: "budget"; maxTokens: number }
   | { published: false; reason: "missing_phrase"; phrase: string };
 
-async function headVersionOf(db: AssistantDb, sectionId: string): Promise<number> {
+/** A section's newest version: its number and who wrote it; null before the first. */
+async function headOf(
+  db: AssistantDb,
+  sectionId: string,
+): Promise<{ readonly versionNumber: number; readonly createdByKind: SignerKind } | null> {
   const [head] = await db
-    .select({ versionNumber: assistantSectionVersions.versionNumber })
+    .select({ versionNumber: assistantSectionVersions.versionNumber, createdByKind: assistantSectionVersions.createdByKind })
     .from(assistantSectionVersions)
     .where(eq(assistantSectionVersions.sectionId, sectionId))
     .orderBy(desc(assistantSectionVersions.versionNumber))
     .limit(1);
-  return head?.versionNumber ?? 0;
+  return (head as { versionNumber: number; createdByKind: SignerKind } | undefined) ?? null;
+}
+
+async function headVersionOf(db: AssistantDb, sectionId: string): Promise<number> {
+  return (await headOf(db, sectionId))?.versionNumber ?? 0;
 }
 
 /** The section, only if it is this company's. */
@@ -260,10 +354,11 @@ export async function publishSection(
   db: AssistantDb,
   tenantId: string,
   input: z.infer<typeof publishSectionSchema>,
-  actor?: string,
+  actor?: Signer,
 ): Promise<PublishResult> {
   const t = company(tenantId);
   const parsed = publishSectionSchema.parse(input);
+  const signer = signerOf(actor);
 
   const section = await sectionOf(db, t, parsed.sectionId);
   if (!section) return { published: false, reason: "unknown" };
@@ -280,7 +375,10 @@ export async function publishSection(
   }
 
   const headVersion = await headVersionOf(db, parsed.sectionId);
-  if (headVersion !== parsed.baseVersion) {
+  if (parsed.baseVersion > headVersion) {
+    return { published: false, reason: "base_ahead", headVersion };
+  }
+  if (parsed.baseVersion < headVersion) {
     return { published: false, reason: "conflict", headVersion };
   }
 
@@ -295,7 +393,8 @@ export async function publishSection(
         versionNumber: nextVersion,
         content: parsed.content,
         changeSummary: parsed.changeSummary ?? null,
-        createdBy: actor ?? null,
+        createdBy: signer.id,
+        createdByKind: signer.kind,
       });
       await tx
         .update(assistantSections)
@@ -309,7 +408,7 @@ export async function publishSection(
         sectionId: parsed.sectionId,
         versionNumber: nextVersion,
         changeSummary: parsed.changeSummary ?? null,
-        performedBy: actor ?? null,
+        performedBy: signer.id,
       });
       await bumpConfigVersion(tx, t);
     });
@@ -330,7 +429,7 @@ export async function rollbackSection(
   db: AssistantDb,
   tenantId: string,
   input: { sectionId: string; toVersion: number },
-  actor?: string,
+  actor?: Signer,
 ): Promise<PublishResult> {
   const t = company(tenantId);
   const section = await sectionOf(db, t, input.sectionId);
@@ -364,6 +463,8 @@ export interface VersionRow {
   versionNumber: number;
   changeSummary: string | null;
   createdBy: string | null;
+  /** Who wrote this text: a person, or the app's own code (0.11.0). */
+  createdByKind: SignerKind;
   createdAt: Date;
 }
 
@@ -375,12 +476,171 @@ export async function listSectionVersions(db: AssistantDb, tenantId: string, sec
       versionNumber: assistantSectionVersions.versionNumber,
       changeSummary: assistantSectionVersions.changeSummary,
       createdBy: assistantSectionVersions.createdBy,
+      createdByKind: assistantSectionVersions.createdByKind,
       createdAt: assistantSectionVersions.createdAt,
     })
     .from(assistantSectionVersions)
     .innerJoin(assistantSections, eq(assistantSections.id, assistantSectionVersions.sectionId))
     .where(and(eq(assistantSections.tenantId, t), eq(assistantSectionVersions.sectionId, sectionId)))
     .orderBy(desc(assistantSectionVersions.versionNumber));
+}
+
+export interface EnsureSectionOptions {
+  /** Who the code's versions are signed by, their `created_by` (default "code"). */
+  readonly signer?: string;
+  /** The change summary on a version that adopts a new code default. */
+  readonly changeSummary?: string;
+}
+
+/**
+ * What `ensureSection` found, and did:
+ * - `created`: no such section; it now holds the code's text, as v1.
+ * - `current`: it already holds the code's text.
+ * - `adopted`: it held an older code default; the code's text is the new version.
+ * - `edited`: a person's edit is live and isn't the code's text. It stands.
+ * - `refused`: the section's own checks refused the code's text. The brain keeps
+ *   the old text; `content` is still the code's.
+ */
+export interface EnsureSectionResult {
+  readonly outcome: "created" | "current" | "adopted" | "edited" | "refused";
+  /** The section after this call; its `content` is what the brain holds. */
+  readonly section: SectionRow;
+  /** The text to use now: the code's, unless a person's edit stands. */
+  readonly content: string;
+  /** A person's text is live and differs from the code's (outcome `edited`). */
+  readonly differsFromCode: boolean;
+  /** On `refused`: what the brain said. */
+  readonly refusal?: Extract<PublishResult, { published: false }>;
+}
+
+/**
+ * A SECTION WHOSE DEFAULT LIVES IN CODE (0.11.0), kept in step with the code.
+ *
+ * Before 0.11 an app seeded a section once (`createSection` on first read) and
+ * the seed then won forever: change the default in code and every database kept
+ * the old text until someone re-published it by hand, on every environment.
+ * Call this instead, wherever the app reads the section:
+ *
+ * - missing: it's created from the seed, the seed recorded as v1, signed as code;
+ * - holding the code's text: nothing to do;
+ * - holding text the CODE wrote (an older default; or no versions at all, a seed
+ *   from before 0.11): the new default is published as the next version, signed
+ *   as code, and served;
+ * - holding text a PERSON published: theirs stands, and `differsFromCode` says so
+ *   (the editor offers `resetSectionToCode`).
+ *
+ * The section's budget and required phrases are the code's settings, so they
+ * follow the seed too (a longer default would otherwise be refused forever).
+ *
+ * Races: two servers adopting the same default at once are one publish and one
+ * conflict, and both serve the code's text. During a deploy's overlap an old
+ * server may publish the old default back; the new one adopts again on its next
+ * read (a deploy rollback likewise restores the old text, as it should).
+ */
+export async function ensureSection(
+  db: AssistantDb,
+  tenantId: string,
+  seed: CreateSectionInput,
+  options: EnsureSectionOptions = {},
+): Promise<EnsureSectionResult> {
+  const t = company(tenantId);
+  const parsed = createSectionSchema.parse(seed);
+  const code = fromCode(options.signer ?? "code");
+
+  let section = await getSectionByKey(db, t, parsed.key);
+  if (!section) {
+    try {
+      const created = await createSection(db, t, parsed, code);
+      return { outcome: "created", section: created, content: parsed.content, differsFromCode: false };
+    } catch (error) {
+      // Another server created it first: carry on with theirs.
+      if (!isUniqueViolation(error)) throw error;
+      section = await getSectionByKey(db, t, parsed.key);
+      if (!section) throw error;
+    }
+  }
+
+  section = await syncSettings(db, t, section, parsed);
+  if (section.content === parsed.content) {
+    return { outcome: "current", section, content: section.content, differsFromCode: false };
+  }
+
+  const head = await headOf(db, section.id);
+  if (head?.createdByKind === "person") {
+    return { outcome: "edited", section, content: section.content, differsFromCode: true };
+  }
+
+  const result = await publishSection(
+    db,
+    t,
+    {
+      sectionId: section.id,
+      baseVersion: head?.versionNumber ?? 0,
+      content: parsed.content,
+      label: parsed.label,
+      changeSummary: options.changeSummary ?? "the code's default changed",
+    },
+    code,
+  );
+  if (result.published) {
+    return { outcome: "adopted", section: { ...section, label: parsed.label, content: parsed.content }, content: parsed.content, differsFromCode: false };
+  }
+  if (result.reason === "conflict" || result.reason === "base_ahead") {
+    // Someone published between the read and the write. A person's edit stands;
+    // anything else is another server adopting, so the code's text is served.
+    const live = (await sectionOf(db, t, section.id)) ?? section;
+    const now = await headOf(db, section.id);
+    if (now?.createdByKind === "person" && live.content !== parsed.content) {
+      return { outcome: "edited", section: live, content: live.content, differsFromCode: true };
+    }
+    return { outcome: "adopted", section: live, content: parsed.content, differsFromCode: false };
+  }
+  return { outcome: "refused", section, content: parsed.content, differsFromCode: false, refusal: result };
+}
+
+/** The seed's own settings (budget, required phrases, description) onto the stored section, when they differ. */
+async function syncSettings(db: AssistantDb, tenantId: string, section: SectionRow, seed: CreateSectionInput): Promise<SectionRow> {
+  const set: Partial<typeof assistantSections.$inferInsert> = {};
+  if (seed.maxTokens !== undefined && seed.maxTokens !== section.maxTokens) set.maxTokens = seed.maxTokens;
+  if (seed.requiredPhrases !== undefined && JSON.stringify(seed.requiredPhrases) !== JSON.stringify(section.requiredPhrases)) {
+    set.requiredPhrases = seed.requiredPhrases;
+  }
+  if (seed.description !== undefined && (seed.description ?? null) !== section.description) set.description = seed.description ?? null;
+  if (Object.keys(set).length === 0) return section;
+  await db
+    .update(assistantSections)
+    .set(set)
+    .where(and(eq(assistantSections.tenantId, tenantId), eq(assistantSections.id, section.id)));
+  return { ...section, ...(set as Partial<SectionRow>) };
+}
+
+export type ResetToCodeResult = PublishResult | { published: false; reason: "no_default" };
+
+/**
+ * "Go back to the code's text" (0.11.0): publish the code's text for this
+ * section as the next version, signed as the code's, so from then on it follows
+ * the code again (`ensureSection`). The person who chose it is recorded as the
+ * version's `created_by` and in the change log. The text comes from the caller's
+ * seeds, looked up by the section's key, and never from the request.
+ */
+export async function resetSectionToCode(
+  db: AssistantDb,
+  tenantId: string,
+  input: { sectionId: string; baseVersion: number },
+  seeds: readonly SectionSeedText[],
+  actor?: string,
+): Promise<ResetToCodeResult> {
+  const t = company(tenantId);
+  const section = await sectionOf(db, t, input.sectionId);
+  if (!section) return { published: false, reason: "unknown" };
+  const seed = seeds.find((candidate) => candidate.key === section.key);
+  if (!seed) return { published: false, reason: "no_default" };
+  return publishSection(
+    db,
+    t,
+    { sectionId: section.id, baseVersion: input.baseVersion, content: seed.content, changeSummary: "back to the code's text" },
+    { id: actor ?? null, kind: "code" },
+  );
 }
 
 /**

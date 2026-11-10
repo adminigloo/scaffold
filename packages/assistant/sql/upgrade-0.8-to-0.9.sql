@@ -39,7 +39,7 @@ declare
   embedding_type text;
 begin
   if to_regclass('"assistant_sections"') is null then
-    raise exception 'There are no assistant tables to upgrade. Run sql/assistant-0.9.0.sql to create them.';
+    raise exception 'There are no assistant tables to upgrade. Run sql/assistant-0.11.0.sql to create them.';
   end if;
 
   -- Step 1: sections.
