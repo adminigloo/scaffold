@@ -1,6 +1,6 @@
 import { commsMessages, commsScheduled, commsTemplates } from "@adminigloo/comms";
 import { and, eq } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { listProducts } from "../catalog.js";
 import {
   createEstimatorCommsListener,
@@ -17,7 +17,15 @@ import { getEstimatorSettings, updateEstimatorSettings } from "../settings.js";
 import { recordingSender } from "./fixtures.js";
 import { createTestDb, tenant, type TestDb } from "./pglite.js";
 
-/** `@adminigloo/estimator/comms` (7): who is emailed what, the follow-up queue, and no key left in a table. */
+/**
+ * `@adminigloo/estimator/comms` (7): who is emailed what, the follow-up queue, and no key left in a table.
+ *
+ * comms' `enqueueMessage` checks a follow-up's expiry against the REAL clock, so the
+ * system clock (Date only; timers stay real) is pinned to the listener's, as the
+ * scheduling suite does. Without it these quotes, sent at a fixed NOW, expired in real
+ * time once the calendar passed NOW + the quote's validity, the follow-up was quietly
+ * not queued, and the suite started failing on 2026-11-06 with nothing changed.
+ */
 
 let t: TestDb;
 beforeAll(async () => {
@@ -25,6 +33,9 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   await t.close();
+});
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 const NOW = new Date("2026-11-02T15:00:00Z");
@@ -45,6 +56,8 @@ async function business(options: { staffEmails?: string[]; leadNotify?: string[]
     followUpDays: 3,
   });
   const mail = recordingSender();
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(NOW);
   let clock = NOW;
   const errors: string[] = [];
   const listener = createEstimatorCommsListener({
@@ -62,7 +75,11 @@ async function business(options: { staffEmails?: string[]; leadNotify?: string[]
     const created = await createEstimate(t.db, { tenantId, customerName: "Pat Lee", customerEmail: email, items: [{ productId: ramp, inputs: { steps: 3, stepHeightIn: 7.5 } }] });
     return created.id;
   };
-  return { tenantId, mail, listener, errors, ramp, quote, setClock: (d: Date) => void (clock = d) };
+  const setClock = (d: Date) => {
+    clock = d;
+    vi.setSystemTime(d);
+  };
+  return { tenantId, mail, listener, errors, ramp, quote, setClock };
 }
 
 const queued = (estimateId: string) =>
