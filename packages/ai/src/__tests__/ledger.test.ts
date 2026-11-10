@@ -109,6 +109,15 @@ describe("recordAiUsage: the cost is code's, from the provider's counts", () => 
     expect(aiCallCostMicros(RATES, { model: "some-new-model", inputTokens: 10, outputTokens: 10, reported: true })).toBeNull();
   });
 
+  it("prices the dated snapshot the provider reports from the alias's row", () => {
+    // RATES is keyed by DEFAULT_AI_MODEL, the alias a request names; the
+    // response's `model` is the snapshot that answered. Same price, not null.
+    const asked = aiCallCostMicros(RATES, { model: DEFAULT_AI_MODEL, inputTokens: 1_000, outputTokens: 200, reported: true });
+    const reported = aiCallCostMicros(RATES, { model: `${DEFAULT_AI_MODEL}-20251001`, inputTokens: 1_000, outputTokens: 200, reported: true });
+    expect(asked).not.toBeNull();
+    expect(reported).toBe(asked);
+  });
+
   it("adds a call's fees beyond tokens (0.3: web searches), and never subtracts a negative one", () => {
     const tokens = aiCallCostMicros(RATES, { model: DEFAULT_AI_MODEL, inputTokens: 1_000, outputTokens: 200, reported: true })!;
     expect(aiCallCostMicros(RATES, { model: DEFAULT_AI_MODEL, inputTokens: 1_000, outputTokens: 200, reported: true, feesMicros: 20_000n })).toBe(tokens + 20_000n);
