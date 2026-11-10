@@ -90,3 +90,11 @@ describe("/sign-out stays out of every index", () => {
   });
 });
 
+describe("next dev opened as 127.0.0.1", () => {
+  it.each([
+    ["hinderstap", HINDERSTAP],
+    ["bare", BARE],
+  ] as const)("is an allowed dev origin in %s's next.config.ts", async (_name, answers) => {
+    expect(code(file(await plan(answers), "next.config.ts"))).toContain('allowedDevOrigins: ["127.0.0.1"],');
+  });
+});
