@@ -33,6 +33,17 @@ export function upgradeNotesFor(answers: Answers, fromVersion: string): string[]
   const companies = answers.tenantNoun !== "none";
   const noun = tenantLabel(answers).toLowerCase();
   const crossed = (version: string) => (compareVersions(fromVersion, version) ?? -1) < 0;
+  // 0.44.0 — refunds and disputes come back from Stripe, and staff see the
+  // shop's orders. No tables are new; the two Stripe events are.
+  if (crossed("0.44.0") && (answers.businessModel === "one-time" || answers.businessModel === "both")) {
+    notes.push(
+      "Refunds: enable charge.refunded and charge.dispute.created on BOTH Stripe webhook endpoints (test and live). " +
+        "A refund made in Stripe now marks the order refunded (or part refunded) and takes back the refunded share of what it granted " +
+        "(credits from the buyer's wallet, never below zero; a whole refund also ends entitlements and marks licence keys revoked); " +
+        "a dispute does all of that at once and flags the order. Run pnpm db:seed for the new shop.orders.view staff key" +
+        (answers.adminShell === "none" ? "." : "; staff see every order at /admin/orders."),
+    );
+  }
   // 0.43.0 — credits: a shop's products can put a spendable balance in the
   // buyer's account. The tables are new, so a migration is all there is to do.
   const shop = answers.businessModel === "one-time" || answers.businessModel === "both";

@@ -1,0 +1,10 @@
+---
+"@adminigloo/create-app": minor
+---
+
+Refunds, disputes and a staff orders list (create-app 0.44), for every shop (`--model one-time` or `both`).
+
+- **Refunds come back from Stripe.** `/api/webhooks/stripe` handles `charge.refunded`: `refundPurchase` (src/server/fulfilment.ts) records Stripe's running refunded total on the order (a part refund leaves it paid with `refunded_minor` set, a whole one marks it refunded) and takes back the refunded share of what it granted. Credits come out of the buyer's wallet pro rata, rounded down, never below zero (`refundWallet`), once per step of the refunded total, so a redelivered event or two refunds arriving out of order take nothing twice. A whole refund also ends the order's entitlements (their rows stay as the record) and marks its licence keys revoked (`licenseRevokedAt` on the line; the key is kept, and checking it is the app's own code). Shipping is untouched: what was sent was sent. A refund on anything the shop didn't book is ignored.
+- **Disputes are treated as a full refund.** `charge.dispute.created` (`disputePurchase`) flags the order "disputed" and takes back everything it granted that a refund hadn't already, once per dispute. Winning the dispute later restores nothing by itself; staff adjust by hand.
+- **Staff see the orders.** `/admin/orders` (Catalog → Orders, `shop.orders.view` from commerce 0.5's new staff fragment) lists every order the shop booked, newest first, filtered by all, paid, refunded, disputed or simulated and searched by email or order number. An order's page shows its lines, the credits it moved, its entitlements, its licence keys and its audit trail, with a link to the payment in Stripe. New: `src/server/routers/orders.ts`, the two pages, `src/components/admin/orderBits.tsx`, the `commerce.refunds` and `admin.orders` capabilities.
+- **DEPLOYMENT.md lists the Stripe webhook's events** for both endpoints (test and live), for the project's model. Upgrading: enable `charge.refunded` and `charge.dispute.created` on both, and run `pnpm db:seed` for the new key.

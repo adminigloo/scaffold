@@ -1096,6 +1096,9 @@ describe("admin shell overlays", () => {
       catalog: "catalogPermissions",
       // create-app 0.43: /admin/credits gates on credits.balances.view.
       credits: "walletPermissions",
+      // create-app 0.44: /admin/orders gates on shop.orders.view, commerce's
+      // staff fragment (its tenant `orders.*` keys are a company's own store's).
+      shop: "shopOrderPermissions",
     };
     const staffCall = /definePermissions\(\s*"staff",\s*\{([^}]*)\}/.exec(
       catalog ?? "",
@@ -2560,6 +2563,7 @@ const UNLINKED_BY_DESIGN: Readonly<Record<string, string>> = {
   "/checkout/success": "reached by redirect after a payment.",
   "/admin/products/new": "reached from the button on the product list.",
   "/admin/products/[id]": "reached by clicking a row in the product list.",
+  "/admin/orders/[id]": "reached by clicking an order in the staff order list (create-app 0.44).",
   "/account/orders/[orderNumber]":
     "reached by clicking a row in the customer's own order list, through " +
     "accountOrderHref. A nav entry would need an order number, and which " +
