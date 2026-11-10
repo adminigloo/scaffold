@@ -34,7 +34,8 @@ export const MAX_CREDIT_AMOUNT = 1_000_000_000;
 /** What a ledger row records. */
 export type WalletReason = "grant" | "spend" | "refund" | "adjust";
 
-export const WALLET_REASONS: readonly WalletReason[] = ["grant", "spend", "refund", "adjust"];
+/** Every reason, as a tuple, so a router can hand it straight to `z.enum`. */
+export const WALLET_REASONS = ["grant", "spend", "refund", "adjust"] as const satisfies readonly WalletReason[];
 
 export function isCreditUnit(value: unknown): value is string {
   return typeof value === "string" && CREDIT_UNIT_PATTERN.test(value);
