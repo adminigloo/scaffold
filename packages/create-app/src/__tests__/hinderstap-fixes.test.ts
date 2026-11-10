@@ -61,3 +61,19 @@ describe("the generated AI wrapper records every count the provider bills", () =
   });
 });
 
+describe("the generated permissions integration test, in every audience", () => {
+  it.each([
+    ["consumers", HINDERSTAP],
+    ["business", BUSINESS],
+    ["companies", COMPANIES],
+  ] as const)("seeds an account the %s membership gate admits", async (_name, answers) => {
+    const test = code(file(await plan(answers), "src/server/__tests__/permissions.integration.test.ts"));
+    // A consumers project's gate admits a person to their OWN personal account
+    // only; a company fixture made five of its tests answer NULL there.
+    expect(test).toContain("tenant: personalWorkspaceId(memberId),");
+    expect(test).toContain('kind: "personal",');
+    expect(test).toContain("ownerUserId: ids.member,");
+    expect(test).not.toContain('kind: "org"');
+  });
+});
+
