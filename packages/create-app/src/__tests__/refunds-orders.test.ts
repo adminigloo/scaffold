@@ -144,6 +144,9 @@ describe("DEPLOYMENT.md and the upgrade note", () => {
     const nothing = file(await plan(NOTHING), "DEPLOYMENT.md");
     expect(nothing).not.toContain("Stripe's webhook (one per mode)");
     expect(nothing).not.toContain("<!-- adminigloo:");
+    // Not even a stray blank line where the section would be.
+    expect(nothing).toContain("link still land on Vercel's login page.\n\n### Email");
+    expect(shop).toContain("forwards every event.\n\n### Email");
   });
 
   it("lists exactly the events the route acts on", () => {

@@ -429,8 +429,9 @@ export async function planEmit(
       .split(UPGRADE_NOTES_MARKER)
       .join(renderDeploymentUpgradeNotes(answers))
       // create-app 0.44: Stripe's two endpoints and every event to enable on
-      // them, for this project's model. Empty without Stripe.
-      .split(STRIPE_WEBHOOK_MARKER)
+      // them, for this project's model. The marker's own line goes with it, so
+      // a project without Stripe reads exactly as the template did.
+      .split(`${STRIPE_WEBHOOK_MARKER}\n`)
       .join(renderDeploymentStripeWebhook(answers));
     for (const region of DEPLOYMENT_SINGLE_REGIONS) text = replaceDeploymentRegion(text, region, notes.regions[region]);
     files.set("DEPLOYMENT.md", text);
