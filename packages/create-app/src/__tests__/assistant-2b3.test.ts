@@ -71,7 +71,7 @@ describe("packages, overlays and versions", () => {
     // 0.11 records who wrote each version, for ensureSection and the editor's "Use the default text").
     expect(versions.assistant).toMatch(/^0\.11\.\d+$/);
     expect(versions["assistant-widget"]).toMatch(/^0\.3\.\d+$/); // the 0.3 line (a patch may move it)
-    expect(versions.ai).toMatch(/^0\.4\.\d+$/); // 0.3 (Tenancy 2b-4b) brought fees beyond tokens; 0.4 adds forgetTenant.
+    expect(versions.ai).toMatch(/^0\.5\.\d+$/); // 0.4 adds forgetTenant; 0.5 adds mayCallModels ("the key pays only for the live site").
   });
 });
 

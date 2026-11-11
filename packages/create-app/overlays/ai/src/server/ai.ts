@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { DEFAULT_AI_MODEL, isAiConfigured, type StreamUsage, type TokenRate } from "__SCOPE__/ai";
+import { DEFAULT_AI_MODEL, isAiConfigured, mayCallModels, type StreamUsage, type TokenRate } from "__SCOPE__/ai";
 import {
   aiSpendSince,
   checkAiAllowance,
@@ -157,10 +157,16 @@ export const AI_CHAT_MONTHLY_CENTS = 500;
  * provider key optional precisely so that a preview branch, a CI run and a
  * laptop working on billing all boot without paying for inference; the route
  * answers 503 and names the configured providers instead of throwing.
+ *
+ * THE KEY PAYS FOR THIS SITE'S OWN TRAFFIC, NEVER FOR A SCRIPT. `mayCallModels()`
+ * (__SCOPE__/ai) is true only inside the running app — Next's server runtime or a
+ * Vercel build/function — so a benchmark, an eval, a seed script or a coding
+ * agent's test harness gets the same null a missing key gives, rather than a
+ * working client charged to this project's key. src/__tests__/no-unmetered-ai.test.ts
+ * fails if anything outside this file builds its own client or reads the key.
  */
-export const anthropic: Anthropic | null = isAiConfigured(env)
-  ? new Anthropic({ apiKey: env.ANTHROPIC_API_KEY })
-  : null;
+export const anthropic: Anthropic | null =
+  isAiConfigured(env) && mayCallModels() ? new Anthropic({ apiKey: env.ANTHROPIC_API_KEY }) : null;
 
 /**
  * A web search, as Anthropic bills it: $10 per 1,000, in micros. A route that

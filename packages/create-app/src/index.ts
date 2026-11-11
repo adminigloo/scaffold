@@ -40,6 +40,7 @@ export {
   renderPackageJson,
   renderEnvExample,
   renderEnvLocal,
+  renderClaudeMd,
   versionRangeFor,
   packageVersions,
   UnknownPackageVersionError,

@@ -62,7 +62,7 @@ describe("packages, overlays, versions and capabilities", () => {
     // The release lines (each 0.x+1 adds forgetTenant).
     expect(versions["seo-reports"]).toMatch(/^0\.3\.\d+$/);
     expect(versions.aeo).toMatch(/^0\.3\.\d+$/);
-    expect(versions.ai).toMatch(/^0\.4\.\d+$/);
+    expect(versions.ai).toMatch(/^0\.5\.\d+$/);
     expect(overlayNamesFor(answers(COMPANIES))).toEqual(expect.arrayContaining(["seo-reports", "seo-admin", "seo-reports-companies", "aeo", "aeo-admin", "aeo-companies"]));
     expect(overlayNamesFor(answers(SINGLE))).not.toContain("seo-reports-companies");
     expect(overlayNamesFor(answers(SINGLE))).not.toContain("aeo-companies");

@@ -161,7 +161,10 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
   // 0.4.2 (Hinderstap): prices the dated snapshot the provider reports, not only
   // the alias a route asked for, so a generated project's ai_usage has costs.
-  ai: "0.4.2",
+  // 0.5.0 (create-app 0.44, "the key pays only for the live site"): mayCallModels,
+  // which the emitted src/server/ai.ts imports to gate the client it builds. Not
+  // in 0.4.x.
+  ai: "0.5.0",
   // 0.3.0 (Tenancy 2a, D8): a per-message From name and Reply-To, so a
   // company's email carries its name on the platform's verified address.
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.

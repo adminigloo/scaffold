@@ -1053,6 +1053,11 @@ export async function planEmit(
   // the one value that is not a credential — so `pnpm install && pnpm dev`
   // works with no setup at all, which is the whole point of deferring the rest.
   files.set(".env.local", renderEnvLocal(answers));
+  // The key pays for this site's own traffic, never for a script or an agent's
+  // test harness (the ai overlay's src/server/ai.ts, mayCallModels): told to
+  // every Claude agent working in the generated project, not just to a human
+  // reading .env.example.
+  if (answers.includeAi) files.set("CLAUDE.md", renderClaudeMd(answers));
 
   // The manifest, and then the human-readable view OF the manifest. In that
   // order and from that one object, so the two cannot disagree: SCAFFOLD.md
@@ -1949,6 +1954,55 @@ export function renderEnvLocal(answers: Answers): string {
 }
 
 /**
+ * Rules for a Claude agent working in the generated project, read before
+ * .env.example — an agent reads code and instructions, not a human's setup
+ * checklist, and a key that is merely documented as deployment-only is a key
+ * an agent still has every opportunity to copy onto a laptop or into a script.
+ *
+ * On 2026-11-10, on a sibling project, agent test scripts built their own
+ * provider client from a laptop's .env.local and graded thousands of test
+ * replies with it, spending the owner's whole monthly budget in about two
+ * hours. `src/__tests__/no-unmetered-ai.test.ts` (the ai overlay) is the test
+ * that enforces this file's rule in code; this file is what tells an agent
+ * the rule exists before it has a reason to go looking for the test.
+ *
+ * Only for --ai (and therefore --assistant, which calls no model without it:
+ * see assistant-emit.ts's `assistantChats`) — a project with neither has no
+ * provider key anywhere to protect, and a file warning about one would be
+ * describing a risk the project does not have.
+ */
+export function renderClaudeMd(_answers: Answers): string {
+  return `# Rules for Claude agents in this project
+
+## The API key pays for this site's own traffic. Never spend it on testing.
+
+On 2026-11-10, on a sibling project, agent test scripts used that project's key to
+generate and grade thousands of test replies with a large model. They spent the
+owner's whole monthly budget in about two hours, against the owner's explicit
+instruction to keep costs low.
+
+- **Never** call the provider from a script, harness, eval, benchmark or one-off
+  check. The key in the deployment environment pays for people using this site,
+  and nothing else.
+- **Test and grade with Claude Code itself** (you, and your subagents), which the
+  owner already pays for. Read prompts, transcripts and code, and judge them
+  yourself. Don't pay twice.
+- **No key on laptops.** \`.env.local\` has no \`ANTHROPIC_API_KEY\`, on purpose.
+  Don't add one, copy one from the deployment environment, or build your own
+  \`new Anthropic(...)\` client.
+- **The client exists only inside the running app** (\`src/server/ai.ts\`,
+  \`mayCallModels\`). Never set \`AI_OWNER_APPROVED_SCRIPT_RUN\` yourself — only the
+  owner sets it, for one run they approved.
+- **The test that enforces this:** \`src/__tests__/no-unmetered-ai.test.ts\` fails if
+  any file, including git-ignored scratch folders, builds its own client or reads
+  the key. Don't weaken it.
+- **If a change really needs live model output** (a prompt rewrite, for example),
+  stop and ask the owner first. Include the estimated dollar cost, the model, and
+  the cap, and wait for a yes.
+`;
+}
+
+/**
  * The one-line why for an optional variable whose name doesn't say it. Kept
  * short: .env.local carries the long form, and /setup the full story.
  */
@@ -2010,7 +2064,13 @@ export function renderEnvExample(answers: Answers): string {
     "# no environment variable can switch that check off.",
     "",
   ];
-  for (const name of requiredEnvFor(answers)) lines.push(`${name}=`);
+  // The key pays for THIS SITE's own traffic, never for a script or a laptop:
+  // src/server/ai.ts builds a client only inside the running app (mayCallModels),
+  // so it belongs only in the deployment environment (Vercel). See CLAUDE.md.
+  for (const name of requiredEnvFor(answers)) {
+    if (name === "ANTHROPIC_API_KEY") lines.push("# Deployment only — never a laptop's .env.local:");
+    lines.push(`${name}=`);
+  }
 
   // Listed, not omitted. These are the variables an app can read and does not
   // need, and a variable absent from this file is one nobody discovers exists —
