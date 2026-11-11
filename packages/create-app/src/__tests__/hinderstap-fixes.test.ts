@@ -90,6 +90,44 @@ describe("/sign-out stays out of every index", () => {
   });
 });
 
+describe("the key pays only for the live site (create-app 0.44)", () => {
+  it("builds the AI client only when mayCallModels() says so", async () => {
+    const ai = code(file(await plan(HINDERSTAP), "src/server/ai.ts"));
+    expect(ai).toContain("isAiConfigured(env) && mayCallModels() ? new Anthropic({ apiKey: env.ANTHROPIC_API_KEY }) : null;");
+    expect(ai).toContain('mayCallModels, type StreamUsage, type TokenRate } from "@adminigloo/ai";');
+  });
+
+  it("generates the no-unmetered-ai test for --ai, scanning from the project root", async () => {
+    const test = file(await plan(HINDERSTAP), "src/__tests__/no-unmetered-ai.test.ts");
+    expect(test).toContain('from "@adminigloo/ai";');
+    expect(test).toContain("new\\s+Anthropic\\s*\\(");
+    expect(test).toContain('SKIP_DIRS = new Set(["node_modules", ".next", ".git"');
+    // Scans from the project root, not from src/ alone: a dot-folder harness
+    // outside src/ is exactly what the 2026-11-10 incident this guards against
+    // looked like.
+    expect(test).toContain('ROOT = join(__dirname, "..", "..")');
+  });
+
+  it("has no client to protect, and no test for one, in a project with no AI at all", async () => {
+    const p = await plan(BARE);
+    expect(p.files.has(sep("src/__tests__/no-unmetered-ai.test.ts"))).toBe(false);
+    expect(p.files.has("CLAUDE.md")).toBe(false);
+  });
+
+  it("tells every Claude agent working in the project never to spend its own key on testing", async () => {
+    const claudeMd = file(await plan(HINDERSTAP), "CLAUDE.md");
+    expect(claudeMd).toContain("Test and grade with Claude Code itself");
+    expect(claudeMd).toContain("No key on laptops");
+    expect(claudeMd).toContain("`AI_OWNER_APPROVED_SCRIPT_RUN`");
+    expect(claudeMd).toContain("src/__tests__/no-unmetered-ai.test.ts");
+  });
+
+  it("notes in .env.example that the key belongs only in the deployment environment", async () => {
+    const example = file(await plan(HINDERSTAP), ".env.example");
+    expect(example).toContain("# Deployment only — never a laptop's .env.local:\nANTHROPIC_API_KEY=");
+  });
+});
+
 describe("next dev opened as 127.0.0.1", () => {
   it.each([
     ["hinderstap", HINDERSTAP],

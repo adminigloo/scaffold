@@ -77,6 +77,17 @@ export function upgradeNotesFor(answers: Answers, fromVersion: string): string[]
       );
     }
   }
+  // 0.44.0 — "the key pays only for the live site": the AI client is built only
+  // inside the running app. No files move; a laptop's own setup might.
+  if (crossed("0.44.0") && answers.includeAi) {
+    notes.push(
+      "The AI client now builds only inside the running app (mayCallModels, ai 0.5): a script, an eval or a coding " +
+        "agent's test harness gets the same null a missing key gives, never a working client. If you have ANTHROPIC_API_KEY " +
+        "in your own .env.local for local work outside `pnpm dev`/`next build`, that use stops working; set " +
+        "AI_OWNER_APPROVED_SCRIPT_RUN=yes for that one run instead of adding it back for every run. New: CLAUDE.md, and " +
+        "src/__tests__/no-unmetered-ai.test.ts, which fails if anything outside src/server/ai.ts builds its own client or reads the key.",
+    );
+  }
   // 0.43.0 — credits: a shop's products can put a spendable balance in the
   // buyer's account. The tables are new, so a migration is all there is to do.
   const shop = answers.businessModel === "one-time" || answers.businessModel === "both";

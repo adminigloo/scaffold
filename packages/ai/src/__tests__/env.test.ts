@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aiServer, configuredAiProviders, isAiConfigured } from "../env.js";
+import { aiServer, configuredAiProviders, isAiConfigured, mayCallModels } from "../env.js";
 
 const server = aiServer();
 
@@ -104,5 +104,26 @@ describe("configuredAiProviders", () => {
 
   it("is true as soon as one provider works", () => {
     expect(isAiConfigured({ GOOGLE_GENERATIVE_AI_API_KEY: "AIza-x" })).toBe(true);
+  });
+});
+
+describe("mayCallModels: the key pays for the running app, never for scripts", () => {
+  it("is true inside the running app", () => {
+    expect(mayCallModels({ NEXT_RUNTIME: "nodejs" })).toBe(true);
+    expect(mayCallModels({ NEXT_RUNTIME: "edge" })).toBe(true);
+    expect(mayCallModels({ VERCEL: "1" })).toBe(true);
+  });
+
+  it("is false for a script, a test runner or an agent's harness", () => {
+    expect(mayCallModels({})).toBe(false);
+    expect(mayCallModels({ NODE_ENV: "development" })).toBe(false);
+    expect(mayCallModels({ NEXT_RUNTIME: "" })).toBe(false);
+    expect(mayCallModels({ VERCEL: "  " })).toBe(false);
+  });
+
+  it("lets a script through only when the owner approved that run, in exactly those words", () => {
+    expect(mayCallModels({ AI_OWNER_APPROVED_SCRIPT_RUN: "yes" })).toBe(true);
+    expect(mayCallModels({ AI_OWNER_APPROVED_SCRIPT_RUN: "true" })).toBe(false);
+    expect(mayCallModels({ AI_OWNER_APPROVED_SCRIPT_RUN: "1" })).toBe(false);
   });
 });

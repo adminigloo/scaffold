@@ -19,7 +19,7 @@ export type { CostInput, TokenRate } from "./cost.js";
 
 export { aiPermissions } from "./permissions.js";
 
-export { aiServer, configuredAiProviders, isAiConfigured } from "./env.js";
+export { aiServer, configuredAiProviders, isAiConfigured, mayCallModels } from "./env.js";
 export type { AiProvider, AiProviderKeys } from "./env.js";
 
 /**
