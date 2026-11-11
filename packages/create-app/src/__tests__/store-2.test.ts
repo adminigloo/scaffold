@@ -251,9 +251,11 @@ describe("docs, versions and the upgrade notes", () => {
   it("pins commerce 0.2 (0.3 since the showroom) and stripe 0.4.1, and tells a 0.33 project what to run", () => {
     // The release lines (commerce 0.4: sales by hand; catalog 0.4: its server entry's forgetTenant;
     // stripe 0.7: product lines on one subscription, one customer per tenant, each item's amount).
-    expect(packageVersions()["commerce"]).toMatch(/^0\.4\.\d+$/);
+    // commerce 0.5 (create-app 0.44): `shopOrderPermissions`, the shop's orders on the staff ladder.
+    expect(packageVersions()["commerce"]).toMatch(/^0\.5\.\d+$/);
     expect(packageVersions()["stripe"]).toMatch(/^0\.7\.\d+$/);
-    expect(packageVersions()["catalog"]).toMatch(/^0\.4\.\d+$/);
+    // catalog 0.5 (create-app 0.43): the `credits` grant kind.
+    expect(packageVersions()["catalog"]).toMatch(/^0\.5\.\d+$/);
     const notes = upgradeNotesFor(answers(COMPANIES), "0.33.0").join("\n");
     expect(notes).toContain("upgrade-0.1-to-0.2.sql");
     expect(notes).toContain("catalog/sql/upgrade-0.2-to-0.3.sql");

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   ASSISTANT_PLATFORM,
+  DEFAULT_SECTIONS,
   createGlossaryTerm,
   createGlossaryTermSchema,
   createSection,
@@ -12,10 +13,11 @@ import {
   listChangeLog,
   listGlossary,
   listSectionVersions,
-  listSections,
+  listSectionsForEditor,
   listTenantRules,
   publishSection,
   publishSectionSchema,
+  resetSectionToCode,
   rollbackSection,
   seedDefaultSections,
 } from "__SCOPE__/assistant";
@@ -40,12 +42,16 @@ import { createTRPCRouter, requireStaff } from "../trpc";
 const SITE = ASSISTANT_PLATFORM;
 
 export const assistantRouter = createTRPCRouter({
-  /** Sections, seeding the five guardrail defaults on first read. */
+  /**
+   * Sections, seeding the five guardrail defaults on first read. Each row says
+   * who wrote its live text and whether that's still the package's default
+   * (assistant 0.11), so the editor can offer to go back to it.
+   */
   sections: requireStaff("staff.assistant.manage")
     .meta({ scope: "staff" })
     .query(async () => {
       await seedDefaultSections(db, SITE);
-      return listSections(db, SITE);
+      return listSectionsForEditor(db, SITE, { seeds: DEFAULT_SECTIONS });
     }),
 
   versions: requireStaff("staff.assistant.manage")
@@ -67,6 +73,16 @@ export const assistantRouter = createTRPCRouter({
     .meta({ scope: "staff" })
     .input(z.object({ sectionId: z.string(), toVersion: z.number().int().min(1) }))
     .mutation(({ input, ctx }) => rollbackSection(db, SITE, input, ctx.principal.userId)),
+
+  /**
+   * Go back to the package's default text for a guardrail section. It lands as
+   * a new version signed as the code's, so later releases' improved defaults
+   * can reach it again; the text comes from the package, never the request.
+   */
+  resetSection: requireStaff("staff.assistant.manage")
+    .meta({ scope: "staff" })
+    .input(z.object({ sectionId: z.string(), baseVersion: z.number().int().min(0) }))
+    .mutation(({ input, ctx }) => resetSectionToCode(db, SITE, input, DEFAULT_SECTIONS, ctx.principal.userId)),
 
   deactivateSection: requireStaff("staff.assistant.manage")
     .meta({ scope: "staff" })

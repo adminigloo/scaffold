@@ -4,15 +4,28 @@ import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { describe, expect, it } from "vitest";
 import { assemblePrompt } from "../assemble.js";
-import { listGlossary, listSections, listTenantRules, type AssistantDb } from "../brain.js";
+import {
+  createSection,
+  ensureSection,
+  fromCode,
+  getSectionByKey,
+  listGlossary,
+  listSectionVersions,
+  listSections,
+  listTenantRules,
+  publishSection,
+  type AssistantDb,
+} from "../brain.js";
 import { getConversation } from "../engine.js";
 import { schemaDdl } from "./pglite.js";
 
 /**
- * THE SHIPPED SQL (0.9.0): sql/assistant-0.9.0.sql builds exactly the tables
- * the code queries, and sql/upgrade-0.8-to-0.9.sql turns a 0.8 database (one
+ * THE SHIPPED SQL (0.11.0): sql/assistant-0.11.0.sql builds exactly the tables
+ * the code queries; sql/upgrade-0.8-to-0.9.sql turns a 0.8 database (one
  * assistant for the whole install) into 0.9's — everything on one assistant,
- * '*' by default or the id the site's own assistant used — safely twice.
+ * '*' by default or the id the site's own assistant used — safely twice; and
+ * sql/upgrade-0.10-to-0.11.sql records who wrote each version, a person's
+ * unless named as the code's.
  */
 
 const SQL_DIR = join(__dirname, "..", "..", "sql");
@@ -77,11 +90,11 @@ async function columns(client: PGlite, table: string): Promise<string[]> {
   return rows.map((row) => row.column_name);
 }
 
-describe("sql/assistant-0.9.0.sql", () => {
+describe("sql/assistant-0.11.0.sql", () => {
   it("builds the same tables and columns the code queries (and runs twice)", async () => {
     const shipped = new PGlite();
-    await shipped.exec(read("assistant-0.9.0.sql"));
-    await shipped.exec(read("assistant-0.9.0.sql"));
+    await shipped.exec(read("assistant-0.11.0.sql"));
+    await shipped.exec(read("assistant-0.11.0.sql"));
     const fromSchema = new PGlite();
     for (const statement of schemaDdl()) await fromSchema.exec(statement);
     const tables = "select table_name, column_name, data_type, is_nullable from information_schema.columns where table_schema = 'public' order by 1, 2";
@@ -98,6 +111,8 @@ describe("sql/upgrade-0.8-to-0.9.sql", () => {
     const client = await at08();
     await client.exec(read("upgrade-0.8-to-0.9.sql"));
     await client.exec(read("upgrade-0.8-to-0.9.sql"));
+    // And on to 0.11, which the code below is.
+    await client.exec(read("upgrade-0.10-to-0.11.sql"));
     const db = drizzle(client) as unknown as AssistantDb;
 
     expect(await columns(client, "assistant_sections")).toContain("tenant_id");
@@ -130,11 +145,79 @@ describe("sql/upgrade-0.8-to-0.9.sql", () => {
   it("puts it on the id the site's own assistant used, when told", async () => {
     const client = await at08();
     await client.exec(`select set_config('assistant.upgrade_tenant', 'my-company-hq', false);\n${read("upgrade-0.8-to-0.9.sql")}`);
+    await client.exec(read("upgrade-0.10-to-0.11.sql"));
     const db = drizzle(client) as unknown as AssistantDb;
     expect((await listSections(db, "my-company-hq")).map((s) => s.key)).toEqual(["core_personality"]);
     expect((await listTenantRules(db, "my-company-hq")).map((r) => r.instruction)).toEqual(["Be brief."]);
     expect(await listSections(db, "*")).toEqual([]);
     expect((await client.query("select id, version from assistant_config_version")).rows).toEqual([{ id: "my-company-hq", version: 7 }]);
+    await client.close();
+  });
+});
+
+/** A 0.10 database: 0.11's tables without the version's created_by_kind. */
+async function at010(): Promise<PGlite> {
+  const client = new PGlite();
+  await client.exec(read("assistant-0.11.0.sql").replace(/^\s*"created_by_kind"[^\n]*\n/m, ""));
+  return client;
+}
+
+describe("sql/upgrade-0.10-to-0.11.sql", () => {
+  it("marks every existing version a person's, and the ones named as the code's, safely twice", async () => {
+    const client = await at010();
+    expect(await columns(client, "assistant_section_versions")).not.toContain("created_by_kind");
+    await client.exec(`
+      insert into assistant_sections (id, tenant_id, key, label, content) values
+        ('s-seed', 'a', 'persona', 'Persona', 'The code''s old default.'),
+        ('s-edit', 'a', 'tone', 'Tone', 'The owner''s own words.'),
+        ('s-bare', 'a', 'greeting', 'Greeting', 'A pre-0.11 seed.');
+      insert into assistant_section_versions (id, section_id, version_number, content, created_by) values
+        ('v1', 's-seed', 1, 'The code''s old default.', 'seed'),
+        ('v2', 's-edit', 1, 'The owner''s own words.', 'user_1');
+    `);
+    const upgrade = `select set_config('assistant.code_actors', 'seed,eval-script', false);\n${read("upgrade-0.10-to-0.11.sql")}`;
+    await client.exec(upgrade);
+    await client.exec(upgrade);
+    const kinds = await client.query("select id, created_by_kind from assistant_section_versions order by id");
+    expect(kinds.rows).toEqual([
+      { id: "v1", created_by_kind: "code" },
+      { id: "v2", created_by_kind: "person" },
+    ]);
+
+    // The code's new defaults land where the code wrote, never over the owner's words.
+    const db = drizzle(client) as unknown as AssistantDb;
+    expect((await ensureSection(db, "a", { key: "persona", label: "Persona", content: "The code's new default." })).outcome).toBe(
+      "adopted",
+    );
+    expect(await ensureSection(db, "a", { key: "tone", label: "Tone", content: "The code's tone." })).toMatchObject({
+      outcome: "edited",
+      content: "The owner's own words.",
+      differsFromCode: true,
+    });
+    // A pre-0.11 seed has no versions at all: it was never anyone's edit.
+    expect((await ensureSection(db, "a", { key: "greeting", label: "Greeting", content: "A 0.11 seed." })).outcome).toBe("adopted");
+    expect((await getSectionByKey(db, "a", "greeting"))?.content).toBe("A 0.11 seed.");
+    await client.close();
+  });
+
+  it("without the setting, every existing version is a person's; new ones record their writer", async () => {
+    const client = await at010();
+    await client.exec(`
+      insert into assistant_sections (id, tenant_id, key, label, content) values ('s1', 'a', 'persona', 'Persona', 'Text.');
+      insert into assistant_section_versions (id, section_id, version_number, content, created_by) values ('v1', 's1', 1, 'Text.', 'seed');
+    `);
+    await client.exec(read("upgrade-0.10-to-0.11.sql"));
+    const db = drizzle(client) as unknown as AssistantDb;
+    expect((await listSectionVersions(db, "a", "s1")).map((v) => v.createdByKind)).toEqual(["person"]);
+    const made = await createSection(db, "a", { key: "fresh", label: "Fresh", content: "First." }, fromCode("seed"));
+    expect(await publishSection(db, "a", { sectionId: made.id, baseVersion: 1, content: "Second." }, "user_2")).toEqual({
+      published: true,
+      versionNumber: 2,
+    });
+    expect((await listSectionVersions(db, "a", made.id)).map((v) => [v.versionNumber, v.createdByKind, v.createdBy])).toEqual([
+      [2, "person", "user_2"],
+      [1, "code", "seed"],
+    ]);
     await client.close();
   });
 });

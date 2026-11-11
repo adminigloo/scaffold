@@ -122,7 +122,9 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.3.0 (getting paid, part 2): product_variants.held — the stock open store
   // checkouts hold, apart from what is on the shelf. The store reads it.
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
-  catalog: "0.4.1",
+  // 0.5.0 (create-app 0.43): the `credits` grant kind and GRANT_KINDS, which
+  // the emitted catalog router's input enum and the product builder read.
+  catalog: "0.5.0",
   // 0.2.0 (getting paid, part 2): a store of its own — the emitted store
   // glue imports @adminigloo/commerce/store and /widget, the route tables and
   // storePermissions, and the schema has store_checkouts and store_alerts.
@@ -130,7 +132,10 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.3.0: title={false} and locale on the store screens (create-app 0.36, the showroom).
   // 0.4.0 (polish 3): `<StoreAdmin actionsInHeader>` — the store page puts "See your store" in its own header.
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company, and sales recorded by hand.
-  commerce: "0.4.2",
+  // 0.4.3: rebuilt against catalog 0.5 (the `credits` grant kind), released with it.
+  // 0.5.0 (create-app 0.44): `shopOrderPermissions`, the shop's orders on the
+  // staff ladder, which the emitted permission catalog imports.
+  commerce: "0.5.0",
   // 0.2.0 for the typed plan record. `src/plans.ts` is emitted into every
   // project that sells something and calls `definePlans`, which does not exist
   // in 0.1.x — so a project resolving the old line fails to compile on a file
@@ -154,7 +159,9 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.3.0 (Tenancy 2b-4b): a call's fees beyond tokens (`feesMicros`: web
   // searches), which src/server/ai-mentions.ts settles every AI mention check with.
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
-  ai: "0.4.1",
+  // 0.4.2 (Hinderstap): prices the dated snapshot the provider reports, not only
+  // the alias a route asked for, so a generated project's ai_usage has costs.
+  ai: "0.4.2",
   // 0.3.0 (Tenancy 2a, D8): a per-message From name and Reply-To, so a
   // company's email carries its name on the platform's verified address.
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
@@ -209,7 +216,12 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // createAnthropicProvider (./anthropic), and the tools import saveFaq — none
   // of which exist in 0.8.x.
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
-  assistant: "0.10.0",
+  // 0.11.0: each version records who wrote it (a person or the code), a
+  // section's first text is its v1, `ensureSection` keeps a code default in
+  // step, and the emitted editor offers "Use the default text" through
+  // `resetSectionToCode` and `listSectionsForEditor({ seeds })`, none of which
+  // exist in 0.10.x.
+  assistant: "0.11.0",
   // 0.3.0: the launcher, history, Stop, starters and the "ask before acting"
   // card, and the settings screen (./admin) the company pages mount.
   "assistant-widget": "0.3.2",
@@ -453,6 +465,11 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.7.4: each platform's panel starts afresh, its own video and pictures.
   // 0.7.5: the card formats' videos start afresh in another look.
   social: "0.7.5",
+  // create-app 0.43: spendable balances. Every shop installs it, because
+  // fulfilment's `credits` grant credits the buyer's wallet and the grant kind
+  // exists in every catalog: a product with a Credits grant in a project with
+  // no wallet would charge the buyer and book nothing.
+  wallet: "0.1.0",
 };
 
 export class UnknownPackageVersionError extends Error {

@@ -303,6 +303,28 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
     provenBy: (plan) => exists(plan, "app", "(site)", "account", "orders", "page.tsx"),
   },
   {
+    capability: "wallet.credits",
+    why:
+      "A `credits` grant credits the buyer's wallet inside the booking " +
+      "transaction (create-app 0.43), and the account page shows the balance.",
+    provenBy: (plan) => mentions(plan, ["src", "server", "fulfilment.ts"], "creditWallet("),
+  },
+  {
+    capability: "commerce.refunds",
+    why:
+      "A refund or a dispute made in Stripe comes back to the shop's order by the " +
+      "webhook and takes back the refunded share of what the order granted " +
+      "(create-app 0.44).",
+    provenBy: (plan) =>
+      mentions(plan, ["src", "server", "fulfilment.ts"], "export async function refundPurchase(") &&
+      mentions(plan, ["app", "api", "webhooks", "stripe", "route.ts"], '"charge.refunded"'),
+  },
+  {
+    capability: "admin.orders",
+    why: "The shop's orders for staff, from the shop-admin overlay (create-app 0.44).",
+    provenBy: (plan) => exists(plan, "app", "admin", "orders", "page.tsx"),
+  },
+  {
     capability: "billing.entitlements",
     why:
       "The subscription mirror grants what a plan includes (and, with a shop, " +

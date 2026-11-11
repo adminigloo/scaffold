@@ -83,7 +83,8 @@ export type { OrderAddress, OrderStatus } from "./schema.js";
 // commerce 0.2: a store of its own. The route tables and the keys are pure
 // data, so they live in the root; the server half is "@adminigloo/commerce/store",
 // the screens "@adminigloo/commerce/widget".
-export { storePermissions, storeCompanyPermissions } from "./permissions.js";
+export { storePermissions, storeCompanyPermissions, shopOrderPermissions } from "./permissions.js";
+export type { ShopOrderPermission } from "./permissions.js";
 export type { StorePermission } from "./permissions.js";
 export { STORE_ADMIN_ROUTES, STORE_PUBLIC_ROUTES, STORE_ADMIN_ROUTE_PERMISSIONS } from "./store-routes.js";
 export type { StoreAdminRouteKind, StorePublicRouteKind, StoreRoute } from "./store-routes.js";

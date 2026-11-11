@@ -33,9 +33,33 @@ export function upgradeNotesFor(answers: Answers, fromVersion: string): string[]
   const companies = answers.tenantNoun !== "none";
   const noun = tenantLabel(answers).toLowerCase();
   const crossed = (version: string) => (compareVersions(fromVersion, version) ?? -1) < 0;
-  // 0.43.0 — from Hinderstap: one address in search, the engines' tokens and
+  // 0.44.0 — refunds and disputes come back from Stripe, and staff see the
+  // shop's orders. No tables are new; the two Stripe events are.
+  if (crossed("0.44.0") && (answers.businessModel === "one-time" || answers.businessModel === "both")) {
+    notes.push(
+      "Refunds: enable charge.refunded and charge.dispute.created on BOTH Stripe webhook endpoints (test and live). " +
+        "A refund made in Stripe now marks the order refunded (or part refunded) and takes back the refunded share of what it granted " +
+        "(credits from the buyer's wallet, never below zero; a whole refund also ends entitlements and marks licence keys revoked); " +
+        "a dispute does all of that at once and flags the order. Run pnpm db:seed for the new shop.orders.view staff key" +
+        (answers.adminShell === "none" ? "." : "; staff see every order at /admin/orders."),
+    );
+  }
+  // 0.44.0 — assistant 0.11: who wrote each version of a section, a person or
+  // the code, so a code default can follow the code without overwriting edits.
+  if (crossed("0.44.0") && answers.includeAssistant) {
+    notes.push(
+      "The assistant now records who wrote each version of a section, a person or the code (assistant 0.11): run " +
+        "`pnpm db:generate` and migrate (one new column, assistant_section_versions.created_by_kind, defaulting to 'person', so " +
+        "every existing edit stays yours). A guardrail you edited at /admin/assistant now says so, with \"Use the default text\" " +
+        "to go back to the package's. If your own code seeds sections, use `ensureSection` instead of `createSection` on first " +
+        "read: it keeps the section in step with your code and never writes over an edit. If that code already published " +
+        "versions under ids of its own, mark them as the code's once: node_modules/@adminigloo/assistant/sql/upgrade-0.10-to-0.11.sql, " +
+        "after `select set_config('assistant.code_actors', '<id>,<id>', false);` in the same session.",
+    );
+  }
+  // 0.44.0 — from Hinderstap: one address in search, the engines' tokens and
   // IndexNow (--seo), a disclaimer slot (every project), and CI's placeholder URL.
-  if (crossed("0.43.0")) {
+  if (crossed("0.44.0")) {
     notes.push(
       "src/seo.ts has SITE_DISCLAIMER (undefined): set it to one line when the site is built around somebody else's work " +
         '("An unofficial fan site; not affiliated with …") and the footer shows it on every page. CI\'s build step now sets a ' +
@@ -52,6 +76,17 @@ export function upgradeNotesFor(answers: Answers, fromVersion: string): string[]
           "page's summary above its body. docs/content-for-answer-engines.md has the writing habits that get pages quoted.",
       );
     }
+  }
+  // 0.43.0 — credits: a shop's products can put a spendable balance in the
+  // buyer's account. The tables are new, so a migration is all there is to do.
+  const shop = answers.businessModel === "one-time" || answers.businessModel === "both";
+  if (crossed("0.43.0") && shop) {
+    notes.push(
+      "Credits: products can now grant credits (a Credits grant in the product builder: a unit such as crowns and an amount), " +
+        "held in @adminigloo/wallet's wallet_balances and wallet_ledger. Run pnpm db:generate && pnpm db:migrate for the two tables, " +
+        "pnpm db:seed for the credits.balances.view and credits.balances.adjust staff keys, and name your units in src/credits.ts. " +
+        "Spend them in your own code with spendWallet from @adminigloo/wallet/server; staff see and adjust balances at /admin/credits.",
+    );
   }
   // 0.40.0 — SEO by default (every project), and each person's own emails
   // (a consumers project with --email).

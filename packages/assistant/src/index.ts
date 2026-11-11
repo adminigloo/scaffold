@@ -38,6 +38,8 @@ export {
   deactivateGlossaryTerm,
   deactivateSection,
   deactivateTenantRule,
+  ensureSection,
+  fromCode,
   getBusinessProfile,
   getSectionByKey,
   listChangeLog,
@@ -50,6 +52,7 @@ export {
   publishSection,
   publishSectionSchema,
   recordBrainChange,
+  resetSectionToCode,
   rollbackSection,
   saveBusinessProfile,
   sectionKeySchema,
@@ -59,11 +62,17 @@ export {
   type ChangeLogRow,
   type CreateSectionInput,
   type DeactivateResult,
+  type EditorListOptions,
   type EditorSectionRow,
+  type EnsureSectionOptions,
+  type EnsureSectionResult,
   type GlossaryRow,
   type PublishResult,
+  type ResetToCodeResult,
   type SaveProfileResult,
   type SectionRow,
+  type SectionSeedText,
+  type Signer,
   type TenantRuleRow,
   type VersionRow,
 } from "./brain.js";
@@ -128,6 +137,7 @@ export {
   assistantGoldens,
   assistantEvalRuns,
   assistantEvalResults,
+  type SignerKind,
 } from "./schema.js";
 
 export {

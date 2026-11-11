@@ -68,8 +68,13 @@ export type VariantInterval = "month" | "year";
  * `none` is a real answer, not a placeholder: a pay-what-you-want donation, or
  * a ticket handled entirely outside the platform, grants nothing here — and an
  * absent grant row would be indistinguishable from a misconfigured product.
+ *
+ * `credits` (catalog 0.5) puts a spendable balance in the buyer's account —
+ * a pack of 25 crowns, 1,000 AI credits — which @adminigloo/wallet holds and
+ * the app spends. Unlike an `entitlement` (a feature, or a limit per window)
+ * it is consumed, and it outlives the order that bought it.
  */
-export type GrantKind = "ship" | "license_key" | "entitlement" | "none";
+export type GrantKind = "ship" | "license_key" | "entitlement" | "credits" | "none";
 
 /**
  * A catalog image. Only `url` is required: `alt` is optional because a project

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, like, lt, or, sql } from "drizzle-orm";
 import { users } from "__SCOPE__/auth/schema";
 import { grantConfigSchemas } from "__SCOPE__/catalog";
 import type { GrantKind } from "__SCOPE__/catalog";
@@ -8,6 +8,8 @@ import { subscriptionEntitlementWindow, type SubscriptionStatus } from "__SCOPE_
 import { entitlements } from "__SCOPE__/billing/schema";
 import { formatOrderNumber } from "__SCOPE__/commerce";
 import { orderItems, orderShipments, orders } from "__SCOPE__/commerce/schema";
+import { walletLedger } from "__SCOPE__/wallet/schema";
+import { creditWallet, refundWallet } from "__SCOPE__/wallet/server";
 import { auditEntry, defineAuditedActions } from "__SCOPE__/observability";
 import { auditLog } from "__SCOPE__/observability/schema";
 import { db, type Db } from "@/db";
@@ -136,7 +138,9 @@ export type PurchaseRefusalCode =
   | "sold_out"
   | "insufficient_stock"
   | "quantity_too_large"
-  | "amount_too_large";
+  | "amount_too_large"
+  // A `credits` grant fills the BUYER's balance, and a guest has none.
+  | "account_required";
 
 export class PurchaseRefusedError extends Error {
   /**
@@ -296,6 +300,19 @@ export const fulfilmentAuditedActions = {
      */
     sensitive: true,
   },
+  /**
+   * create-app 0.44: a refund made in Stripe came back by the webhook. Sensitive
+   * for the same reason a simulated order is: money moved and a grant was taken
+   * back, and the compliance slice is where both are asked about.
+   */
+  "commerce.order.refunded": {
+    label: "Recorded a refund from Stripe and took back the refunded share of what the order granted",
+    sensitive: true,
+  },
+  "commerce.order.disputed": {
+    label: "Recorded a dispute from Stripe and took back what the order granted",
+    sensitive: true,
+  },
 } as const satisfies Record<string, { label: string; sensitive?: boolean }>;
 
 export const fulfilmentAuditRegistry = defineAuditedActions(
@@ -347,6 +364,14 @@ export type AppliedGrant =
     }
   | { readonly kind: "license_key"; readonly licenseKey: string }
   | { readonly kind: "ship"; readonly shipmentId: string }
+  | {
+      readonly kind: "credits";
+      readonly unit: string;
+      /** What this order added: the grant's amount times the quantity. */
+      readonly amount: number;
+      /** The buyer's balance of `unit` after it. */
+      readonly balance: number;
+    }
   | { readonly kind: "none" };
 
 export interface FulfilmentResult {
@@ -576,6 +601,7 @@ async function bookOrder(
       tenantId: input.tenantId,
       orderId,
       reference: input.reference,
+      userId: input.userId,
     });
     applied.push(result);
     if (result.kind === "license_key") {
@@ -584,6 +610,12 @@ async function bookOrder(
       // being archived, and it needs no migration in a scaffold whose grant
       // kinds a project is expected to extend.
       lineMetadata["licenseKey"] = result.licenseKey;
+    }
+    if (result.kind === "credits") {
+      // On the line too, so the receipt and /account/orders can say "25 crowns"
+      // without joining the ledger. Keyed by unit: one variant can carry two
+      // credits grants (crowns AND a bonus of something else).
+      lineMetadata[`credits:${result.unit}`] = String(result.amount);
     }
   }
 
@@ -711,6 +743,340 @@ export async function windowProductGrants(state: ProductSubscriptionState): Prom
 }
 
 // ---------------------------------------------------------------------------
+// Refunds and disputes (create-app 0.44)
+// ---------------------------------------------------------------------------
+
+/**
+ * A refund Stripe reported (`charge.refunded`). `refundedMinor` is Stripe's
+ * RUNNING total for the charge, `amount_refunded`, not this one refund's
+ * amount: two partial refunds arrive as two events carrying 500 and then 1000,
+ * possibly the other way round, and a running total is what makes both orders
+ * of delivery come out the same.
+ */
+export interface ShopRefund {
+  readonly paymentIntentId: string;
+  readonly refundedMinor: number;
+  readonly currency: string;
+}
+
+/** A dispute Stripe reported (`charge.dispute.created`). */
+export interface ShopDispute {
+  readonly paymentIntentId: string;
+  readonly disputeId: string;
+  readonly currency: string;
+}
+
+export type ShopRefundOutcome =
+  /** Not an order this shop booked: a plan's invoice, a store order, another app's charge. */
+  | { readonly outcome: "ignored"; readonly why: string }
+  /** Already recorded at this running total (or this dispute): nothing moved. */
+  | { readonly outcome: "duplicate"; readonly orderId: string }
+  | {
+      readonly outcome: "refunded" | "disputed";
+      readonly orderId: string;
+      /** The whole order is refunded (or disputed): every grant was ended, not just a share. */
+      readonly whole: boolean;
+      readonly creditsTaken: readonly { readonly unit: string; readonly taken: number }[];
+      readonly entitlementsEnded: number;
+      readonly licencesRevoked: number;
+    };
+
+/**
+ * The part of `granted` that a running refund of `refundedMinor` out of
+ * `totalMinor` takes back, ROUNDED DOWN. Half of 25 credits refunded is 12, not
+ * 13: the customer keeps the odd one rather than losing one they paid for.
+ *
+ * In bigint, because `granted × refunded` passes 2^53 on an order worth a few
+ * million cents of a pack of a few billion credits, and a float rounding the
+ * product would round the refund with it.
+ */
+export function refundedShare(granted: number, totalMinor: bigint, refundedMinor: bigint): number {
+  if (granted <= 0 || totalMinor <= 0n || refundedMinor <= 0n) return 0;
+  const refunded = refundedMinor > totalMinor ? totalMinor : refundedMinor;
+  return Number((BigInt(granted) * refunded) / totalMinor);
+}
+
+interface RefundableOrder {
+  readonly id: string;
+  readonly tenantId: string;
+  readonly orderNumber: string;
+  readonly idempotencyKey: string;
+  readonly userId: string | null;
+  readonly totalMinor: bigint;
+  readonly refundedMinor: bigint;
+  readonly currency: string;
+  readonly flag: string | null;
+}
+
+/**
+ * The shop order a PaymentIntent paid for, LOCKED for the rest of the
+ * transaction. The lock is what makes two refund events at different running
+ * totals safe: without it both read the same "refunded so far", both compute
+ * their share from it, and the credits between the two totals are taken twice.
+ *
+ * Found by the shop's own idempotency key, so a refund on anything this module
+ * did not book (a plan's invoice, a company's store order) matches nothing.
+ */
+async function lockOrderForPayment(tx: Tx, paymentIntentId: string): Promise<RefundableOrder | null> {
+  const [row] = await tx
+    .select({
+      id: orders.id,
+      tenantId: orders.tenantId,
+      orderNumber: orders.orderNumber,
+      idempotencyKey: orders.idempotencyKey,
+      userId: orders.userId,
+      totalMinor: orders.totalMinor,
+      refundedMinor: orders.refundedMinor,
+      currency: orders.currency,
+      flag: orders.flag,
+    })
+    .from(orders)
+    .where(eq(orders.idempotencyKey, `${FULFILMENT_KEY_PREFIX}${paymentIntentId}`))
+    .limit(1)
+    .for("update");
+  return row ?? null;
+}
+
+/** `%` and `_` are LIKE wildcards, and every PaymentIntent id has an underscore. */
+function likePrefix(value: string): string {
+  return `${value.replace(/[\\%_]/g, "\\$&")}:%`;
+}
+
+/**
+ * Take back credits this order granted: `owed(granted)` of each grant, from the
+ * buyer's balance, never below zero. Credits already spent stay spent; the
+ * wallet records what it could take (possibly nothing) under `ref`, so a retry
+ * of the same step takes nothing more.
+ */
+async function takeBackCredits(
+  tx: Tx,
+  order: RefundableOrder,
+  reference: string,
+  step: { readonly ref: (grantId: string) => string; readonly owed: (granted: number) => number; readonly note: string },
+): Promise<{ unit: string; taken: number }[]> {
+  if (order.userId === null) return []; // a guest can't have bought credits
+  const grants = await tx
+    .select({ unit: walletLedger.unit, delta: walletLedger.delta, ref: walletLedger.ref })
+    .from(walletLedger)
+    .where(
+      and(
+        eq(walletLedger.holderId, order.userId),
+        eq(walletLedger.reason, "grant"),
+        like(walletLedger.ref, likePrefix(reference)),
+      ),
+    );
+  const taken: { unit: string; taken: number }[] = [];
+  for (const grant of grants) {
+    const owed = step.owed(grant.delta);
+    if (owed <= 0) continue;
+    // `ref` was written by applyGrant as `<reference>:<grantId>`.
+    const grantId = grant.ref.slice(reference.length + 1);
+    const moved = await refundWallet(tx, {
+      holderId: order.userId,
+      unit: grant.unit,
+      amount: owed,
+      ref: step.ref(grantId),
+      note: step.note,
+    });
+    if (moved.applied) taken.push({ unit: grant.unit, taken: moved.taken });
+  }
+  return taken;
+}
+
+/** End now what the order's `entitlement` grants still hold. The rows are kept: they are the record. */
+async function endOrderEntitlements(tx: Tx, tenantId: string, reference: string, now: Date): Promise<number> {
+  const ended = await tx
+    .update(entitlements)
+    .set({ expiresAt: now, updatedAt: now })
+    .where(
+      and(
+        eq(entitlements.tenantId, tenantId),
+        eq(entitlements.source, "grant"),
+        sql`split_part(${entitlements.sourceRef}, ':', 1) = ${reference}`,
+        or(isNull(entitlements.expiresAt), gt(entitlements.expiresAt, now)),
+      ),
+    )
+    .returning({ id: entitlements.id });
+  return ended.length;
+}
+
+/**
+ * A licence key can't be un-shown: the buyer has it. What a refund CAN do is
+ * say so on the line, as `licenseRevokedAt`, so anything that checks keys (an
+ * activation endpoint, a download gate) can refuse this one. The key stays on
+ * the receipt it was printed on.
+ */
+async function revokeOrderLicences(tx: Tx, orderId: string, now: Date): Promise<number> {
+  const revoked = await tx
+    .update(orderItems)
+    .set({
+      metadata: sql`coalesce(${orderItems.metadata}, '{}'::jsonb) || ${JSON.stringify({ licenseRevokedAt: now.toISOString() })}::jsonb`,
+    })
+    .where(
+      and(
+        eq(orderItems.orderId, orderId),
+        sql`${orderItems.metadata} ->> 'licenseKey' is not null`,
+        sql`${orderItems.metadata} ->> 'licenseRevokedAt' is null`,
+      ),
+    )
+    .returning({ id: orderItems.id });
+  return revoked.length;
+}
+
+/**
+ * A REFUND MADE IN STRIPE comes back to the order (create-app 0.44).
+ *
+ * The order's `refunded_minor` follows Stripe's running total, and all of it
+ * makes the order `refunded`; a part refund leaves it `paid` with the amount
+ * shown, as __SCOPE__/commerce defines both columns. Then, per grant kind:
+ *
+ *   credits      the refunded SHARE of what this order credited is taken back
+ *                from the buyer (rounded down, never below zero): half the
+ *                money back is half the pack back.
+ *   entitlement  a WHOLE refund ends it now; a part refund leaves it, because
+ *                half a seat is not a thing and a part refund is usually a
+ *                goodwill gesture on a purchase that stands.
+ *   license_key  a WHOLE refund marks the line `licenseRevokedAt` (above).
+ *   ship         nothing: whether a parcel already sent comes back is the
+ *                business's call, made in the warehouse, not here.
+ *
+ * IDEMPOTENT ON THE RUNNING TOTAL: only the event that moves `refunded_minor`
+ * up does anything, so a redelivery, or an older total arriving late, is a
+ * duplicate. Everything is one transaction, with the audit row. On an order
+ * already disputed only the money is recorded: the dispute took the grants.
+ *
+ * Refunding is done in Stripe's dashboard (or its API), never from this app:
+ * the money path stays where the money is, and this function only records what
+ * Stripe says happened.
+ */
+export async function refundPurchase(refund: ShopRefund): Promise<ShopRefundOutcome> {
+  return db.transaction(async (tx) => {
+    const order = await lockOrderForPayment(tx, refund.paymentIntentId);
+    if (!order) return { outcome: "ignored", why: "not an order this shop booked" };
+    if (refund.currency.toLowerCase() !== order.currency.toLowerCase()) {
+      return { outcome: "ignored", why: `a refund in ${refund.currency} on an order paid in ${order.currency}` };
+    }
+
+    const total = order.totalMinor;
+    const reported = BigInt(Math.max(0, Math.trunc(refund.refundedMinor)));
+    const next = reported > total ? total : reported;
+    const previous = order.refundedMinor;
+    // Never backwards: only a larger running total moves anything.
+    if (next <= previous) return { outcome: "duplicate", orderId: order.id };
+    const whole = next >= total;
+    const now = new Date();
+
+    await tx
+      .update(orders)
+      .set({ refundedMinor: next, ...(whole ? { status: "refunded" as const } : {}), updatedAt: now })
+      .where(and(eq(orders.id, order.id), lt(orders.refundedMinor, next)));
+
+    const reference = referenceOfKey(order.idempotencyKey) ?? refund.paymentIntentId;
+    // A dispute already took back everything the order granted (below), so a
+    // refund after one records the money and takes nothing: taking the credits
+    // again would take them out of whatever the buyer has bought since.
+    const afterDispute = order.flag !== null;
+    const creditsTaken = afterDispute
+      ? []
+      : await takeBackCredits(tx, order, reference, {
+          ref: (grantId) => `${reference}:${grantId}:refund:${next}`,
+          owed: (granted) => refundedShare(granted, total, next) - refundedShare(granted, total, previous),
+          note: `Refunded in Stripe: ${next} of ${total} ${order.currency} on order ${order.orderNumber}`,
+        });
+    const entitlementsEnded = whole && !afterDispute ? await endOrderEntitlements(tx, order.tenantId, reference, now) : 0;
+    const licencesRevoked = whole && !afterDispute ? await revokeOrderLicences(tx, order.id, now) : 0;
+
+    await tx.insert(auditLog).values(
+      auditEntry(fulfilmentAuditRegistry, {
+        action: "commerce.order.refunded",
+        // The buyer, as on the booking: the person this row is about.
+        actor: order.userId === null ? null : { userId: order.userId },
+        scope: "tenant",
+        tenantId: order.tenantId,
+        resourceType: "order",
+        resourceId: order.id,
+        metadata: {
+          reference,
+          orderNumber: order.orderNumber,
+          refundedMinor: next.toString(),
+          previousMinor: previous.toString(),
+          totalMinor: total.toString(),
+          currency: order.currency,
+          whole,
+          afterDispute,
+          creditsTaken,
+          entitlementsEnded,
+          licencesRevoked,
+        },
+      }),
+    );
+    return { outcome: "refunded", orderId: order.id, whole, creditsTaken, entitlementsEnded, licencesRevoked };
+  });
+}
+
+/**
+ * A DISPUTE IS TREATED AS A FULL REFUND OF WHAT THE ORDER GRANTED.
+ *
+ * When a customer's bank disputes a payment, Stripe pulls the money back at
+ * once and holds it until the dispute is decided. Leaving the credits,
+ * entitlements and licence keys in place for those weeks would let a buyer
+ * spend what they are simultaneously asking their bank to return. So the order
+ * is flagged `disputed` (__SCOPE__/commerce's own flag) and every grant is
+ * ended exactly as a whole refund ends it. The order's money columns don't
+ * move: no refund happened, and `refunded_minor` stays Stripe's refund total.
+ *
+ * A dispute the business WINS doesn't hand the grants back automatically: by
+ * then the buyer may hold a new pack, and a person should decide. Staff restore
+ * credits with the adjustment on /admin/credits.
+ *
+ * Idempotent on the flag: a second `charge.dispute.created` for an order
+ * already flagged is a duplicate.
+ */
+export async function disputePurchase(dispute: ShopDispute): Promise<ShopRefundOutcome> {
+  return db.transaction(async (tx) => {
+    const order = await lockOrderForPayment(tx, dispute.paymentIntentId);
+    if (!order) return { outcome: "ignored", why: "not an order this shop booked" };
+    if (order.flag === "disputed" || order.flag === "dispute_lost") return { outcome: "duplicate", orderId: order.id };
+    const now = new Date();
+
+    await tx.update(orders).set({ flag: "disputed", flaggedAt: now, updatedAt: now }).where(eq(orders.id, order.id));
+
+    const reference = referenceOfKey(order.idempotencyKey) ?? dispute.paymentIntentId;
+    const total = order.totalMinor;
+    const refundedBefore = order.refundedMinor;
+    const creditsTaken = await takeBackCredits(tx, order, reference, {
+      ref: (grantId) => `${reference}:${grantId}:dispute:${dispute.disputeId}`,
+      // Everything a refund hasn't already taken back.
+      owed: (granted) => granted - refundedShare(granted, total, refundedBefore),
+      note: `Disputed at the customer's bank (${dispute.disputeId}) on order ${order.orderNumber}`,
+    });
+    const entitlementsEnded = await endOrderEntitlements(tx, order.tenantId, reference, now);
+    const licencesRevoked = await revokeOrderLicences(tx, order.id, now);
+
+    await tx.insert(auditLog).values(
+      auditEntry(fulfilmentAuditRegistry, {
+        action: "commerce.order.disputed",
+        actor: order.userId === null ? null : { userId: order.userId },
+        scope: "tenant",
+        tenantId: order.tenantId,
+        resourceType: "order",
+        resourceId: order.id,
+        metadata: {
+          reference,
+          orderNumber: order.orderNumber,
+          disputeId: dispute.disputeId,
+          currency: dispute.currency,
+          creditsTaken,
+          entitlementsEnded,
+          licencesRevoked,
+        },
+      }),
+    );
+    return { outcome: "disputed", orderId: order.id, whole: true, creditsTaken, entitlementsEnded, licencesRevoked };
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Grants
 // ---------------------------------------------------------------------------
 
@@ -723,6 +1089,8 @@ interface ApplyGrantInput {
   readonly tenantId: string;
   readonly orderId: string;
   readonly reference: string;
+  /** The buyer. NULL for a guest, which a `credits` grant refuses. */
+  readonly userId: string | null;
 }
 
 /**
@@ -801,6 +1169,41 @@ async function applyGrant(
       return { kind: "ship", shipmentId: shipment.id };
     }
 
+    case "credits": {
+      const config = grantConfigSchemas.credits.parse(input.config);
+      if (input.userId === null) {
+        // Refused, and the whole booking with it: this throws inside the
+        // transaction, so no order is left behind claiming credits nobody
+        // holds. The storefront asks for an account before checkout
+        // (`variantGrantsCredits`), so reaching here means something called
+        // this function without a buyer — a webhook for an intent this app did
+        // not create. Stripe then redelivers, and the event waits in the
+        // failed queue for a person, which is the right place for money that
+        // can't be attributed to anyone.
+        throw new PurchaseRefusedError(
+          "account_required",
+          "Credits go into the buyer's account, and this purchase has no buyer.",
+        );
+      }
+      // Three packs of 25 is 75: the amount scales with the quantity, like an
+      // entitlement's limit.
+      const amount = config.amount * input.quantity;
+      const credited = await creditWallet(tx, {
+        // THE BUYER, NOT THE TENANT. `tenantId` here is the storefront's
+        // (whose catalog this is), and credits belong to the person who paid.
+        holderId: input.userId,
+        unit: config.unit,
+        amount,
+        // The purchase AND the grant, as an entitlement's source_ref: two
+        // credits grants on one variant are two credits, and a redelivered
+        // payment never reaches here (the order insert short-circuits above)
+        // — but if it did, the wallet's own unique index would hold the line.
+        ref: `${input.reference}:${input.grantId}`,
+        note: `${input.variant.productName} — ${input.variant.variantName}${input.quantity > 1 ? ` × ${input.quantity}` : ""}`,
+      });
+      return { kind: "credits", unit: config.unit, amount, balance: credited.balance };
+    }
+
     case "none":
       // A real answer, not a placeholder — a donation or an off-platform ticket
       // grants nothing here. Parsed anyway, so a config that has grown fields
@@ -808,6 +1211,23 @@ async function applyGrant(
       grantConfigSchemas.none.parse(input.config);
       return { kind: "none" };
   }
+}
+
+/**
+ * Whether buying this variant puts credits in someone's account.
+ *
+ * The checkout asks BEFORE any money moves, so a guest is told to sign in
+ * rather than charged for credits fulfilment then refuses to book. Read from
+ * the grant rows, never from the product's name or metadata, because the
+ * grant is what fulfilment acts on.
+ */
+export async function variantGrantsCredits(variantId: string, handle: Db | Tx = db): Promise<boolean> {
+  const [row] = await handle
+    .select({ id: productGrants.id })
+    .from(productGrants)
+    .where(and(eq(productGrants.variantId, variantId), eq(productGrants.kind, "credits")))
+    .limit(1);
+  return row !== undefined;
 }
 
 /**

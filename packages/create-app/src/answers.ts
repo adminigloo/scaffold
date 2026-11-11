@@ -466,7 +466,9 @@ export function packagesFor(answers: Answers): readonly string[] {
     // entitlements) and no catalog or commerce — no products, orders,
     // discounts or shipments. One-time and both keep the shop.
     if (answers.businessModel === "one-time" || answers.businessModel === "both") {
-      optional.push("stripe", "catalog", "commerce", "billing");
+      // `wallet` (create-app 0.43): what a `credits` grant fills. With the
+      // catalog, always, because every catalog can sell credits.
+      optional.push("stripe", "catalog", "commerce", "billing", "wallet");
     } else {
       optional.push("stripe", "billing");
     }
@@ -1213,6 +1215,8 @@ export function capabilitiesFor(answers: Answers): readonly string[] {
   const shop = answers.businessModel === "one-time" || answers.businessModel === "both";
   if (shop && answers.adminShell !== "none") {
     keys.push("admin.product-builder");
+    // create-app 0.44: staff see the shop's orders at /admin/orders.
+    keys.push("admin.orders");
   }
 
   if (takesMoney) {
@@ -1230,6 +1234,11 @@ export function capabilitiesFor(answers: Answers): readonly string[] {
       // WRITE — `fulfilPurchase` booking a row — and was true for a year while
       // no customer-facing screen could read one back.
       "commerce.customer-account",
+      // create-app 0.43: a `credits` grant fills the buyer's wallet.
+      "wallet.credits",
+      // create-app 0.44: a refund or dispute in Stripe comes back to the order
+      // and takes back what it granted.
+      "commerce.refunds",
     );
   }
   if (answers.businessModel === "one-time" || answers.businessModel === "both") {

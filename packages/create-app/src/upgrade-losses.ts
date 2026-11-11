@@ -40,6 +40,8 @@ export const PACKAGE_TABLES: Readonly<Record<string, readonly string[]>> = {
   observability: ["audit_log", "error_log"],
   stripe: ["stripe_connected_accounts", "stripe_events"],
   catalog: ["product_grants", "product_variants", "products"],
+  // create-app 0.43: the balances a `credits` grant fills, and their ledger.
+  wallet: ["wallet_balances", "wallet_ledger"],
   commerce: ["discount_codes", "order_items", "order_shipments", "orders", "store_alerts", "store_checkouts", "store_settings"],
   billing: ["entitlements", "plans", "subscriptions"],
   ai: ["ai_usage"],

@@ -143,6 +143,6 @@ describe("every project", () => {
     const seo = upgradeNotesFor(answers(SEO), "0.42.8").join("\n");
     expect(seo).toContain("pnpm seo:indexnow --origin https://your-domain");
     expect(seo).toContain("take `toCanonicalHost` out of `handle`");
-    expect(upgradeNotesFor(answers(SEO), "0.43.0").join("\n")).not.toContain("SITE_DISCLAIMER");
+    expect(upgradeNotesFor(answers(SEO), "0.44.0").join("\n")).not.toContain("SITE_DISCLAIMER");
   });
 });

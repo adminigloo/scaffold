@@ -1,6 +1,7 @@
--- @adminigloo/assistant 0.9.0: every table, for a host that doesn't run drizzle-kit.
+-- @adminigloo/assistant 0.11.0: every table, for a host that doesn't run drizzle-kit.
 -- A project made with create-app doesn't need this: its migrations come from the schema.
--- Upgrading from 0.8? Run upgrade-0.8-to-0.9.sql instead.
+-- Upgrading? From 0.8, run upgrade-0.8-to-0.9.sql, then upgrade-0.10-to-0.11.sql;
+-- from 0.9 or 0.10, run upgrade-0.10-to-0.11.sql.
 --
 -- Every company's rows carry its id in tenant_id ('*' is the site's own
 -- assistant). No default on any of them: an insert that forgets the company
@@ -212,6 +213,7 @@ create table if not exists "assistant_section_versions" (
   "content" text not null,
   "change_summary" text,
   "created_by" text,
+  "created_by_kind" text not null default 'person',
   "created_at" timestamptz not null default now()
 );
 

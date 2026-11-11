@@ -1,6 +1,9 @@
 import { eq } from "drizzle-orm";
 import type { AssistantDb } from "./brain.js";
-import { assistantSections } from "./schema.js";
+import { assistantSectionVersions, assistantSections } from "./schema.js";
+
+/** Who signs the defaults' first versions: the package's own code (0.11.0). */
+export const DEFAULT_SECTIONS_SIGNER = "seed";
 
 /**
  * The personality and the guardrails a fresh install boots with.
@@ -100,6 +103,10 @@ export const DEFAULT_SECTIONS = [
  * key the company doesn't have yet is added. A section the owner turned off
  * is still a row, so it is never brought back. Race-safe: an insert that
  * meets the (company, key) unique index is skipped, not an error.
+ *
+ * Each default's text is recorded as its v1, signed as code (0.11.0), so the
+ * history starts where the text did and the editor can tell an untouched
+ * default from a person's edit.
  */
 export async function seedDefaultSections(db: AssistantDb, tenantId: string): Promise<number> {
   if (!tenantId) throw new Error("seedDefaultSections needs the company");
@@ -111,12 +118,24 @@ export async function seedDefaultSections(db: AssistantDb, tenantId: string): Pr
   let inserted = 0;
   for (const section of DEFAULT_SECTIONS) {
     if (have.has(section.key)) continue;
-    const rows = await db
-      .insert(assistantSections)
-      .values({ ...section, tenantId, requiredPhrases: [...section.requiredPhrases] })
-      .onConflictDoNothing({ target: [assistantSections.tenantId, assistantSections.key] })
-      .returning({ id: assistantSections.id });
-    inserted += rows.length;
+    inserted += await db.transaction(async (tx: AssistantDb) => {
+      const rows = (await tx
+        .insert(assistantSections)
+        .values({ ...section, tenantId, requiredPhrases: [...section.requiredPhrases] })
+        .onConflictDoNothing({ target: [assistantSections.tenantId, assistantSections.key] })
+        .returning({ id: assistantSections.id })) as Array<{ id: string }>;
+      const row = rows[0];
+      if (!row) return 0;
+      await tx.insert(assistantSectionVersions).values({
+        sectionId: row.id,
+        versionNumber: 1,
+        content: section.content,
+        changeSummary: "created",
+        createdBy: DEFAULT_SECTIONS_SIGNER,
+        createdByKind: "code",
+      });
+      return 1;
+    });
   }
   return inserted;
 }

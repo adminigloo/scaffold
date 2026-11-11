@@ -97,6 +97,16 @@ export interface ValidateProductInput {
  * `undefined`, which grants the customer nothing and looks like a successful
  * purchase from every angle except theirs.
  */
+/**
+ * Every grant kind, in the order the product builder lists them. One list, so
+ * a router's input enum and the "a `none` grant replaces every other kind"
+ * rule can't fall a kind behind the `GrantKind` union, which is how a new kind
+ * used to arrive: valid in the type, refused by the input schema. Here rather
+ * than in ./schema.ts because it is a value, and the root entry must not import
+ * the tables (see the note in ./index.ts).
+ */
+export const GRANT_KINDS = ["none", "ship", "license_key", "entitlement", "credits"] as const satisfies readonly GrantKind[];
+
 export const grantConfigSchemas = {
   ship: z.object({
     weightGrams: z.number().int().nonnegative().optional(),
@@ -111,6 +121,19 @@ export const grantConfigSchemas = {
     feature: z.string().min(1),
     /** NULL is unlimited, matching `entitlements.limit_value`. Not zero. */
     limit: z.number().int().nonnegative().nullable().optional(),
+  }),
+  credits: z.object({
+    /**
+     * Which balance it fills: `wallet_balances.unit` in @adminigloo/wallet. A
+     * lower-case slug, the same pattern the wallet enforces, so "Crowns" and
+     * "crowns" can never be two wallets holding half the customer's money each.
+     * Not called `currency`: the variant already has one, and it means dollars.
+     */
+    unit: z
+      .string()
+      .regex(/^[a-z][a-z0-9-]{0,31}$/, "a lower-case slug such as crowns or ai-credits"),
+    /** Per unit bought: three packs of 25 credit 75. */
+    amount: z.number().int().positive().max(1_000_000_000),
   }),
   none: z.object({}),
 } as const satisfies Record<GrantKind, z.ZodType>;

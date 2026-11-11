@@ -206,7 +206,7 @@ describe("each person's own emails: what they do", () => {
     expect(notes).toContain("proxy.ts.new");
     // Past 0.40 nothing about its digests is said again (later releases have notes of their own).
     expect(upgradeNotesFor(ALMANAC, "0.40.0").join("\n")).not.toContain("digest_sends");
-    expect(upgradeNotesFor(ALMANAC, "0.43.0")).toEqual([]);
+    expect(upgradeNotesFor(ALMANAC, "0.44.0")).toEqual([]);
     expect(upgradeNotesFor(BUSINESS, "0.39.0").join("\n")).not.toContain("digest_sends");
   });
 });

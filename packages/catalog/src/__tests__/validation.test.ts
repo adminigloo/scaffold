@@ -470,6 +470,37 @@ describe("grants", () => {
     expect(codes(problems)).toEqual(["grant-config-invalid"]);
   });
 
+  it("accepts a well-formed credits grant", () => {
+    expect(
+      codes(
+        validateProduct({
+          product: product(),
+          variants: [variant()],
+          grants: [grant({ kind: "credits", config: { unit: "crowns", amount: 25 } })],
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("flags a credits grant with a unit that could be spelled two ways, or no amount", () => {
+    // The unit is half of every balance's key: "Crowns" beside "crowns" is two
+    // wallets, each holding part of what the customer paid for.
+    for (const config of [
+      { unit: "Crowns", amount: 25 },
+      { unit: "gold crowns", amount: 25 },
+      { unit: "crowns" },
+      { unit: "crowns", amount: 0 },
+      { unit: "crowns", amount: 2.5 },
+    ]) {
+      const problems = validateProduct({
+        product: product(),
+        variants: [variant()],
+        grants: [grant({ kind: "credits", config })],
+      });
+      expect(codes(problems)).toEqual(["grant-config-invalid"]);
+    }
+  });
+
   it("accepts a `none` grant with no config at all", () => {
     // `none` is a real answer, not a placeholder: a donation grants nothing.
     expect(
