@@ -14,7 +14,7 @@ export type {
   UsageReporter,
 } from "./stream.js";
 
-export { estimateCostMicros, costMinorUnits, InvalidCostInputError } from "./cost.js";
+export { estimateCostMicros, costMinorUnits, rateFor, InvalidCostInputError } from "./cost.js";
 export type { CostInput, TokenRate } from "./cost.js";
 
 export { aiPermissions } from "./permissions.js";
