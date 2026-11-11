@@ -65,7 +65,7 @@ describe("packages, overlays, versions and capabilities", () => {
     // seo 0.3: dataset(), ownImage and robots.txt as one group, create-app 0.40).
     expect(versions.analytics).toMatch(/^0\.5\.\d+$/);
     expect(versions.audience).toMatch(/^0\.3\.\d+$/);
-    expect(versions.seo).toMatch(/^0\.3\.\d+$/);
+    expect(versions.seo).toMatch(/^0\.4\.\d+$/);
   });
 
   it("selects the analytics overlays by their conditions", () => {

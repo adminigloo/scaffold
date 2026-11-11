@@ -100,7 +100,7 @@ import {
 import { renderDeploymentFeedback, renderFeedbackCron, renderFeedbackGlue } from "./feedback-emit.js";
 import { assistantChats, renderAssistantGlue, renderAssistantLauncherSlot, renderAssistantTools } from "./assistant-emit.js";
 import { renderAnalyticsCron, renderSiteAnalyticsSlot, renderWebsiteGlue, websitesQuota } from "./website-emit.js";
-import { renderSeoPackageModule, renderSeoRobots, renderSeoSitemap } from "./seo-emit.js";
+import { renderAnswerEngineGuide, renderIndexNowKeyRoute, renderIndexNowScript, renderSeoPackageModule, renderSeoRobots, renderSeoSitemap } from "./seo-emit.js";
 import {
   renderAppleIcon,
   renderBrand,
@@ -1026,6 +1026,14 @@ export async function planEmit(
     }),
   );
   files.set(join("app", "sitemap.ts"), answers.includeSeo ? renderSeoSitemap(answers) : renderSitemap(answers));
+  // Search basics, part 2 (create-app 0.43): IndexNow's key file at a fixed
+  // address, and the script that tells the engines about every page after a
+  // launch. Bing, Yandex and the rest; Google reads the sitemap.
+  if (answers.includeSeo) {
+    files.set(join("app", "indexnow-key.txt", "route.ts"), renderIndexNowKeyRoute(answers));
+    files.set(join("scripts", "indexnow.ts"), renderIndexNowScript(answers));
+    files.set(join("docs", "content-for-answer-engines.md"), renderAnswerEngineGuide());
+  }
   // The derived half of the legal pages: who else sees a customer's data, and
   // which clauses follow from what this project does. Written on the same
   // condition that copies the pages, because nothing else imports it — and that
@@ -1352,6 +1360,9 @@ export function renderPackageJson(answers: Answers): string {
       // call, order and message a business already has to its customer. Safe
       // to run again; see scripts/customers-backfill.ts.
       ...(answers.includeCustomers ? { "customers:backfill": "tsx scripts/customers-backfill.ts" } : {}),
+      // Tell the IndexNow engines about every page the LIVE sitemap lists
+      // (create-app 0.43): by hand, after a launch, never on every deploy.
+      ...(answers.includeSeo ? { "seo:indexnow": "tsx scripts/indexnow.ts" } : {}),
       ...(answers.includeFeedback
         ? {
             "feedback:issue-key":
@@ -1966,6 +1977,17 @@ const OPTIONAL_ENV_NOTES: Readonly<Record<string, readonly string[]>> = {
     "(claude-haiku-4-5), the cheapest capable one; another model needs its price",
     "in MODEL_RATES (src/server/ai.ts) or the chat stays off.",
   ],
+  GOOGLE_SITE_VERIFICATION: [
+    "Google Search Console's HTML-tag verification: the meta tag's content",
+    "value only. Set it on production, then press Verify in Search Console.",
+  ],
+  BING_SITE_VERIFICATION: [
+    "Bing Webmaster Tools' HTML-tag verification (msvalidate.01): the content value only.",
+  ],
+  INDEXNOW_KEY: [
+    "Any 8 to 128 letters, digits or dashes (openssl rand -hex 16), public by design:",
+    "served at /indexnow-key.txt, and sent by pnpm seo:indexnow after a launch.",
+  ],
   PLANS_ENFORCED_FROM: [
     "Only on a project that ran BEFORE plans were enforced: the day you deployed",
     "this (YYYY-MM-DD), so every existing company gets a fresh free trial from",
@@ -2567,6 +2589,27 @@ export function renderEnvModule(answers: Answers): string {
   if (answers.includeBooking) {
     features.push(
       `{ name: "Call reminders", vars: ["CRON_SECRET"${answers.includeEmail ? ', "RESEND_API_KEY"' : ""}], disables: "${answers.includeEmail ? "The reminder email the day before a call, and the clean-up of abandoned holds: /api/cron/booking answers 401 until the secret is set. Without RESEND_API_KEY no booking email leaves at all, and the booking page stops promising one." : "The clean-up of abandoned holds: /api/cron/booking answers 401 until the secret is set. This project has no email (--email), so nobody is emailed about a call and the booking page says so."}" }`,
+    );
+  }
+
+  // Search basics, part 2 (create-app 0.43, from Hinderstap): the search
+  // engines' ownership tokens, written as meta tags by src/seo.ts, and the
+  // IndexNow key, served at /indexnow-key.txt and sent by pnpm seo:indexnow.
+  // All optional and none secret: each is published on the site by design.
+  if (answers.includeSeo) {
+    serverSpreads.push(
+      "GOOGLE_SITE_VERIFICATION: z.string().max(200).optional()",
+      "BING_SITE_VERIFICATION: z.string().max(200).optional()",
+      'INDEXNOW_KEY: z.string().regex(/^[A-Za-z0-9-]{8,128}$/, "8 to 128 letters, digits or dashes").optional()',
+    );
+    runtime.push(
+      "GOOGLE_SITE_VERIFICATION: process.env.GOOGLE_SITE_VERIFICATION",
+      "BING_SITE_VERIFICATION: process.env.BING_SITE_VERIFICATION",
+      "INDEXNOW_KEY: process.env.INDEXNOW_KEY",
+    );
+    features.push(
+      `{ name: "Search engine verification", vars: ["GOOGLE_SITE_VERIFICATION", "BING_SITE_VERIFICATION"], disables: "Nothing. Each is the content of the engine's HTML-tag verification (Google Search Console, Bing Webmaster Tools), written as a meta tag on every page; set them on production, then press Verify. A DNS TXT record verifies the same without these." }`,
+      `{ name: "IndexNow", vars: ["INDEXNOW_KEY"], disables: "Telling Bing, Yandex and the other IndexNow engines about new pages the moment they're published: /indexnow-key.txt answers 404 and pnpm seo:indexnow refuses. Any 8 to 128 letters, digits or dashes (\`openssl rand -hex 16\`); it's public by design. Google doesn't take part; it reads the sitemap." }`,
     );
   }
 
@@ -8346,6 +8389,14 @@ export const SITE_NAME = ${JSON.stringify(displayNameOf(answers.projectName))};
 export const SITE_DESCRIPTION =
   "One sentence about what ${answers.projectName} does and who it is for. " +
   "Replace this: it is the line search results and shared links show.";
+
+/**
+ * A line this site has to carry when it is built around somebody else's work
+ * (create-app 0.43, from Hinderstap): "An unofficial fan site; not affiliated
+ * with the author or publisher." The footer shows it on every page. Leave it
+ * undefined when the site is about your own work.
+ */
+export const SITE_DISCLAIMER: string | undefined = undefined;
 
 /**
  * May this deployment be indexed?

@@ -31,6 +31,12 @@ jobs:
       - run: pnpm test
       # SKIP_ENV_VALIDATION lets the build run without secrets. It relaxes the
       # Zod pass ONLY — the key-mode assertion still runs on any key present.
+      # NEXT_PUBLIC_APP_URL is a placeholder because some modules build a link
+      # from it while they load (the staff sign-up link, since create-app
+      # 0.42), and with no app URL `next build` dies with "TypeError: Invalid
+      # URL" while collecting page data. This build is a check and is never
+      # deployed, so a placeholder is right here (found by Hinderstap's first CI run).
       - run: pnpm build
         env:
           SKIP_ENV_VALIDATION: "1"
+          NEXT_PUBLIC_APP_URL: http://localhost:3000

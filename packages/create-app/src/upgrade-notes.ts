@@ -33,6 +33,26 @@ export function upgradeNotesFor(answers: Answers, fromVersion: string): string[]
   const companies = answers.tenantNoun !== "none";
   const noun = tenantLabel(answers).toLowerCase();
   const crossed = (version: string) => (compareVersions(fromVersion, version) ?? -1) < 0;
+  // 0.43.0 — from Hinderstap: one address in search, the engines' tokens and
+  // IndexNow (--seo), a disclaimer slot (every project), and CI's placeholder URL.
+  if (crossed("0.43.0")) {
+    notes.push(
+      "src/seo.ts has SITE_DISCLAIMER (undefined): set it to one line when the site is built around somebody else's work " +
+        '("An unofficial fan site; not affiliated with …") and the footer shows it on every page. CI\'s build step now sets a ' +
+        "placeholder NEXT_PUBLIC_APP_URL, so `next build` stops failing with \"Invalid URL\" there.",
+    );
+    if (answers.includeSeo) {
+      notes.push(
+        "With --seo (seo 0.4): INDEXABLE now also needs a real public NEXT_PUBLIC_APP_URL (not localhost, an IP or *.vercel.app), " +
+          "so set it to your domain on production. proxy.ts sends a production page read on any other host (www., the *.vercel.app " +
+          "aliases) to that address with a 308; if you serve several domains on purpose, take `toCanonicalHost` out of `handle`. " +
+          "New, all optional: GOOGLE_SITE_VERIFICATION and BING_SITE_VERIFICATION (the HTML-tag token, written as a meta tag), and " +
+          "INDEXNOW_KEY, served at /indexnow-key.txt; after a launch run `pnpm seo:indexnow --origin https://your-domain` to tell " +
+          "Bing and the other IndexNow engines about every page. llms.txt carries the disclaimer, and llms-full.txt keeps each " +
+          "page's summary above its body. docs/content-for-answer-engines.md has the writing habits that get pages quoted.",
+      );
+    }
+  }
   // 0.40.0 — SEO by default (every project), and each person's own emails
   // (a consumers project with --email).
   if (crossed("0.40.0")) {

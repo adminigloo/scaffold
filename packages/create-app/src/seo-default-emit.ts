@@ -444,6 +444,54 @@ export function renderProxy(answers: Answers): string {
   const scope = answers.scope;
   const counted = answers.includeAnalytics;
   const companies = companiesMode(answers);
+  const canonical = answers.includeSeo;
+  const canonicalHost = canonical
+    ? `
+/**
+ * ONE ADDRESS IN SEARCH (create-app 0.43, from Hinderstap). On production, a
+ * page read on any other host this deployment answers to (www., the project's
+ * *.vercel.app aliases) is sent to the canonical address, NEXT_PUBLIC_APP_URL's,
+ * with a 308 that keeps the path and query. Otherwise www.example.com serves a
+ * second, indexable copy of the whole site. Only GET and HEAD move: the API
+ * answers on every host, because a webhook or a cron registered at another
+ * address would not follow a redirect.
+ *
+ * Production is decided as \`resolveAppEnv()\` decides it (VERCEL_ENV, else
+ * APP_ENV), read here directly because this file must not load src/env.ts.
+ * NEXT_PUBLIC_APP_URL is inlined at build time. An app URL on localhost, an IP
+ * address or a name without a dot is never a canonical address, so a
+ * misconfigured production is left alone rather than sent there.
+ */
+const CANONICAL_ORIGIN = canonicalOrigin(process.env.NEXT_PUBLIC_APP_URL);
+
+function canonicalOrigin(url: string | undefined): URL | null {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    const name = parsed.hostname.toLowerCase();
+    if (!name.includes(".") || name === "localhost" || name.endsWith(".localhost") || /^[\\d.]+$/.test(name) || name.startsWith("[")) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function onProduction(): boolean {
+  const platform = process.env.VERCEL_ENV;
+  if (platform) return platform === "production";
+  return process.env.APP_ENV?.trim().toLowerCase() === "production";
+}
+
+/** A 308 to the canonical host, or null when this request is already there (or isn't a page read on production). */
+function toCanonicalHost(req: NextRequest): NextResponse | null {
+  if (!CANONICAL_ORIGIN || (req.method !== "GET" && req.method !== "HEAD")) return null;
+  if (req.nextUrl.pathname.startsWith("/api/")) return null;
+  const host = (req.headers.get("host") ?? "").trim().toLowerCase();
+  if (host === "" || host === CANONICAL_ORIGIN.host.toLowerCase() || !onProduction()) return null;
+  return NextResponse.redirect(new URL(\`\${req.nextUrl.pathname}\${req.nextUrl.search}\`, CANONICAL_ORIGIN.origin), 308);
+}
+`
+    : "";
   const crawlerLog = counted
     ? `
 /**
@@ -598,8 +646,11 @@ function withRequestId(req: NextRequest): NextResponse {
   return response;
 }
 ${crawlerLog}
-/** Every request: ${counted ? "the crawler log, then " : ""}the request id and the robots header. */
-function handle(req: NextRequest): NextResponse {${counted ? `
+${canonicalHost}
+/** Every request: ${canonical ? "another host's page read sent to the canonical one, else " : ""}${counted ? "the crawler log, then " : ""}the request id and the robots header. */
+function handle(req: NextRequest): NextResponse {${canonical ? `
+  const moved = toCanonicalHost(req);
+  if (moved) return moved;` : ""}${counted ? `
   logCrawler(req);` : ""}
   return withRequestId(req);
 }
@@ -623,6 +674,55 @@ export const config = {
 /** src/__tests__/proxy.test.ts: the proxy itself, as Next runs it on every request. */
 export function renderProxyTest(answers: Answers): string {
   const counted = answers.includeAnalytics;
+  const canonicalTests = answers.includeSeo
+    ? `
+describe("one address in search (create-app 0.43)", () => {
+  /** The proxy as production builds it: NEXT_PUBLIC_APP_URL inlined, VERCEL_ENV set by the platform. */
+  async function production(appUrl: string, env = "production") {
+    vi.resetModules();
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", appUrl);
+    vi.stubEnv("VERCEL_ENV", env);
+    const fresh = (await import("../../proxy")).default as unknown as (req: NextRequest) => Response | Promise<Response>;
+    return (url: string, init: { method?: string; host?: string } = {}) =>
+      fresh(new NextRequest(url, { method: init.method ?? "GET", headers: { host: init.host ?? new URL(url).host } }));
+  }
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("sends a page read on www. to the canonical host, path and query kept", async () => {
+    const send = await production("https://example.com");
+    const res = await send("https://www.example.com/pricing?ref=a");
+    expect(res.status).toBe(308);
+    expect(res.headers.get("location")).toBe("https://example.com/pricing?ref=a");
+  });
+
+  it("sends the project's *.vercel.app alias there too", async () => {
+    const send = await production("https://example.com");
+    const res = await send("https://example-team.vercel.app/");
+    expect(res.status).toBe(308);
+    expect(res.headers.get("location")).toBe("https://example.com/");
+  });
+
+  it("leaves the canonical host, the API, a POST and anything off production alone", async () => {
+    const send = await production("https://example.com");
+    expect((await send("https://example.com/pricing")).status).not.toBe(308);
+    expect((await send("https://www.example.com/api/webhooks/stripe")).status).not.toBe(308);
+    expect((await send("https://www.example.com/contact", { method: "POST" })).status).not.toBe(308);
+    const preview = await production("https://example.com", "preview");
+    expect((await preview("https://www.example.com/pricing")).status).not.toBe(308);
+  });
+
+  it("never sends production to an app URL that can't be the public address", async () => {
+    for (const appUrl of ["http://localhost:3000", "http://127.0.0.1:3000", "https://intranet"]) {
+      const send = await production(appUrl);
+      expect((await send("https://example.com/pricing")).status).not.toBe(308);
+    }
+  });
+});
+`
+    : "";
   const crawlerMocks = counted
     ? `
 /** What reached the crawler log, and whether its module was ever loaded. */
@@ -669,7 +769,7 @@ describe("the crawler log", () => {
 });
 `
     : "";
-  return `import { beforeEach, describe, expect, it, vi } from "vitest";
+  return `import { ${answers.includeSeo ? "afterEach, " : ""}beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import proxy from "../../proxy";
 
@@ -718,7 +818,7 @@ describe("X-Robots-Tag", () => {
     expect(response?.headers.get("x-robots-tag")).toBeNull();
   });
 });
-${crawlerTests}`;
+${crawlerTests}${canonicalTests}`;
 }
 
 // ---------------------------------------------------------------------------

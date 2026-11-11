@@ -417,7 +417,9 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // /t/{web address}/quote/…) and a LocalBusiness without an address.
   // 0.3.0 (create-app 0.40): `dataset()`, `pageMetadata({ ownImage })` and
   // robots.txt as one group (`combine: true`), which the generated robots.ts asks for.
-  seo: "0.3.0",
+  // 0.4.0 (create-app 0.43, from Hinderstap): `defineSite({ disclaimer,
+  // verification })`, which the generated src/seo.ts passes, and `creativeWork()`.
+  seo: "0.4.0",
   // 0.2.0 (Tenancy 2b-4c): book a call per company — the admin and public
   // handlers and their route tables, the open/closed gate, the company caps,
   // reminders and the pinned calendar reader. 0.1 had none of these.

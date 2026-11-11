@@ -10,6 +10,13 @@
 @source "../app";
 @source "../src";
 
+/* BRINGING IN AN EXISTING STYLESHEET? Put it in a cascade layer declared
+   BEFORE Tailwind: a line `@layer legacy;` above `@import "tailwindcss";`, and
+   the old file wrapped in `@layer legacy { … }`. Unlayered CSS beats every
+   layer, Tailwind's utilities included, so an old `a { color: inherit }`
+   silently overrides `.text-accent` on every page and nothing reports it
+   (found moving Hinderstap's hand-made site onto a generated app). */
+
 /* ---------------------------------------------------------------------------
    THE THEME. One place, and the only place, colour is decided.
 

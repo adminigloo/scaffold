@@ -672,6 +672,11 @@ export function optionalEnvFor(answers: Answers): readonly string[] {
   if (answers.includeAi) {
     vars.push("OPENAI_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY");
   }
+  if (answers.includeSeo) {
+    // Search basics, part 2 (create-app 0.43): the engines' ownership tokens
+    // and the IndexNow key. Optional, and none of them secret.
+    vars.push("GOOGLE_SITE_VERIFICATION", "BING_SITE_VERIFICATION", "INDEXNOW_KEY");
+  }
   if (answers.includeEmail) {
     vars.push("EMAIL_REPLY_TO", "RESEND_WEBHOOK_SECRET");
   }
