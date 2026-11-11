@@ -43,6 +43,32 @@ export interface CostInput {
   readonly rate: TokenRate;
 }
 
+/**
+ * The rate for a model id, or undefined when the table doesn't price it.
+ *
+ * THE EXACT ID FIRST, then the alias a dated snapshot belongs to. Anthropic's
+ * ids are aliases for a dated snapshot: a request names `claude-haiku-4-5`, and
+ * the response reports the snapshot it served, `claude-haiku-4-5-20251001`. A
+ * table keyed by the alias, as every generated project's is, looked the
+ * reported id up, found nothing, and wrote every row for the default model with
+ * an unknown cost (and a settled reservation kept its worst case). Trying the
+ * alias after the exact id prices every snapshot of it, while a snapshot with a
+ * row of its own (a price that changed between snapshots) still wins.
+ *
+ * Only a trailing eight-digit date is stripped, never a guess at a "family":
+ * `claude-haiku-4` must not price `claude-haiku-4-5`. Own properties only, so an
+ * id like "constructor" can't find Object's prototype and come back priced.
+ */
+export function rateFor(
+  rates: Readonly<Record<string, TokenRate>>,
+  model: string,
+): TokenRate | undefined {
+  if (Object.prototype.hasOwnProperty.call(rates, model)) return rates[model];
+  const alias = /^(.+)-\d{8}$/.exec(model)?.[1];
+  if (alias !== undefined && Object.prototype.hasOwnProperty.call(rates, alias)) return rates[alias];
+  return undefined;
+}
+
 export class InvalidCostInputError extends Error {
   readonly name = "InvalidCostInputError";
   constructor(

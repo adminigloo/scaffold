@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { costMinorUnits, estimateCostMicros, InvalidCostInputError } from "../cost.js";
+import { costMinorUnits, estimateCostMicros, InvalidCostInputError, rateFor } from "../cost.js";
 
 /** $3.00 in, $15.00 out, $0.30 per MTok for cache reads. Shape only. */
 const RATE = {
@@ -265,5 +265,38 @@ describe("costMinorUnits", () => {
 
   it("refuses a negative total", () => {
     expect(() => costMinorUnits(-1n)).toThrow(InvalidCostInputError);
+  });
+});
+
+describe("rateFor: the row for the id the provider reports", () => {
+  const HAIKU = { inputMicrosPerMTok: 1_000_000, outputMicrosPerMTok: 5_000_000 } as const;
+  const REPRICED = { inputMicrosPerMTok: 800_000, outputMicrosPerMTok: 4_000_000 } as const;
+
+  it("prices a dated snapshot from its alias's row", () => {
+    // Requests name the alias; responses report the snapshot they served. The
+    // generated table is keyed by the alias, so without this every reported id
+    // was unpriced and every row for the default model had a null cost.
+    expect(rateFor({ "claude-haiku-4-5": HAIKU }, "claude-haiku-4-5-20251001")).toBe(HAIKU);
+  });
+
+  it("prefers a snapshot's own row over its alias's", () => {
+    const rates = { "claude-haiku-4-5": HAIKU, "claude-haiku-4-5-20260101": REPRICED };
+    expect(rateFor(rates, "claude-haiku-4-5-20260101")).toBe(REPRICED);
+    expect(rateFor(rates, "claude-haiku-4-5-20251001")).toBe(HAIKU);
+    expect(rateFor(rates, "claude-haiku-4-5")).toBe(HAIKU);
+  });
+
+  it("strips only a trailing eight-digit date, never guesses at a family", () => {
+    const rates = { "claude-haiku-4": HAIKU };
+    expect(rateFor(rates, "claude-haiku-4-5")).toBeUndefined();
+    expect(rateFor(rates, "claude-haiku-4-5-20251001")).toBeUndefined();
+    expect(rateFor({ "claude-haiku-4-5": HAIKU }, "claude-haiku-4-5-latest")).toBeUndefined();
+    expect(rateFor({ "claude-haiku-4-5": HAIKU }, "claude-haiku-4-5-2025100")).toBeUndefined();
+  });
+
+  it("never finds a price on Object's prototype", () => {
+    expect(rateFor({}, "constructor")).toBeUndefined();
+    expect(rateFor({}, "toString-20251001")).toBeUndefined();
+    expect(rateFor({}, "__proto__")).toBeUndefined();
   });
 });

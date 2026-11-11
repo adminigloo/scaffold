@@ -1,6 +1,6 @@
 import { and, count, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import type { PgDatabase } from "drizzle-orm/pg-core";
-import { costMinorUnits, estimateCostMicros, type TokenRate } from "./cost.js";
+import { costMinorUnits, estimateCostMicros, rateFor, type TokenRate } from "./cost.js";
 import { aiUsage, type AiUsageStatus } from "./schema.js";
 
 /**
@@ -25,7 +25,11 @@ import { aiUsage, type AiUsageStatus } from "./schema.js";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type AiDb = PgDatabase<any, any, any>;
 
-/** The app's rate table: micros per million tokens, keyed by the exact model id. */
+/**
+ * The app's rate table: micros per million tokens, keyed by model id. A row for
+ * an alias (`claude-haiku-4-5`) also prices its dated snapshots, which is what
+ * the provider reports; see `rateFor`.
+ */
 export type AiRates = Readonly<Record<string, TokenRate>>;
 
 export { DEFAULT_AI_MODEL } from "./model.js";
@@ -58,7 +62,8 @@ export interface AiCallUsage {
  */
 export function aiCallCostMicros(rates: AiRates, usage: AiCallUsage): bigint | null {
   if (!usage.reported) return null;
-  const rate = rates[usage.model];
+  // The reported id is usually a dated snapshot of the alias the table names.
+  const rate = rateFor(rates, usage.model);
   if (rate === undefined) return null;
   const fees = usage.feesMicros ?? 0n;
   return (

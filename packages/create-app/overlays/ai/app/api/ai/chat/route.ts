@@ -26,6 +26,7 @@ import {
   anthropic,
   chatAllowance,
   newSpend,
+  spendFromUsage,
   recordAiUsage,
 } from "@/server/ai";
 
@@ -242,11 +243,8 @@ async function chat(ctx: StreamRouteContext): Promise<Response> {
         // the provider reports them at the end, and until it has, `reported`
         // stays false and the row is written with an unknown cost.
         const final = await upstream.finalMessage();
-        spend.model = final.model;
-        spend.inputTokens = final.usage.input_tokens;
-        spend.outputTokens = final.usage.output_tokens;
-        spend.cachedInputTokens = final.usage.cache_read_input_tokens ?? 0;
-        spend.reported = true;
+        // Every count the provider bills, cache writes and searches included.
+        spendFromUsage(spend, final.model, final.usage);
         controller.close();
       } catch (error) {
         controller.error(error);
