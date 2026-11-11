@@ -154,7 +154,9 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.3.0 (Tenancy 2b-4b): a call's fees beyond tokens (`feesMicros`: web
   // searches), which src/server/ai-mentions.ts settles every AI mention check with.
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
-  ai: "0.4.1",
+  // 0.4.2 (Hinderstap): prices the dated snapshot the provider reports, not only
+  // the alias a route asked for, so a generated project's ai_usage has costs.
+  ai: "0.4.2",
   // 0.3.0 (Tenancy 2a, D8): a per-message From name and Reply-To, so a
   // company's email carries its name on the platform's verified address.
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
