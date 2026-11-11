@@ -78,6 +78,31 @@ export function isAiConfigured(env: AiProviderKeys): boolean {
   return configuredAiProviders(env).length > 0;
 }
 
+/**
+ * MAY THIS PROCESS CALL A MODEL WITH THE PROJECT'S KEY? Only the running app may.
+ *
+ * The provider key pays for the people using the site. It is not for scripts: not a
+ * benchmark, an eval, an LLM judge, a seed, or a coding agent's test harness. On
+ * 2026-11-10 an agent's test scripts on one Igloo project built clients from the
+ * laptop's `.env.local` and graded thousands of test replies with Opus, spending the
+ * owner's whole monthly API credit in about two hours, against the owner's
+ * instruction to keep costs low. Testing and grading are the coding agent's own job,
+ * on the subscription the owner already pays for.
+ *
+ * True inside the running app: Next's server runtime sets `NEXT_RUNTIME` (`next dev`
+ * and `next start` alike), and Vercel sets `VERCEL` for builds and functions. Anywhere
+ * else (a `tsx` script, a test runner, a harness) it is false unless the owner has
+ * approved that one run by setting `AI_OWNER_APPROVED_SCRIPT_RUN=yes` themselves.
+ * The app's AI wrapper builds no client when this is false, so a script gets the same
+ * "AI isn't configured" null a keyless preview gets, never a working client.
+ */
+export function mayCallModels(
+  env: Readonly<Record<string, string | undefined>> = typeof process === "undefined" ? {} : process.env,
+): boolean {
+  if (isPresent(env.NEXT_RUNTIME) || isPresent(env.VERCEL)) return true;
+  return env.AI_OWNER_APPROVED_SCRIPT_RUN === "yes";
+}
+
 function isPresent(value: string | undefined): boolean {
   return typeof value === "string" && value.trim().length > 0;
 }
