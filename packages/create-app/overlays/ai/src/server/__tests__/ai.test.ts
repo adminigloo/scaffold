@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { estimateCostMicros, costMinorUnits } from "__SCOPE__/ai";
-import { AI_MAX_TOKENS, AI_MODEL, AI_SITE_DAILY_CENTS, MODEL_RATES, describeStreamError } from "../ai";
+import { aiCallCostMicros } from "__SCOPE__/ai/server";
+import {
+  AI_MAX_TOKENS,
+  AI_MODEL,
+  AI_SITE_DAILY_CENTS,
+  MODEL_RATES,
+  describeStreamError,
+  newSpend,
+  spendFromUsage,
+} from "../ai";
 
 /**
  * The arithmetic and the table, not the provider.
@@ -86,6 +95,48 @@ describe("the cheapest capable model, and a ceiling on the site's day", () => {
     for (const rate of Object.values(MODEL_RATES)) {
       expect(rate.cachedWriteMicrosPerMTok ?? 0).toBeGreaterThan(rate.inputMicrosPerMTok);
     }
+  });
+});
+
+describe("what a route records from the provider", () => {
+  it("prices the snapshot the provider reports, not only the alias the route asked for", () => {
+    // The request names AI_MODEL, the alias; the response reports the dated
+    // snapshot that answered, and that is the id the row records. Unpriced,
+    // every row for the default model would carry a null cost.
+    const reported = `${AI_MODEL}-20251001`;
+    const usage = { inputTokens: 1_000, outputTokens: 100, reported: true } as const;
+    expect(aiCallCostMicros(MODEL_RATES, { model: reported, ...usage })).toBe(
+      aiCallCostMicros(MODEL_RATES, { model: AI_MODEL, ...usage }),
+    );
+    expect(aiCallCostMicros(MODEL_RATES, { model: reported, ...usage })).not.toBeNull();
+  });
+
+  it("keeps every count the provider bills: cache writes and web searches too", () => {
+    const spend = newSpend();
+    spendFromUsage(spend, `${AI_MODEL}-20251001`, {
+      input_tokens: 10,
+      output_tokens: 20,
+      cache_read_input_tokens: 30,
+      cache_creation_input_tokens: 40,
+      server_tool_use: { web_search_requests: 2 },
+    });
+    expect(spend).toEqual({
+      model: `${AI_MODEL}-20251001`,
+      inputTokens: 10,
+      outputTokens: 20,
+      cachedInputTokens: 30,
+      cachedWriteTokens: 40,
+      feesMicros: 20_000n,
+      reported: true,
+    });
+  });
+
+  it("treats a usage report without cache or search fields as none of either", () => {
+    const spend = newSpend();
+    spendFromUsage(spend, AI_MODEL, { input_tokens: 5, output_tokens: 6 });
+    expect(spend.cachedInputTokens).toBe(0);
+    expect(spend.cachedWriteTokens).toBe(0);
+    expect(spend.feesMicros).toBe(0n);
   });
 });
 

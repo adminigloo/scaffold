@@ -1538,6 +1538,15 @@ import "./src/env";
 
 const config: NextConfig = {
   reactStrictMode: true,
+  // \`next dev\` opened as http://127.0.0.1 as well as localhost. Next 16 refuses
+  // its dev resources (the hot-reload socket) to any origin not listed here,
+  // and a page opened by IP then renders and NEVER HYDRATES: nothing on it
+  // runs, the browser console is empty, and the one clue is a warning in the
+  // server log. The IP is how you reach the app when localhost won't do: on
+  // Windows, or when localhost carries another project's Clerk cookies
+  // (cookies ignore the port, so two dev servers share them). Dev only; a
+  // build ignores it.
+  allowedDevOrigins: ["127.0.0.1"],
   // Packages Next must NOT bundle, and must \`require\` from node_modules at
   // request time instead.
   //
@@ -8561,6 +8570,10 @@ export function robotsDisallowed(answers: Answers): { readonly path: string; rea
       why: "An auth screen indexes as a page with no content, and it competes with the real landing page for the brand term.",
     },
     { path: "/sign-up", why: "The same, for the other half of the pair." },
+    {
+      path: "/sign-out",
+      why: "Signing out. Every project has the page, and it is a button with nothing to read: an indexed one is a search result that signs whoever clicks it out.",
+    },
   ];
 
   if (answers.adminShell !== "none") {

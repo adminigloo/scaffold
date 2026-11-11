@@ -7,6 +7,7 @@ import {
   roleTemplate,
   roleTemplateGrant,
 } from "__SCOPE__/permissions/schema";
+import { personalWorkspaceId } from "__SCOPE__/tenancy";
 import { tenantMembers, tenants } from "__SCOPE__/tenancy/schema";
 import { deterministicId } from "__SCOPE__/testing";
 import { buildPrincipal } from "__SCOPE__/testing/auth";
@@ -55,9 +56,20 @@ vi.mock("@/db", async (importOriginal) => {
  * branch, even though every write here is rolled back.
  */
 const NS = "itest:permissions";
+const memberId = deterministicId(NS, 2);
 const ids = {
-  tenant: deterministicId(NS, 1),
-  member: deterministicId(NS, 2),
+  /**
+   * THE MEMBER'S OWN PERSONAL ACCOUNT, not a company. In a project whose
+   * customers are people (--audience consumers) the membership gate
+   * (src/server/membership.ts) admits a person to their own personal account
+   * and to nothing else, so a company fixture made every test below answer NULL
+   * there for a reason none of them is about. A personal account with an
+   * active membership is admitted by every variant of the gate, and nothing
+   * these tests check (templates, overrides, the tenant predicate, membership)
+   * depends on the account's kind.
+   */
+  tenant: personalWorkspaceId(memberId),
+  member: memberId,
   stranger: deterministicId(NS, 3),
   staff: deterministicId(NS, 4),
   tenantTemplate: deterministicId(NS, 5),
@@ -84,12 +96,13 @@ const member = buildPrincipal({ userId: ids.member });
 const stranger = buildPrincipal({ userId: ids.stranger });
 const staff = buildPrincipal({ userId: ids.staff });
 
-/** A tenant plus an ACTIVE membership for `member`. */
+/** `member`'s personal account plus an ACTIVE membership of it (see `ids.tenant`). */
 async function seedTenant(tx: AppTransaction): Promise<void> {
   await tx.insert(tenants).values({
     id: ids.tenant,
-    kind: "org",
-    slug: `itest-permissions-${ids.tenant.slice(0, 8)}`,
+    kind: "personal",
+    ownerUserId: ids.member,
+    slug: `itest-permissions-${ids.member.slice(0, 8)}`,
     name: "Integration tenant",
   });
   await tx

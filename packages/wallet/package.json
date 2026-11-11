@@ -1,6 +1,6 @@
 {
   "name": "@adminigloo/wallet",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Spendable balances: credits a purchase puts in someone's account (a catalog `credits` grant), spent in one conditional statement that never goes below zero, with an append-only ledger that makes every credit, spend, refund and staff adjustment idempotent by reference. Several kinds of credit side by side, each named by a unit.",
   "license": "UNLICENSED",
   "type": "module",

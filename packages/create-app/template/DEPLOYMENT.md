@@ -557,6 +557,7 @@ working. The production database has not been touched.
 | /admin says "The roles aren't installed yet" | the deploy's `db:seed:deploy` step | Re-run the deploy, or `pnpm db:seed` locally. |
 | /admin says "You do not have access" and you run the site | whether an administrator exists | Run the Admin grant workflow (production) or `pnpm admin:grant` (local/staging). |
 | Someone deleted in Clerk can still sign in | the Clerk webhook for that instance | Set it up (§5); deletions reach the app only through it. |
+| Locally, sign-in loops or errors after Clerk's redirect, while the same page works in a private window | whether another project's dev server on `localhost` set Clerk cookies | Cookies ignore the port, so two projects on `localhost` share them. Set `NEXT_PUBLIC_APP_URL=http://127.0.0.1:<port>` in `.env.local` and open the app there (`next.config.ts` already allows that origin in dev). |
 | On Windows, `next build` (or `pnpm dev`) says `Module not found: Can't resolve '__SCOPE__/…-widget/admin'` although it is installed | how long the project folder's path is | pnpm keeps each package several folders deep inside `node_modules`, and the build can't read a file whose full path is over 260 characters. This project's `.npmrc` already keeps those folders short (`virtual-store-dir-max-length=40`); if it still happens, move the project to a short folder (`C:\sites\my-site`; under about 80 characters), delete `node_modules` and run `pnpm install` again. |
 
 ## 8. Demo data

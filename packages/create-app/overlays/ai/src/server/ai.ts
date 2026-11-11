@@ -26,10 +26,12 @@ import { log } from "./logger";
 /**
  * The model this project calls, as the provider names it.
  *
- * AN EXACT ID, NEVER A FAMILY ALIAS, for the same reason `ai_usage` stores the
- * exact one: prices differ between snapshots of the "same" model, so a row
- * recording only the family cannot be re-priced later — and re-pricing is what
- * you always end up doing the week after a rate changes.
+ * AN ALIAS, AND THE ROWS STILL SAY WHICH SNAPSHOT ANSWERED. `claude-haiku-4-5`
+ * is Anthropic's name for its current dated snapshot; the response reports
+ * that snapshot (`claude-haiku-4-5-20251001`), the route records it as the
+ * row's model, and `MODEL_RATES`' row for the alias prices it (ai 0.4.2,
+ * `rateFor`). So every row can still be re-priced by the exact snapshot later,
+ * and a snapshot whose price changed gets a row of its own, which wins.
  *
  * Change this and `MODEL_RATES` in the same commit. Changing one alone produces
  * rows with a null cost, and a spend dashboard that is quietly missing a model
@@ -160,12 +162,27 @@ export const anthropic: Anthropic | null = isAiConfigured(env)
   ? new Anthropic({ apiKey: env.ANTHROPIC_API_KEY })
   : null;
 
+/**
+ * A web search, as Anthropic bills it: $10 per 1,000, in micros. A route that
+ * sends the web_search tool passes `usage.server_tool_use.web_search_requests`
+ * times this as the call's fees (`spendFromUsage` does).
+ */
+export const WEB_SEARCH_FEE_MICROS = 10_000n;
+
 /** What the route managed to learn from the provider, if it got that far. */
 export interface ModelSpend {
   model: string;
   inputTokens: number;
   outputTokens: number;
   cachedInputTokens: number;
+  /**
+   * Prompt tokens written to the cache, which bill ABOVE fresh input (1.25x
+   * for the five-minute cache). Left out, a route with prompt caching recorded
+   * its most expensive tokens as if they cost nothing.
+   */
+  cachedWriteTokens: number;
+  /** What the provider bills beyond tokens, in micros: web searches. */
+  feesMicros: bigint;
   /**
    * False until the provider has reported usage.
    *
@@ -183,8 +200,35 @@ export function newSpend(): ModelSpend {
     inputTokens: 0,
     outputTokens: 0,
     cachedInputTokens: 0,
+    cachedWriteTokens: 0,
+    feesMicros: 0n,
     reported: false,
   };
+}
+
+/** The usage an Anthropic message reports, in the fields Anthropic names them. */
+export interface ProviderUsage {
+  readonly input_tokens: number;
+  readonly output_tokens: number;
+  readonly cache_read_input_tokens?: number | null;
+  readonly cache_creation_input_tokens?: number | null;
+  readonly server_tool_use?: { readonly web_search_requests?: number | null } | null;
+}
+
+/**
+ * Copy what the provider reported into `spend`: every token count it bills,
+ * cache writes included, and its web searches as fees. The one place the
+ * provider's field names meet the ledger's, so a route can't price some of a
+ * call and drop the rest.
+ */
+export function spendFromUsage(spend: ModelSpend, model: string, usage: ProviderUsage): void {
+  spend.model = model;
+  spend.inputTokens = usage.input_tokens;
+  spend.outputTokens = usage.output_tokens;
+  spend.cachedInputTokens = usage.cache_read_input_tokens ?? 0;
+  spend.cachedWriteTokens = usage.cache_creation_input_tokens ?? 0;
+  spend.feesMicros = BigInt(usage.server_tool_use?.web_search_requests ?? 0) * WEB_SEARCH_FEE_MICROS;
+  spend.reported = true;
 }
 
 export interface RecordAiUsageInput {
@@ -223,6 +267,8 @@ export async function recordAiUsage(input: RecordAiUsageInput): Promise<void> {
         inputTokens: spend.inputTokens,
         outputTokens: spend.outputTokens,
         cachedInputTokens: spend.cachedInputTokens,
+        cachedWriteTokens: spend.cachedWriteTokens,
+        feesMicros: spend.feesMicros,
         reported: spend.reported,
       },
       latencyMs: usage.durationMs,
