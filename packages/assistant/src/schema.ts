@@ -107,12 +107,23 @@ export const assistantSectionVersions = pgTable(
     content: text("content").notNull(),
     changeSummary: text("change_summary"),
     createdBy: text("created_by"),
+    /**
+     * WHO WROTE THIS TEXT (0.11.0): "person" for an edit someone made, "code" for
+     * text the app's own code supplied (a seed, a default it ships). The text a
+     * person wrote is theirs and stands; the text code wrote is only the code's
+     * default, so `ensureSection` replaces it when the code's default changes.
+     * Rows from before 0.11 are "person": nothing is ever overwritten on a guess.
+     */
+    createdByKind: text("created_by_kind").$type<SignerKind>().notNull().default("person"),
     createdAt: createdAt(),
   },
   (table) => [
     uniqueIndex("assistant_section_versions_idx").on(table.sectionId, table.versionNumber),
   ],
 );
+
+/** Who wrote a version's text: a person, or the app's own code (0.11.0). */
+export type SignerKind = "person" | "code";
 
 /**
  * A work-in-progress edit, testable before it goes live. `status` walks

@@ -15,6 +15,12 @@ import { Badge, Button, Card, CardBody, EmptyState, Notice, PageHeader } from "@
  * the refusal to overwrite a change you didn't see (409) — surfaces here as a
  * message rather than a silent failure. Core sections (the guardrails) can be
  * edited but say so, and refuse to lose their identity phrases.
+ *
+ * A guardrail whose text isn't the package's current default says so ("edited —
+ * not the default" when an owner wrote it, "an older default" when an earlier
+ * release did), with a one-click way to the package's text. That hands the
+ * section to the package again, so a later release's improved default can
+ * reach it (assistant 0.11).
  */
 export default function AssistantSectionsPage() {
   const sections = api.assistant.sections.useQuery();
@@ -67,6 +73,12 @@ type Section = {
   isCore: boolean;
   requiredPhrases: string[];
   maxTokens: number;
+  /** Who wrote the live text: an owner ("person") or the package ("code"). */
+  headKind: "person" | "code" | null;
+  /** The package's own text for this section, when it ships one. */
+  codeDefault: string | null;
+  /** The live text isn't the package's current default. */
+  differsFromCode: boolean;
 };
 
 function SectionCard({
@@ -81,6 +93,7 @@ function SectionCard({
   const versions = api.assistant.versions.useQuery({ sectionId: section.id });
   const publish = api.assistant.publishSection.useMutation();
   const rollback = api.assistant.rollbackSection.useMutation();
+  const reset = api.assistant.resetSection.useMutation();
   const [content, setContent] = useState(section.content);
   const [open, setOpen] = useState(false);
 
@@ -106,11 +119,35 @@ function SectionCard({
     onNotice(
       result.reason === "conflict"
         ? `"${section.label}" changed since you opened it (now v${result.headVersion}) — reload before saving so you don't overwrite that edit.`
-        : result.reason === "budget"
-          ? `"${section.label}" is over its ${result.maxTokens}-token budget — trim it and try again.`
-          : result.reason === "missing_phrase"
-            ? `"${section.label}" must keep the phrase "${result.phrase}" — it's what stops the assistant losing its identity.`
-            : "That section no longer exists; refreshing.",
+        : result.reason === "base_ahead"
+          ? `This page's copy of "${section.label}" doesn't match the saved one (v${result.headVersion}) — reload before saving.`
+          : result.reason === "budget"
+            ? `"${section.label}" is over its ${result.maxTokens}-token budget — trim it and try again.`
+            : result.reason === "missing_phrase"
+              ? `"${section.label}" must keep the phrase "${result.phrase}" — it's what stops the assistant losing its identity.`
+              : "That section no longer exists; refreshing.",
+    );
+    if (result.reason === "unknown") onSaved();
+  };
+
+  // Back to the package's text, as the package's: later releases' defaults reach it again.
+  const restoreDefault = async () => {
+    onNotice(null);
+    const result = await reset.mutateAsync({ sectionId: section.id, baseVersion: headVersion });
+    if (result.published) {
+      if (section.codeDefault !== null) setContent(section.codeDefault);
+      onSaved();
+      void versions.refetch();
+      return;
+    }
+    onNotice(
+      result.reason === "conflict" || result.reason === "base_ahead"
+        ? `"${section.label}" changed since you opened it — reload, then try again.`
+        : result.reason === "no_default"
+          ? `"${section.label}" has no default text to go back to.`
+          : result.reason === "unknown"
+            ? "That section no longer exists; refreshing."
+            : `"${section.label}"'s default text doesn't fit the section's rules — edit it by hand instead.`,
     );
     if (result.reason === "unknown") onSaved();
   };
@@ -122,6 +159,9 @@ function SectionCard({
           <code className="font-mono text-xs text-ink-muted">{section.key}</code>
           <span className="text-sm font-semibold text-ink">{section.label}</span>
           {section.isCore ? <Badge tone="accent">core guardrail</Badge> : null}
+          {section.differsFromCode ? (
+            <Badge tone="neutral">{section.headKind === "person" ? "edited — not the default" : "an older default"}</Badge>
+          ) : null}
           <span
             className={`ml-auto font-mono text-xs tabular-nums ${overBudget ? "text-danger" : "text-ink-faint"}`}
             title="Estimated tokens vs the section's budget"
@@ -146,6 +186,11 @@ function SectionCard({
           </Button>
           {dirty ? (
             <Button onClick={() => setContent(section.content)}>Discard</Button>
+          ) : null}
+          {section.differsFromCode && !dirty ? (
+            <Button disabled={reset.isPending} onClick={() => void restoreDefault()}>
+              {reset.isPending ? "Restoring…" : "Use the default text"}
+            </Button>
           ) : null}
           <button
             type="button"
