@@ -8,6 +8,7 @@ import { subscriptionEntitlementWindow, type SubscriptionStatus } from "__SCOPE_
 import { entitlements } from "__SCOPE__/billing/schema";
 import { formatOrderNumber } from "__SCOPE__/commerce";
 import { orderItems, orderShipments, orders } from "__SCOPE__/commerce/schema";
+import { creditWallet } from "__SCOPE__/wallet/server";
 import { auditEntry, defineAuditedActions } from "__SCOPE__/observability";
 import { auditLog } from "__SCOPE__/observability/schema";
 import { db, type Db } from "@/db";
@@ -136,7 +137,9 @@ export type PurchaseRefusalCode =
   | "sold_out"
   | "insufficient_stock"
   | "quantity_too_large"
-  | "amount_too_large";
+  | "amount_too_large"
+  // A `credits` grant fills the BUYER's balance, and a guest has none.
+  | "account_required";
 
 export class PurchaseRefusedError extends Error {
   /**
@@ -347,6 +350,14 @@ export type AppliedGrant =
     }
   | { readonly kind: "license_key"; readonly licenseKey: string }
   | { readonly kind: "ship"; readonly shipmentId: string }
+  | {
+      readonly kind: "credits";
+      readonly unit: string;
+      /** What this order added: the grant's amount times the quantity. */
+      readonly amount: number;
+      /** The buyer's balance of `unit` after it. */
+      readonly balance: number;
+    }
   | { readonly kind: "none" };
 
 export interface FulfilmentResult {
@@ -576,6 +587,7 @@ async function bookOrder(
       tenantId: input.tenantId,
       orderId,
       reference: input.reference,
+      userId: input.userId,
     });
     applied.push(result);
     if (result.kind === "license_key") {
@@ -584,6 +596,12 @@ async function bookOrder(
       // being archived, and it needs no migration in a scaffold whose grant
       // kinds a project is expected to extend.
       lineMetadata["licenseKey"] = result.licenseKey;
+    }
+    if (result.kind === "credits") {
+      // On the line too, so the receipt and /account/orders can say "25 crowns"
+      // without joining the ledger. Keyed by unit: one variant can carry two
+      // credits grants (crowns AND a bonus of something else).
+      lineMetadata[`credits:${result.unit}`] = String(result.amount);
     }
   }
 
@@ -723,6 +741,8 @@ interface ApplyGrantInput {
   readonly tenantId: string;
   readonly orderId: string;
   readonly reference: string;
+  /** The buyer. NULL for a guest, which a `credits` grant refuses. */
+  readonly userId: string | null;
 }
 
 /**
@@ -801,6 +821,41 @@ async function applyGrant(
       return { kind: "ship", shipmentId: shipment.id };
     }
 
+    case "credits": {
+      const config = grantConfigSchemas.credits.parse(input.config);
+      if (input.userId === null) {
+        // Refused, and the whole booking with it: this throws inside the
+        // transaction, so no order is left behind claiming credits nobody
+        // holds. The storefront asks for an account before checkout
+        // (`variantGrantsCredits`), so reaching here means something called
+        // this function without a buyer — a webhook for an intent this app did
+        // not create. Stripe then redelivers, and the event waits in the
+        // failed queue for a person, which is the right place for money that
+        // can't be attributed to anyone.
+        throw new PurchaseRefusedError(
+          "account_required",
+          "Credits go into the buyer's account, and this purchase has no buyer.",
+        );
+      }
+      // Three packs of 25 is 75: the amount scales with the quantity, like an
+      // entitlement's limit.
+      const amount = config.amount * input.quantity;
+      const credited = await creditWallet(tx, {
+        // THE BUYER, NOT THE TENANT. `tenantId` here is the storefront's
+        // (whose catalog this is), and credits belong to the person who paid.
+        holderId: input.userId,
+        unit: config.unit,
+        amount,
+        // The purchase AND the grant, as an entitlement's source_ref: two
+        // credits grants on one variant are two credits, and a redelivered
+        // payment never reaches here (the order insert short-circuits above)
+        // — but if it did, the wallet's own unique index would hold the line.
+        ref: `${input.reference}:${input.grantId}`,
+        note: `${input.variant.productName} — ${input.variant.variantName}${input.quantity > 1 ? ` × ${input.quantity}` : ""}`,
+      });
+      return { kind: "credits", unit: config.unit, amount, balance: credited.balance };
+    }
+
     case "none":
       // A real answer, not a placeholder — a donation or an off-platform ticket
       // grants nothing here. Parsed anyway, so a config that has grown fields
@@ -808,6 +863,23 @@ async function applyGrant(
       grantConfigSchemas.none.parse(input.config);
       return { kind: "none" };
   }
+}
+
+/**
+ * Whether buying this variant puts credits in someone's account.
+ *
+ * The checkout asks BEFORE any money moves, so a guest is told to sign in
+ * rather than charged for credits fulfilment then refuses to book. Read from
+ * the grant rows, never from the product's name or metadata, because the
+ * grant is what fulfilment acts on.
+ */
+export async function variantGrantsCredits(variantId: string, handle: Db | Tx = db): Promise<boolean> {
+  const [row] = await handle
+    .select({ id: productGrants.id })
+    .from(productGrants)
+    .where(and(eq(productGrants.variantId, variantId), eq(productGrants.kind, "credits")))
+    .limit(1);
+  return row !== undefined;
 }
 
 /**

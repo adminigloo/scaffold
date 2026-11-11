@@ -58,6 +58,7 @@ export const ROUTER_SCOPES: readonly RouterScopeRow[] = [
   { key: "catalog", scope: "staff", installedBy: shop, source: "shop/src/server/routers/catalog.ts" },
   { key: "checkout", scope: "public", installedBy: shop, source: "shop/src/server/routers/checkout.ts" },
   { key: "checkout.createIntent", scope: "authenticated", installedBy: shop, source: "shop/src/server/routers/checkout.ts" },
+  { key: "credits", scope: "staff", installedBy: shop, source: "shop/src/server/routers/credits.ts" },
   { key: "account", scope: "tenant", installedBy: sells, source: "account/src/server/routers/account.ts" },
   { key: "billing", scope: "staff", installedBy: sells, source: "stripe/src/server/routers/billing.ts" },
   { key: "billing.subscribeToPlan", scope: "tenant", installedBy: sells, source: "stripe/src/server/routers/billing.ts" },

@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   canPublish,
   grantConfigSchemas,
+  GRANT_KINDS,
   planStripeSync,
   validateProduct,
   type GrantKind,
@@ -126,7 +127,9 @@ export class ProductNotPublishableError extends Error {
 const productStatusInput = z.enum(["draft", "active", "archived"]);
 const productKindInput = z.enum(["one_time", "subscription"]);
 const variantIntervalInput = z.enum(["month", "year"]);
-const grantKindInput = z.enum(["ship", "license_key", "entitlement", "none"]);
+// From the catalog's own list, so a kind added there (credits, catalog 0.5) is
+// accepted here the day it ships rather than refused by a stale copy.
+const grantKindInput = z.enum(GRANT_KINDS);
 
 /**
  * Lowercased and trimmed before it is checked, matching
@@ -812,8 +815,7 @@ export const catalogRouter = createTRPCRouter({
         // Replace-in-place rather than insert-and-hope. Without the delete a
         // variant accumulates a grant row per save, and fulfilment reads every
         // one of them — so a customer who bought once is shipped three times.
-        const supersedes: GrantKind[] =
-          kind === "none" ? ["ship", "license_key", "entitlement", "none"] : [kind, "none"];
+        const supersedes: GrantKind[] = kind === "none" ? [...GRANT_KINDS] : [kind, "none"];
 
         await tx
           .delete(productGrants)

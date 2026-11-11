@@ -2729,6 +2729,16 @@ export const PACKAGE_PERMISSION_FRAGMENTS: readonly PackagePermissionFragment[] 
       "or cs_agent, and the admin router gates each key with requireStaff.",
   },
   {
+    package: "wallet",
+    binding: "walletPermissions",
+    scope: "staff",
+    installedBy: SHOP,
+    why:
+      "Seeing everyone's credit balances and adjusting one by hand, with a " +
+      "note. Staff: a person's own balance needs no key, and spending is the " +
+      "app's own code. View for every staff role, adjust for admin.",
+  },
+  {
     package: "stripe",
     binding: "stripePermissions",
     scope: "tenant",
@@ -5408,6 +5418,10 @@ export function renderAuditRegistry(answers: Answers): string {
     // The shop's only (create-app 0.39): plans alone author no products.
     imports.push('import { catalogAuditedActions } from "./routers/catalog";');
     fragments.push("catalogAuditedActions");
+    // A hand adjustment of someone's credits (create-app 0.43), on the same
+    // one-way terms: routers/credits.ts writes through its own registry.
+    imports.push('import { creditsAuditedActions } from "./routers/credits";');
+    fragments.push("creditsAuditedActions");
   }
   if (answers.businessModel !== "none") {
     // The customer side, on the same one-way terms and for the same reason.
@@ -5517,6 +5531,7 @@ export function renderAppRouter(answers: Answers): string {
     if (sellsShop(answers)) {
       imports.splice(3, 0, 'import { catalogRouter } from "./catalog";');
       imports.splice(4, 0, 'import { checkoutRouter } from "./checkout";');
+      imports.splice(5, 0, 'import { creditsRouter } from "./credits";');
     }
   }
 
@@ -5601,6 +5616,10 @@ export function renderAppRouter(answers: Answers): string {
   // and the owning tenant are read from the catalog row, never from the
   // request.
   checkout: checkoutRouter,
+
+  // Everyone's credit balances, the ledger, and the audited adjustment
+  // (create-app 0.43). Staff-scoped; spending is the app's own code.
+  credits: creditsRouter,
 ` : ""}
   // The customer's own account: the Stripe billing portal, cancelling and
   // resuming a subscription, and the invoice list. Everything else the account
@@ -5679,7 +5698,8 @@ export function schemaOwners(answers: Answers): string[] {
     // entitlements; the shop (--model one-time or both) adds the catalog's
     // products and commerce's orders, discounts and shipments.
     owners.push("stripe");
-    if (sellsShop(answers)) owners.push("catalog", "commerce");
+    // The wallet (create-app 0.43): the balances a `credits` grant fills.
+    if (sellsShop(answers)) owners.push("catalog", "commerce", "wallet");
     owners.push("billing");
   }
   if (answers.includeAi) owners.push("ai");
@@ -6622,6 +6642,15 @@ export function renderAdminNav(answers: Answers): string {
                   "contributed by the catalog package, so a project without a shop " +
                   "has neither the page nor the permission — but what keeps this " +
                   "entry out of one is the overlay that was not copied.",
+              },
+              {
+                href: "/admin/credits",
+                label: "Credits",
+                permission: "credits.balances.view",
+                why:
+                  "Everyone's balances of what a Credits grant sold them, the " +
+                  "ledger, and the audited adjustment (create-app 0.43). From the " +
+                  "shop-admin overlay; the key from @adminigloo/wallet.",
               },
             ]
           : []),

@@ -303,6 +303,13 @@ export const CAPABILITY_EVIDENCE: readonly CapabilityEvidence[] = [
     provenBy: (plan) => exists(plan, "app", "(site)", "account", "orders", "page.tsx"),
   },
   {
+    capability: "wallet.credits",
+    why:
+      "A `credits` grant credits the buyer's wallet inside the booking " +
+      "transaction (create-app 0.43), and the account page shows the balance.",
+    provenBy: (plan) => mentions(plan, ["src", "server", "fulfilment.ts"], "creditWallet("),
+  },
+  {
     capability: "billing.entitlements",
     why:
       "The subscription mirror grants what a plan includes (and, with a shop, " +

@@ -122,7 +122,9 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.3.0 (getting paid, part 2): product_variants.held — the stock open store
   // checkouts hold, apart from what is on the shelf. The store reads it.
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company.
-  catalog: "0.4.1",
+  // 0.5.0 (create-app 0.43): the `credits` grant kind and GRANT_KINDS, which
+  // the emitted catalog router's input enum and the product builder read.
+  catalog: "0.5.0",
   // 0.2.0 (getting paid, part 2): a store of its own — the emitted store
   // glue imports @adminigloo/commerce/store and /widget, the route tables and
   // storePermissions, and the schema has store_checkouts and store_alerts.
@@ -453,6 +455,11 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.7.4: each platform's panel starts afresh, its own video and pictures.
   // 0.7.5: the card formats' videos start afresh in another look.
   social: "0.7.5",
+  // create-app 0.43: spendable balances. Every shop installs it, because
+  // fulfilment's `credits` grant credits the buyer's wallet and the grant kind
+  // exists in every catalog: a product with a Credits grant in a project with
+  // no wallet would charge the buyer and book nothing.
+  wallet: "0.1.0",
 };
 
 export class UnknownPackageVersionError extends Error {

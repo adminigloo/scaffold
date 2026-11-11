@@ -58,6 +58,9 @@ export interface VariantRow {
   readonly grantKeyFormat: string;
   readonly grantWeightGrams: string;
   readonly grantRequiresAddress: boolean;
+  /** A `credits` grant's unit slug (`crowns`), and how many per unit bought. */
+  readonly grantCreditsUnit: string;
+  readonly grantCreditsAmount: string;
 }
 
 export function emptyVariantRow(key: string, currency: string, kind: ProductKind): VariantRow {
@@ -81,6 +84,8 @@ export function emptyVariantRow(key: string, currency: string, kind: ProductKind
     grantKeyFormat: "",
     grantWeightGrams: "",
     grantRequiresAddress: false,
+    grantCreditsUnit: "",
+    grantCreditsAmount: "",
   };
 }
 
@@ -105,6 +110,13 @@ export function grantConfigFor(row: VariantRow): Record<string, unknown> {
           ? {}
           : { weightGrams: Number(row.grantWeightGrams) }),
         requiresAddress: row.grantRequiresAddress,
+      };
+    case "credits":
+      return {
+        // Lower-cased here as well as checked by the catalog: "Crowns" typed
+        // into this field must land as the same wallet as "crowns" spent in code.
+        unit: row.grantCreditsUnit.trim().toLowerCase(),
+        amount: Number(row.grantCreditsAmount),
       };
     case "none":
       return {};

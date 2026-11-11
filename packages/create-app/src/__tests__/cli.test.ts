@@ -111,6 +111,9 @@ describe("packagesFor — the only structural branch", () => {
       // Released with Tenancy 1, in the same changeset run as the tenancy 0.4
       // it talks to (versions.test.ts holds the two together).
       "@adminigloo/tenancy-widget",
+      // First released with create-app 0.43, in the same changeset run as the
+      // catalog 0.5 whose `credits` grant it holds.
+      "@adminigloo/wallet",
     ]);
     for (const model of ["none", "one-time", "subscription", "both"] as const) {
       for (const pkg of packagesFor(answers({ businessModel: model }))) {
@@ -1091,6 +1094,8 @@ describe("admin shell overlays", () => {
     // scope, which is the failure this narrowing exists to make impossible.
     const FRAGMENT_FOR_NAMESPACE: Record<string, string> = {
       catalog: "catalogPermissions",
+      // create-app 0.43: /admin/credits gates on credits.balances.view.
+      credits: "walletPermissions",
     };
     const staffCall = /definePermissions\(\s*"staff",\s*\{([^}]*)\}/.exec(
       catalog ?? "",
