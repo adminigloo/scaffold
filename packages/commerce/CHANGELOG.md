@@ -1,5 +1,12 @@
 # @adminigloo/commerce
 
+## 0.4.3
+
+### Patch Changes
+
+- Updated dependencies [432637b]
+  - @adminigloo/catalog@0.5.0
+
 ## 0.4.2
 
 ### Patch Changes
