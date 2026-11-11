@@ -227,7 +227,7 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   assistant: "0.11.0",
   // 0.3.0: the launcher, history, Stop, starters and the "ask before acting"
   // card, and the settings screen (./admin) the company pages mount.
-  "assistant-widget": "0.3.2",
+  "assistant-widget": "0.3.3",
   // 0.6.0 for the onEvent producer hook (optional, so the emitted route
   // needs no change); 0.5.0 was the column editor and unread marks. The emitted router imports
   // `createStatus`, `deleteStatus`, `markTicketRead` and friends; none exist

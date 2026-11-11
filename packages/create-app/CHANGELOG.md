@@ -1,5 +1,30 @@
 # create-adminigloo-app
 
+## 0.44.0
+
+### Minor Changes
+
+- 309e357: "The key pays only for the live site" (create-app 0.44, for `--ai` and `--assistant` projects): installs ai 0.5's `mayCallModels`, so the generated `src/server/ai.ts` builds its Anthropic client only inside the running app — a script, an eval or a coding agent's test harness gets the same null a missing key gives.
+  
+  - New: `src/__tests__/no-unmetered-ai.test.ts`, which fails if any file in the project (dot-folders included, `node_modules`/`.next`/`.git` skipped) builds its own client or reads `ANTHROPIC_API_KEY`, outside `src/server/ai.ts` and `src/env.ts`.
+  - New: `CLAUDE.md` tells every Claude agent working in the project to test and grade with Claude Code itself, never the project's own key; to keep the key out of a laptop's `.env.local`; to never set the override; and to ask the owner, with a cost, before any model call.
+  - `.env.example` now notes that `ANTHROPIC_API_KEY` belongs only in the deployment environment.
+- 7b42cc0: New projects install assistant 0.11. The site's own assistant editor (/admin/assistant) marks a guardrail whose text an owner edited ("edited — not the default") and offers "Use the default text", which puts the package's text back as the package's (a new `assistant.resetSection` staff procedure over `resetSectionToCode`; the text comes from `DEFAULT_SECTIONS`, never the request), so a later release's improved default reaches it again. The editor words a publish whose base is past the head (`base_ahead`) correctly instead of saying the section no longer exists. The upgrade note covers the one new column (`pnpm db:generate`) and marking versions a project's own code signed.
+- 2387ed3: Keep one address in search, verify the site and announce new pages with IndexNow, and give a fan site its disclaimer (found building Hinderstap).
+  
+  - With `--seo`, a production page read on any other host (www., the `*.vercel.app` aliases) gets a 308 to `NEXT_PUBLIC_APP_URL`'s host, and `INDEXABLE` also needs a real public app URL, so a site never has two indexable copies.
+  - With `--seo`, `GOOGLE_SITE_VERIFICATION` and `BING_SITE_VERIFICATION` write the engines' verification meta tags. `INDEXNOW_KEY` is served at `/indexnow-key.txt`, and `pnpm seo:indexnow --origin https://your-domain` announces every page the live sitemap lists.
+  - Every project's `src/seo.ts` has `SITE_DISCLAIMER`, shown in the footer (and, with `--seo`, in both llms files).
+  - `docs/content-for-answer-engines.md` (with `--seo`) has the writing habits that get pages quoted.
+  - CI's build step sets a placeholder `NEXT_PUBLIC_APP_URL`, so a new project's first CI run no longer fails with "Invalid URL".
+  - `app/globals.css` says how to bring in an existing stylesheet without it overriding Tailwind's utilities.
+- c3ed1fa: Refunds, disputes and a staff orders list (create-app 0.44), for every shop (`--model one-time` or `both`).
+  
+  - **Refunds come back from Stripe.** `/api/webhooks/stripe` handles `charge.refunded`: `refundPurchase` (src/server/fulfilment.ts) records Stripe's running refunded total on the order (a part refund leaves it paid with `refunded_minor` set, a whole one marks it refunded) and takes back the refunded share of what it granted. Credits come out of the buyer's wallet pro rata, rounded down, never below zero (`refundWallet`), once per step of the refunded total, so a redelivered event or two refunds arriving out of order take nothing twice. A whole refund also ends the order's entitlements (their rows stay as the record) and marks its licence keys revoked (`licenseRevokedAt` on the line; the key is kept, and checking it is the app's own code). Shipping is untouched: what was sent was sent. A refund on anything the shop didn't book is ignored.
+  - **Disputes are treated as a full refund.** `charge.dispute.created` (`disputePurchase`) flags the order "disputed" and takes back everything it granted that a refund hadn't already, once per dispute. Winning the dispute later restores nothing by itself; staff adjust by hand.
+  - **Staff see the orders.** `/admin/orders` (Catalog → Orders, `shop.orders.view` from commerce 0.5's new staff fragment) lists every order the shop booked, newest first, filtered by all, paid, refunded, disputed or simulated and searched by email or order number. An order's page shows its lines, the credits it moved, its entitlements, its licence keys and its audit trail, with a link to the payment in Stripe. New: `src/server/routers/orders.ts`, the two pages, `src/components/admin/orderBits.tsx`, the `commerce.refunds` and `admin.orders` capabilities.
+  - **DEPLOYMENT.md lists the Stripe webhook's events** for both endpoints (test and live), for the project's model. Upgrading: enable `charge.refunded` and `charge.dispute.created` on both, and run `pnpm db:seed` for the new key.
+
 ## 0.43.0
 
 ### Minor Changes

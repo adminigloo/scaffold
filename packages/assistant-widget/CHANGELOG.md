@@ -1,5 +1,12 @@
 # @adminigloo/assistant-widget
 
+## 0.3.3
+
+### Patch Changes
+
+- Updated dependencies [7b42cc0]
+  - @adminigloo/assistant@0.11.0
+
 ## 0.3.2
 
 ### Patch Changes
