@@ -1,0 +1,35 @@
+{
+  "name": "@adminigloo/characters",
+  "version": "0.1.0",
+  "description": "An AI character bound to a world: lore cards gated by book, two-part story hooks that pay off after a purchase, rotating flourishes, a rumor deck she can argue about, and a ledger that remembers a regular past her own dawn. Pure, deterministic, no model calls — ported from building Hinderstap's keepers.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adminigloo/scaffold.git",
+    "directory": "packages/characters"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  }
+}
