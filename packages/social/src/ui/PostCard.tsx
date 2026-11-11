@@ -7,6 +7,9 @@ import type { Platform, PostEdit, PostStatus } from "../types.js";
 import { dayText, postAnchor, type PostGroupView, type QueuePostView } from "../view.js";
 import { ShareImages } from "./share.js";
 import { MakeVideo } from "./video.js";
+import { useImageViewer, viewOnPlainClick, type ViewerImage } from "./viewer.js";
+import type { LookChoices } from "../wire.js";
+import { LookControls } from "./LookControls.js";
 
 /**
  * What an action answers: nothing when it worked, or a message for the
@@ -26,6 +29,28 @@ export interface QueueActions {
   readonly approve: (ids: string[]) => Promise<ActionResult>;
   readonly markPosted: (id: string, url: string) => Promise<ActionResult>;
   readonly skip: (id: string) => Promise<ActionResult>;
+  /** A post's pictures in another look (social 0.6): `id` is any one of its platforms; all of them change. */
+  readonly restyle?: (id: string, look: string) => Promise<ActionResult>;
+}
+
+/** The site a picture comes from ("staging.example.com"), or "" when it has none. */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "";
+  }
+}
+
+/** The look a post's cards wear: the `look` in its first card's signed address ("" for none). */
+export function lookOf(images: readonly { readonly url: string }[]): string {
+  const first = images[0];
+  if (!first) return "";
+  try {
+    return new URL(first.url, "https://card.invalid").searchParams.get("look") ?? "";
+  } catch {
+    return "";
+  }
 }
 
 /** An action's message for the person, or null when it worked. */
@@ -93,14 +118,19 @@ function CopyButton({ text, label = "Copy" }: { readonly text: string; readonly 
   );
 }
 
-/** A platform's images in posting order, each opening full size: a strip that scrolls sideways for a carousel. */
-function Images({ images, label }: { readonly images: QueuePostView["images"]; readonly label: string }) {
+/** A platform's images as the viewer shows them: the slide number on each of a carousel's. */
+function viewerImages(images: QueuePostView["images"], name: string): ViewerImage[] {
+  return images.map((image, i) => ({ ...image, label: images.length > 1 ? `${name}, ${i + 1} of ${images.length}` : name }));
+}
+
+/** A platform's images in posting order, each opening the viewer (social 0.5): a strip that scrolls sideways for a carousel. */
+function Images({ images, label, onView }: { readonly images: QueuePostView["images"]; readonly label: string; readonly onView: (start: number) => void }) {
   return (
     <ol className="social-images" aria-label={label}>
       {images.map((image, i) => (
         <li key={`${i}:${image.url}`} className="social-image">
-          {/* The thumbnail opens the full image, as stored: a signed address is used as it was built. */}
-          <a href={image.url} target="_blank" rel="noreferrer" title={`Open the full image${images.length > 1 ? ` (${i + 1} of ${images.length})` : ""}`}>
+          {/* The thumbnail opens the viewer; its address is the full image as stored, for a Ctrl/Cmd-click. */}
+          <a href={image.url} target="_blank" rel="noreferrer" title={`View the image${images.length > 1 ? ` (${i + 1} of ${images.length})` : ""}`} onClick={viewOnPlainClick(() => onView(i))}>
             {/* A plain <img>: this card drops into any React app, so no framework image component. */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={image.url} alt={image.alt} width={image.width} height={image.height} loading="lazy" />
@@ -127,7 +157,7 @@ function Images({ images, label }: { readonly images: QueuePostView["images"]; r
  * type in and none of the buttons that change it (each would only come back
  * refused).
  */
-export function PostCard({ post, actions, kindLabel }: { readonly post: PostGroupView; readonly actions?: QueueActions; readonly kindLabel: string }) {
+export function PostCard({ post, actions, kindLabel, looks }: { readonly post: PostGroupView; readonly actions?: QueueActions; readonly kindLabel: string; readonly looks?: LookChoices }) {
   const uid = useId();
   const firstToDo = post.platforms.find((p) => p.status === "draft") ?? post.platforms.find((p) => p.status === "approved") ?? post.platforms[0]!;
   const [chosen, setChosen] = useState<Platform>(firstToDo.platform);
@@ -135,6 +165,12 @@ export function PostCard({ post, actions, kindLabel }: { readonly post: PostGrou
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<{ readonly where: string; readonly message: string } | null>(null);
   const tabs = useRef(new Map<Platform, HTMLButtonElement>());
+  const { open: openViewer, viewer } = useImageViewer();
+  /* The overview opens every image the post has, each set once, so they can be stepped through or set side by side. */
+  const allImages: ViewerImage[] = post.imageSets.flatMap((set) => {
+    const name = set.platforms.map((p) => PLATFORMS[p].name).join(" · ");
+    return set.images.map((image, i) => ({ ...image, label: set.images.length > 1 ? `${name}, ${i + 1} of ${set.images.length}` : name }));
+  });
 
   const selected = post.platforms.find((p) => p.platform === chosen) ?? post.platforms[0]!;
   const typedOn = (p: QueuePostView): Typed => {
@@ -183,6 +219,14 @@ export function PostCard({ post, actions, kindLabel }: { readonly post: PostGrou
   const panel = `${uid}-panel`;
   const tabId = (p: Platform) => `${uid}-tab-${p}`;
 
+  /* The Look picker (social 0.6): the app's looks, for a post with pictures still to post; it redraws every platform's. */
+  const currentLook = lookOf(post.imageSets[0]?.images ?? []);
+  const changeable = post.platforms.find((p) => (p.status === "draft" || p.status === "approved") && p.images.length > 0);
+  // Pictures another server made can't be redrawn here (social 0.7.1): the controls stay, switched off, saying where.
+  const redrawable = post.platforms.filter((p) => (p.status === "draft" || p.status === "approved") && p.images.length > 0);
+  const elsewhere = redrawable.length > 0 && redrawable.every((p) => p.canRestyle === false) ? hostOf(redrawable[0]!.images[0]!.url) : null;
+  const lookPicker = looks?.options.length && actions?.restyle && changeable ? { id: changeable.id, restyle: actions.restyle, choices: looks, elsewhere } : null;
+
   return (
     <article className="social-post" id={postAnchor(post.key)} data-open={post.open || undefined} aria-label={`${kindLabel}, ${dayText(post.day)}`}>
       <header className="social-post-head">
@@ -203,11 +247,12 @@ export function PostCard({ post, actions, kindLabel }: { readonly post: PostGrou
 
       {post.imageSets.length ? (
         <ul className="social-sets" aria-label="Its images, each set once">
-          {post.imageSets.map((set) => {
+          {post.imageSets.map((set, setIndex) => {
             const lead = set.images[0]!;
+            const start = post.imageSets.slice(0, setIndex).reduce((n, earlier) => n + earlier.images.length, 0);
             return (
               <li key={lead.url} className="social-set">
-                <a href={lead.url} target="_blank" rel="noreferrer" title="Open the full image">
+                <a href={lead.url} target="_blank" rel="noreferrer" title="View the images" onClick={viewOnPlainClick(() => openViewer(allImages, start))}>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={lead.url} alt={lead.alt} width={lead.width} height={lead.height} loading="lazy" />
                 </a>
@@ -219,6 +264,37 @@ export function PostCard({ post, actions, kindLabel }: { readonly post: PostGrou
             );
           })}
         </ul>
+      ) : null}
+
+      {lookPicker ? (
+        <div className="social-look-row">
+          <LookControls
+            id={`${uid}-look`}
+            choices={lookPicker.choices}
+            value={currentLook}
+            disabled={busy !== null || lookPicker.elsewhere !== null}
+            onChange={(next) => {
+              if (next !== currentLook) void run("look", "restyle", () => lookPicker.restyle(lookPicker.id, next));
+            }}
+          />
+          {busy === "look:restyle" ? (
+            <span className="social-note" role="status">
+              Redrawing the pictures…
+            </span>
+          ) : null}
+          {lookPicker.elsewhere !== null ? (
+            <p className="social-note">
+              {lookPicker.elsewhere
+                ? `Its pictures were drawn by ${lookPicker.elsewhere}, so its look can be changed there, not here.`
+                : "Its pictures were drawn somewhere else, so its look can be changed there, not here."}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+      {error?.where === "look" ? (
+        <p className="social-error" role="alert">
+          {error.message}
+        </p>
       ) : null}
 
       {waiting.length && actions ? (
@@ -265,7 +341,9 @@ export function PostCard({ post, actions, kindLabel }: { readonly post: PostGrou
       </div>
 
       <div className="social-panel" role="tabpanel" id={panel} aria-labelledby={tabId(selected.platform)}>
+        {/* Keyed by the draft: a tab switch starts its panel afresh, so one platform's video or shared files never show as another's. */}
         <PlatformPanel
+          key={selected.id}
           post={selected}
           typed={typedOn(selected)}
           onType={(change) => type(selected, change)}
@@ -273,8 +351,10 @@ export function PostCard({ post, actions, kindLabel }: { readonly post: PostGrou
           error={error?.where === selected.id ? error.message : null}
           run={(what, task) => run(selected.id, what, task)}
           actions={actions}
+          onViewImages={(start) => openViewer(viewerImages(selected.images, PLATFORMS[selected.platform].name), start)}
         />
       </div>
+      {viewer}
     </article>
   );
 }
@@ -288,6 +368,7 @@ function PlatformPanel({
   error,
   run,
   actions,
+  onViewImages,
 }: {
   readonly post: QueuePostView;
   readonly typed: Typed;
@@ -297,6 +378,8 @@ function PlatformPanel({
   readonly run: (what: string, task: () => Promise<ActionResult>) => Promise<void>;
   /** None for someone who may only read the posts: nothing to type in, no button that changes one. */
   readonly actions?: QueueActions;
+  /** Opens the viewer on this platform's images, at one of them. */
+  readonly onViewImages: (start: number) => void;
 }) {
   const rule = PLATFORMS[post.platform];
   const open = isOpen(post.status);
@@ -320,7 +403,13 @@ function PlatformPanel({
         </span>
       </div>
 
-      {post.images.length ? <Images images={post.images} label={post.images.length > 1 ? `${rule.name}: ${post.images.length} images, in posting order` : `${rule.name}: the image to attach`} /> : null}
+      {post.images.length ? (
+        <Images
+          images={post.images}
+          label={post.images.length > 1 ? `${rule.name}: ${post.images.length} images, in posting order` : `${rule.name}: the image to attach`}
+          onView={onViewImages}
+        />
+      ) : null}
 
       <label className="social-field">
         <span>The hook, on the image ({hookLength} of {HOOK_MAX})</span>
@@ -384,6 +473,10 @@ function PlatformPanel({
         <p className="social-note">
           In {rule.name}: the pictures open as a slideshow, or make them a video (videos get more engagement there). If {rule.name} isn&rsquo;t in the share list, save them to your photos and pick them in {rule.name}. Add a sound from {rule.name}&rsquo;s library, paste the caption, then post.
         </p>
+      ) : post.images.length ? (
+        <p className="social-note">
+          For a post that moves: Make a video, then upload the video in {rule.name} in place of the {post.images.length > 1 ? "pictures" : "picture"}. A pasted or uploaded picture stays still.
+        </p>
       ) : null}
       <div className="social-actions">
         {post.status === "draft" && actions ? (
@@ -408,7 +501,7 @@ function PlatformPanel({
         ) : null}
         <CopyButton text={typed.text} label="Copy text" />
         <ShareImages postKey={post.key} platform={post.platform} images={post.images} text={typed.text} />
-        {rule.captionOnly ? <MakeVideo postKey={post.key} platform={post.platform} images={post.images} text={typed.text} /> : null}
+        {post.images.length ? <MakeVideo postKey={post.key} platform={post.platform} images={post.images} text={typed.text} /> : null}
         {compose ? (
           <a className="social-button" href={compose} target="_blank" rel="noreferrer">
             Open {rule.name}

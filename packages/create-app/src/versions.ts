@@ -442,7 +442,15 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.2.x: what Almanac learned (hashtags, link cards, stale posts, smell); any AI (./openai).
   // 0.3.0: TikTok share and video (./video), `npx adminigloo-social init`, the AI SDK (./ai-sdk).
   // 0.4.0: the cards take the brand's whole logo (`brand.logo`) as their header.
-  social: "0.4.0",
+  // 0.5.0: looks, cards that move in video (every platform with pictures), the picture viewer.
+  // 0.6.0: the Look picker on each post, and confetti that rains.
+  // 0.7.0: a look is a background and a switch over it; the card formats a look at a time.
+  // 0.7.1: the Look controls switched off, saying where, on pictures another server made.
+  // 0.7.2: the look in one dropdown, the switch its last entry.
+  // 0.7.3: the switch back beside the dropdown, as its own button.
+  // 0.7.4: each platform's panel starts afresh, its own video and pictures.
+  // 0.7.5: the card formats' videos start afresh in another look.
+  social: "0.7.5",
 };
 
 export class UnknownPackageVersionError extends Error {

@@ -32,6 +32,13 @@ export interface QueuePostView {
   readonly expiresLabel: string | null;
   /** Changes whenever the row does: a screen showing it knows when to take the new version. */
   readonly updatedAt: string;
+  /**
+   * Can this server redraw its pictures in another look (social 0.7.1)? False
+   * when the app says they came from somewhere else (another server signed
+   * them), so the Look controls are shown switched off, not offered and then
+   * refused. Left out: they can.
+   */
+  readonly canRestyle?: boolean;
 }
 
 /** A row for the screens, its status as of `now` by the app's PostLife (none: as stored). */

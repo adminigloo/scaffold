@@ -1,6 +1,7 @@
 "use client";
 
 import { groupPosts, type QueuePostView } from "../view.js";
+import type { LookChoices } from "../wire.js";
 import { PostCard, type QueueActions } from "./PostCard.js";
 import { SocialStyles } from "./styles.js";
 
@@ -17,6 +18,8 @@ export interface PostQueueProps {
   readonly kinds?: Readonly<Record<string, string>>;
   /** What to say when there's nothing to show. */
   readonly empty?: string;
+  /** The looks a post's pictures can be switched to (social 0.6; two choices since 0.7), with `actions.restyle`. */
+  readonly looks?: LookChoices;
 }
 
 const capitalized = (kind: string) => kind.charAt(0).toUpperCase() + kind.slice(1);
@@ -29,7 +32,7 @@ const capitalized = (kind: string) => kind.charAt(0).toUpperCase() + kind.slice(
  * inside their card, every button is a 44 px target, and nothing makes the
  * page scroll sideways.
  */
-export function PostQueue({ posts, actions, readOnly = false, kinds, empty = "Nothing here." }: PostQueueProps) {
+export function PostQueue({ posts, actions, readOnly = false, kinds, empty = "Nothing here.", looks }: PostQueueProps) {
   const groups = groupPosts(posts);
   const allowed = readOnly ? undefined : actions;
   return (
@@ -37,7 +40,7 @@ export function PostQueue({ posts, actions, readOnly = false, kinds, empty = "No
       <SocialStyles />
       {groups.length === 0 ? <p className="social-empty">{empty}</p> : null}
       {groups.map((g) => (
-        <PostCard key={g.key} post={g} actions={allowed} kindLabel={kinds?.[g.kind] ?? capitalized(g.kind)} />
+        <PostCard key={g.key} post={g} actions={allowed} kindLabel={kinds?.[g.kind] ?? capitalized(g.kind)} {...(looks?.options.length ? { looks } : {})} />
       ))}
     </div>
   );

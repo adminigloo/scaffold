@@ -16,7 +16,7 @@ export interface SocialRoute<K extends string = string> {
   readonly body?: unknown;
 }
 
-export type SocialAdminRouteKind = "list" | "compose" | "approve" | "edit" | "posted" | "skip" | "approved" | "card-formats";
+export type SocialAdminRouteKind = "list" | "compose" | "approve" | "edit" | "posted" | "skip" | "look" | "approved" | "card-formats";
 
 export const SOCIAL_ADMIN_ROUTE_PERMISSIONS: Readonly<Record<SocialAdminRouteKind, SocialPermission>> = {
   list: "social.view",
@@ -25,6 +25,7 @@ export const SOCIAL_ADMIN_ROUTE_PERMISSIONS: Readonly<Record<SocialAdminRouteKin
   edit: "social.manage",
   posted: "social.manage",
   skip: "social.manage",
+  look: "social.manage",
   approved: "social.view",
   "card-formats": "social.view",
 };
@@ -49,6 +50,8 @@ export const SOCIAL_ADMIN_ROUTES: readonly SocialRoute<SocialAdminRouteKind>[] =
   { kind: "edit", method: "POST", path: "v1/admin/posts/{post}", permission: "social.manage", body: { text: "Isolation probe", hook: "Isolation probe", firstComment: null } },
   { kind: "posted", method: "POST", path: "v1/admin/posts/{post}/posted", permission: "social.manage", body: { url: "https://example.com/isolation-probe" } },
   { kind: "skip", method: "POST", path: "v1/admin/posts/{post}/skip", permission: "social.manage", body: {} },
+  // A post's pictures in another of the app's looks: every platform of it not yet posted or skipped (social 0.6).
+  { kind: "look", method: "POST", path: "v1/admin/posts/{post}/look", permission: "social.manage", body: { look: "isolation-probe" } },
   // The posting session's list: every approved post with what to paste and attach.
   { kind: "approved", method: "GET", path: "v1/admin/approved", permission: "social.view" },
   // Every card format, as samples, in the company's own brand.

@@ -5,7 +5,8 @@ import type { SocialPermission } from "../permissions.js";
 import { SOCIAL_ADMIN_ROUTE_PERMISSIONS, SOCIAL_ADMIN_ROUTES, type SocialRoute } from "../routes.js";
 import { launchSource } from "../sources.js";
 import { postStore } from "../store.js";
-import type { ComposeWire, PostingSessionWire, QueueWire } from "../wire.js";
+import { lookKeys } from "../look-choices.js";
+import type { ComposeWire, LookChoices, PostingSessionWire, QueueWire } from "../wire.js";
 import { createTestDb, type TestDb } from "./pglite.js";
 
 /**
@@ -25,6 +26,17 @@ afterEach(async () => {
 });
 
 const NOW = new Date("2026-10-27T15:00:00Z");
+
+/** The app's looks as two choices (social 0.7): a background, and confetti over it. */
+const LOOKS: LookChoices = {
+  label: "Background",
+  options: [
+    { key: "isolation-probe", name: "Probe" },
+    { key: "party", name: "Party" },
+  ],
+  toggle: { suffix: "-confetti", turnOn: "Turn on confetti", turnOff: "Turn off confetti" },
+};
+const LOOK_KEYS = ["isolation-probe", "isolation-probe-confetti", "party", "party-confetti"];
 
 interface Asked {
   permission: SocialPermission;
@@ -53,7 +65,10 @@ function handlerFor(options: { readonly can?: readonly SocialPermission[]; reado
         images: (platform, hook) => (platform === "reddit" ? [] : [{ url: `https://example.com/card?p=${platform}&h=${encodeURIComponent(hook)}`, alt: hook, width: 1080, height: 1080 }]),
       }),
     writer: options.complete ?? (() => ({ complete: null, honesty: genericHonesty, mode: "aside" })),
-    cardFormats: (tenantId) => [{ key: "quote", title: "Quote card", about: `Samples for ${tenantId}`, images: [] }],
+    cardFormats: (tenantId, { look }) => [{ key: "quote", title: "Quote card", about: `Samples for ${tenantId}${look ? ` in ${look}` : ""}`, images: [] }],
+    // The Look picker (social 0.6; two choices since 0.7): the probe's look is one of them, so the route table's every row can be driven.
+    looks: () => LOOKS,
+    restyle: (images, look) => (LOOK_KEYS.includes(look) ? images.map((i) => ({ ...i, url: `${i.url.replace(/&look=[^&]*/, "")}&look=${look}` })) : null),
     today: () => "2026-10-27",
     now: () => NOW,
   });
@@ -187,9 +202,71 @@ describe("the queue's routes", () => {
     expect(session.markPosted).toEqual({ method: "POST", url: "/api/app/alpha/posts/v1/admin/posts/{id}/posted", body: { url: "<the post's own link>" } });
   });
 
-  it("shows the app's card formats for the company", async () => {
+  it("switches a post's pictures to another look on every platform not posted or skipped, and lists the looks with the queue", async () => {
+    const { handle } = handlerFor();
+    await compose(handle, "alpha", "We now mow on Saturdays, 8 to noon.");
+    const queue = await queueOf(handle, "alpha");
+    expect(queue.looks).toEqual(LOOKS);
+    expect(lookKeys(LOOKS)).toEqual(LOOK_KEYS);
+    const rows = queue.sections.today;
+    const x = rows.find((p) => p.platform === "x")!;
+    const linkedin = rows.find((p) => p.platform === "linkedin")!;
+    const reddit = rows.find((p) => p.platform === "reddit")!;
+    // LinkedIn is posted first: what went out keeps its pictures.
+    expect((await handle(post("alpha", `v1/admin/posts/${linkedin.id}/posted`, { url: "https://linkedin.com/posts/1" }))).status).toBe(200);
+    const res = await handle(post("alpha", `v1/admin/posts/${x.id}/look`, { look: "party-confetti" }));
+    expect(res.status).toBe(200);
+    const after = (await queueOf(handle, "alpha")).sections;
+    const all = [...after.today, ...after.ready, ...after.history];
+    for (const row of all.filter((p) => p.platform !== "linkedin" && p.platform !== "reddit")) {
+      expect(row.images.every((i) => i.url.endsWith("&look=party-confetti")), row.platform).toBe(true);
+      // The words and their edit stamp stay as they were.
+      expect(row.updatedAt, row.platform).toBe(rows.find((p) => p.id === row.id)!.updatedAt);
+    }
+    expect(all.find((p) => p.id === linkedin.id)!.images).toEqual(linkedin.images);
+    expect(all.find((p) => p.id === reddit.id)!.images).toEqual([]);
+    expect(await res.json()).toEqual({ restyled: rows.filter((p) => p.platform !== "linkedin" && p.images.length).length });
+    // A look the app doesn't offer, and a picture the app can't redraw, are refused.
+    const refused = await handle(post("alpha", `v1/admin/posts/${x.id}/look`, { look: "nope" }));
+    expect([refused.status, ((await refused.json()) as { error: { message: string } }).error.message]).toEqual([400, "Choose one of the looks."]);
+  });
+
+  it("marks a post whose pictures this server can't redraw (social 0.7.1), and leaves the mark off without the app's check", async () => {
+    const { handle } = handlerFor();
+    await compose(handle, "alpha", "We now mow on Saturdays, 8 to noon.");
+    expect((await queueOf(handle, "alpha")).sections.today.some((p) => "canRestyle" in p)).toBe(false);
+    const elsewhere = createSocialAdminHandlers({
+      db: test.db,
+      tenantId: "alpha",
+      authorize: () => ({ userId: "u1" }),
+      compose: () => {
+        throw new Error("never");
+      },
+      writer: () => ({ complete: null }),
+      looks: () => LOOKS,
+      restyle: () => null,
+      canRestyle: (images) => !images.some((i) => i.url.includes("p=x&")),
+      today: () => "2026-10-27",
+    });
+    const rows = (await queueOf(elsewhere.handle, "alpha")).sections.today;
+    expect(rows.find((p) => p.platform === "x")!.canRestyle).toBe(false);
+    expect(rows.find((p) => p.platform === "linkedin")!.canRestyle).toBe(true);
+    // A row with no pictures has nothing to redraw, and no mark.
+    expect("canRestyle" in rows.find((p) => p.platform === "reddit")!).toBe(false);
+  });
+
+  it("has no Look picker without the app's looks, and won't take looks without a way to redraw", async () => {
+    const plain = createSocialAdminHandlers({ db: test.db, tenantId: "alpha", authorize: () => ({ userId: "u1" }), compose: () => { throw new Error("never"); }, writer: () => ({ complete: null }) });
+    expect("looks" in ((await (await plain.handle(get("alpha", "v1/admin/posts"))).json()) as QueueWire)).toBe(false);
+    expect((await plain.handle(post("alpha", "v1/admin/posts/anything/look", { look: "party" }))).status).toBe(404);
+    expect(() => createSocialAdminHandlers({ db: test.db, tenantId: "alpha", authorize: () => true, compose: () => { throw new Error("never"); }, writer: () => ({ complete: null }), looks: () => ({ label: "Background", options: [{ key: "party", name: "Party" }] }) })).toThrow(/looks needs restyle/);
+  });
+
+  it("shows the app's card formats for the company, in one of its looks when asked (social 0.7), and refuses one it doesn't have", async () => {
     const { handle } = handlerFor();
     expect(await (await handle(get("alpha", "v1/admin/card-formats"))).json()).toEqual({ sets: [{ key: "quote", title: "Quote card", about: "Samples for alpha", images: [] }] });
+    expect(await (await handle(get("alpha", "v1/admin/card-formats?look=party-confetti"))).json()).toEqual({ sets: [{ key: "quote", title: "Quote card", about: "Samples for alpha in party-confetti", images: [] }] });
+    expect((await handle(get("alpha", "v1/admin/card-formats?look=nope"))).status).toBe(400);
   });
 
   it("asks for each route's own key, for the company in the path", async () => {

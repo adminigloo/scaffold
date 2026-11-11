@@ -1,4 +1,4 @@
-import { fitLine, fitText, type FitBox, type FontMetrics, type Fitted } from "./metrics.js";
+import { fitLine, fitText, textWidth, type FitBox, type FontMetrics, type Fitted } from "./metrics.js";
 import { CARD_SIZES, MAX_LIST_ROWS, SAFE_AREA, type CardSize, type CardSpec } from "./types.js";
 
 /**
@@ -23,7 +23,10 @@ export interface LineBlock {
   readonly size: number;
   readonly text: string;
   readonly cut: boolean;
+  /** The room it has. */
   readonly width: number;
+  /** The words' own width at their size, tracking included (social 0.5: a look's brush stroke fits them). */
+  readonly measured: number;
 }
 
 export interface Frame {
@@ -48,7 +51,8 @@ function block(metrics: FontMetrics, text: string, box: FitBox): TextBlock {
 }
 
 function line(metrics: FontMetrics, text: string, width: number, sizes: readonly number[], tracking = 0): LineBlock {
-  return { ...fitLine(metrics, text, width, sizes, tracking), width };
+  const fitted = fitLine(metrics, text, width, sizes, tracking);
+  return { ...fitted, width, measured: Math.min(width, Math.ceil(textWidth(metrics, fitted.text, fitted.size, tracking))) };
 }
 
 /** The slides' chrome: a header row (mark, wordmark, page) and a footer row. */

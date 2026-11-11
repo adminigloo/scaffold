@@ -1,5 +1,83 @@
 # create-adminigloo-app
 
+## 0.42.8
+
+### Patch Changes
+
+- 80298be: See every card format's videos start afresh in another look: a video made in one look no longer stays under another look's cards.
+  
+  - create-app pins social 0.7.5.
+
+## 0.42.7
+
+### Patch Changes
+
+- 2b3df86: Each platform's panel starts afresh when its tab is chosen: a video made on one platform (TikTok's 9:16) no longer shows on the next (Instagram) as "Send video to Instagram", and neither do its shared pictures.
+  
+  - create-app pins social 0.7.4.
+
+## 0.42.6
+
+### Patch Changes
+
+- 1186637: The look's switch is back as its own button beside the dropdown, as in 0.7 (0.7.2's single dropdown undone; its `toggle.label` is gone).
+  
+  - create-app pins social 0.7.3.
+
+## 0.42.5
+
+### Patch Changes
+
+- 3d62199: The look is one dropdown: the backgrounds, then the entry that turns the switch on or off.
+  
+  - `<LookControls>` is a single dropdown: the options, and (under the switch's name) "Turn on confetti" / "Turn off confetti". The chosen option reads "Blue + confetti" when the switch is on (`toggle.label`, new and optional). There is no separate button.
+  - create-app pins social 0.7.2.
+
+## 0.42.4
+
+### Patch Changes
+
+- d492c64: The Look controls are switched off, saying where, on a post whose pictures this server can't redraw.
+  
+  - The handler's `canRestyle(images, { tenantId })`: false for pictures another server made. The queue marks each such row (`QueuePostView.canRestyle`), and the post's Background and confetti controls show switched off with "Its pictures were drawn by <site>, so its look can be changed there, not here." instead of offering a change and refusing it.
+  - The refusal, when a redraw still can't happen, says why: the pictures were made somewhere else.
+  - create-app pins social 0.7.1.
+
+## 0.42.3
+
+### Patch Changes
+
+- 9762f4c: A look is two choices: a background and a switch over it (confetti); See every card format shows one look at a time.
+  
+  - `LookChoices` (`label`, `options`, `toggle?: { suffix, turnOn, turnOff }`) replaces 0.6's flat list from the handler's `looks()` and in `QueueWire.looks` (pass `{ label, options }` for 0.6's picker). A look's key is an option's, plus the toggle's suffix when it's on. `lookKeys`, `lookKey`, `lookParts`, `firstLook` (root).
+  - `<LookControls>` (./ui): the dropdown and the switch's button, on each post and at the top of See every card format.
+  - See every card format shows every format in the chosen look: `cardFormats(tenantId, { look })`, `GET v1/admin/card-formats?look=` (an unknown look is refused), `client.cardFormats(look)`, `sampleCardSets(brand, { look })`. It opens on the first option with the switch on.
+  - create-app pins social 0.7.0.
+
+## 0.42.2
+
+### Patch Changes
+
+- a3b23ec: Switch a post's look from the queue, and let a look's pieces rain.
+  
+  - The Look picker: the handler's `looks(tenantId)` (their keys and names) and `restyle(images, look, { tenantId })` (the app re-signs each card), `POST v1/admin/posts/{post}/look` (every platform of the post not posted or skipped; words and their edit stamp untouched), `QueueWire.looks`, `QueueActions.restyle`, `<PostQueue looks>`, and `lookOf(images)`. A handler given looks without restyle throws.
+  - Rain: `enter: "rain"` with `fall`, `sway` and `spin` on a piece; the motion sheet carries them; `rainAt` and `RainClip` in `./video`; `MotionLayer.time`, the frame's own time in the clip. Rain falls on the clip's clock, outside the ground's push-in, and repeats a whole number of times in the clip.
+  - Each platform with pictures says how to post something that moves: the video, in place of the picture.
+  - create-app pins social 0.6.0.
+
+## 0.42.1
+
+### Patch Changes
+
+- 018a674: Social cards wear looks and move in video; the posts screen's pictures open in a viewer.
+  
+  - Looks: `CardAssets.looks` by key, and a spec's signed `look`. A look's colours over the theme (and `theme.button` / `onButton` for the call), its pieces around the words per card size (`decor(frame)`: a picture, a ball with a face or a word, a bit of confetti), and a picture behind the small capitals (`eyebrow`). A company's card never wears the app's look; a look the app doesn't have draws the plain card. `LineBlock.measured` is a line's own width.
+  - The card route's parts for a video, outside the signature: `&layer=ground`, `words`, `piece-N` and `motion` (the motion sheet, JSON). `cardLayerUrl`, `splitCardLayer`, `cardMotion`, `CardMotion` and `CardMotionPiece`.
+  - Make a video on every platform with pictures, at their own size: `makeCardVideo` brings each piece on its own way (`enter`: pop, spray, fall, fade; `bob`; `stays`), the words on as each card crosses in (`words`: rise, slide, fade), the ground pushing in, and loops with no seam. Falls back to the slideshow for a card route without parts.
+  - `<ImageViewer>`, `useImageViewer()` and `viewOnPlainClick()`: a picture opens in a pop-up, one at a time or side by side, in the queue and in See every card format.
+  - `sampleCardSets(brand, { looks })` adds a set per look, and See every card format makes a video of each of its sizes.
+  - create-app pins social 0.5.0.
+
 ## 0.42.0
 
 ### Minor Changes

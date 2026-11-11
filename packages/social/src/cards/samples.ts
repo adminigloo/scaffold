@@ -16,10 +16,32 @@ export interface CardSampleSet {
   readonly specs: readonly CardSpec[];
 }
 
+/** One of the app's looks, for the samples: its key in the assets' looks, and what to call it. */
+export interface CardSampleLook {
+  readonly key: string;
+  readonly name: string;
+  /** A line on what it is ("The homepage's spray paint behind the words"). */
+  readonly about?: string;
+}
+
 const RATIO: Readonly<Record<CardSize, string>> = { square: "1:1", portrait: "4:5", story: "9:16" };
 
-/** Every sample set, in the brand given (a company's own name and colour), or the app's. */
-export function sampleCardSets(brand?: CardBrandWords): CardSampleSet[] {
+/**
+ * Every sample set, in the brand given (a company's own name and colour), or
+ * the app's. With `look` (social 0.7), every card wears that one of the app's
+ * looks, for "See every card format" shown a look at a time. With `looks`
+ * (social 0.5), a set for each besides: its quote card at 1:1, its
+ * announcement at 4:5, and the announcement at 9:16. A company's card wears
+ * no look, so a brand gets neither.
+ */
+export function sampleCardSets(brand?: CardBrandWords, options: { readonly looks?: readonly CardSampleLook[]; readonly look?: string | null } = {}): CardSampleSet[] {
+  const look = brand ? null : (options.look ?? null);
+  const sets = baseSets(brand, look ? {} : options);
+  return look ? sets.map((set) => ({ ...set, specs: set.specs.map((spec) => ({ ...spec, look })) })) : sets;
+}
+
+/** The sample sets, and (social 0.5) one for each look given. */
+function baseSets(brand: CardBrandWords | undefined, options: { readonly looks?: readonly CardSampleLook[] }): CardSampleSet[] {
   const b = brand ? { brand } : {};
   const launch = {
     hook: "We're open on Saturdays now, 9 to 1.",
@@ -28,6 +50,8 @@ export function sampleCardSets(brand?: CardBrandWords): CardSampleSet[] {
     call: "See our hours",
     ...b,
   };
+  const looks = brand ? [] : (options.looks ?? []);
+  const worn = (look: string) => (spec: CardSpec): CardSpec => ({ ...spec, look });
   return [
     {
       key: "quote",
@@ -57,7 +81,25 @@ export function sampleCardSets(brand?: CardBrandWords): CardSampleSet[] {
       about: "A hook, then one number per slide with its plain line, the call. Every number is one the post's facts already have.",
       specs: storyCarousel({ hook: "Our first year, in two numbers.", stats: [{ value: "312", line: "Homes we cleaned this year." }, { value: "4.9", line: "Our average review, from 96 reviews." }], call: "Book a cleaning", ...b }, "portrait"),
     },
+    ...looks.map(
+      (look): CardSampleSet => ({
+        key: `look-${look.key}`,
+        title: `The ${look.name} look`,
+        about: `${look.about ? `${look.about}. ` : ""}Its quote card at 1:1, its announcement at 4:5, and the announcement at 9:16. In a video each piece comes on in turn, then the words.`,
+        specs: [
+          worn(look.key)(quoteCard("We're open on Saturdays now, 9 to 1.", "square", { date: "Oct 27" })),
+          worn(look.key)(alone(launchCarousel(launch, "portrait")[0]!)),
+          ...launchCarousel(launch, "story").map(worn(look.key)),
+        ],
+      }),
+    ),
   ];
+}
+
+/** A slide shown on its own: no page number. */
+function alone(spec: CardSpec): CardSpec {
+  const { page: _page, ...rest } = spec;
+  return rest as CardSpec;
 }
 
 export type { CardFormatImage, CardFormatSet } from "../wire.js";

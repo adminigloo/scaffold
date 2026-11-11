@@ -44,6 +44,79 @@ posting-session list) and marks each one posted with its link.
   read and write is inside it: one company never sees, approves or forgets
   another's posts, even under the same key. `"*"` is the site's own posts.
 
+## 0.7.3: the switch is back beside the dropdown
+
+0.7.2 put the switch in the dropdown as its last entry; 0.7.3 puts it back as
+its own button beside it ("Turn on confetti" / "Turn off confetti"), as 0.7
+had it, and drops 0.7.2's `toggle.label`.
+
+## New in 0.7: a look is a background, and a switch over it
+
+The looks are offered as two choices instead of one long list: a dropdown
+(`label`, `options`: the backgrounds, say) and, if the app has one, a switch
+that adds something over any of them (`toggle`: its key `suffix` and its
+button's words, "Turn on confetti" / "Turn off confetti"). A look's key is the
+option's, with the suffix when the switch is on: `spray`, `spray-confetti`.
+The same two controls (`<LookControls>`) are on each post and at the top of
+**See every card format**, which now shows every format in the one look
+chosen (`cardFormats(tenantId, { look })`, `GET v1/admin/card-formats?look=`,
+`sampleCardSets(brand, { look })`) instead of a set per look. The handler's
+`looks()` returns `LookChoices`; 0.6's flat list is `{ label, options }`.
+`lookKeys`, `lookKey`, `lookParts` and `firstLook` read and build the keys.
+
+## New in 0.6: switch a post's look, and rain
+
+- **The Look picker.** Give the handler your looks and a way to redraw a
+  post's pictures in one (`looks: () => [{ key, name }]` and
+  `restyle(images, look)`, which re-signs each of your cards with the look),
+  and each post on the queue gets a **Look** select under its pictures. One
+  choice redraws every platform's pictures that hasn't been posted or skipped
+  (`POST v1/admin/posts/{post}/look`); what went out keeps its pictures, and
+  what a person has typed isn't touched. A post made before your looks shows
+  "Plain". `QueueWire.looks` carries the list; `lookOf(images)` reads a post's.
+- **Rain.** `enter: "rain"` falls a piece through the card the whole clip
+  long, behind the words, from where the card has it (the first frame is the
+  card as posted), wrapping back in at the top: `fall` (seconds to cross the
+  card), `sway` (px) and `spin` (degrees a second; none, and it wobbles, as a
+  ball with a word on it should). Each repeats a whole number of times in the
+  clip, so the loop has no seam, and every card of a video draws it on the
+  clip's own clock, so a cross never doubles it. `rainAt` in `./video`.
+- **A post that moves.** Each platform with pictures says so on its panel:
+  Make a video, then upload the video in place of the picture. A pasted or
+  uploaded picture stays still.
+
+## New in 0.5: looks, cards that move, and a viewer
+
+- **Looks.** Give the card route your own looks (`assets.looks`, by key) and
+  a post's cards can wear one (`look` in the spec, signed with the words): its
+  colours over your theme, and the pieces around its words. A piece is a
+  picture (`kind: "art"`, a spray of paint, say, tinted before you hand it
+  over), a ball (`kind: "ball"`, a disc in a colour with a picture or a short
+  word on it), or a bit of confetti (`kind: "bit"`: a card, a strip or a dot),
+  laid out per card size by your `decor(frame)`, clear of the words. A look
+  can put a picture behind the small capitals (`eyebrow`, a brush stroke
+  stretched to fit them) and give the call its own button colour
+  (`theme.button`, `theme.onButton`). A company's card never wears the app's
+  look, and a look you retire draws the plain card, so old posts still work.
+- **Cards that move.** **Make a video** is on every platform with pictures,
+  at the pictures' own size (TikTok's 9:16, Instagram's and Facebook's 4:5,
+  X's 1:1). The card route draws each card's parts for it (`&layer=ground`,
+  `words`, `piece-N`, and `motion`, the motion sheet, outside the signature:
+  a part only ever draws less of the signed card), and the video moves them:
+  each piece comes on its own way and in turn (`enter`: a ball pops up and
+  settles, paint sprays out from its nozzle, confetti falls in spinning, or a
+  fade), a ball bobs once it's on (`bob`), paint sprays once and stays
+  (`stays`), the ground pushes in slowly while the words hold still, and a
+  later card's words come on as it crosses in (`words`: up from below, in from
+  the left, or a fade). The first card's words are whole at the first frame,
+  and the clip loops with no seam. `makeCardVideo` in `@adminigloo/social/video`.
+- **A viewer.** A picture on the posts screen (and in **See every card
+  format**) opens in a pop-up, one at a time with arrows and the ← → keys, or
+  side by side; Esc, ✕ or the backdrop closes it; Ctrl- or Cmd-click still
+  opens the image itself. `<ImageViewer>` and `useImageViewer()` in `./ui`.
+- **The samples show your looks.** `sampleCardSets(undefined, { looks })`
+  adds a set per look, with a video for each of its sizes.
+
 ## New in 0.2 (from Almanac's month of posting by hand)
 
 - **One card per post**, a tab per platform, and "Approve all" on each post
@@ -123,8 +196,11 @@ caption with its hashtags. From the posts screen:
   watermark on it. On TikTok, video posts get more engagement than photo posts
   (3.39% against 1.92% median, Buffer's study of 45M posts, March 2026).
 - **Download images** on a computer, for any platform's own upload page.
-- `@adminigloo/social/video` (`makeSlideshowVideo`) makes the clip for your own
-  screens. It needs a browser with WebCodecs (Chrome, Edge, Safari 16.4+,
+- Since 0.5 **Make a video** is on every platform with pictures, at the
+  pictures' own size, and each card's parts move (see New in 0.5). A card
+  route from before 0.5 has no parts to give, and the clip is the slideshow.
+- `@adminigloo/social/video` (`makeCardVideo`, or `makeSlideshowVideo` for
+  plain pictures) makes the clip for your own screens. It needs a browser with WebCodecs (Chrome, Edge, Safari 16.4+,
   Firefox 130+); where there's none, the button doesn't show. Keep `fps` at 23
   or more: TikTok and Instagram refuse slower video.
 
@@ -171,8 +247,9 @@ that same shape. `null` means no AI: every post is your own words.
 | … `@adminigloo/social` (the root) | Each platform's format and limits, the number guard, the writer (`writePost`), the AI-smell check (`smell`), tagged links (`taggedLink`), what goes stale (`effectiveStatus`, `asOf`), the queue in sections (`queueSectionsOf`), one view a post (`groupPosts`), the generic honesty list, the launch and release sources, the view, `SOCIAL_ADMIN_ROUTES` and the permission keys. Pure: safe anywhere, a browser included. |
 | … `@adminigloo/social/schema` | The table (`social_posts`, or your own prefix with `defineSocialTables({ prefix })`). |
 | … `@adminigloo/social/server` | The queue (`postStore(db, { tenantId })`), the HTTP handler the screens talk to (`createSocialAdminHandlers`), and `forgetTenant`. |
-| … `@adminigloo/social/ui` | The screens: `<PostsAdmin>` (the whole page), `<PostQueue>`, `<PostCard>`, `<ComposeForm>`, `<CardFormats>`. Their CSS comes with them. |
-| … `@adminigloo/social/cards` | The card images: quote cards and carousels from plain specs, signed addresses, the layout that never lets words run off, and `createCardRoute` for the image route. |
+| … `@adminigloo/social/ui` | The screens: `<PostsAdmin>` (the whole page), `<PostQueue>`, `<PostCard>`, `<ComposeForm>`, `<CardFormats>`, `<MakeVideo>`, and the pictures' pop-up `<ImageViewer>` (0.5). Their CSS comes with them. |
+| … `@adminigloo/social/cards` | The card images: quote cards and carousels from plain specs, signed addresses, the layout that never lets words run off, the looks (0.5), and `createCardRoute` for the image route and the parts a video moves. |
+| … `@adminigloo/social/video` | The clip made in the browser: `makeCardVideo` (each card's parts moving, at the cards' size, 0.5) and `makeSlideshowVideo`. |
 | … `@adminigloo/social/fonts` | The cards' fonts, embedded (DM Serif Display and Inter): no file to trace, for the card route alone. |
 | … `@adminigloo/social/anthropic` | The metered Claude call (`createAnthropicComplete`). Needs `pnpm add @anthropic-ai/sdk`. |
 | … `@adminigloo/social/openai` | The metered OpenAI call (`createOpenAIComplete`), or any service that speaks OpenAI's Chat Completions API (Azure OpenAI, OpenRouter, Groq, Together, a local server). No SDK needed: your `new OpenAI()`, or `openAIFetchClient({ apiKey })` over plain fetch. |
@@ -271,6 +348,26 @@ routes, the card route, the metering, the migration and the nav entry.
    any width), and it becomes the header: top left of every slide in place of the mark and
    the name, and on your own quote card in place of the avatar and the name, the handle under
    it. The mark stays in the footers; a company's card never shows your logo.
+
+   Looks (0.5) go in the same assets, by key, and a spec names one:
+
+   ```ts
+   const looks = {
+     confetti: {
+       decor: ({ width }) => [
+         { kind: "ball", color: "#59bc6c", size: 124, x: width - 50, y: 44, label: "GO", ink: "#fff", enter: "pop", delay: 0.1, bob: true },
+         { kind: "bit", shape: "strip", color: "#f1a834", size: 40, x: 760, y: 40, rotate: -35, enter: "fall", delay: 0.3 },
+       ],
+       words: "rise",
+     },
+   };
+   const assets = { ...yourAssets, looks };
+   const image = cardImage({ ...quoteCard(hook, "square"), look: "confetti" }, signing);
+   ```
+
+   Keep each size's pieces clear of the words: the corners, the bands outside
+   `SAFE_AREA`. A picture is drawn as it comes (satori can't size a mask), so
+   hand it over in its colour.
 
 ## Your own posts
 

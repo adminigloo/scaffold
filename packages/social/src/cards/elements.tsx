@@ -1,7 +1,8 @@
 /* eslint-disable @next/next/no-img-element, jsx-a11y/alt-text -- satori draws these; nobody browses them */
 import type { CSSProperties, ReactElement, ReactNode } from "react";
 import { BYLINE, EYEBROW, LOGO, logoSize, PAGE_ROOM, QUOTE, SLIDE_FOOTER, SLIDE_HEADER, slideBody, type CardLayout, type CoverLayout, type CtaLayout, type Frame, type LineBlock, type ListLayout, type QuoteLayout, type StatLayout, type TextBlock } from "./layout.js";
-import { cardAuthor, cardCharacter, cardLogo, type CardArt, type CardAssets, type CardPage, type CardSpec, type CoverCardSpec, type CtaCardSpec, type ListCardSpec, type QuoteCardSpec, type StatCardSpec } from "./types.js";
+import { cardDecor, cardLook, decorBox, decorSize, entranceOf } from "./looks.js";
+import { cardAuthor, cardCharacter, cardLogo, type CardArt, type CardAssets, type CardDecor, type CardLook, type CardPage, type CardSpec, type CoverCardSpec, type CtaCardSpec, type ListCardSpec, type QuoteCardSpec, type StatCardSpec } from "./types.js";
 
 /**
  * THE CARDS, AS SATORI DRAWS THEM: every box with more than one child is a
@@ -14,6 +15,11 @@ import { cardAuthor, cardCharacter, cardLogo, type CardArt, type CardAssets, typ
  * a picture. With no art the mark and the avatar are the brand's first
  * letter on its accent. A brand's whole logo (`brand.logo`), when it has one,
  * is the header instead of the mark and the name.
+ *
+ * A look (social 0.5) lays its pieces on the ground under the words, and may
+ * put a picture behind the small capitals. For a video the card is also drawn
+ * in parts: its ground alone (with any piece that doesn't move), its words
+ * alone on nothing, and each piece on its own (`pieceElement`).
  */
 
 /** The four-point sparkle. */
@@ -36,8 +42,14 @@ export function initialOf(name: string): string {
   return first ? first.toLocaleUpperCase("en-US") : "•";
 }
 
+/** Which of a card's parts to draw: all of it, its ground alone, or its words alone. */
+export type CardPart = "card" | "ground" | "words";
+
 interface Ctx {
   readonly assets: CardAssets;
+  readonly look: CardLook | undefined;
+  readonly decor: readonly CardDecor[];
+  readonly part: CardPart;
 }
 
 function Sparkle({ x, y, size, color, opacity = 1 }: { x: number; y: number; size: number; color: string; opacity?: number }) {
@@ -151,8 +163,47 @@ function StarField({ frame, color }: { frame: Frame; color: string }) {
   );
 }
 
-function Ground({ frame, assets, children }: { frame: Frame; assets: CardAssets; children: ReactNode }) {
+/** One piece of a look, its centre `dx`, `dy` from where the card puts it (a piece drawn on its own is moved into its box). */
+function Piece({ piece, assets, dx = 0, dy = 0 }: { piece: CardDecor; assets: CardAssets; dx?: number; dy?: number }) {
+  const { width, height } = decorSize(piece);
+  const place: CSSProperties = {
+    position: "absolute",
+    left: piece.x - width / 2 + dx,
+    top: piece.y - height / 2 + dy,
+    width,
+    height,
+    ...(piece.rotate ? { transform: `rotate(${piece.rotate}deg)` } : {}),
+    ...(piece.opacity !== undefined && piece.opacity < 1 ? { opacity: Math.max(0, piece.opacity) } : {}),
+  };
+  switch (piece.kind) {
+    case "art":
+      return <img src={piece.art.src} width={width} height={height} style={place} />;
+    case "ball":
+      return (
+        <div style={{ ...place, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: width, backgroundColor: piece.color }}>
+          {piece.face ? (
+            <img src={piece.face.src} width={width} height={height} style={{ position: "absolute", left: 0, top: 0, width, height }} />
+          ) : piece.label ? (
+            <div style={{ display: "flex", fontFamily: assets.sans, fontWeight: 700, fontSize: Math.round(width * 0.36), lineHeight: 1, letterSpacing: "-0.02em", color: piece.ink ?? assets.theme.onAccent }}>{piece.label}</div>
+          ) : null}
+        </div>
+      );
+    case "bit":
+      return <div style={{ ...place, display: "flex", backgroundColor: piece.color, borderRadius: piece.shape === "rect" ? Math.max(2, Math.round(width * 0.16)) : width }} />;
+  }
+}
+
+/**
+ * The ground: its colour, its gradient, the star field, and the look's pieces
+ * under the words. Drawn as the ground alone it keeps only the pieces that
+ * don't move in a video (they come on as layers of their own); as the words
+ * alone it has nothing behind them, so the video can lay them over the rest.
+ */
+function Ground({ frame, ctx, children }: { frame: Frame; ctx: Ctx; children?: ReactNode }) {
+  const { assets, part } = ctx;
   const { theme } = assets;
+  const behind = part !== "words";
+  const pieces = part === "card" ? ctx.decor : part === "ground" ? ctx.decor.filter((p) => entranceOf(p) === "none") : [];
   return (
     <div
       style={{
@@ -160,17 +211,33 @@ function Ground({ frame, assets, children }: { frame: Frame; assets: CardAssets;
         display: "flex",
         width: frame.width,
         height: frame.height,
-        backgroundColor: theme.ground,
-        ...(theme.groundImage ? { backgroundImage: theme.groundImage } : {}),
+        ...(behind ? { backgroundColor: theme.ground, ...(theme.groundImage ? { backgroundImage: theme.groundImage } : {}) } : {}),
         color: theme.text,
         fontFamily: assets.sans,
         overflow: "hidden",
       }}
     >
-      {theme.flourish ? <StarField frame={frame} color={theme.muted} /> : null}
-      {children}
+      {behind && theme.flourish ? <StarField frame={frame} color={theme.muted} /> : null}
+      {pieces.map((piece, i) => (
+        <Piece key={`decor-${i}`} piece={piece} assets={assets} />
+      ))}
+      {part === "ground" ? null : children}
     </div>
   );
+}
+
+/** One piece of a card's look, alone in its own box (`decorBox`), for a video to bring on by itself. */
+export function pieceElement(piece: CardDecor, assets: CardAssets): { element: ReactElement; width: number; height: number } {
+  const box = decorBox(piece);
+  return {
+    element: (
+      <div style={{ position: "relative", display: "flex", width: box.width, height: box.height, overflow: "hidden" }}>
+        <Piece piece={piece} assets={assets} dx={-box.left} dy={-box.top} />
+      </div>
+    ),
+    width: box.width,
+    height: box.height,
+  };
 }
 
 /** Words fitted by ./layout.ts: one box per paragraph, wrapped by satori at the fitted size. */
@@ -208,6 +275,19 @@ function Line({ block, family, weight, color, style }: { block: LineBlock; famil
 
 function Eyebrow({ block, ctx, style }: { block: LineBlock | null; ctx: Ctx; style?: CSSProperties }) {
   if (!block) return null;
+  const brush = ctx.look?.eyebrow;
+  if (brush) {
+    // The look's picture (a brush stroke) behind the small capitals, a little wider and taller than they are.
+    const height = EYEBROW.size * 1.15;
+    const padX = Math.round(block.size * 0.75);
+    const padY = Math.round(block.size * 0.5);
+    return (
+      <div style={{ position: "relative", display: "flex", height, marginBottom: EYEBROW.gap - EYEBROW.size * 0.15, ...style }}>
+        <img src={brush.art.src} width={block.measured + padX * 2} height={height + padY * 2} style={{ position: "absolute", left: -padX, top: -padY, width: block.measured + padX * 2, height: height + padY * 2 }} />
+        <Line block={block} family={ctx.assets.sans} weight={700} color={brush.color ?? ctx.assets.theme.accent} style={{ letterSpacing: `${EYEBROW.tracking}em`, height }} />
+      </div>
+    );
+  }
   return (
     <Line
       block={block}
@@ -299,7 +379,7 @@ function QuoteCard({ spec, layout, ctx }: { spec: QuoteCardSpec; layout: QuoteLa
   const author = cardAuthor(spec, assets);
   const logo = cardLogo(spec, assets);
   return (
-    <Ground frame={frame} assets={assets}>
+    <Ground frame={frame} ctx={ctx}>
       {theme.flourish ? (
         <>
           <Sparkle x={frame.width - 150} y={150} size={34} color={theme.accent} opacity={0.9} />
@@ -363,7 +443,7 @@ function CoverCard({ spec, layout, ctx }: { spec: CoverCardSpec; layout: CoverLa
   const artTop = body.top + body.height - artHeight + 12;
   const artLeft = frame.left + (frame.contentWidth - artWidth) / 2;
   return (
-    <Ground frame={frame} assets={assets}>
+    <Ground frame={frame} ctx={ctx}>
       {art && theme.glow ? <Glow cx={artLeft + artWidth / 2} cy={artTop + artHeight * 0.52} radius={artHeight * 0.78} color={theme.glow} /> : null}
       {art && theme.flourish ? (
         <>
@@ -389,7 +469,7 @@ function StatCard({ spec, layout, ctx }: { spec: StatCardSpec; layout: StatLayou
   const { frame } = layout;
   const body = slideBody(frame);
   return (
-    <Ground frame={frame} assets={assets}>
+    <Ground frame={frame} ctx={ctx}>
       {theme.glow ? <Glow cx={frame.left + layout.value.size * 0.9} cy={body.top + body.height * 0.42} radius={Math.max(320, layout.value.size * 1.5)} color={theme.glow} /> : null}
       {theme.flourish ? (
         <>
@@ -439,7 +519,7 @@ function ListCard({ spec, layout, ctx }: { spec: ListCardSpec; layout: ListLayou
   const { frame } = layout;
   const body = slideBody(frame);
   return (
-    <Ground frame={frame} assets={assets}>
+    <Ground frame={frame} ctx={ctx}>
       {theme.flourish ? <Sparkle x={frame.width - frame.right - 30} y={body.top + 30} size={28} color={theme.accent} opacity={0.75} /> : null}
       <Header frame={frame} ctx={ctx} page={spec.page} wordmark={layout.wordmark} />
       <div style={{ position: "absolute", left: frame.left, top: body.top, width: frame.contentWidth, height: body.height, display: "flex", flexDirection: "column", justifyContent: "center" }}>
@@ -493,7 +573,7 @@ function CtaCard({ spec, layout, ctx }: { spec: CtaCardSpec; layout: CtaLayout; 
   const top = body.top + Math.max(0, (body.height - block) / 2);
   const center = frame.left + frame.contentWidth / 2;
   return (
-    <Ground frame={frame} assets={assets}>
+    <Ground frame={frame} ctx={ctx}>
       {art && theme.glow ? <Glow cx={center} cy={top + artHeight * 0.5} radius={artHeight * 0.8} color={theme.glow} /> : null}
       {art && theme.flourish ? (
         <>
@@ -514,11 +594,11 @@ function CtaCard({ spec, layout, ctx }: { spec: CtaCardSpec; layout: CtaLayout; 
             height: Math.round(layout.button.size * 1.2 + 56),
             padding: "0 44px",
             borderRadius: 999,
-            backgroundColor: theme.accent,
-            color: theme.onAccent,
+            backgroundColor: theme.button ?? theme.accent,
+            color: theme.onButton ?? theme.onAccent,
           }}
         >
-          <Line block={layout.button} family={assets.sans} weight={700} color={theme.onAccent} />
+          <Line block={layout.button} family={assets.sans} weight={700} color={theme.onButton ?? theme.onAccent} />
         </div>
         {layout.note ? <Words block={layout.note} family={assets.sans} color={theme.muted} style={{ marginTop: 32, fontWeight: 500 }} align="center" /> : null}
       </div>
@@ -527,9 +607,10 @@ function CtaCard({ spec, layout, ctx }: { spec: CtaCardSpec; layout: CtaLayout; 
   );
 }
 
-/** The card as a satori element. */
-export function cardElement(spec: CardSpec, layout: CardLayout, assets: CardAssets): ReactElement {
-  const ctx: Ctx = { assets };
+/** The card as a satori element: all of it, or (for a video) its ground or its words alone. */
+export function cardElement(spec: CardSpec, layout: CardLayout, assets: CardAssets, part: CardPart = "card"): ReactElement {
+  const ctx: Ctx = { assets, look: cardLook(spec, assets), decor: cardDecor(spec, assets), part };
+  if (part === "ground") return <Ground frame={layout.frame} ctx={ctx} />;
   if (spec.kind === "quote" && layout.kind === "quote") return <QuoteCard spec={spec} layout={layout} ctx={ctx} />;
   if (spec.kind === "cover" && layout.kind === "cover") return <CoverCard spec={spec} layout={layout} ctx={ctx} />;
   if (spec.kind === "stat" && layout.kind === "stat") return <StatCard spec={spec} layout={layout} ctx={ctx} />;

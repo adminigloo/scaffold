@@ -1,7 +1,10 @@
 import type { ReactElement } from "react";
-import { cardElement } from "./elements.js";
+import { cardElement, pieceElement } from "./elements.js";
 import { layoutCard, type CardLayout, type CardMetrics } from "./layout.js";
+import type { CardMotion } from "../card-parts.js";
+import { cardDecor, lookedAssets, motionOf } from "./looks.js";
 import { parseFontMetrics, type FontMetrics } from "./metrics.js";
+import { splitCardLayer, type CardLayer } from "../card-parts.js";
 import { parseCardParams, verifyCardParams } from "./params.js";
 import { CARD_SIZES, cardAuthor, cardCharacter, type CardAssets, type CardFont, type CardSpec } from "./types.js";
 
@@ -32,7 +35,8 @@ export function cardMetrics(assets: Pick<CardAssets, "fonts" | "serif" | "sans">
  * The assets a card is drawn with: the app's, unless the spec carries its
  * own brand's words (a company's card), which win — its name, address,
  * handle and colours, and its first letter for the mark and the avatar: the
- * app's own art belongs to the app's own brand.
+ * app's own art (its characters, its logo, its looks) belongs to the app's
+ * own brand.
  */
 export function brandedAssets(spec: CardSpec, assets: CardAssets): CardAssets {
   const words = spec.brand;
@@ -45,7 +49,18 @@ export function brandedAssets(spec: CardSpec, assets: CardAssets): CardAssets {
     // The app's own characters and their art belong to the app's own brand, never a company's card.
     authors: undefined,
     characters: undefined,
+    looks: undefined,
   };
+}
+
+/** What a card is drawn with: its brand's (`brandedAssets`), then its look's colours. */
+export function drawnAssets(spec: CardSpec, assets: CardAssets): CardAssets {
+  return lookedAssets(spec, brandedAssets(spec, assets));
+}
+
+/** The card's motion sheet (./looks.ts): what a video needs to move its parts. */
+export function cardMotion(spec: CardSpec, assets: CardAssets): CardMotion {
+  return motionOf(spec, drawnAssets(spec, assets));
 }
 
 /** Where everything on this card goes (the words sized to fit), without drawing it. */
@@ -76,16 +91,30 @@ export type CardPainter = new (
   },
 ) => Response;
 
-/** The card as a PNG response, painted by the app's painter (next/og's ImageResponse in a Next.js app). */
-export function renderCard(spec: CardSpec, assets: CardAssets, paint: CardPainter, options: { readonly headers?: Record<string, string> } = {}): Response {
+/** A part of a card the painter draws: all but the motion sheet, which is words, not a picture. */
+export type CardPicturePart = Exclude<CardLayer, "motion">;
+
+/**
+ * The card as a PNG response, painted by the app's painter (next/og's
+ * ImageResponse in a Next.js app): the whole card, or one of its parts for a
+ * video (social 0.5): its ground, its words on nothing, or one piece of its
+ * look in that piece's own box. A piece the look doesn't have is an error.
+ */
+export function renderCard(spec: CardSpec, assets: CardAssets, paint: CardPainter, options: { readonly headers?: Record<string, string>; readonly layer?: CardPicturePart | null } = {}): Response {
+  const drawn = drawnAssets(spec, assets);
+  const fonts = drawn.fonts.map((f) => ({ name: f.name, data: f.data, weight: f.weight, style: f.style }));
+  const headers = options.headers ? { headers: options.headers } : {};
+  const layer = options.layer ?? null;
+  if (layer?.startsWith("piece-")) {
+    const index = Number(layer.slice("piece-".length));
+    const piece = cardDecor(spec, drawn)[index];
+    if (!piece) throw new RangeError(`This card's look has no piece ${index}.`);
+    const { element, width, height } = pieceElement(piece, drawn);
+    return new paint(element, { width, height, fonts, ...headers });
+  }
   const { width, height } = CARD_SIZES[spec.size];
-  const drawn = brandedAssets(spec, assets);
-  return new paint(cardElement(spec, cardLayout(spec, assets), drawn), {
-    width,
-    height,
-    fonts: drawn.fonts.map((f) => ({ name: f.name, data: f.data, weight: f.weight, style: f.style })),
-    ...(options.headers ? { headers: options.headers } : {}),
-  });
+  const part = layer === "ground" || layer === "words" ? layer : "card";
+  return new paint(cardElement(spec, cardLayout(spec, assets), drawn, part), { width, height, fonts, ...headers });
 }
 
 /**
@@ -115,10 +144,17 @@ function refuse(status: number, message: string): Response {
  * picture, and signed, so nobody can make a card say something the business
  * didn't: a query whose signature doesn't match its words is a 403, one that
  * names no card (or a picture the app doesn't have) a 400.
+ *
+ * `&layer=` (social 0.5, outside the signature: it only ever draws less of
+ * the signed card) asks for one part, for a video: `ground`, `words`,
+ * `piece-N`, or `motion`, the motion sheet as JSON. A look the app no longer
+ * has draws the plain card, so an old post's pictures still work.
  */
 export function createCardRoute(options: CardRouteOptions): (req: Request) => Promise<Response> {
   return async (req) => {
-    const params = new URL(req.url).searchParams;
+    const split = splitCardLayer(new URL(req.url).searchParams);
+    if (!split.ok) return refuse(400, `Not a card: ${split.error}`);
+    const { params, layer } = split;
     if (!verifyCardParams(params, options.secret())) return refuse(403, "This card's signature doesn't match its words.");
     const parsedSpec = parseCardParams(params);
     if (!parsedSpec.ok) return refuse(400, `Not a card: ${parsedSpec.error}`);
@@ -127,6 +163,13 @@ export function createCardRoute(options: CardRouteOptions): (req: Request) => Pr
     if ("character" in spec && spec.character && !assets.characters?.[spec.character]) {
       return refuse(400, `Not a card: no picture called "${spec.character}".`);
     }
-    return renderCard(spec, assets, options.paint, { headers: { "cache-control": options.cacheControl ?? CARD_CACHE_CONTROL } });
+    const cacheControl = options.cacheControl ?? CARD_CACHE_CONTROL;
+    if (layer === "motion") {
+      return new Response(JSON.stringify(cardMotion(spec, assets)), { headers: { "content-type": "application/json; charset=utf-8", "cache-control": cacheControl } });
+    }
+    if (layer?.startsWith("piece-") && !cardDecor(spec, drawnAssets(spec, assets))[Number(layer.slice("piece-".length))]) {
+      return refuse(400, `Not a card: its look has no ${layer}.`);
+    }
+    return renderCard(spec, assets, options.paint, { headers: { "cache-control": cacheControl }, layer });
   };
 }

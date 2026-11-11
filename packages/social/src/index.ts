@@ -78,6 +78,10 @@ export { queueSectionsOf, type QueueSections, type SectionOptions } from "./sect
 export { combineHonesty, genericHonesty, GENERIC_HONESTY_RULES, honestyFrom, type HonestyRule } from "./honesty.js";
 export { firstSentence, hookOf, LAUNCH_FACTS_MAX, launchSource, MAX_HASHTAGS, parseHashtags, releaseSource, type ReleaseFacts, type SourceTarget } from "./sources.js";
 export { dayText, groupPosts, postAnchor, postView, type ImageSet, type PostGroupView, type QueuePostView } from "./view.js";
+// social 0.5: a card's parts, for a video that moves them.
+export { cardLayerUrl, isCardLayer, splitCardLayer, type CardEntrance, type CardLayer, type CardMotion, type CardMotionPiece, type CardWordsEntrance } from "./card-parts.js";
+// social 0.7: a look as two choices, a background and a switch over it.
+export { firstLook, lookKey, lookKeys, lookParts } from "./look-choices.js";
 export { SOCIAL_ADMIN_ROUTES, SOCIAL_ADMIN_ROUTE_PERMISSIONS, type SocialAdminRouteKind, type SocialRoute } from "./routes.js";
 export { SOCIAL_PERMISSION_KEYS, socialPermissions, type SocialPermission, type SocialPermissionDefinition } from "./permissions.js";
 export type * from "./wire.js";

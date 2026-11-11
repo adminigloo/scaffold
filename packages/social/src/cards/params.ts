@@ -44,9 +44,10 @@ const rows = z
   )
   .transform((list) => list.map(([label, detail, value]) => ({ label, ...(detail ? { detail } : {}), ...(value ? { value } : {}) })));
 
-/** Every card may carry its page and its brand's words. */
+/** Every card may carry its page, its brand's words and its look. */
 const base = {
   page: page.optional(),
+  look: z.string().regex(CHARACTER).optional(),
   brand: line(60).optional(),
   site: line(80).optional(),
   handle: line(40).optional(),
@@ -103,6 +104,7 @@ export function cardParams(spec: CardSpec): URLSearchParams {
       break;
   }
   if (spec.page) put("page", `${spec.page.index}/${spec.page.count}`);
+  put("look", spec.look);
   if (spec.brand) {
     put("brand", spec.brand.name);
     put("site", spec.brand.site);
