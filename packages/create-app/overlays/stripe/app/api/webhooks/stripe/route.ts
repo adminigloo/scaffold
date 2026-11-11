@@ -26,7 +26,12 @@ import { db } from "@/db";
 import { env } from "@/env";
 import { reportError } from "@/server/error-reporter";
 import { limiter } from "@/server/rate-limit";
-import { bookShopPayment, followShopSubscription } from "@/server/shop-hooks";
+import {
+  bookShopPayment,
+  disputeShopPayment,
+  followShopSubscription,
+  refundShopPayment,
+} from "@/server/shop-hooks";
 import { plans } from "@/plans";
 import { stripe } from "@/server/stripe";
 import { mirrorStripeSubscription } from "@/server/subscription";
@@ -146,6 +151,39 @@ registry.on("payment_intent.succeeded", async (event) => {
   // part, src/server/shop-hooks.ts) — or, in a project with no shop, a
   // payment this application never asked for, recorded and skipped.
   await bookShopPayment(intent);
+});
+
+/**
+ * A REFUND MADE IN STRIPE (create-app 0.44). Refunds are made in Stripe's
+ * dashboard, never from this app, and come back here: the shop's order records
+ * Stripe's running refunded total and takes back the refunded share of what it
+ * granted (src/server/fulfilment.ts, `refundPurchase`). A refund on anything
+ * the shop didn't book, a plan's invoice for one, is ignored, so this is safe on
+ * every project; without a shop the hook is a no-op.
+ *
+ * Enable `charge.refunded` on BOTH Stripe endpoints, test and live
+ * (DEPLOYMENT.md). An event that isn't enabled is never sent, and a refund
+ * nobody records leaves the buyer holding what they were refunded for.
+ */
+registry.on("charge.refunded", async (event) => {
+  await refundShopPayment(event.data.object);
+});
+
+/**
+ * A DISPUTE at the customer's bank, TREATED AS A FULL REFUND of what the order
+ * granted. A deliberate choice: Stripe takes the disputed amount back out of
+ * the balance the moment a dispute opens, so the grants come back now rather
+ * than after weeks of evidence (`disputePurchase`). The order is flagged
+ * "disputed" and its refunded total is left alone, because nobody refunded
+ * anything. Winning the dispute later restores nothing by itself: staff
+ * decide, and adjust by hand (/admin/credits). To wait for the outcome
+ * instead, handle `charge.dispute.closed` when its status is "lost" and drop
+ * this handler.
+ *
+ * Enable `charge.dispute.created` on both Stripe endpoints too (DEPLOYMENT.md).
+ */
+registry.on("charge.dispute.created", async (event) => {
+  await disputeShopPayment(event.data.object);
 });
 
 /**

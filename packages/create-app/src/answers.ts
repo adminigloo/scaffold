@@ -1210,6 +1210,8 @@ export function capabilitiesFor(answers: Answers): readonly string[] {
   const shop = answers.businessModel === "one-time" || answers.businessModel === "both";
   if (shop && answers.adminShell !== "none") {
     keys.push("admin.product-builder");
+    // create-app 0.44: staff see the shop's orders at /admin/orders.
+    keys.push("admin.orders");
   }
 
   if (takesMoney) {
@@ -1229,6 +1231,9 @@ export function capabilitiesFor(answers: Answers): readonly string[] {
       "commerce.customer-account",
       // create-app 0.43: a `credits` grant fills the buyer's wallet.
       "wallet.credits",
+      // create-app 0.44: a refund or dispute in Stripe comes back to the order
+      // and takes back what it granted.
+      "commerce.refunds",
     );
   }
   if (answers.businessModel === "one-time" || answers.businessModel === "both") {

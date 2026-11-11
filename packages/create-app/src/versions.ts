@@ -133,7 +133,9 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.4.0 (polish 3): `<StoreAdmin actionsInHeader>` — the store page puts "See your store" in its own header.
   // 0.37 (history and housekeeping): `forgetTenant` for deleting a company, and sales recorded by hand.
   // 0.4.3: rebuilt against catalog 0.5 (the `credits` grant kind), released with it.
-  commerce: "0.4.3",
+  // 0.5.0 (create-app 0.44): `shopOrderPermissions`, the shop's orders on the
+  // staff ladder, which the emitted permission catalog imports.
+  commerce: "0.5.0",
   // 0.2.0 for the typed plan record. `src/plans.ts` is emitted into every
   // project that sells something and calls `definePlans`, which does not exist
   // in 0.1.x — so a project resolving the old line fails to compile on a file

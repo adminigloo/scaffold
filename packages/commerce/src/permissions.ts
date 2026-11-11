@@ -74,6 +74,34 @@ export const commercePermissions = {
 export type CommercePermission = keyof typeof commercePermissions;
 
 /**
+ * commerce 0.5: THIS SITE'S OWN SHOP's orders, on the STAFF ladder.
+ *
+ * `commercePermissions` above is the tenant catalog's: a company's own orders,
+ * held by its owner, admins and members. The shop a project sells from itself
+ * (create-app's `--model one-time` or `both`) is worked by the site's staff,
+ * and the staff ladder has no owner, member or viewer to give `orders.view`
+ * to, so those keys reached nobody there. This is the shop's key in the staff
+ * catalog, under its own name so the two can never be mistaken for each other.
+ *
+ * View only. A refund is made in Stripe's dashboard and comes back to the order
+ * by the webhook; nothing in the app moves money back.
+ */
+export const shopOrderPermissions = {
+  "shop.orders.view": {
+    label: "View the shop's orders",
+    description:
+      "See every order placed in this site's own shop: who bought what, the " +
+      "totals, refunds and disputes, what each order granted, and its trail.",
+    category: "Shop",
+    // Every staff role: support looks an order up first when someone writes in
+    // about a purchase. An order names an email and what was bought, no card.
+    defaultFor: ["admin", "cs_lead", "cs_agent"],
+  },
+} as const satisfies PermissionMap;
+
+export type ShopOrderPermission = keyof typeof shopOrderPermissions;
+
+/**
  * commerce 0.2: A STORE OF ITS OWN — the products a business sells to its own
  * customers and the orders they place. Two keys, in two ladders:
  *

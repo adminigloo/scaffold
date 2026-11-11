@@ -470,6 +470,7 @@ protected.
 A "Protection Bypass for Automation" in the webhook URL is NOT enough on its
 own: it lets Clerk's webhook through, but people opening a staging invitation
 link still land on Vercel's login page.
+<!-- adminigloo:stripe-webhook -->
 
 ### Email (invitations by email)
 

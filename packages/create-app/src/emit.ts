@@ -55,7 +55,7 @@ import {
   renderSharedAccounts,
   teamInvites,
 } from "./consumer-emit.js";
-import { renderShopHooks, sellsShop } from "./shop-emit.js";
+import { renderDeploymentStripeWebhook, renderShopHooks, sellsShop, STRIPE_WEBHOOK_MARKER } from "./shop-emit.js";
 import {
   renderConsumerDashboard,
   renderSubscriberFacts,
@@ -427,7 +427,12 @@ export async function planEmit(
       // What a project made by an earlier create-app has to do by hand when
       // it runs `upgrade` (review BUY-01), for THIS project's features.
       .split(UPGRADE_NOTES_MARKER)
-      .join(renderDeploymentUpgradeNotes(answers));
+      .join(renderDeploymentUpgradeNotes(answers))
+      // create-app 0.44: Stripe's two endpoints and every event to enable on
+      // them, for this project's model. The marker's own line goes with it, so
+      // a project without Stripe reads exactly as the template did.
+      .split(`${STRIPE_WEBHOOK_MARKER}\n`)
+      .join(renderDeploymentStripeWebhook(answers));
     for (const region of DEPLOYMENT_SINGLE_REGIONS) text = replaceDeploymentRegion(text, region, notes.regions[region]);
     files.set("DEPLOYMENT.md", text);
   }
@@ -2737,6 +2742,16 @@ export const PACKAGE_PERMISSION_FRAGMENTS: readonly PackagePermissionFragment[] 
       "Seeing everyone's credit balances and adjusting one by hand, with a " +
       "note. Staff: a person's own balance needs no key, and spending is the " +
       "app's own code. View for every staff role, adjust for admin.",
+  },
+  {
+    package: "commerce",
+    binding: "shopOrderPermissions",
+    scope: "staff",
+    installedBy: SHOP,
+    why:
+      "This site's own shop's orders, on the staff ladder (create-app 0.44): " +
+      "/admin/orders lists every order the shop booked, with its refunds, " +
+      "disputes and what it granted. Every staff role holds the view key.",
   },
   {
     package: "stripe",
@@ -5532,6 +5547,7 @@ export function renderAppRouter(answers: Answers): string {
       imports.splice(3, 0, 'import { catalogRouter } from "./catalog";');
       imports.splice(4, 0, 'import { checkoutRouter } from "./checkout";');
       imports.splice(5, 0, 'import { creditsRouter } from "./credits";');
+      imports.splice(6, 0, 'import { ordersRouter } from "./orders";');
     }
   }
 
@@ -5620,6 +5636,10 @@ export function renderAppRouter(answers: Answers): string {
   // Everyone's credit balances, the ledger, and the audited adjustment
   // (create-app 0.43). Staff-scoped; spending is the app's own code.
   credits: creditsRouter,
+
+  // The shop's orders for staff (create-app 0.44): the list and one order in
+  // full. Read only; a refund comes back by the webhook.
+  orders: ordersRouter,
 ` : ""}
   // The customer's own account: the Stripe billing portal, cancelling and
   // resuming a subscription, and the invoice list. Everything else the account
@@ -6642,6 +6662,16 @@ export function renderAdminNav(answers: Answers): string {
                   "contributed by the catalog package, so a project without a shop " +
                   "has neither the page nor the permission — but what keeps this " +
                   "entry out of one is the overlay that was not copied.",
+              },
+              {
+                href: "/admin/orders",
+                label: "Orders",
+                permission: "shop.orders.view",
+                why:
+                  "Every order the shop booked, newest first: refunds and disputes " +
+                  "as Stripe reported them, simulated ones marked, and each order's " +
+                  "grants and trail (create-app 0.44). From the shop-admin overlay; " +
+                  "the key from @adminigloo/commerce's staff fragment.",
               },
               {
                 href: "/admin/credits",
