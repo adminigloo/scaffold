@@ -79,6 +79,11 @@ export function personId(site: Site, key: string): string {
   return siteNodeId(site, `person-${slugify(key)}`);
 }
 
+/** A creative work's site-wide @id (0.4): `{origin}/#work-{key}`, so pages can `ref()` the same book or series. */
+export function creativeWorkId(site: Site, key: string): string {
+  return siteNodeId(site, `work-${slugify(key)}`);
+}
+
 // ---------------------------------------------------------------------------
 // Closed type lists
 // ---------------------------------------------------------------------------
@@ -132,6 +137,26 @@ export type SoftwareType = (typeof SOFTWARE_TYPES)[number];
 
 export const ARTICLE_TYPES = ["Article", "BlogPosting", "NewsArticle", "TechArticle", "Report"] as const;
 export type ArticleType = (typeof ARTICLE_TYPES)[number];
+
+/**
+ * What a fan, review or reference site is about (0.4): a book, a series, a film, a show,
+ * a game. Every one a real schema.org type; a series is part of nothing, and its works
+ * point at it with `isPartOf`.
+ */
+export const CREATIVE_WORK_TYPES = [
+  "CreativeWork",
+  "CreativeWorkSeries",
+  "Book",
+  "BookSeries",
+  "Movie",
+  "MovieSeries",
+  "TVSeries",
+  "VideoGame",
+  "VideoGameSeries",
+  "PodcastSeries",
+  "MusicAlbum",
+] as const;
+export type CreativeWorkType = (typeof CREATIVE_WORK_TYPES)[number];
 
 /** Place and its subtypes that a site page is plausibly about. Every one is a real schema.org type. */
 export const PLACE_TYPES = [
@@ -1447,6 +1472,126 @@ export function person(site: Site, input: PersonInput): JsonLdNode {
     description: text(issues, input.description, "description", false),
     sameAs: sameAs(site, issues, input.sameAs, "sameAs"),
     worksFor: input.worksFor === false ? undefined : (input.worksFor ?? ref(organizationId(site))),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// CreativeWork: a book, a series, a film, a show, a game (0.4)
+// ---------------------------------------------------------------------------
+
+export interface CreativeWorkInput {
+  /** Default "CreativeWork". */
+  type?: CreativeWorkType;
+  name: string;
+  /** What the site-wide @id is made from (default: the name): `{origin}/#work-{key}`. */
+  key?: string;
+  /** The work's own page on this site, when it has one: the @id then hangs off that page (`{canonical}#work`). */
+  path?: string;
+  description?: string;
+  /**
+   * Who made it: a name (written as a Person), or a `ref()` to a Person or
+   * Organization node in the graph. Films and shows write `creator`; everything
+   * else writes `author`.
+   */
+  authors?: ReadonlyArray<string | Ref>;
+  /**
+   * When it came out, as precisely as is known: a year ("1990"), a month
+   * ("2023-07") or a day ("1990-01-15"). Never a day the sources don't give.
+   */
+  datePublished?: DateInput;
+  /** The series it belongs to: `ref(creativeWorkId(site, "the-wheel-of-time"))`, or the series node itself. */
+  isPartOf?: Ref | JsonLdNode;
+  /** Its place in that series, from 1. Needs `isPartOf`. */
+  position?: number;
+  /** A book's ISBN: 10 or 13 digits, dashes or spaces allowed. */
+  isbn?: string;
+  /** Who published it: a name (written as an Organization), or a `ref()`. */
+  publisher?: string | Ref;
+  genre?: string | readonly string[];
+  /** The work's language when it isn't the site's (BCP 47, "en"). Never defaulted: the site's language is not the work's. */
+  inLanguage?: string;
+  image?: ImageInput;
+  /** The work's official page elsewhere (the publisher's, the studio's). */
+  url?: string;
+  /** The same work's pages elsewhere: Wikipedia, Wikidata, a fan wiki, a catalogue entry. */
+  sameAs?: ReadonlyArray<string | null | undefined | false>;
+  id?: string;
+}
+
+/** A year ("1990") or a month ("2023-07") as schema.org takes a reduced-precision date, else `date()`'s full check. */
+function publicationDate(issues: Issues, value: DateInput | undefined, field: string): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (/^\d{4}$/.test(trimmed)) return trimmed;
+    const month = /^\d{4}-(\d{2})$/.exec(trimmed);
+    if (month) {
+      const m = Number(month[1]);
+      if (m >= 1 && m <= 12) return trimmed;
+      issues.add(`${field} is not a real month (${trimmed})`);
+      return undefined;
+    }
+  }
+  return date(issues, value, field);
+}
+
+/** A maker or publisher: a name becomes a node of `type`; a ref is kept as a ref. */
+function agent(issues: Issues, value: string | Ref, field: string, type: "Person" | "Organization"): unknown {
+  if (typeof value === "string") {
+    const name = text(issues, value, field, true);
+    return name ? { "@type": type, name } : undefined;
+  }
+  if (value && typeof value === "object" && typeof value["@id"] === "string") return ref(value["@id"]);
+  issues.add(`${field} must be a name or a ref()`);
+  return undefined;
+}
+
+/**
+ * A creative work (0.4): what a fan, review or reference site is about, so a
+ * page can say `webPage({ about: ref(work) })` and an answer engine knows which
+ * book or series the page discusses. Not a rich result: Google's Book actions
+ * need a partner feed, so this describes the work for the knowledge graph and
+ * answer engines. Every field is a claim about somebody else's work, so give
+ * only what a source states.
+ */
+export function creativeWork(site: Site, input: CreativeWorkInput): JsonLdNode {
+  const issues = new Issues("creativeWork");
+  const type = oneOf(issues, input.type ?? "CreativeWork", CREATIVE_WORK_TYPES, "type") ?? "CreativeWork";
+  const name = text(issues, input.name, "name", true);
+  const canonical = input.path === undefined ? null : safePageUrl(site, issues, input.path);
+  const makers = (input.authors ?? []).map((entry, i) => agent(issues, entry, `authors[${i}]`, "Person")).filter((entry) => entry !== undefined);
+  const screen = type === "Movie" || type === "MovieSeries" || type === "TVSeries";
+  if (input.position !== undefined) {
+    issues.check(Number.isInteger(input.position) && input.position >= 1, "position must be a whole number from 1");
+    issues.check(input.isPartOf !== undefined, "position needs isPartOf: its place in which series?");
+  }
+  const isbn = input.isbn === undefined ? undefined : text(issues, input.isbn, "isbn", false);
+  if (isbn !== undefined) {
+    issues.check(type === "Book", "isbn is for a Book");
+    const digits = isbn.replace(/[ -]/g, "");
+    issues.check(/^(?:\d{9}[\dXx]|\d{13})$/.test(digits), `isbn "${isbn}" should be 10 or 13 digits`);
+  }
+  const genres = input.genre === undefined ? [] : (typeof input.genre === "string" ? [input.genre] : [...input.genre]).map((g, i) => text(issues, g, `genre[${i}]`, true)).filter((g): g is string => Boolean(g));
+  return finish(issues, {
+    "@type": type,
+    "@id": canonical
+      ? nodeId(site, canonical, input.id, "work")
+      : input.id
+        ? nodeId(site, null, input.id, "work")
+        : creativeWorkId(site, input.key ?? name ?? "work"),
+    name,
+    description: text(issues, input.description, "description", false),
+    ...(screen ? { creator: makers.length > 0 ? makers : undefined } : { author: makers.length > 0 ? makers : undefined }),
+    datePublished: publicationDate(issues, input.datePublished, "datePublished"),
+    isPartOf: input.isPartOf === undefined ? undefined : ref(input.isPartOf),
+    position: input.position,
+    isbn: isbn?.replace(/[ -]/g, ""),
+    publisher: input.publisher === undefined ? undefined : agent(issues, input.publisher, "publisher", "Organization"),
+    genre: genres.length === 0 ? undefined : genres.length === 1 ? genres[0] : genres,
+    inLanguage: text(issues, input.inLanguage, "inLanguage", false),
+    image: image(site, issues, input.image, "image"),
+    url: canonical ?? url(site, issues, input.url, "url"),
+    sameAs: sameAs(site, issues, input.sameAs, "sameAs"),
   });
 }
 

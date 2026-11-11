@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { resolveAppEnv } from "__SCOPE__/env";
 import { FOOTER_LINKS, SITE_LINKS, type SiteLink } from "@/nav";
-import { SITE_NAME } from "@/seo";
+import { SITE_DISCLAIMER, SITE_NAME } from "@/seo";
 import { operatorView } from "@/server/operator";
 
 /**
@@ -70,6 +70,8 @@ export async function SiteFooter() {
             </Link>
           ))}
         </nav>
+        {/* A site about somebody else's work says so on every page (src/seo.ts, create-app 0.43). */}
+        {SITE_DISCLAIMER ? <p className="w-full text-xs text-ink-muted">{SITE_DISCLAIMER}</p> : null}
       </div>
     </footer>
   );

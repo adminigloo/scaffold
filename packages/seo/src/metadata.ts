@@ -293,6 +293,8 @@ export interface SiteMetadata {
   openGraph: { type: "website"; siteName: string; locale: string; title: string; description?: string; images: OgImage[] };
   twitter: { card: "summary_large_image" | "summary"; title: string; description?: string; images: OgImage[]; site?: string; creator?: string };
   robots: RobotsMeta;
+  /** The site's ownership tokens (0.4), as Next's `verification` writes them: Bing's under its meta name. */
+  verification?: { google?: string; yandex?: string; other?: Record<string, string> };
 }
 
 /**
@@ -329,5 +331,15 @@ export function siteMetadata(site: Site, options: { homeTitle?: string } = {}): 
       ...(site.twitter?.creator ? { creator: site.twitter.creator } : {}),
     },
     robots: site.indexable ? { ...INDEX_DIRECTIVES, googleBot: { ...INDEX_DIRECTIVES.googleBot! } } : { ...OFF_PRODUCTION, googleBot: { ...OFF_PRODUCTION.googleBot! } },
+    ...(site.verification ? { verification: verificationMeta(site.verification) } : {}),
+  };
+}
+
+/** Site verification as Next's metadata takes it: Google and Yandex by name, Bing as msvalidate.01. */
+function verificationMeta(tokens: NonNullable<Site["verification"]>): NonNullable<SiteMetadata["verification"]> {
+  return {
+    ...(tokens.google ? { google: tokens.google } : {}),
+    ...(tokens.yandex ? { yandex: tokens.yandex } : {}),
+    ...(tokens.bing ? { other: { "msvalidate.01": tokens.bing } } : {}),
   };
 }

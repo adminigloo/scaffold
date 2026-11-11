@@ -53,7 +53,7 @@ export function renderSeoPackageModule(answers: Answers): string {
   const companies = companiesMode(answers);
   const noun = tenantLabel(answers).toLowerCase();
   return `import type { Metadata } from "next";
-import { defineSite, pageMetadata, siteMetadata as buildSiteMetadata, type PageInput } from "${scope}/seo";
+import { defineSite, isIndexable, pageMetadata, siteMetadata as buildSiteMetadata, type PageInput } from "${scope}/seo";
 import { resolveAppEnv } from "${scope}/env";
 import { env } from "@/env";
 import { paths } from "@/seo-paths";
@@ -74,12 +74,26 @@ export const SITE_DESCRIPTION =
   "Replace this: it is the line search results and shared links show.";
 
 /**
- * May this deployment be indexed? PRODUCTION ONLY — \`resolveAppEnv()\`, which
- * calls an unlabelled production build "staging", never \`isDeployed()\`. ONE
- * value behind the robots meta tag, robots.txt, the sitemap and llms.txt, so
- * the page and the files can't disagree.
+ * A line this site has to carry wherever it describes itself, when it is built
+ * around somebody else's work (create-app 0.43, from Hinderstap): "An
+ * unofficial fan site; not affiliated with the author or publisher." llms.txt
+ * and llms-full.txt print it under the summary, the footer shows it, and the
+ * terms say it. Leave it undefined when the site is about your own work.
  */
-export const INDEXABLE: boolean = resolveAppEnv() === "production";
+export const SITE_DISCLAIMER: string | undefined = undefined;
+
+/**
+ * May this deployment be indexed? PRODUCTION ONLY — \`resolveAppEnv()\`, which
+ * calls an unlabelled production build "staging", never \`isDeployed()\` — AND
+ * ONLY AT A REAL PUBLIC ADDRESS (create-app 0.43): \`isIndexable\` refuses a
+ * production build whose NEXT_PUBLIC_APP_URL is localhost, an IP address or a
+ * *.vercel.app address, so a production whose app URL was never set can't put
+ * its platform address in search. ONE value behind the robots meta tag,
+ * robots.txt, the sitemap and llms.txt, so the page and the files can't
+ * disagree. Every other host this production answers to (www., the project's
+ * *.vercel.app aliases) is sent to NEXT_PUBLIC_APP_URL's by proxy.ts.
+ */
+export const INDEXABLE: boolean = isIndexable({ env: resolveAppEnv(), host: env.NEXT_PUBLIC_APP_URL ?? "" });
 
 /**
  * THE ONE PATH LIST lives in src/seo-paths.ts (create-app 0.40), where the
@@ -112,6 +126,10 @@ export const site = defineSite({
   locale: "en_US",
   image: SHARE_IMAGE,
   paths,
+  disclaimer: SITE_DISCLAIMER,
+  // Search Console's and Bing's HTML-tag verification (create-app 0.43): set
+  // the tokens on production and press Verify. Empty is skipped.
+  verification: { google: env.GOOGLE_SITE_VERIFICATION, bing: env.BING_SITE_VERIFICATION },
 });
 
 /**
@@ -293,5 +311,189 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const entries = sitemapEntries(site, [...pathEntries(site), ...more, ...(await companyPages())], { onInvalid: () => {} });
   return toNextSitemap(entries) as MetadataRoute.Sitemap;
 }
+`;
+}
+
+// ---------------------------------------------------------------------------
+// IndexNow (create-app 0.43, from Hinderstap)
+// ---------------------------------------------------------------------------
+
+/** app/indexnow-key.txt/route.ts: the key file, at an address that never changes. */
+export function renderIndexNowKeyRoute(answers: Answers): string {
+  const scope = answers.scope;
+  return `import { indexNowKeyFile, isIndexNowKey } from "${scope}/seo";
+import { env } from "@/env";
+
+/**
+ * INDEXNOW'S KEY FILE (create-app 0.43). The engines fetch it to check that a
+ * submission really comes from this site, and \`pnpm seo:indexnow\` names it as
+ * the key's location, so it lives at this one fixed address rather than at
+ * /{key}.txt. Its folder is the site's root, so it covers every page.
+ *
+ * Public by design: the key is published here and in every submission. Unset
+ * (INDEXNOW_KEY), it is a 404 and the script refuses.
+ */
+export const dynamic = "force-dynamic";
+
+export function GET(): Response {
+  const key = env.INDEXNOW_KEY;
+  if (!key || !isIndexNowKey(key)) {
+    return new Response("Not found\\n", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } });
+  }
+  const file = indexNowKeyFile(key);
+  return new Response(file.body, { headers: { "Content-Type": file.contentType, "Cache-Control": "public, max-age=3600" } });
+}
+`;
+}
+
+/** scripts/indexnow.ts: announce the live site's pages, by hand, after a launch. */
+export function renderIndexNowScript(answers: Answers): string {
+  const scope = answers.scope;
+  return `/**
+ * Tell Bing, Yandex, Seznam, Naver and the other IndexNow engines about every
+ * page the LIVE site's sitemap lists (create-app 0.43, from Hinderstap). Google
+ * doesn't take part; it reads the sitemap.
+ *
+ *   pnpm seo:indexnow --origin https://example.com --dry-run   what would be sent
+ *   pnpm seo:indexnow --origin https://example.com             send it
+ *
+ * BY HAND, AFTER A LAUNCH, NEVER AUTOMATICALLY: once when the production site
+ * is live, then after a batch of new pages if you like. Engines throttle a host
+ * that submits too often (a 429), so not on every deploy.
+ *
+ * PRODUCTION ONLY, three ways. It needs the production origin said out loud
+ * (--origin). It sends only what that live site's sitemap lists, and the
+ * sitemap is empty on any deployment that isn't production. And it checks the
+ * live key file (/indexnow-key.txt) answers with this key before sending,
+ * because an engine that can't read it answers 403.
+ *
+ * WHAT IT SENDS is filtered again through the one path list (src/seo-paths.ts):
+ * \`submitUrls\` throws on a private page and leaves a noindex one out.
+ *
+ * THE KEY is INDEXNOW_KEY, from the environment or .env.local: the same value
+ * production serves. It is public by design.
+ */
+import { defineSite, indexNowKeyFile, isIndexNowKey, submitUrls } from "${scope}/seo";
+import { paths } from "../src/seo-paths";
+
+/** At most this many sitemap files are read: an index, then the sitemaps it names. */
+const MAX_SITEMAPS = 50;
+
+/** The key file's fixed address (app/indexnow-key.txt/route.ts). */
+const KEY_LOCATION = "/indexnow-key.txt";
+
+// tsx does not read .env.local; Node does, when asked. Missing is fine: the
+// key can come from the environment.
+try {
+  process.loadEnvFile(".env.local");
+} catch {
+  // No .env.local.
+}
+
+function fail(message: string): never {
+  console.error(\`indexnow: \${message}\`);
+  process.exit(1);
+}
+
+/** Every <loc> in a sitemap, or in each sitemap a sitemap index names. */
+async function sitemapUrls(url: string, seen = new Set<string>()): Promise<string[]> {
+  if (seen.has(url) || seen.size >= MAX_SITEMAPS) return [];
+  seen.add(url);
+  const res = await fetch(url, { headers: { accept: "application/xml" } });
+  if (!res.ok) fail(\`\${url} answered \${res.status}\`);
+  const xml = await res.text();
+  // XML's five escapes, &amp; last so "&amp;lt;" stays "&lt;".
+  const locs = [...xml.matchAll(/<loc>\\s*([^<]+?)\\s*<\\/loc>/g)].map((m) =>
+    m[1]!.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&"),
+  );
+  if (!/<sitemapindex[\\s>]/.test(xml)) return locs;
+  const nested: string[] = [];
+  for (const loc of locs) nested.push(...(await sitemapUrls(loc, seen)));
+  return nested;
+}
+
+function argument(name: string): string | undefined {
+  const args = process.argv.slice(2);
+  const inline = args.find((arg) => arg.startsWith(\`--\${name}=\`));
+  if (inline) return inline.slice(name.length + 3);
+  const at = args.indexOf(\`--\${name}\`);
+  return at >= 0 ? args[at + 1] : undefined;
+}
+
+async function main(): Promise<void> {
+  const args = new Set(process.argv.slice(2));
+  if (args.has("--help") || args.has("-h")) {
+    console.log("pnpm seo:indexnow --origin https://example.com [--dry-run]");
+    return;
+  }
+  const raw = argument("origin");
+  if (!raw) fail("say which live site to announce: --origin https://example.com (this runs by hand, after a launch).");
+  let origin: string;
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "https:") fail(\`\${raw} is not https: announce the production site.\`);
+    origin = parsed.origin;
+  } catch {
+    fail(\`\${raw} is not a web address.\`);
+  }
+  const key = process.env.INDEXNOW_KEY?.trim() ?? "";
+  if (!isIndexNowKey(key)) fail("INDEXNOW_KEY is missing or malformed (8 to 128 letters, digits or dashes; the same value production serves).");
+
+  const file = indexNowKeyFile(key);
+  const live = await fetch(\`\${origin}\${KEY_LOCATION}\`, { redirect: "manual" }).catch(() => null);
+  if (!live || live.status !== 200) fail(\`\${origin}\${KEY_LOCATION} answered \${live ? live.status : "nothing"}: set INDEXNOW_KEY on production first.\`);
+  if ((await live.text()).trim() !== file.body) fail(\`\${origin}\${KEY_LOCATION} holds a different key from INDEXNOW_KEY here.\`);
+
+  const urls = await sitemapUrls(\`\${origin}/sitemap.xml\`);
+  if (urls.length === 0) fail(\`\${origin}/sitemap.xml lists nothing: is it the production site?\`);
+  const site = defineSite({ url: origin, name: origin, indexable: true, paths });
+  if (args.has("--dry-run")) {
+    console.log(\`indexnow: would send \${urls.length} URLs from \${origin}:\`);
+    for (const url of urls) console.log(\`  \${url}\`);
+    return;
+  }
+  const result = await submitUrls(site, urls, { key, keyLocation: KEY_LOCATION });
+  for (const batch of result.batches) console.log(\`indexnow: \${batch.count} URLs, answered \${batch.status ?? "nothing"}\${batch.error ? \` (\${batch.error})\` : ""}\`);
+  if (result.excluded?.length) console.log(\`indexnow: left out \${result.excluded.length} noindex URLs\`);
+  if (!result.ok) process.exit(1);
+  console.log(\`indexnow: sent \${result.submitted} URLs\`);
+}
+
+main().catch((err: unknown) => fail(err instanceof Error ? err.message : String(err)));
+`;
+}
+
+/** docs/content-for-answer-engines.md: the prose the package can't write for you (create-app 0.43). */
+export function renderAnswerEngineGuide(): string {
+  return `# Writing pages that search and AI answers quote
+
+The SEO package writes the plumbing: titles, canonicals, JSON-LD, robots,
+sitemap, llms.txt. It deliberately writes no prose. What wins a search result or
+an AI answer is the text on the page, and these are the habits that worked on
+Hinderstap's guide pages (its keepers' pages ranked on the books' own names):
+
+1. **Lead with the answer.** The first paragraph answers the question the page
+   is named for ("What is X?") in two or three plain sentences. Answer engines
+   quote first paragraphs; a lead that warms up first gets skipped.
+2. **An FAQ in the questions people actually type.** Not "Our mission"; "How
+   many books are there?", "Where do I start?". Put the same list in the page
+   and in \`webPage({ faq })\`, so the FAQ markup and the visible text never
+   disagree.
+3. **Facts stated plainly, with where they come from.** A date, a count, a
+   name, and the source (a chapter, a page, a dataset). A claim an answer engine
+   can check is a claim it repeats.
+4. **Label what you made up.** A fan site's invented characters, a product's
+   roadmap, an estimate: say so in the sentence. Mixing invention into fact is
+   how a page gets quoted wrongly, and then not at all.
+5. **One page per question worth asking.** A guide, a glossary entry, a dated
+   archive page: each its own address, title and summary, in the sitemap and in
+   llms-full.txt (src/site-pages.ts, src/dynamic-pages.ts). A daily archive is a
+   promise of permanent addresses: never delete what became a public page.
+6. **The summary is the page's elevator line.** It's the meta description, the
+   llms.txt line and the standfirst above the body in llms-full.txt. Write it
+   for someone who has never heard of the site.
+7. **Somebody else's world? Say whose.** Set \`SITE_DISCLAIMER\` in src/seo.ts
+   ("An unofficial fan site; not affiliated with …"): the footer and both llms
+   files carry it.
 `;
 }

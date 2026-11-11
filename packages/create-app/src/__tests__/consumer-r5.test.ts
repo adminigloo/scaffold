@@ -75,7 +75,7 @@ describe("each person's own emails: where they are", () => {
   it("pins the release lines that carry them (the line, never the patch)", () => {
     expect(versionRangeFor("@adminigloo/digest")).toMatch(/^\^0\.1\./);
     expect(versionRangeFor("@adminigloo/email")).toMatch(/^\^0\.5\./);
-    expect(versionRangeFor("@adminigloo/seo")).toMatch(/^\^0\.3\./);
+    expect(versionRangeFor("@adminigloo/seo")).toMatch(/^\^0\.4\./);
   });
 
   it("writes the files, the tables, the cron, the secret and the staff key", async () => {
@@ -204,7 +204,9 @@ describe("each person's own emails: what they do", () => {
     expect(notes).toContain("digest_preferences, digest_subscriptions, digest_sends");
     expect(notes).toContain("src/digests.ts");
     expect(notes).toContain("proxy.ts.new");
-    expect(upgradeNotesFor(ALMANAC, "0.40.0")).toEqual([]);
+    // Past 0.40 nothing about its digests is said again (later releases have notes of their own).
+    expect(upgradeNotesFor(ALMANAC, "0.40.0").join("\n")).not.toContain("digest_sends");
+    expect(upgradeNotesFor(ALMANAC, "0.44.0")).toEqual([]);
     expect(upgradeNotesFor(BUSINESS, "0.39.0").join("\n")).not.toContain("digest_sends");
   });
 });
