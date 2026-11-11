@@ -92,6 +92,7 @@ export const PER_COMPANY_COVERAGE: Readonly<Record<string, Status>> = {
   license: "shared:checks the site's own licence key with the seller; one per site, not per business",
   observability: "shared:the site owner's error log and health checks, across every business",
   digest: "shared:each person's own email choices and digests, keyed by the person: they follow them, not any one business",
+  characters: "shared:pure functions for AI characters, with no tables of its own; the app that uses it keeps any records",
   wallet: "shared:each person's credits from this site's own shop, keyed by the person who bought them, not by any one business",
   "create-app": "shared:the generator itself; it writes the project and is never installed into it",
 };
