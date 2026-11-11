@@ -338,8 +338,10 @@ describe("RL-04: a mail server that never answers can't hold a booking open", ()
   it("each send gives up waiting after sendTimeoutMs, reported, and the event finishes", async () => {
     const hanging = { email: () => new Promise<never>(() => undefined) };
     const { tenantId, crew, errors, comms } = await setUp({}, { senders: hanging, sendTimeoutMs: 50 });
-    const started = Date.now();
+    // Both readings on the real clock: `setUp` pinned Date to THU, and a start read
+    // there made this measure the calendar (negative before 2026-10-29, days after).
     vi.useRealTimers();
+    const started = Date.now();
     await bookVisit(
       t.db,
       { tenantId, resourceId: crew.id, scheduledDate: "2026-11-02", startTime: "09:00", endTime: "10:00", customerEmail: "pat@example.com" },

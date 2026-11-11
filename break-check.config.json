@@ -25,5 +25,9 @@
   "outputFormat": "markdown",
   "ai": {
     "enabled": false
-  }
+  },
+  "acknowledgedChanges": [
+    "@adminigloo/catalog#GrantKind",
+    "@adminigloo/catalog#grantConfigSchemas"
+  ]
 }

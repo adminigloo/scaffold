@@ -874,6 +874,8 @@ function rowFromInitial(variant: ProductFormInitialVariant): VariantRow {
     grantKeyFormat: readText(config, "keyFormat"),
     grantWeightGrams: readText(config, "weightGrams"),
     grantRequiresAddress: config["requiresAddress"] === true,
+    grantCreditsUnit: readText(config, "unit"),
+    grantCreditsAmount: readText(config, "amount"),
   };
 }
 

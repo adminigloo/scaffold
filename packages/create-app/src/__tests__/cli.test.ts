@@ -111,6 +111,9 @@ describe("packagesFor — the only structural branch", () => {
       // Released with Tenancy 1, in the same changeset run as the tenancy 0.4
       // it talks to (versions.test.ts holds the two together).
       "@adminigloo/tenancy-widget",
+      // First released with create-app 0.43, in the same changeset run as the
+      // catalog 0.5 whose `credits` grant it holds.
+      "@adminigloo/wallet",
     ]);
     for (const model of ["none", "one-time", "subscription", "both"] as const) {
       for (const pkg of packagesFor(answers({ businessModel: model }))) {
@@ -1091,6 +1094,11 @@ describe("admin shell overlays", () => {
     // scope, which is the failure this narrowing exists to make impossible.
     const FRAGMENT_FOR_NAMESPACE: Record<string, string> = {
       catalog: "catalogPermissions",
+      // create-app 0.43: /admin/credits gates on credits.balances.view.
+      credits: "walletPermissions",
+      // create-app 0.44: /admin/orders gates on shop.orders.view, commerce's
+      // staff fragment (its tenant `orders.*` keys are a company's own store's).
+      shop: "shopOrderPermissions",
     };
     const staffCall = /definePermissions\(\s*"staff",\s*\{([^}]*)\}/.exec(
       catalog ?? "",
@@ -2555,6 +2563,7 @@ const UNLINKED_BY_DESIGN: Readonly<Record<string, string>> = {
   "/checkout/success": "reached by redirect after a payment.",
   "/admin/products/new": "reached from the button on the product list.",
   "/admin/products/[id]": "reached by clicking a row in the product list.",
+  "/admin/orders/[id]": "reached by clicking an order in the staff order list (create-app 0.44).",
   "/account/orders/[orderNumber]":
     "reached by clicking a row in the customer's own order list, through " +
     "accountOrderHref. A nav entry would need an order number, and which " +

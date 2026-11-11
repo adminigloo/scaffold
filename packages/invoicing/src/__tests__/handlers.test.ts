@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createInvoicingAdminHandlers,
   createInvoicingHandlers,
@@ -39,6 +39,21 @@ afterAll(async () => {
 
 const ALL = Object.keys(invoicingPermissions) as InvoicingPermission[];
 const NOW = new Date("2026-10-13T18:00:00.000Z");
+
+/**
+ * The admin side runs on the injected NOW, but the customer's page derives
+ * "overdue" from the real clock (`getInvoiceByToken` takes none). Pin Date (timers
+ * stay real) to NOW so both sides agree, as the scheduling and estimator suites
+ * do. Without it, an invoice due NOW + its terms reads "overdue" once the calendar
+ * passes that date, and the customer's-page test fails with nothing changed.
+ */
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(NOW);
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 const GREEN: InvoicingBusiness = {
   name: "Green Acres",

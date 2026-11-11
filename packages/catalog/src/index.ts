@@ -5,6 +5,7 @@ export {
   validateProduct,
   canPublish,
   grantConfigSchemas,
+  GRANT_KINDS,
 } from "./validation.js";
 export type {
   GrantDraft,

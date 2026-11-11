@@ -117,3 +117,19 @@ describe("namespace ownership", () => {
     ).toThrow(DuplicatePermissionError);
   });
 });
+
+describe("shopOrderPermissions (commerce 0.5)", () => {
+  it("is the shop's orders on the STAFF ladder: one view key every staff role holds", async () => {
+    const { shopOrderPermissions } = await import("../permissions.js");
+    const staff = definePermissions("staff", shopOrderPermissions);
+    expect([...staff.keys]).toEqual(["shop.orders.view"]);
+    expect(staff.get("shop.orders.view").defaultFor).toEqual(["admin", "cs_lead", "cs_agent"]);
+  });
+
+  it("never shares a key with the tenant catalog's orders.*, so the two can't be confused", async () => {
+    const { shopOrderPermissions } = await import("../permissions.js");
+    for (const key of Object.keys(shopOrderPermissions)) {
+      expect(Object.keys(commercePermissions)).not.toContain(key);
+    }
+  });
+});

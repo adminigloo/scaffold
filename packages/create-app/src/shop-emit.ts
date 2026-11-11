@@ -80,10 +80,26 @@ export async function bookShopPayment(intent: Stripe.PaymentIntent): Promise<voi
 export async function followShopSubscription(_state: ShopSubscriptionState): Promise<number> {
   return 0;
 }
+
+/**
+ * A refund, or a dispute, on a charge (create-app 0.44). With no shop there is
+ * no order to record it on: a refund on a plan's invoice is Stripe's and the
+ * subscription mirror's business, so these are no-ops, never throws.
+ */
+export async function refundShopPayment(_charge: Stripe.Charge): Promise<void> {}
+export async function disputeShopPayment(_dispute: Stripe.Dispute): Promise<void> {}
 `;
   }
   return `import type Stripe from "stripe";
-import { fulfilPurchase, windowProductGrants, type ProductSubscriptionState } from "@/server/fulfilment";
+import { createLogger } from "${scope}/observability";
+import { env } from "@/env";
+import {
+  disputePurchase,
+  fulfilPurchase,
+  refundPurchase,
+  windowProductGrants,
+  type ProductSubscriptionState,
+} from "@/server/fulfilment";
 
 /**
  * WHAT THE STRIPE WEBHOOK HANDS THE SHOP: a product's payment (book the
@@ -156,5 +172,116 @@ export async function bookShopPayment(intent: Stripe.PaymentIntent): Promise<voi
 export function followShopSubscription(state: ShopSubscriptionState): Promise<number> {
   return windowProductGrants(state);
 }
+
+const logger = createLogger({ level: env.LOG_LEVEL });
+
+/** A charge names its PaymentIntent by id, or expanded. */
+function paymentIntentOf(value: string | { readonly id: string } | null | undefined): string | null {
+  if (!value) return null;
+  return typeof value === "string" ? value : value.id;
+}
+
+/**
+ * A refund made in Stripe (create-app 0.44): the order records it and takes back
+ * the refunded share of what it granted. THIS OWNS NO LOGIC, like
+ * \`bookShopPayment\`: \`refundPurchase\` decides everything, idempotently, and a
+ * charge that isn't one of this shop's orders (a plan's invoice) is ignored.
+ */
+export async function refundShopPayment(charge: Stripe.Charge): Promise<void> {
+  const paymentIntentId = paymentIntentOf(charge.payment_intent);
+  if (!paymentIntentId) return;
+  const result = await refundPurchase({
+    paymentIntentId,
+    refundedMinor: charge.amount_refunded,
+    currency: charge.currency,
+  });
+  logger.info({ chargeId: charge.id, paymentIntentId, ...result }, "charge.refunded handled for the shop");
+}
+
+/**
+ * A dispute at the customer's bank: treated as a full refund of what the order
+ * granted (see \`disputePurchase\` for why, and for what happens if it's won).
+ */
+export async function disputeShopPayment(dispute: Stripe.Dispute): Promise<void> {
+  const paymentIntentId = paymentIntentOf(dispute.payment_intent);
+  if (!paymentIntentId) return;
+  const result = await disputePurchase({
+    paymentIntentId,
+    disputeId: dispute.id,
+    currency: dispute.currency,
+  });
+  logger.warn({ disputeId: dispute.id, paymentIntentId, ...result }, "charge.dispute.created handled for the shop");
+}
 `;
+}
+
+// ---------------------------------------------------------------------------
+// DEPLOYMENT.md — the Stripe webhook's events (create-app 0.44)
+// ---------------------------------------------------------------------------
+
+/** Where DEPLOYMENT.md's Stripe webhook section goes. */
+export const STRIPE_WEBHOOK_MARKER = "<!-- adminigloo:stripe-webhook -->";
+
+/**
+ * The events /api/webhooks/stripe acts on in this project, in DEPLOYMENT.md's
+ * order. The last five are @adminigloo/stripe's SUBSCRIPTION_EVENT_TYPES (the
+ * route refuses to load without a handler for each); a shop adds its payment,
+ * its refunds and its disputes. Empty when the project takes no money.
+ */
+export function stripeWebhookEvents(answers: Pick<Answers, "businessModel">): readonly string[] {
+  if (answers.businessModel === "none") return [];
+  return [
+    ...(sellsShop(answers) ? ["payment_intent.succeeded", "charge.refunded", "charge.dispute.created"] : []),
+    "customer.subscription.created",
+    "customer.subscription.updated",
+    "customer.subscription.deleted",
+    "invoice.paid",
+    "invoice.payment_failed",
+  ];
+}
+
+/**
+ * DEPLOYMENT.md's "Stripe's webhook" section: the two endpoints (test and live)
+ * and every event to enable on both. Before 0.44 the file named no events at
+ * all, and an event that isn't enabled is never sent: a refund nobody enabled
+ * is a refund nobody records. Empty when the project takes no money.
+ */
+export function renderDeploymentStripeWebhook(answers: Pick<Answers, "businessModel">): string {
+  if (stripeWebhookEvents(answers).length === 0) return "";
+  const shop = sellsShop(answers);
+  const renews =
+    answers.businessModel === "one-time" ? "a product that renews" : shop ? "a plan, or a product that renews" : "a plan";
+  const lines = [
+    "",
+    "### Stripe's webhook (one per mode)",
+    "",
+    "Stripe sends only the events an endpoint has enabled, and nothing in this app",
+    "can notice one missing. Make one endpoint in each mode, both at",
+    "`/api/webhooks/stripe`, and enable the same events on each:",
+    "",
+    "| Mode | Endpoint URL | Secret goes in |",
+    "| --- | --- | --- |",
+    "| Test | `https://<STAGING_DOMAIN>/api/webhooks/stripe` | Vercel **Preview** → `STRIPE_WEBHOOK_SECRET` |",
+    "| Live | `https://<your domain>/api/webhooks/stripe` | Vercel **Production** → `STRIPE_WEBHOOK_SECRET` |",
+    "",
+    "The events, on both endpoints:",
+    "",
+    ...(shop
+      ? [
+          "- `payment_intent.succeeded`: a purchase from the shop was paid. The order is booked and what it grants is given.",
+          "- `charge.refunded`: a refund made in Stripe (refunds are made there, never in this app). The order records it, " +
+            "and the refunded share of what it granted comes back: credits from the buyer's balance, never below zero, " +
+            "and once the whole order is refunded, its entitlements and licence keys too.",
+          "- `charge.dispute.created`: a dispute, treated as a full refund of what the order granted, and the order is " +
+            "flagged. Winning it later restores nothing by itself; staff adjust by hand.",
+        ]
+      : []),
+    `- \`customer.subscription.created\`, \`customer.subscription.updated\`, \`customer.subscription.deleted\`: the state of a subscription to ${renews}.`,
+    "- `invoice.paid`, `invoice.payment_failed`: a renewal, and a failed payment.",
+    "",
+    "The test endpoint reaches staging past Vercel's login the way Clerk's does",
+    "(the exception above). Locally no endpoint is needed: `pnpm dev` runs",
+    "`stripe listen`, which forwards every event.",
+  ];
+  return `${lines.join("\n")}\n`;
 }

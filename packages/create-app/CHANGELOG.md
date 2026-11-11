@@ -1,5 +1,22 @@
 # create-adminigloo-app
 
+## 0.43.0
+
+### Minor Changes
+
+- ffc99af: Credits (create-app 0.43): every shop (`--model one-time` or `both`) can sell spendable balances. A variant's Credits grant (`{ unit, amount }`, catalog 0.5) credits the BUYER's wallet (@adminigloo/wallet 0.1) inside the booking transaction, scaled by quantity, once per order however often the payment arrives; the order line carries `credits:<unit>`. A guest can't buy credits: `checkout.simulate` asks them to sign in first and fulfilment refuses a buyer-less booking (`account_required`), rolling the order back. The product builder edits the grant (unit and amount), the catalog router accepts every kind from `GRANT_KINDS`, `/account` shows "Your credits", and `/admin/credits` (Catalog → Credits, `credits.balances.view`) lists balances and the ledger with an audited, sensitive adjustment (`credits.balances.adjust`, a note required). New: `src/server/routers/credits.ts`, `src/credits.ts` (unit labels), the wallet's tables in the schema module, its permission fragment, and the `wallet.credits` capability.
+
+## 0.42.9
+
+### Patch Changes
+
+- 4840249: Fixes from building Hinderstap (a consumer one-time shop with AI, SEO and the assistant):
+  
+  - AI costs: `src/server/ai.ts`'s `ModelSpend` carries cache-write tokens and fees, `spendFromUsage` copies everything the provider bills (cache reads and writes, web searches at $10 per 1,000), and the chat route uses it. With ai 0.4.2 the row's reported snapshot (`claude-haiku-4-5-20251001`) is priced from the alias's row instead of written with a null cost.
+  - `--audience consumers`: the generated `permissions.integration.test.ts` seeds the member's own personal account, which every membership gate admits. Its company fixture failed five tests in every consumers project.
+  - `/sign-out` is disallowed in robots.txt and private in `src/seo-paths.ts`.
+  - `next dev` opened as `http://127.0.0.1` hydrates: `next.config.ts` lists it in `allowedDevOrigins`, and DEPLOYMENT.md's troubleshooting table names the localhost Clerk-cookie clash that sends you there.
+
 ## 0.42.8
 
 ### Patch Changes
