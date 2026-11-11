@@ -355,7 +355,7 @@ export function llmsTxt(site: Site, registry: LlmsRegistry, options: LlmsOptions
   const sitemapUrl = linkUrl(site, options.sitemapPath ?? "/sitemap.xml");
   const target = (path: string | undefined): string | null => (path ? linkUrl(site, path) : fullUrl);
   const doc = new Doc();
-  doc.fixed(`# ${oneLine(registry.title ?? site.name)}\n\n> ${oneLine(registry.summary)}\n\n`);
+  doc.fixed(`# ${oneLine(registry.title ?? site.name)}\n\n> ${oneLine(registry.summary)}\n\n${disclaimerLine(site)}`);
   doc.fixed(`${fullUrl ? linkLine("Full text", fullUrl) : ""}${linkLine("Sitemap", sitemapUrl)}`);
 
   const more = (where: string) => (n: number) => `- […and ${n} more](${where})\n`;
@@ -417,6 +417,22 @@ export function llmsTxt(site: Site, registry: LlmsRegistry, options: LlmsOptions
   return { ...doc.fit(maxBytes), maxBytes, offProduction: false };
 }
 
+/** The site's disclaimer (defineSite, 0.4) as its own line under the summary, or nothing. */
+function disclaimerLine(site: Site): string {
+  return site.disclaimer ? `${site.disclaimer}\n\n` : "";
+}
+
+/**
+ * A page's body in llms-full.txt, with its summary on top as a standfirst (0.4):
+ * a page that gains a body used to lose the summary the index and the page's own
+ * meta description share. A body that already opens with the summary is left as it is.
+ */
+function withStandfirst(summary: string, body: string): string {
+  const lead = block(summary);
+  const text = block(body);
+  return text.startsWith(lead) ? text : `${lead}\n\n${text}`;
+}
+
 function contactLines(site: Site, contact: LlmsRegistry["contact"]): string {
   if (!contact) return "";
   return [
@@ -434,7 +450,7 @@ export function llmsFullTxt(site: Site, registry: LlmsRegistry, options: LlmsOpt
   const indexUrl = linkUrl(site, options.indexPath ?? "/llms.txt");
   const sitemapUrl = linkUrl(site, options.sitemapPath ?? "/sitemap.xml");
   const doc = new Doc();
-  doc.fixed(`# ${oneLine(registry.title ?? site.name)}\n\n> ${oneLine(registry.summary)}\n\n`);
+  doc.fixed(`# ${oneLine(registry.title ?? site.name)}\n\n> ${oneLine(registry.summary)}\n\n${disclaimerLine(site)}`);
   if (registry.about) doc.fixed(`${block(registry.about)}\n\n`);
   doc.fixed(`${linkLine("Site", linkUrl(site, "/"))}${linkLine("Index", indexUrl)}${linkLine("Sitemap", sitemapUrl)}`);
 
@@ -471,7 +487,7 @@ export function llmsFullTxt(site: Site, registry: LlmsRegistry, options: LlmsOpt
     for (const item of items) {
       const head = item.path ? `\n### [${linkText(item.title)}](${linkUrl(site, item.path)})\n\n` : `\n### ${oneLine(item.title)}\n\n`;
       const summary = `${head}${block(item.summary)}\n`;
-      const variants = item.body && block(item.body) !== block(item.summary) ? [`${head}${block(item.body)}\n`, summary] : [summary];
+      const variants = item.body && block(item.body) !== block(item.summary) ? [`${head}${withStandfirst(item.summary, item.body)}\n`, summary] : [summary];
       doc.item(group, variants, section.optional ? FULL_PRIORITY.optional : FULL_PRIORITY.item);
     }
   }

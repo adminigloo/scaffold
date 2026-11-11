@@ -59,6 +59,29 @@ export interface SiteInput {
   trailingSlash?: boolean;
   /** The one path list for robots.txt, noindex and the sitemap. */
   paths?: PathList | PathListInput;
+  /**
+   * A line the site has to carry wherever it describes itself (0.4), for a
+   * site built around somebody else's work: "An unofficial fan site; not
+   * affiliated with the author or publisher." llms.txt and llms-full.txt print
+   * it under the summary, so an answer engine quoting the site quotes it too;
+   * the generated footer and terms show it. One line.
+   */
+  disclaimer?: string;
+  /**
+   * Search engines' ownership tokens (0.4), from Search Console's "HTML tag"
+   * method and its peers: `siteMetadata` writes each as its verification meta
+   * tag on every page. The token is the tag's `content` value; a pasted
+   * `google-site-verification=…` TXT value works too. Empty or null is skipped,
+   * so `process.env.GOOGLE_SITE_VERIFICATION` can be passed as it is.
+   */
+  verification?: SiteVerificationInput;
+}
+
+/** The engines `verification` covers: Google, Bing (msvalidate.01) and Yandex. */
+export interface SiteVerificationInput {
+  google?: string | null;
+  bing?: string | null;
+  yandex?: string | null;
 }
 
 export interface Site {
@@ -75,6 +98,44 @@ export interface Site {
   readonly twitter?: { readonly site?: string; readonly creator?: string };
   readonly trailingSlash: boolean;
   readonly paths: PathList;
+  readonly disclaimer?: string;
+  readonly verification?: { readonly google?: string; readonly bing?: string; readonly yandex?: string };
+}
+
+/** What a verification token may contain: the characters the engines issue (letters, digits, - and _). */
+const VERIFICATION_TOKEN = /^[A-Za-z0-9_-]{8,200}$/;
+
+/** The engines' TXT-record prefixes, so a value pasted from the DNS method still works. */
+const VERIFICATION_PREFIXES: Readonly<Record<keyof SiteVerificationInput, string>> = {
+  google: "google-site-verification=",
+  bing: "msvalidate.01=",
+  yandex: "yandex-verification:",
+};
+
+function verificationTokens(
+  issues: Issues,
+  input: SiteVerificationInput | undefined,
+): { google?: string; bing?: string; yandex?: string } | undefined {
+  if (input === undefined) return undefined;
+  const out: { google?: string; bing?: string; yandex?: string } = {};
+  for (const engine of ["google", "bing", "yandex"] as const) {
+    const raw = input[engine];
+    if (raw === undefined || raw === null) continue;
+    if (typeof raw !== "string") {
+      issues.add(`verification.${engine} must be text`);
+      continue;
+    }
+    let token = raw.trim();
+    const prefix = VERIFICATION_PREFIXES[engine];
+    if (token.toLowerCase().startsWith(prefix)) token = token.slice(prefix.length).trim();
+    if (token === "") continue;
+    if (!VERIFICATION_TOKEN.test(token)) {
+      issues.add(`verification.${engine} should be the token alone (the meta tag's content: 8 to 200 letters, digits, - or _), got ${JSON.stringify(raw)}`);
+      continue;
+    }
+    out[engine] = token;
+  }
+  return Object.keys(out).length > 0 ? Object.freeze(out) : undefined;
 }
 
 export function defineSite(input: SiteInput): Site {
@@ -100,6 +161,9 @@ export function defineSite(input: SiteInput): Site {
   issues.check(typeof input.indexable === "boolean", "indexable is required: pass isIndexable({ env, host })");
   const separator = input.titleSeparator ?? " | ";
   issues.check(separator.trim() !== "", 'titleSeparator must contain a visible character, e.g. " | " or " · "');
+  const disclaimer = typeof input.disclaimer === "string" ? oneLine(input.disclaimer) : "";
+  issues.check(input.disclaimer === undefined || typeof input.disclaimer === "string", "disclaimer must be text");
+  const verification = verificationTokens(issues, input.verification);
   issues.throwIfAny();
 
   const locale = input.locale ?? "en_US";
@@ -120,6 +184,8 @@ export function defineSite(input: SiteInput): Site {
     ...(input.twitter ? { twitter: normalizeTwitter(input.twitter) } : {}),
     trailingSlash: input.trailingSlash ?? false,
     paths,
+    ...(disclaimer ? { disclaimer } : {}),
+    ...(verification ? { verification } : {}),
   };
 
   if (image && image.url.startsWith(`${origin}/`)) {
