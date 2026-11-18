@@ -1,6 +1,32 @@
 import { prefixedSecret } from "@adminigloo/env";
 import { z } from "zod";
 
+/**
+ * The two kinds of key that can be STRIPE_SECRET_KEY: a standard secret key
+ * (`sk_…`) or a restricted key (`rk_…`).
+ *
+ * stripe 0.7.1: restricted keys are accepted. Stripe recommends them for a live
+ * account, because a restricted key can be cut down so that a leaked one can't
+ * move money out. 0.7.0 took `sk_` only, and a real restricted key stopped
+ * Hinderstap's production build (2026-11-12, its commit c988bd6); Almanac hit
+ * the same wall in October. Both patched their own env.ts around this package.
+ *
+ * The mode check is unchanged: `detectKeyMode` reads the `_live_` / `_test_`
+ * marker whatever the prefix, so an `rk_live_…` key still cannot run outside
+ * production. And the logger already redacts `rk_` keys
+ * (@adminigloo/observability's CREDENTIAL_PATTERNS).
+ */
+const STRIPE_SECRET_KEY_PREFIXES = ["sk_", "rk_"] as const;
+
+function stripeSecretKey() {
+  return z
+    .string()
+    .min(11, { message: "is too short to be a valid Stripe secret key" })
+    .refine((v) => STRIPE_SECRET_KEY_PREFIXES.some((prefix) => v.startsWith(prefix)), {
+      message: 'must start with "sk_" (a secret key) or "rk_" (a restricted key)',
+    });
+}
+
 /** Stripe server credentials. */
 export function stripeServer() {
   return {
@@ -12,7 +38,7 @@ export function stripeServer() {
     // checkout flow works, and is demonstrable, before that. The moment a key
     // IS present the mode assertion applies to it in full: a live key still
     // cannot run outside production.
-    STRIPE_SECRET_KEY: prefixedSecret("sk_").optional(),
+    STRIPE_SECRET_KEY: stripeSecretKey().optional(),
     STRIPE_WEBHOOK_SECRET: prefixedSecret("whsec_").optional(),
   };
 }

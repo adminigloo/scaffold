@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { and, eq, sql } from "drizzle-orm";
 import type { Principal } from "__SCOPE__/auth";
 import { users } from "__SCOPE__/auth/schema";
@@ -194,6 +194,27 @@ vi.mock("@/server/stripe", async (importOriginal) => ({
     return fake.client;
   },
 }));
+
+/**
+ * The webhook secret, as a configured deployment has one (create-app 0.44.1).
+ * `checkoutMode()` refuses a secret key without it, because the webhook is what
+ * records a payment, so every "Stripe is configured" case here needs it. The
+ * no-webhook block at the end takes it away. A Proxy rather than a copy, so
+ * every other variable is still the project's own.
+ */
+const WEBHOOK_FIXTURE = "whsec_test_product_lines_fixture";
+const webhook = vi.hoisted(() => ({ secret: "whsec_test_product_lines_fixture" as string | undefined }));
+
+vi.mock("@/env", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/env")>();
+  return {
+    ...real,
+    env: new Proxy(real.env, {
+      get: (target, key, receiver) =>
+        key === "STRIPE_WEBHOOK_SECRET" ? webhook.secret : Reflect.get(target, key, receiver),
+    }),
+  };
+});
 
 const createCaller = createCallerFactory(appRouter);
 
@@ -784,5 +805,41 @@ describe("REVIEW FIX: a company's Stripe customer is the company's, never a memb
       expect(fake.calls.some((c) => c.method === "customers.update")).toBe(false);
       expect((fake.calls.find((c) => c.method === "customers.create")!.args[0] as { metadata: Record<string, string> }).metadata).toEqual({ tenantId: o.tenantId });
     }
+  });
+});
+
+describe("NO WEBHOOK SECRET: nothing is charged that couldn't be recorded (create-app 0.44.1)", () => {
+  // Almanac's launch review (2026-10-30): with STRIPE_SECRET_KEY set and no
+  // STRIPE_WEBHOOK_SECRET, the webhook answers 503 to every delivery, so a
+  // checkout here charged the card and the plan was never written.
+  afterEach(() => {
+    webhook.secret = WEBHOOK_FIXTURE;
+  });
+
+  it("refuses a new plan, a plan change and a new line before anything reaches Stripe, and says why", async () => {
+    const o = await owner("ext_no_webhook", "nowebhook@lines.test");
+    const sub = stripeSubscription("sub_no_webhook", o.tenantId, [["si_nw", "weather-basic:month:usd"]]);
+    await mirrorStripeSubscription(snapshotOf(sub), { observedAt: at(0), observedBy: "evt_no_webhook" });
+    const fresh = await owner("ext_no_webhook_fresh", "nowebhook-fresh@lines.test");
+    fake.calls.length = 0;
+    webhook.secret = undefined;
+
+    await expect(
+      createCaller(createScaffoldContext({ principal: fresh.principal })).billing.subscribeToPlan({ tenantId: fresh.tenantId, tierKey: "sports", interval: "month", currency: "usd" }),
+    ).rejects.toMatchObject({ code: "PRECONDITION_FAILED", message: expect.stringContaining("STRIPE_WEBHOOK_SECRET") });
+    const caller = createCaller(createScaffoldContext({ principal: o.principal }));
+    await expect(
+      caller.billing.changePlan({ tenantId: o.tenantId, tierKey: "weather-pro", interval: "month", currency: "usd", prorationDate: NOW_S }),
+    ).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
+    await expect(
+      caller.billing.addLine({ tenantId: o.tenantId, tierKey: "sports", interval: "month", currency: "usd", prorationDate: NOW_S }),
+    ).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("NEGATIVE CONTROL: with the secret set, the same new plan opens Stripe's checkout", async () => {
+    const fresh = await owner("ext_with_webhook", "withwebhook@lines.test");
+    const out = await createCaller(createScaffoldContext({ principal: fresh.principal })).billing.subscribeToPlan({ tenantId: fresh.tenantId, tierKey: "sports", interval: "month", currency: "usd" });
+    expect(out.url).toContain("checkout.stripe.test");
   });
 });

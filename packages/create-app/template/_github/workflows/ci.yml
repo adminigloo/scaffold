@@ -1,9 +1,23 @@
 name: CI
 
+# PULL REQUESTS ONLY, plus a button to run it by hand (create-app 0.44.1).
+#
+# It used to run on every push to main and staging as well, where deploy.yml's
+# `verify` job already runs the same typecheck and tests before it migrates
+# anything, so every push paid for both. On Hinderstap that doubling used about
+# 40% of a month's Actions minutes (its commit 04d2ca1, 2026-11-14). A pull
+# request is where this check earns its minutes: it is the gate branch
+# protection requires before a merge (DEPLOYMENT.md), and the merge's own push
+# is then checked once, by the deploy.
 on:
   pull_request:
-  push:
-    branches: [main, staging]
+  workflow_dispatch:
+
+# A new push to the same pull request makes the run in progress worthless, so
+# it is cancelled rather than finished.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 # THE SAME TOKEN deploy.yml uses (TB-DEPLOY-03). .npmrc reads ${GITHUB_TOKEN}
 # for the __SCOPE__ registry, and the automatic secrets.GITHUB_TOKEN is scoped

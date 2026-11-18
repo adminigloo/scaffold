@@ -17,7 +17,7 @@ export const STRIPE_API_VERSION = "2026-08-26.dahlia" satisfies Stripe.LatestApi
 
 export interface CreateStripeClientOptions {
   /**
-   * `sk_…`. Accepts undefined so an app can pass `env.STRIPE_SECRET_KEY`
+   * `sk_…` or a restricted `rk_…`. Accepts undefined so an app can pass `env.STRIPE_SECRET_KEY`
    * straight through without a guard at every call site.
    */
   secretKey: string | undefined;

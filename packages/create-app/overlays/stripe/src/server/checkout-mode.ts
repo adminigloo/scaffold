@@ -63,11 +63,14 @@ import { stripe } from "@/server/stripe";
  * and the API error can never drift apart either.
  */
 export type CheckoutModeKind =
-  /** A Stripe secret key is set. Real payments, real money. */
+  /** A Stripe secret key and the webhook secret are set. Real payments, real money. */
   | "stripe"
   /** No Stripe key, and this environment is permitted to book orders without one. */
   | "simulated"
-  /** No Stripe key, and nothing here may hand out paid goods. */
+  /**
+   * No Stripe key, and nothing here may hand out paid goods. Or a key with no
+   * webhook secret, so a payment taken here could never be recorded.
+   */
   | "unavailable";
 
 export interface CheckoutMode {
@@ -90,6 +93,29 @@ export function checkoutMode(): CheckoutMode {
   // because it is the condition that flips by itself the moment the keys are
   // pasted in — nothing below has to be remembered or removed at launch.
   if (stripe) {
+    // A SECRET KEY WITH NO WEBHOOK SECRET (create-app 0.44.1, from Almanac's
+    // launch review of 2026-10-30): a deployment that can't record a payment
+    // must not take one. Orders and plans are written only by the webhook
+    // (app/api/webhooks/stripe), and with no STRIPE_WEBHOOK_SECRET that route
+    // answers 503 to every delivery. So "stripe" here charged the card and left
+    // the customer with nothing, and nothing on our side said so. It is named,
+    // like the cases below, and the fix is to set it and redeploy: a deployment
+    // is handed its variables when it is made, and `pnpm dev` reads them when it
+    // starts (its Stripe listener prints the local `whsec_…`).
+    //
+    // The publishable key is NOT asked here. A plan's checkout is Stripe's
+    // hosted page and needs none, and the shop's card form already says so when
+    // it is missing (app/(site)/checkout/page.tsx).
+    if (!env.STRIPE_WEBHOOK_SECRET) {
+      return {
+        kind: "unavailable",
+        reason:
+          "Payments can't be recorded: STRIPE_SECRET_KEY is set but " +
+          "STRIPE_WEBHOOK_SECRET isn't, so the webhook that turns a payment " +
+          "into an order or a plan refuses every delivery. Set it, then " +
+          "redeploy (or restart pnpm dev).",
+      };
+    }
     return {
       kind: "stripe",
       reason: "Stripe is configured on this deployment, so payments are real.",

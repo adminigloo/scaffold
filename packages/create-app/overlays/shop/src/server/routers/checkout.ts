@@ -523,6 +523,14 @@ export const checkoutRouter = createTRPCRouter({
             "is not set. See /setup.",
         });
       }
+      // The page's own predicate, asked again here because this mutation is
+      // reachable directly (create-app 0.44.1). A secret key with no
+      // STRIPE_WEBHOOK_SECRET is "unavailable": the card would be charged and
+      // the webhook that turns the payment into an order would refuse it.
+      const mode = checkoutMode();
+      if (mode.kind !== "stripe") {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: mode.reason });
+      }
       const client = stripe;
 
       // Loaded and guarded through the SHARED functions, not through a query

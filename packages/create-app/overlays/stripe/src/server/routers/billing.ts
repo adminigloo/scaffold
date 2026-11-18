@@ -195,6 +195,14 @@ export const billingRouter = createTRPCRouter({
             "path without keys through the simulated one.",
         });
       }
+      // The account page's own predicate, asked again here because this
+      // mutation is reachable directly (create-app 0.44.1). A secret key with no
+      // STRIPE_WEBHOOK_SECRET is "unavailable": Stripe would take the first
+      // payment and the webhook that writes the plan would refuse it.
+      const mode = checkoutMode();
+      if (mode.kind !== "stripe") {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: mode.reason });
+      }
       const client = stripe;
 
       // NEVER A SECOND SUBSCRIPTION (billing 0.3). A __TENANT_LABEL_LOWER__ that already pays
@@ -1191,9 +1199,15 @@ async function cachePlanIds(
     .where(eq(planTable.key, planKey));
 }
 
-/** The Stripe client, or the plain refusal a deployment without keys gives. */
+/**
+ * The Stripe client, or the plain refusal a deployment that can't take a
+ * payment gives. `checkoutMode()` decides, as it does for the account page
+ * (create-app 0.44.1): with a secret key but no STRIPE_WEBHOOK_SECRET a plan
+ * change or a new line would be charged at Stripe, and only the webhook writes
+ * the change here, so it is refused too.
+ */
 function stripeOrThrow(): NonNullable<typeof stripe> {
-  if (!stripe) {
+  if (!stripe || checkoutMode().kind !== "stripe") {
     throw new TRPCError({
       code: "PRECONDITION_FAILED",
       // The owner's words; the operator's (STRIPE_SECRET_KEY, /setup) are on /setup.

@@ -417,6 +417,11 @@ Repository variable (optional):
 `PACKAGES_READ_TOKEN` serves BOTH workflows: `ci.yml` installs with it too, so a
 pull request can pass the check branch protection requires.
 
+`ci.yml` runs on pull requests, and by hand (Actions → CI → Run workflow), never
+on a push. A push to `staging` or `main` is checked once, by `deploy.yml`'s
+`verify` job, before anything migrates. Running both on every push doubled the
+Actions minutes for nothing: on one project it used about 40% of a month's.
+
 Repository (or environment) variable `BOOTSTRAP_ADMIN_EMAIL` — the address that
 becomes the first administrator. Set it here for the deploy seed AND in Vercel
 (both scopes) for the app; see "First run" below.

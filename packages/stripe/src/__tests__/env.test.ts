@@ -24,14 +24,26 @@ describe("stripeServer fragment", () => {
     expect(result.success).toBe(false);
   });
 
-  it("rejects a restricted key, which has a different prefix", () => {
+  it("accepts a restricted key (rk_), live or test", () => {
+    // 0.7.0 rejected these, and a real restricted live key stopped Hinderstap's
+    // production build. Stripe recommends them for live accounts.
     expect(server.STRIPE_SECRET_KEY.safeParse("rk_test_51Abc123Def456").success).toBe(
-      false,
+      true,
+    );
+    expect(server.STRIPE_SECRET_KEY.safeParse("rk_live_51Abc123Def456").success).toBe(
+      true,
     );
   });
 
-  it("rejects a truncated key that still starts with sk_", () => {
+  it("rejects a truncated key that still starts with sk_ or rk_", () => {
     expect(server.STRIPE_SECRET_KEY.safeParse("sk_test").success).toBe(false);
+    expect(server.STRIPE_SECRET_KEY.safeParse("rk_live").success).toBe(false);
+  });
+
+  it("rejects a webhook secret pasted into the secret slot", () => {
+    expect(
+      server.STRIPE_SECRET_KEY.safeParse("whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2La").success,
+    ).toBe(false);
   });
 
   it("accepts a whsec_ webhook secret and rejects anything else", () => {
@@ -87,6 +99,23 @@ describe("STRIPE_MODE_BOUND_KEYS", () => {
         STRIPE_MODE_BOUND_KEYS,
       ),
     ).toThrow(KeyModeMismatchError);
+  });
+
+  it("stops a restricted live key reaching a preview deployment, as it does a secret one", () => {
+    expect(() =>
+      assertModeBoundKeys(
+        { STRIPE_SECRET_KEY: "rk_live_51Abc123Def456" },
+        "staging",
+        STRIPE_MODE_BOUND_KEYS,
+      ),
+    ).toThrow(KeyModeMismatchError);
+    expect(() =>
+      assertModeBoundKeys(
+        { STRIPE_SECRET_KEY: "rk_live_51Abc123Def456" },
+        "production",
+        STRIPE_MODE_BOUND_KEYS,
+      ),
+    ).not.toThrow();
   });
 
   it("stops a test key reaching production", () => {

@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { and, eq, sql } from "drizzle-orm";
 import type { Principal } from "__SCOPE__/auth";
 import { users } from "__SCOPE__/auth/schema";
@@ -200,6 +200,25 @@ vi.mock("@/server/stripe", async (importOriginal) => ({
     return fake.client;
   },
 }));
+
+/**
+ * The webhook secret, as a configured deployment has one (create-app 0.44.1):
+ * `checkoutMode()` refuses a secret key without it. The no-webhook block at the
+ * end takes it away. See src/server/__tests__/product-lines.test.ts.
+ */
+const WEBHOOK_FIXTURE = "whsec_test_shop_lines_fixture";
+const webhook = vi.hoisted(() => ({ secret: "whsec_test_shop_lines_fixture" as string | undefined }));
+
+vi.mock("@/env", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/env")>();
+  return {
+    ...real,
+    env: new Proxy(real.env, {
+      get: (target, key, receiver) =>
+        key === "STRIPE_WEBHOOK_SECRET" ? webhook.secret : Reflect.get(target, key, receiver),
+    }),
+  };
+});
 
 const createCaller = createCallerFactory(appRouter);
 
@@ -431,5 +450,33 @@ describe("REVIEW FIX: a company's Stripe customer is the company's, never a memb
     const out = await createCaller(createScaffoldContext({ principal: o.principal })).billing.subscribeToPlan({ tenantId: o.tenantId, tierKey: "weather-basic", interval: "month", currency: "usd" });
     expect(out.url).toContain("checkout.stripe.test");
     expect((fake.calls.find((c) => c.method === "checkout.sessions.create")!.args[0] as { customer: string }).customer).toBe(`cus_${o.tenantId}`);
+  });
+});
+
+describe("NO WEBHOOK SECRET: the shop takes no payment it couldn't record (create-app 0.44.1)", () => {
+  afterEach(() => {
+    webhook.secret = WEBHOOK_FIXTURE;
+  });
+
+  it("createIntent refuses, saying why, before anything reaches Stripe", async () => {
+    const p = await owner("ext_shop_no_webhook", "nowebhook@shop.test");
+    fake.client = stripeWithIdempotency();
+    const variantId = await monthlyBox("no-webhook-box");
+    fake.calls.length = 0;
+    webhook.secret = undefined;
+    const caller = createCaller(createScaffoldContext({ principal: p.principal }));
+    await expect(caller.checkout.createIntent({ variantId, quantity: 1 })).rejects.toMatchObject({
+      code: "PRECONDITION_FAILED",
+      message: expect.stringContaining("STRIPE_WEBHOOK_SECRET"),
+    });
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("NEGATIVE CONTROL: with the secret set, the same purchase reaches Stripe", async () => {
+    const p = await owner("ext_shop_with_webhook", "withwebhook@shop.test");
+    fake.client = stripeWithIdempotency();
+    const variantId = await monthlyBox("with-webhook-box");
+    const caller = createCaller(createScaffoldContext({ principal: p.principal }));
+    expect((await caller.checkout.createIntent({ variantId, quantity: 1 })).status).toBe("requires_payment");
   });
 });

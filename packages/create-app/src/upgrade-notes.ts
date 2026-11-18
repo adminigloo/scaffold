@@ -33,6 +33,24 @@ export function upgradeNotesFor(answers: Answers, fromVersion: string): string[]
   const companies = answers.tenantNoun !== "none";
   const noun = tenantLabel(answers).toLowerCase();
   const crossed = (version: string) => (compareVersions(fromVersion, version) ?? -1) < 0;
+  // 0.44.1 — from the 2026-11-16 audit of Almanac and Hinderstap: no payment
+  // is taken that can't be recorded, restricted Stripe keys work, and CI stops
+  // paying twice for every push.
+  if (crossed("0.44.1") && answers.businessModel !== "none") {
+    notes.push(
+      "Checkout won't take a payment it can't record: with STRIPE_SECRET_KEY set and no STRIPE_WEBHOOK_SECRET, the checkout " +
+        "and the plan chooser now say so instead of charging the card (the webhook refused every delivery, so the order or plan " +
+        "was never written). Set STRIPE_WEBHOOK_SECRET on every deployment that has a secret key, then redeploy. " +
+        "@adminigloo/stripe 0.7.1 also takes a restricted key (rk_…) as STRIPE_SECRET_KEY, so an override of it in src/env.ts " +
+        "is no longer needed.",
+    );
+  }
+  if (crossed("0.44.1")) {
+    notes.push(
+      "CI (.github/workflows/ci.yml) now runs on pull requests, and by hand from Actions → CI, never on a push: a push to " +
+        "staging or main is checked once, by deploy.yml's verify job, instead of twice. Nothing to set.",
+    );
+  }
   // 0.44.0 — refunds and disputes come back from Stripe, and staff see the
   // shop's orders. No tables are new; the two Stripe events are.
   if (crossed("0.44.0") && (answers.businessModel === "one-time" || answers.businessModel === "both")) {
