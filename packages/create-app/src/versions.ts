@@ -113,7 +113,9 @@ const PACKAGE_VERSIONS: Readonly<Record<string, string>> = {
   // 0.7.0 (create-app 0.39): each item's `amountMinor` — what Stripe really
   // charges it — which the mirror writes to subscriptions.price_minor for the
   // founder's MRR. Not in 0.6.x.
-  stripe: "0.7.0",
+  // 0.7.1 (create-app 0.44.1): STRIPE_SECRET_KEY takes a restricted key (rk_…).
+  // 0.7.0 refused one, so a project on it couldn't boot with one.
+  stripe: "0.7.1",
   // 0.2.0 for the variant- and product-name rules. The product builder refuses
   // to start a save that `validateProduct` cannot clear, so a project resolving
   // 0.1.x gets a validator with no opinion about a blank variant name — which
