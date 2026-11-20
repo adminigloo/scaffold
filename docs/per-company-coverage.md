@@ -65,6 +65,7 @@ project's isolation test.
 | `observability` | Shared | the site owner's error log and health checks, across every business |
 | `digest` | Shared | each person's own email choices and digests, keyed by the person: they follow them, not any one business |
 | `characters` | Shared | pure functions for AI characters, with no tables of its own; the app that uses it keeps any records |
+| `dashboard` | Shared | each staff member's own arrangement of dashboard cards, kept by the person; every card reads its feature's records through that feature's own rules |
 | `wallet` | Shared | each person's credits from this site's own shop, keyed by the person who bought them, not by any one business |
 | `create-app` | Shared | the generator itself; it writes the project and is never installed into it |
 

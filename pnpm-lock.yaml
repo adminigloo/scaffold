@@ -415,6 +415,73 @@ importers:
         specifier: ^19.2.4
         version: 19.2.4(react@19.2.4)
 
+  packages/dashboard:
+    dependencies:
+      '@adminigloo/db':
+        specifier: workspace:^
+        version: link:../db
+    devDependencies:
+      '@adminigloo/aeo':
+        specifier: workspace:^
+        version: link:../aeo
+      '@adminigloo/analytics':
+        specifier: workspace:^
+        version: link:../analytics
+      '@adminigloo/assistant':
+        specifier: workspace:^
+        version: link:../assistant
+      '@adminigloo/auth':
+        specifier: workspace:^
+        version: link:../auth
+      '@adminigloo/billing':
+        specifier: workspace:^
+        version: link:../billing
+      '@adminigloo/booking':
+        specifier: workspace:^
+        version: link:../booking
+      '@adminigloo/catalog':
+        specifier: workspace:^
+        version: link:../catalog
+      '@adminigloo/commerce':
+        specifier: workspace:^
+        version: link:../commerce
+      '@adminigloo/feedback':
+        specifier: workspace:^
+        version: link:../feedback
+      '@adminigloo/observability':
+        specifier: workspace:^
+        version: link:../observability
+      '@adminigloo/permissions':
+        specifier: workspace:^
+        version: link:../permissions
+      '@adminigloo/seo-reports':
+        specifier: workspace:^
+        version: link:../seo-reports
+      '@adminigloo/tenancy':
+        specifier: workspace:^
+        version: link:../tenancy
+      '@electric-sql/pglite':
+        specifier: ^0.5.8
+        version: 0.5.8
+      '@types/react':
+        specifier: ^19.2.7
+        version: 19.2.18
+      '@types/react-dom':
+        specifier: ^19.2.4
+        version: 19.2.5(@types/react@19.2.18)
+      drizzle-orm:
+        specifier: 'catalog:'
+        version: 0.45.2(@electric-sql/pglite@0.5.8)(@neondatabase/serverless@1.1.0)
+      happy-dom:
+        specifier: ^20.0.0
+        version: 20.14.6
+      react:
+        specifier: ^19.2.4
+        version: 19.2.4
+      react-dom:
+        specifier: ^19.2.4
+        version: 19.2.4(react@19.2.4)
+
   packages/db:
     dependencies:
       '@adminigloo/env':

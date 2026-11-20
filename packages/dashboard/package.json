@@ -1,0 +1,137 @@
+{
+  "name": "@adminigloo/dashboard",
+  "version": "0.1.0",
+  "description": "The staff dashboard: a card for every feature you have — what needs you, a few counts and a short list, each linking to its page — arranged by each person, saved for them, and offered only to those who may open the page behind it.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adminigloo/scaffold.git",
+    "directory": "packages/dashboard"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./schema": {
+      "types": "./dist/schema.d.ts",
+      "import": "./dist/schema.js",
+      "require": "./dist/schema.cjs"
+    },
+    "./ui": {
+      "types": "./dist/ui.d.ts",
+      "import": "./dist/ui.js",
+      "require": "./dist/ui.cjs"
+    },
+    "./glances/*": {
+      "types": "./dist/glances/*.d.ts",
+      "import": "./dist/glances/*.js",
+      "require": "./dist/glances/*.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "public"
+  },
+  "dependencies": {
+    "@adminigloo/db": "workspace:^"
+  },
+  "peerDependencies": {
+    "drizzle-orm": "catalog:peers",
+    "react": "^18.0.0 || ^19.0.0",
+    "@adminigloo/observability": ">=0.2.2",
+    "@adminigloo/tenancy": ">=0.9.0",
+    "@adminigloo/auth": ">=0.2.1",
+    "@adminigloo/feedback": ">=0.13.0",
+    "@adminigloo/analytics": ">=0.5.0",
+    "@adminigloo/booking": ">=0.3.1",
+    "@adminigloo/seo-reports": ">=0.3.0",
+    "@adminigloo/aeo": ">=0.3.0",
+    "@adminigloo/assistant": ">=0.10.0",
+    "@adminigloo/commerce": ">=0.4.2",
+    "@adminigloo/catalog": ">=0.4.1",
+    "@adminigloo/billing": ">=0.6.0",
+    "@adminigloo/permissions": ">=0.4.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "@adminigloo/observability": {
+      "optional": true
+    },
+    "@adminigloo/tenancy": {
+      "optional": true
+    },
+    "@adminigloo/auth": {
+      "optional": true
+    },
+    "@adminigloo/feedback": {
+      "optional": true
+    },
+    "@adminigloo/analytics": {
+      "optional": true
+    },
+    "@adminigloo/booking": {
+      "optional": true
+    },
+    "@adminigloo/seo-reports": {
+      "optional": true
+    },
+    "@adminigloo/aeo": {
+      "optional": true
+    },
+    "@adminigloo/assistant": {
+      "optional": true
+    },
+    "@adminigloo/commerce": {
+      "optional": true
+    },
+    "@adminigloo/catalog": {
+      "optional": true
+    },
+    "@adminigloo/billing": {
+      "optional": true
+    },
+    "@adminigloo/permissions": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "drizzle-orm": "catalog:",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.4",
+    "happy-dom": "^20.0.0",
+    "@adminigloo/observability": "workspace:^",
+    "@adminigloo/tenancy": "workspace:^",
+    "@adminigloo/auth": "workspace:^",
+    "@adminigloo/feedback": "workspace:^",
+    "@adminigloo/analytics": "workspace:^",
+    "@adminigloo/booking": "workspace:^",
+    "@adminigloo/seo-reports": "workspace:^",
+    "@adminigloo/aeo": "workspace:^",
+    "@adminigloo/assistant": "workspace:^",
+    "@adminigloo/commerce": "workspace:^",
+    "@adminigloo/catalog": "workspace:^",
+    "@adminigloo/billing": "workspace:^",
+    "@adminigloo/permissions": "workspace:^"
+  },
+  "scripts": {
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  }
+}
